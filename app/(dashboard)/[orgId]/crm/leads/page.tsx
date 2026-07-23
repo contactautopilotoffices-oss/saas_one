@@ -1,10 +1,9 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams, useRouter, useParams } from 'next/navigation';
 import { useAuth } from '@/frontend/context/AuthContext';
-import { LeadsTable, LeadDetailDrawer, LeadForm, LeadViews } from '@/frontend/components/crm';
-import { ResolvedView, ALL_LEADS_VIEW } from '@/frontend/lib/crm/views';
+import { LeadsTable, LeadDetailDrawer, LeadForm } from '@/frontend/components/crm';
 import { CRMLead, CreateLeadInput } from '@/frontend/types/crm';
 import { CrmTour, leadsTableSteps, leadDetailSteps } from '@/frontend/components/crm/onboarding';
 import { useCrmTour } from '@/frontend/hooks/useCrmTour';
@@ -89,27 +88,6 @@ export default function LeadsPage() {
     const [editingLead, setEditingLead] = useState<CRMLead | null>(null);
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error'; visible: boolean }>({ message: '', type: 'success', visible: false });
     const { statusFilter } = useResolvedFilters();
-
-    // Saved-views state. `active` is the selected tab (built-in "All Leads" by
-    // default); `nonce` bumps on every explicit (re)select so the table re-seeds
-    // even when the same tab is chosen again (powers the "Reset" action). The
-    // table reports its live filters back up so views can offer save/drift.
-    const [active, setActive] = useState<{ id: string; resolved: ResolvedView }>({ id: 'all', resolved: ALL_LEADS_VIEW });
-    const [nonce, setNonce] = useState(0);
-    const [liveState, setLiveState] = useState<ResolvedView | null>(null);
-
-    const selectView = useCallback((resolved: ResolvedView, id: string) => {
-        setActive({ id, resolved });
-        setNonce(n => n + 1);
-    }, []);
-
-    // A dashboard deep-link (?status=/?filter=) applies as an ad-hoc filter over
-    // All Leads, taking precedence over any default view.
-    useEffect(() => {
-        if (!statusFilter.length) return;
-        setActive({ id: 'all', resolved: { ...ALL_LEADS_VIEW, appliedFilters: { status: statusFilter } } });
-        setNonce(n => n + 1);
-    }, [statusFilter]);
     const { isCompleted: leadsTableDone } = useCrmTour('crm-leads');
     const { isCompleted: leadDetailDone } = useCrmTour('crm-lead-detail');
     const autoOpenedRef = useRef(false);
@@ -191,15 +169,11 @@ export default function LeadsPage() {
 
     return (
         <div>
-            <div className="space-y-4">
-                <LeadViews activeKey={active.id} liveState={liveState} onSelect={selectView} />
-                <LeadsTable
-                    onLeadSelect={handleLeadSelect}
-                    onCreateLead={handleCreateLead}
-                    view={{ ...active.resolved, key: `${active.id}#${nonce}` }}
-                    onStateChange={setLiveState}
-                />
-            </div>
+            <LeadsTable
+                onLeadSelect={handleLeadSelect}
+                onCreateLead={handleCreateLead}
+                filters={statusFilter.length ? { status: statusFilter } : undefined}
+            />
 
             <LeadDetailDrawer
                 leadId={selectedLead?.id || null}
@@ -209,7 +183,6 @@ export default function LeadsPage() {
                     setSelectedLead(null);
                 }}
                 onLeadUpdate={(lead) => setSelectedLead(lead)}
-                onEdit={handleEditLead}
             />
 
             <LeadForm

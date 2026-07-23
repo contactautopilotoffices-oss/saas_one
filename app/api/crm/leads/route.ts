@@ -24,9 +24,6 @@ const SORTABLE = new Set([
     'last_contacted', 'company_name', 'priority', 'status', 'closed_at',
 ]);
 
-// Date columns a saved view's period can be applied to.
-const DATE_FILTERABLE = new Set(['created_at', 'next_followup_date', 'last_contacted']);
-
 function isValidEmail(v: string) {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
 }
@@ -49,10 +46,6 @@ export async function GET(request: NextRequest) {
     const cities = searchParams.getAll('city');
     const dateFrom = searchParams.get('date_from');
     const dateTo = searchParams.get('date_to');
-    // Which date column the range applies to (saved views can key a period off
-    // created / follow-up / last-contacted). Whitelisted; defaults to created_at.
-    const dateFieldRaw = searchParams.get('date_field') || 'created_at';
-    const dateField = DATE_FILTERABLE.has(dateFieldRaw) ? dateFieldRaw : 'created_at';
     const seatsRange = searchParams.get('seats_range');
     const isArchived = searchParams.get('is_archived') === 'true';
     const sortByRaw = searchParams.get('sort_by') || 'created_at';
@@ -79,8 +72,8 @@ export async function GET(request: NextRequest) {
         const cityOr = cityFilterOr(cities);
         if (cityOr) query = query.or(cityOr);
     }
-    if (dateFrom) query = query.gte(dateField, dateFrom);
-    if (dateTo) query = query.lte(dateField, `${dateTo}T23:59:59.999Z`);
+    if (dateFrom) query = query.gte('created_at', dateFrom);
+    if (dateTo) query = query.lte('created_at', `${dateTo}T23:59:59.999Z`);
     // Seat-range filter on the numeric `seats` column.
     if (seatsRange === 'lt25') query = query.lt('seats', 25);
     else if (seatsRange === '25to50') query = query.gte('seats', 25).lte('seats', 50);

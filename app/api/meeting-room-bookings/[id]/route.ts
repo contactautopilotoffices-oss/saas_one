@@ -25,7 +25,7 @@ export async function DELETE(
         // 1. Fetch booking to get property_id
         const { data: booking, error: bookingError } = await adminSupabase
             .from('meeting_room_bookings')
-            .select('property_id, user_id, company_id, booking_date, start_time, end_time')
+            .select('property_id, user_id, company_id, booking_date, start_time, end_time, meeting_room_id, meeting_rooms(name), users(full_name, email)')
             .eq('id', bookingId)
             .single();
 
@@ -33,10 +33,10 @@ export async function DELETE(
             return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
         }
 
-        // Prevent deletion if the meeting has already ended
-        const bookingEnd = new Date(`${booking.booking_date}T${booking.end_time}`);
-        if (bookingEnd <= new Date()) {
-            return NextResponse.json({ error: 'Cannot delete a booking that has already ended' }, { status: 400 });
+        // Prevent deletion if the meeting has already started
+        const bookingStart = new Date(`${booking.booking_date}T${booking.start_time}`);
+        if (bookingStart <= new Date()) {
+            return NextResponse.json({ error: 'Cannot cancel a booking after its start time' }, { status: 400 });
         }
 
         const isOwner = booking.user_id === user.id;
@@ -139,8 +139,8 @@ export async function DELETE(
             console.error('Activity log insertion failed:', err);
         }
 
-        // 8. Refund credits if booking is in the future
-        if (bookingEnd > new Date()) {
+        // 8. Refund credits if booking is in the future (which is guaranteed by the check above, but keeping the safeguard)
+        if (bookingStart > new Date()) {
             const [startH, startM] = booking.start_time.split(':').map(Number);
             const [endH, endM] = booking.end_time.split(':').map(Number);
             const durationHours = (endH * 60 + endM - startH * 60 - startM) / 60;
@@ -159,6 +159,10 @@ export async function DELETE(
                 }
             );
         }
+
+        // 9. Email cancellation is now strictly handled at the database level.
+        // A Postgres Trigger listens for DELETE on meeting_room_bookings and queues 
+        // the 'MEETING_ROOM_CANCELLED' event into the outbox automatically.
 
         return NextResponse.json({ success: true, message: 'Booking deleted successfully' });
     } catch (error) {

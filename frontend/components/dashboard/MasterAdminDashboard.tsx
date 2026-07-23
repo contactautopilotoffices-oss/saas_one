@@ -7,8 +7,8 @@ import {
     CheckCircle2, AlertCircle, Search, Plus, ExternalLink, XCircle, Filter,
     Key, Eye, EyeOff, Globe, Copy, X, Ticket, Link as LinkIcon, LogOut,
     UserCircle, FileDown, Brain, Wrench, MessageCircle,
-    TrendingUp, MapPin, Radio, Flame, Phone, Gauge,
-  MessageSquarePlus
+    TrendingUp, MapPin, Radio, Flame, Phone, Gauge,
+  MessageSquarePlus, Mail
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -18,6 +18,7 @@ import OrgPropertyDashboard from './OrgPropertyDashboard';
 import TicketsView from './TicketsView';
 import AdminSPOCDashboard from '../tickets/AdminSPOCDashboard';
 import InviteLinkGenerator from './InviteLinkGenerator';
+import EmailTemplateEditor from './EmailTemplateEditor';
 import { HapticCard } from '@/frontend/components/ui/HapticCard';
 import SignOutModal from '@/frontend/components/ui/SignOutModal';
 import { useTheme } from '@/frontend/context/ThemeContext';
@@ -36,7 +37,7 @@ import IssueTrackingDashboard from '@/frontend/components/master-admin/IssueTrac
 import DailyProgressDashboard from './DailyProgressDashboard';
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
 
-type Tab = 'overview' | 'bd-pipeline' | 'analytics' | 'daily-progress' | 'usage' | 'organizations' | 'tickets' | 'users' | 'visitors' | 'invite-links' | 'ai-insights' | 'ai-assistant' | 'issue-config' | 'modules' | 'settings' | 'resolvers' | 'super-tenants' | 'whatsapp-templates' | 'issues';
+type Tab = 'overview' | 'bd-pipeline' | 'analytics' | 'daily-progress' | 'usage' | 'organizations' | 'tickets' | 'users' | 'visitors' | 'invite-links' | 'ai-insights' | 'ai-assistant' | 'issue-config' | 'modules' | 'settings' | 'resolvers' | 'super-tenants' | 'whatsapp-templates' | 'issues' | 'email-config';
 
 // Shape returned by GET /api/admin/bd-stats (cross-org BD pipeline metrics).
 interface BDStats {
@@ -77,6 +78,8 @@ interface Organization {
     created_at: string;
     properties?: { count: number }[];
     organization_memberships?: { count: number }[];
+    email_preferences?: { [key: string]: boolean };
+    email_templates?: { [key: string]: { design: object; html: string } };
 }
 
 interface SystemUser {
@@ -145,7 +148,7 @@ const MasterAdminDashboard = () => {
     // Restore tab from URL and handle back navigation
     useEffect(() => {
         const tab = searchParams.get('tab');
-        if (tab && ['overview', 'bd-pipeline', 'analytics', 'daily-progress', 'usage', 'organizations', 'tickets', 'users', 'visitors', 'invite-links', 'ai-insights', 'ai-assistant', 'issue-config', 'modules', 'settings', 'resolvers', 'super-tenants', 'whatsapp-templates', 'issues'].includes(tab)) {
+        if (tab && ['overview', 'bd-pipeline', 'analytics', 'daily-progress', 'usage', 'organizations', 'tickets', 'users', 'visitors', 'invite-links', 'ai-insights', 'ai-assistant', 'issue-config', 'modules', 'settings', 'resolvers', 'super-tenants', 'whatsapp-templates', 'issues', 'email-config'].includes(tab)) {
             setActiveTab(tab as Tab);
         }
     }, [searchParams]);
@@ -234,7 +237,7 @@ const MasterAdminDashboard = () => {
         setIsLoading(true);
         const { data, error } = await supabase
             .from('organizations')
-            .select('*, properties(count)')
+            .select('*, properties(count), organization_settings(email_preferences, email_templates)')
             .order('created_at', { ascending: false });
 
         if (error) {
@@ -243,7 +246,13 @@ const MasterAdminDashboard = () => {
             return;
         }
 
-        setOrganizations(data ?? []);
+        const formattedData = (data ?? []).map((org: any) => ({
+            ...org,
+            email_preferences: org.organization_settings?.[0]?.email_preferences || org.organization_settings?.email_preferences,
+                email_templates: org.organization_settings?.[0]?.email_templates || org.organization_settings?.email_templates
+        }));
+
+        setOrganizations(formattedData);
         setIsLoading(false);
     };
 
@@ -357,6 +366,42 @@ const MasterAdminDashboard = () => {
         fetchOrganizations();
     };
 
+    const handleUpdateEmailTemplate = async (orgId: string, moduleId: string, design: object, html: string) => {
+        try {
+            const org = organizations.find(o => o.id === orgId);
+            const currentTemplates = org?.email_templates || {};
+            const updatedTemplates = { ...currentTemplates, [moduleId]: { design, html } };
+            const res = await fetch(`/api/admin/organizations/${orgId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email_templates: updatedTemplates })
+            });
+            if (res.ok) {
+                setOrganizations(prev => prev.map(o => o.id === orgId ? { ...o, email_templates: updatedTemplates } : o));
+            }
+        } catch (err) {
+            console.error('Failed to save template:', err);
+        }
+    };
+
+    const handleUpdateEmailPrefs = async (orgId: string, prefs: { [key: string]: boolean }) => {
+        try {
+            const response = await fetch(`/api/admin/organizations/${orgId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email_preferences: prefs })
+            });
+            if (response.ok) {
+                showToast('Email preferences updated successfully');
+                setOrganizations(prev => prev.map(o => o.id === orgId ? { ...o, email_preferences: prefs } : o));
+            } else {
+                showToast('Failed to update email preferences', 'error');
+            }
+        } catch (error) {
+            showToast('Error updating email preferences', 'error');
+        }
+    };
+
     const handleRestoreWithSecret = async (secret: string) => {
         const { data, error } = await supabase
             .from('organizations')
@@ -392,6 +437,7 @@ const MasterAdminDashboard = () => {
         { id: 'issues', label: 'Issue Tracker', icon: AlertTriangle },
         { id: 'whatsapp-templates', label: 'WhatsApp Templates', icon: MessageCircle },
         { id: 'modules', label: 'Module Control', icon: LayoutGrid },
+        { id: 'email-config', label: 'Email Control', icon: Mail },
         { id: 'settings', label: 'System', icon: Settings },
     ];
 
@@ -592,6 +638,13 @@ const MasterAdminDashboard = () => {
                             <ModuleConfig
                                 organizations={organizations}
                                 onUpdateModules={handleUpdateModules}
+                            />
+                        )}
+                        {activeTab === 'email-config' && (
+                            <EmailConfig
+                                organizations={organizations}
+                                onUpdateEmailPrefs={handleUpdateEmailPrefs}
+                                onUpdateEmailTemplate={handleUpdateEmailTemplate}
                             />
                         )}
                         {activeTab === 'issue-config' && (
@@ -2819,6 +2872,170 @@ const SuperTenantManagerTab = ({ users, organizations, showToast }: SuperTenantM
                     </motion.div>
                 )}
             </AnimatePresence>
+        </div>
+    );
+};
+
+const EmailConfig = ({ organizations, onUpdateEmailPrefs, onUpdateEmailTemplate }: {
+    organizations: Organization[];
+    onUpdateEmailPrefs: (orgId: string, prefs: { [key: string]: boolean }) => Promise<void>;
+    onUpdateEmailTemplate: (orgId: string, moduleId: string, design: object, html: string) => Promise<void>;
+}) => {
+    const [selectedOrg, setSelectedOrg] = useState<string | null>(null);
+    const [emailPrefs, setEmailPrefs] = useState<{ [key: string]: boolean }>({});
+    const [isSaving, setIsSaving] = useState(false);
+    const [savedSuccess, setSavedSuccess] = useState(false);
+    const [editingTemplate, setEditingTemplate] = useState<{ moduleId: string; moduleName: string } | null>(null);
+
+    const emailModulesList = [
+        { id: 'procurement', name: 'Procurement', desc: 'Material requests and fulfillment emails.', hasTemplate: false },
+        { id: 'meeting_rooms', name: 'Meeting Rooms', desc: 'Booking confirmations and cancellations emails.', hasTemplate: true },
+        { id: 'tickets', name: 'Tickets', desc: 'Helpdesk issue updates emails.', hasTemplate: false },
+        { id: 'visitors', name: 'Visitors', desc: 'Gate pass and visitor arrival notification emails.', hasTemplate: false }
+    ];
+
+    useEffect(() => {
+        if (selectedOrg) {
+            const org = organizations.find(o => o.id === selectedOrg);
+            const defaultPrefs = org?.email_preferences || {
+                procurement: true,
+                meeting_rooms: true,
+                tickets: true,
+                visitors: true
+            };
+            setEmailPrefs(defaultPrefs);
+            setSavedSuccess(false);
+            setEditingTemplate(null);
+        }
+    }, [selectedOrg, organizations]);
+
+    const togglePref = (id: string) => {
+        setEmailPrefs(prev => ({
+            ...prev,
+            [id]: prev[id] === false ? true : false
+        }));
+        setSavedSuccess(false);
+    };
+
+    const handleSave = async () => {
+        if (selectedOrg) {
+            setIsSaving(true);
+            try {
+                await onUpdateEmailPrefs(selectedOrg, emailPrefs);
+                setSavedSuccess(true);
+                setTimeout(() => setSavedSuccess(false), 3000);
+            } finally {
+                setIsSaving(false);
+            }
+        }
+    };
+
+    const handleSaveTemplate = async (moduleId: string, design: object, html: string) => {
+        if (!selectedOrg) return;
+        await onUpdateEmailTemplate(selectedOrg, moduleId, design, html);
+    };
+
+    const selectedOrgData = organizations.find(o => o.id === selectedOrg);
+
+    // Show template editor overlay if editing
+    if (editingTemplate && selectedOrg && selectedOrgData) {
+        return (
+            <EmailTemplateEditor
+                orgId={selectedOrg}
+                orgName={selectedOrgData.name}
+                moduleId={editingTemplate.moduleId}
+                moduleName={editingTemplate.moduleName}
+                initialDesign={selectedOrgData.email_templates?.[editingTemplate.moduleId]?.design || null}
+                onSave={handleSaveTemplate}
+                onClose={() => setEditingTemplate(null)}
+            />
+        );
+    }
+
+    return (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="lg:col-span-1 bg-white border border-slate-100 rounded-[32px] p-8 h-fit">
+                <h3 className="text-lg font-black text-slate-900 mb-6">Select Organization</h3>
+                <div className="space-y-2">
+                    {organizations.map((org) => (
+                        <button
+                            key={org.id}
+                            onClick={() => setSelectedOrg(org.id)}
+                            className={`w-full text-left p-4 rounded-2xl border transition-all ${selectedOrg === org.id
+                                ? 'border-slate-900 bg-slate-900 text-white'
+                                : 'border-slate-50 bg-slate-50 text-slate-400 hover:border-slate-200'
+                                }`}
+                        >
+                            <p className="text-sm font-black">{org.name}</p>
+                        </button>
+                    ))}
+                </div>
+            </div>
+
+            <div className="lg:col-span-2 space-y-6">
+                {!selectedOrg ? (
+                    <div className="h-96 border-2 border-dashed border-slate-100 rounded-[32px] flex items-center justify-center text-slate-300 font-bold italic">
+                        Choose an organization on the left to configure email services.
+                    </div>
+                ) : (
+                    <div className="space-y-4">
+                        <header className="flex justify-between items-center mb-8 bg-slate-50 p-6 rounded-[24px]">
+                            <div>
+                                <h4 className="text-lg font-black text-slate-800">Email Control</h4>
+                                <p className="text-xs text-slate-400 font-medium italic">Configure which emails are sent for {selectedOrgData?.name}</p>
+                            </div>
+                            <button
+                                onClick={handleSave}
+                                disabled={isSaving}
+                                className={`px-6 py-3 text-white font-black text-xs rounded-xl uppercase tracking-widest transition-all disabled:opacity-50 shadow-lg ${
+                                    savedSuccess 
+                                        ? 'bg-blue-500 shadow-blue-100' 
+                                        : 'bg-emerald-500 hover:bg-emerald-600 shadow-emerald-100'
+                                }`}
+                            >
+                                {isSaving ? 'Saving...' : savedSuccess ? 'Saved Successfully!' : 'Save Configuration'}
+                            </button>
+                        </header>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {emailModulesList.map((mod) => {
+                                const hasCustomTemplate = !!selectedOrgData?.email_templates?.[mod.id];
+                                return (
+                                    <div key={mod.id} className="bg-white border border-slate-100 p-6 rounded-[28px] flex flex-col justify-between hover:shadow-lg transition-all">
+                                        <div className="flex justify-between items-start mb-4">
+                                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${emailPrefs[mod.id] !== false ? 'bg-emerald-100' : 'bg-slate-50'}`}>
+                                                <Mail className={`w-5 h-5 ${emailPrefs[mod.id] !== false ? 'text-emerald-600' : 'text-slate-400'}`} />
+                                            </div>
+                                            <button
+                                                onClick={() => togglePref(mod.id)}
+                                                className={`relative inline-flex items-center h-6 w-11 rounded-full transition-colors ${emailPrefs[mod.id] !== false ? 'bg-emerald-500' : 'bg-slate-200'}`}
+                                            >
+                                                <span className={`inline-block w-5 h-5 transform bg-white rounded-full transition-transform shadow ${emailPrefs[mod.id] !== false ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                                            </button>
+                                        </div>
+                                        <div>
+                                            <p className="font-black text-slate-900 mb-1">{mod.name}</p>
+                                            <p className="text-[11px] text-slate-400 font-medium leading-relaxed">{mod.desc}</p>
+                                        </div>
+                                        {mod.hasTemplate && (
+                                            <button
+                                                onClick={() => setEditingTemplate({ moduleId: mod.id, moduleName: mod.name })}
+                                                className="mt-4 w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl border-2 border-dashed border-slate-200 hover:border-slate-800 hover:bg-slate-900 hover:text-white text-slate-500 font-bold text-xs uppercase tracking-widest transition-all group"
+                                            >
+                                                <Mail className="w-3.5 h-3.5" />
+                                                {hasCustomTemplate ? 'Edit Template' : 'Design Template'}
+                                                {hasCustomTemplate && (
+                                                    <span className="ml-auto bg-emerald-100 text-emerald-700 text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider group-hover:bg-emerald-500 group-hover:text-white">Custom</span>
+                                                )}
+                                            </button>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
+            </div>
         </div>
     );
 };

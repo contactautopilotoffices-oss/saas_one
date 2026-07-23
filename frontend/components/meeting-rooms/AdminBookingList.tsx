@@ -236,7 +236,7 @@ const AdminBookingList: React.FC<AdminBookingListProps> = ({ propertyId }) => {
                                         <div className="flex items-center flex-wrap gap-x-3 gap-y-1 mt-1">
                                             <div className="flex items-center gap-1.5 text-slate-400">
                                                 <Calendar className="w-3 h-3" />
-                                                <span className="text-[10px] font-bold uppercase tracking-wider">{booking.booking_date}</span>
+                                                <span className="text-[10px] font-bold uppercase tracking-wider">{new Date(booking.booking_date + 'T00:00:00').toLocaleDateString('en-GB')}</span>
                                             </div>
                                             <div className="flex items-center gap-1.5 text-slate-400">
                                                 <Clock className="w-3 h-3" />

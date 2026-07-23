@@ -192,6 +192,9 @@ export async function POST(request: NextRequest) {
             console.error('[Booking API] Notification trigger error:', err);
         });
 
+        // Note: Email to Property Admins is now handled asynchronously via the Event Outbox 
+        // (Supabase Database Trigger -> webhook -> EventProcessor)
+
         return NextResponse.json({ success: true, booking }, { status: 201 });
     } catch (error) {
         console.error('Booking POST error:', error);

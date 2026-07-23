@@ -1,8 +1,6 @@
 // CRM Components Index
 export { default as CRMDashboard } from './CRMDashboard';
 export { default as LeadsTable } from './LeadsTable';
-export { default as LeadViews } from './LeadViews';
-export { default as ViewBuilder } from './ViewBuilder';
 export { default as LeadDetailDrawer } from './LeadDetailDrawer';
 export { default as LeadForm } from './LeadForm';
 export { default as CalendarView } from './CalendarView';

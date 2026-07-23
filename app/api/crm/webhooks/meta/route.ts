@@ -146,20 +146,29 @@ async function notifyNewLead(config: any, lead: any, assignedTo: string | null, 
                 .select('id, email, full_name')
                 .in('id', [assignedTo])
             : { data: [] as any[] };
-        const { data: admins } = await supabaseAdmin
+
+        // Fetch Business Development Admins (bd_admin)
+        const { data: bdAdmins } = await supabaseAdmin
             .from('organization_memberships')
-            .select('user_id, users:user_id(email, full_name)')
+            .select('user_id, users:user_id(email)')
             .eq('organization_id', config.organization_id)
-            .in('role', ['bd_admin', 'org_admin', 'org_super_admin'])
-            .eq('is_active', true)
-            .limit(5);
+            .eq('role', 'bd_admin')
+            .eq('is_active', true);
 
         const emails = new Set<string>();
+        
+        // 1. Always add the assigned sales rep ("other persons")
         users?.forEach((u: any) => { if (u.email) emails.add(u.email); });
-        admins?.forEach((a: any) => {
+        
+        // 2. Always add all Business Development Admins
+        bdAdmins?.forEach((a: any) => {
             const e = (a.users as any)?.email;
             if (e) emails.add(e);
         });
+        
+        // 3. ONLY these two specific Org Super Admins should receive CRM lead emails
+        emails.add('rushab@worksquare.in');
+        emails.add('saniel@worksquare.in');
 
         if (emails.size === 0) return;
 

@@ -677,7 +677,7 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
                                                             <div className="flex items-center gap-3 text-xs text-muted-foreground">
                                                                 <span className="flex items-center gap-1">
                                                                     <Calendar className="w-3 h-3" />
-                                                                    {new Date(booking.booking_date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                                                                    {new Date(booking.booking_date + 'T00:00:00').toLocaleDateString('en-GB')}
                                                                 </span>
                                                                 <span className="flex items-center gap-1">
                                                                     <Clock className="w-3 h-3" />
