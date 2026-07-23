@@ -1,0 +1,1 @@
+{"date":"2026-07-14", "issue":"FeedbackModal not centering", "solution":"Moved out of aside container to fix stacking context CSS bug"}

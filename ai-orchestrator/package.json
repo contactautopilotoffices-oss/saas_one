@@ -1,0 +1,19 @@
+{
+  "name": "ai-orchestrator",
+  "version": "1.0.0",
+  "description": "AI Auto-Dev Pipeline for SaaS One",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.24.3",
+    "@supabase/supabase-js": "^2.44.2",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "octokit": "^4.0.2",
+    "p-queue": "^8.0.1"
+  }
+}

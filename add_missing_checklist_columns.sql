@@ -1,0 +1,3 @@
+ALTER TABLE sop_completion_items 
+ADD COLUMN IF NOT EXISTS video_url TEXT,
+ADD COLUMN IF NOT EXISTS value TEXT;
