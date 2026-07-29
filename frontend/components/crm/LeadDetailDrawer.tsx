@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import {
-    X, Phone, Mail, MapPin, Building, Calendar, User, DollarSign,
+    X, Phone, Mail, MapPin, Building, Calendar, User, Users, DollarSign,
     Edit, Trash2, PhoneCall, Video, Map, FileText, MessageSquare,
     Clock, ChevronRight, Plus, CheckCircle, CalendarPlus, Pencil, Save,
     FileSignature, LayoutGrid, MapPin as MapPinIcon
@@ -93,7 +93,15 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
     const [savingField, setSavingField] = useState(false);
 
     const saveField = async (field: keyof CRMLead) => {
-        if (!lead || fieldDraft === (lead[field] || '')) {
+        if (!lead) {
+            setEditingField(null);
+            return;
+        }
+        const valToSend = field === 'seats'
+            ? (fieldDraft !== '' && !isNaN(Number(fieldDraft)) ? Number(fieldDraft) : null)
+            : (fieldDraft || null);
+
+        if (valToSend === (lead[field] ?? null)) {
             setEditingField(null);
             return;
         }
@@ -102,10 +110,10 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
             const res = await fetch(`/api/crm/leads/${lead.id}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ [field]: fieldDraft || null }),
+                body: JSON.stringify({ [field]: valToSend }),
             });
             if (res.ok) {
-                const updated = { ...lead, [field]: fieldDraft || null } as CRMLead;
+                const updated = { ...lead, [field]: valToSend } as CRMLead;
                 setLead(updated);
                 onLeadUpdate?.(updated);
             }
@@ -407,9 +415,9 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
     };
 
     const formatDate = (date: string) => {
-        return new Date(date).toLocaleDateString('en-IN', {
-            day: 'numeric',
-            month: 'short',
+        return new Date(date).toLocaleString('en-GB', {
+            day: '2-digit',
+            month: '2-digit',
             year: 'numeric',
             hour: '2-digit',
             minute: '2-digit',
@@ -484,6 +492,7 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
         <>
         <AnimatePresence>
             <motion.div
+                key="lead-drawer-backdrop"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
@@ -491,6 +500,7 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
                 onClick={onClose}
             />
             <motion.div
+                key="lead-drawer-panel"
                 initial={{ x: '100%' }}
                 animate={{ x: 0 }}
                 exit={{ x: '100%' }}
@@ -584,6 +594,7 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
                                             {renderEditable('Secondary Contact', 'secondary_contact_number', lead.secondary_contact_number, <Phone className="w-4 h-4" />)}
                                             {renderEditable('Email', 'email', lead.email, <Mail className="w-4 h-4" />)}
                                             {renderEditable('City/Location', 'location', lead.location, <MapPin className="w-4 h-4" />)}
+                                            {renderEditable('Seat Requirement', 'seats', lead.seats, <Users className="w-4 h-4" />)}
                                         </div>
                                     </div>
 
@@ -787,12 +798,22 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
                                         <div className="bg-surface-elevated rounded-xl p-4">
                                             <h3 className="font-bold text-text-primary mb-3">Request Details</h3>
                                             <div className="space-y-2.5">
-                                                {formResponses.map((f, i) => (
-                                                    <div key={i} className="flex flex-col">
-                                                        <span className="text-xs font-bold text-text-secondary">{f.question}</span>
-                                                        <span className="text-sm text-text-primary break-words">{f.answer}</span>
-                                                    </div>
-                                                ))}
+                                                {formResponses.map((f, i) => {
+                                                    const isSeatReq = f.question.toLowerCase().includes('seat requirement') || f.question.toLowerCase() === 'seats';
+                                                    if (isSeatReq) {
+                                                        return (
+                                                            <div key={i} className="py-1">
+                                                                {renderEditable('Seat Requirement', 'seats', lead.seats != null ? lead.seats : f.answer, <Users className="w-4 h-4" />)}
+                                                            </div>
+                                                        );
+                                                    }
+                                                    return (
+                                                        <div key={i} className="flex flex-col">
+                                                            <span className="text-xs font-bold text-text-secondary">{f.question}</span>
+                                                            <span className="text-sm text-text-primary break-words">{f.answer}</span>
+                                                        </div>
+                                                    );
+                                                })}
                                             </div>
                                         </div>
                                     )}
@@ -1153,6 +1174,7 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
         <AnimatePresence>
             {stageComment.open && (
                 <motion.div
+                    key="stage-comment-backdrop"
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}

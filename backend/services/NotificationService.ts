@@ -652,6 +652,9 @@ export class NotificationService {
             if (error || !request) return;
 
             const recipientIds = new Set<string>();
+            if (request.assignee_uid) {
+                recipientIds.add(String(request.assignee_uid));
+            }
             if (request.target_approver_ids && request.target_approver_ids.length > 0) {
                 request.target_approver_ids.forEach((id: string) => recipientIds.add(String(id)));
             } else if (request.target_approver_id) {
@@ -885,6 +888,33 @@ export class NotificationService {
             }
         } catch (err) {
             console.error('[NotificationService] afterMaterialRequestStatusChanged error:', err);
+        }
+    }
+
+    static async afterMaterialRequestAcknowledged(requestId: string) {
+        try {
+            const { data: request, error } = await supabaseAdmin
+                .from('material_requests')
+                .select('*, properties(name)')
+                .eq('id', requestId)
+                .single();
+
+            if (error || !request) return;
+
+            if (request.requested_by) {
+                await this.send({
+                    userId: request.requested_by,
+                    ticketId: request.ticket_id,
+                    propertyId: request.property_id,
+                    organizationId: request.organization_id,
+                    type: 'MATERIAL_REQUEST_ACKNOWLEDGED',
+                    title: `Request Acknowledged 👀`,
+                    message: `Your material request for ${request.properties?.name || 'the property'} has been seen and acknowledged by the Procurement team.`,
+                    deepLink: `/tickets/${request.ticket_id}`
+                });
+            }
+        } catch (err) {
+            console.error('[NotificationService] afterMaterialRequestAcknowledged error:', err);
         }
     }
 

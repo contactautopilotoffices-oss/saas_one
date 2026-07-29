@@ -23,6 +23,7 @@ interface MaterialRequest {
     ticket_id: string;
     status: string;
     requested_by: string;
+    procurement_viewed_at?: string;
     assignee_uid: string;
     created_at: string;
     updated_at: string;
@@ -198,7 +199,9 @@ export default function ProcurementDashboard() {
                 body: JSON.stringify({ material_id: requestId, status: newStatus })
             });
             if (res.ok) {
-                setRequests(prev => prev.map(r => r.id === requestId ? { ...r, status: newStatus } : r));
+                setRequests(prev => prev.map(r => r.id === requestId ? 
+                    (newStatus === 'acknowledge' ? { ...r, procurement_viewed_at: new Date().toISOString() } : { ...r, status: newStatus }) 
+                : r));
                 fetchActivities();
                 showToast(`Request marked as ${newStatus}`, 'success');
             }
@@ -1081,6 +1084,11 @@ function RequestsTab({
                                             )}
                                         </div>
                                         <div className="flex items-center gap-2">
+                                            {!req.procurement_viewed_at && req.status !== 'delivered' && req.status !== 'ordered' && isProcurementUser && (
+                                                <button onClick={() => onUpdateStatus(req.id, 'acknowledge', req.ticket_id)} disabled={updatingId === req.id} className="flex items-center justify-center gap-2 px-5 py-2.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all active:scale-95 disabled:opacity-50">
+                                                    {updatingId === req.id ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />} Acknowledge
+                                                </button>
+                                            )}
                                             {req.status === 'approved' && (
                                                 <button onClick={() => onUpdateStatus(req.id, 'ordered', req.ticket_id)} disabled={updatingId === req.id} className="flex items-center justify-center gap-2 px-8 py-3 bg-primary text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all active:scale-95 disabled:opacity-50 shadow-lg shadow-primary/20 hover:bg-primary-dark">
                                                     {updatingId === req.id ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ShoppingCart className="w-4 h-4" />} Buy

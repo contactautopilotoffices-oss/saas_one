@@ -68,9 +68,35 @@ function parseUserAgent(ua: string): { browser: string; os: string; device: stri
   return { browser, os, device };
 }
 
+// Client-side rate limiting state
+const LOG_LIMIT_PER_MINUTE = 10;
+const LOG_WINDOW_MS = 60 * 1000;
+let logTimestamps: number[] = [];
+const recentlyLoggedErrors = new Set<string>();
+
 // Send error to backend (silent - no user impact)
 async function captureError(payload: ErrorPayload | UserFeedbackPayload) {
   try {
+    const now = Date.now();
+
+    // 1. Sliding Window Rate Limiting (Max 10 requests per 60 seconds per browser window)
+    logTimestamps = logTimestamps.filter((t) => now - t < LOG_WINDOW_MS);
+    if (logTimestamps.length >= LOG_LIMIT_PER_MINUTE) {
+      // Throttle limit reached - suppress further logs locally to prevent Vercel spikes
+      return;
+    }
+
+    // 2. Client-side Deduplication (Suppress identical error message on same route within 10s)
+    const pageRoute = typeof window !== 'undefined' ? window.location.pathname : '';
+    const dedupeKey = `${payload.category}:${pageRoute}:${payload.error_message.slice(0, 100)}`;
+    if (recentlyLoggedErrors.has(dedupeKey)) {
+      return;
+    }
+    recentlyLoggedErrors.add(dedupeKey);
+    setTimeout(() => recentlyLoggedErrors.delete(dedupeKey), 10000);
+
+    logTimestamps.push(now);
+
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
 
@@ -160,9 +186,9 @@ export function setupApiInterceptor() {
       const response = await originalFetch(input, init);
       const duration = Date.now() - startTime;
 
-      // Capture API errors (4xx, 5xx) - Ignore the issue tracker itself to prevent infinite loops
+      // Capture API errors (4xx, 5xx) - Ignore 400 validation/credentials errors & issue tracker itself to prevent loops
       const urlString = input instanceof Request ? input.url : String(input);
-      if (!response.ok && !urlString.includes('/api/internal/issue-logs')) {
+      if (!response.ok && response.status !== 400 && response.status !== 401 && !urlString.includes('/api/internal/issue-logs')) {
         let errorBody: { error?: string } = {};
         try {
           errorBody = await response.clone().json();

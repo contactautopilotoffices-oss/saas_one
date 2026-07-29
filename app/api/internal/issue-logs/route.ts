@@ -2,6 +2,28 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
 
+// In-memory rate limiting map for server-side protection against request loops
+const ipRateMap = new Map<string, { count: number; resetAt: number }>();
+const MAX_REQUESTS_PER_MIN = 20;
+
+function isRateLimited(ip: string): boolean {
+  const now = Date.now();
+  const record = ipRateMap.get(ip);
+
+  // Clean up expired entry or set initial
+  if (!record || now > record.resetAt) {
+    ipRateMap.set(ip, { count: 1, resetAt: now + 60 * 1000 });
+    return false;
+  }
+
+  if (record.count >= MAX_REQUESTS_PER_MIN) {
+    return true;
+  }
+
+  record.count += 1;
+  return false;
+}
+
 /**
  * POST /api/internal/issue-logs
  * Capture errors/issues from frontend automatically
@@ -9,6 +31,15 @@ import { createAdminClient } from '@/frontend/utils/supabase/admin';
  */
 export async function POST(request: NextRequest) {
   try {
+    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
+
+    // Rate Limit Check per IP (Max 20 requests / minute)
+    if (isRateLimited(clientIp)) {
+      return NextResponse.json(
+        { error: 'Rate limit exceeded for issue logging' },
+        { status: 429 }
+      );
+    }
     let body: any = {};
     try {
       body = await request.json();

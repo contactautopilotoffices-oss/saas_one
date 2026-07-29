@@ -50,7 +50,7 @@ export async function GET(request: NextRequest) {
     }
     if (type === 'properties') {
         const { data: properties } = await supabaseAdmin
-            .from('properties').select('id, name, code').eq('organization_id', org).order('name');
+            .from('properties').select('id, name, code').eq('organization_id', org).eq('is_active', true).neq('status', 'crm_interest').order('name');
         return NextResponse.json({ properties });
     }
     if (type === 'meta') {
@@ -90,16 +90,27 @@ export async function GET(request: NextRequest) {
     }
 
     // type === 'all' (or unspecified): bundle everything the settings UI needs.
-    const [statusesRes, sourcesRes, propsRes] = await Promise.all([
+    const [statusesRes, sourcesRes, propsRes, leadsLocRes] = await Promise.all([
         orgOrGlobal(supabaseAdmin.from('crm_lead_statuses').select('*').eq('is_active', true), org).order('sort_order'),
         orgOrGlobal(supabaseAdmin.from('crm_lead_sources').select('*').eq('is_active', true), org).order('name'),
-        supabaseAdmin.from('properties').select('id, name, code').eq('organization_id', org).order('name'),
+        supabaseAdmin.from('properties').select('id, name, code').eq('organization_id', org).eq('is_active', true).neq('status', 'crm_interest').order('name'),
+        supabaseAdmin.from('crm_leads').select('location').eq('organization_id', org).not('location', 'is', null)
     ]);
     const scope = new URL(request.url).searchParams.get('scope');
-    const BD_CITIES = ['mumbai', 'bangalore', 'noida', 'andheri', 'lower parel', 'kalyan'];
-    const filteredProps = scope === 'bd'
-        ? (propsRes.data || []).filter((p: any) => BD_CITIES.some(c => p.name?.toLowerCase().includes(c)))
-        : propsRes.data || [];
+
+    // Extract unique locations stored on existing leads so custom added locations persist across page refreshes
+    const existingPropNames = new Set((propsRes.data || []).map((p: any) => p.name?.toLowerCase()));
+    const customLocProps: { id: string; name: string }[] = [];
+    (leadsLocRes.data || []).forEach((l: any) => {
+        const locName = l.location?.trim();
+        if (locName && !existingPropNames.has(locName.toLowerCase())) {
+            existingPropNames.add(locName.toLowerCase());
+            customLocProps.push({ id: `custom:${locName}`, name: locName });
+        }
+    });
+
+    const combinedProps = [...(propsRes.data || []), ...customLocProps].sort((a, b) => a.name.localeCompare(b.name));
+
     const memberIds = scope === 'bd' ? await bdMemberIds(org) : await orgMemberIds(org);
     const { data: users } = memberIds.length
         ? await supabaseAdmin.from('users').select('id, full_name, email').in('id', memberIds).order('full_name')
@@ -108,7 +119,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
         statuses: statusesRes.data || [],
         sources: sourcesRes.data || [],
-        properties: filteredProps,
+        properties: combinedProps,
         users: users || [],
     });
 }
@@ -197,13 +208,24 @@ export async function POST(request: NextRequest) {
                     name: d.name,
                     code: codeData || 'PROP-' + Date.now(),
                     is_active: true,
-                    status: 'active'
+                    status: 'crm_interest'
                 })
                 .select('id, name, code')
                 .single();
             
             if (insertError) return NextResponse.json({ error: insertError.message }, { status: 500 });
             return NextResponse.json({ property }, { status: 201 });
+        }
+        case 'delete_property': {
+            if (!access.isAdmin) return NextResponse.json({ error: 'Forbidden: admin only' }, { status: 403 });
+            // Soft delete property so CRM lead relations remain completely untouched & intact
+            const { error } = await supabaseAdmin
+                .from('properties')
+                .update({ is_active: false, status: 'inactive' })
+                .eq('id', d.id)
+                .eq('organization_id', org);
+            if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+            return NextResponse.json({ success: true });
         }
         case 'delete_source': {
             if (!access.isAdmin) return NextResponse.json({ error: 'Forbidden: admin only' }, { status: 403 });

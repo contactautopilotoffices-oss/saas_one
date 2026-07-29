@@ -92,11 +92,6 @@ export const EventProcessor = {
 
     async handleMaterialRequestEvent(payload: any) {
         const assigneeUid = payload.assignee_uid;
-        if (!assigneeUid) {
-            console.log(`[EventProcessor] Material request has no assignee. Skipping email.`);
-            return;
-        }
-
         const ticketId = payload.ticket_id;
         const requestId = payload.id;
         const userId = payload.requested_by;
@@ -115,17 +110,45 @@ export const EventProcessor = {
             }
         }
 
-        const { data: assignee } = await supabaseAdmin.from('users').select('email').eq('id', assigneeUid).single();
+        let assigneeName = '';
+        const recipientEmails = new Set<string>();
+
+        if (assigneeUid) {
+            const { data: assignee } = await supabaseAdmin.from('users').select('full_name, email').eq('id', assigneeUid).single();
+            if (assignee?.full_name) assigneeName = assignee.full_name;
+            if (assignee?.email) recipientEmails.add(assignee.email);
+        }
+
+        // Fetch all procurement users for the organization
+        if (orgId) {
+            const { data: procurementMembers } = await supabaseAdmin
+                .from('organization_memberships')
+                .select('user_id, users:users!user_id(email, full_name)')
+                .eq('organization_id', orgId)
+                .eq('role', 'procurement');
+
+            (procurementMembers || []).forEach((m: any) => {
+                const email = m.users?.email || m.users?.[0]?.email;
+                if (email) recipientEmails.add(email);
+            });
+        }
+
+        if (recipientEmails.size === 0) {
+            console.log(`[EventProcessor] No recipient emails found for material request. Skipping email.`);
+            return;
+        }
+
         const { data: ticket } = await supabaseAdmin.from('tickets').select('*, property:properties(name)').eq('id', ticketId).single();
         const { data: requester } = await supabaseAdmin.from('users').select('id, full_name, email').eq('id', userId).single();
         const { data: items } = await supabaseAdmin.from('material_request_items').select('*').eq('request_id', requestId);
 
-        if (assignee?.email && ticket) {
+        if (ticket) {
             await EmailService.sendMaterialRequestEmail({
-                emailTo: assignee.email,
+                emailTo: Array.from(recipientEmails),
                 ticket,
                 property: ticket.property,
                 requestedBy: requester,
+                assignedToName: assigneeName || 'Unassigned',
                 items: items || []
             });
         }

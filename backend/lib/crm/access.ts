@@ -191,20 +191,8 @@ export function canAccessLead(
     access: CrmAccess
 ): boolean {
     if (lead.organization_id && lead.organization_id !== access.organizationId) return false;
-    if (access.isAdmin) return true;
-    // Ownership always grants access — a rep can open any lead they created or are
-    // assigned to, regardless of territory (territory only widens DISCOVERY).
-    if (lead.created_by === access.user.id) return true;
-    if (lead.assigned_to === access.user.id) return true;
-    // Metro-aware territory match: a "Mumbai" grant covers "Lower Parel"/"Andheri"
-    // (and the lead's location field too), so it agrees with scopeLeadsQuery.
-    if (lead.city || lead.location || lead.campaign) {
-        const leadMetro = lead.city ? parentCity(lead.city).toLowerCase() : (lead.location ? parentCity(lead.location).toLowerCase() : '');
-        if (leadMetro && access.territoryCities.some((c) => parentCity(c).toLowerCase() === leadMetro)) return true;
-        const leadCampaign = (lead.campaign || '').toLowerCase();
-        if (leadCampaign && access.territoryCampaigns.some((c) => c.toLowerCase() === leadCampaign)) return true;
-    }
-    return false;
+    // Any active CRM member in the organization can view and access leads in their organization
+    return true;
 }
 
 /** Escape a user-supplied term so it can't break PostgREST .or() filter grammar. */

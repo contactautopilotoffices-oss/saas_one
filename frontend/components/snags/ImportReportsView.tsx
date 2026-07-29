@@ -320,9 +320,9 @@ export default function ImportReportsView({ propertyId, organizationId }: Import
 
     const formatDate = (dateString: string) => {
         const date = new Date(dateString);
-        const datePart = date.toLocaleDateString('en-US', {
-            month: 'short',
-            day: 'numeric',
+        const datePart = date.toLocaleDateString('en-GB', {
+            day: '2-digit',
+            month: '2-digit',
             year: 'numeric'
         });
         const timePart = date.toLocaleTimeString('en-IN', {

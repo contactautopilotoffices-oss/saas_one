@@ -79,28 +79,10 @@ DROP POLICY IF EXISTS feedback_tickets_insert ON feedback_tickets;
 CREATE POLICY feedback_tickets_insert ON feedback_tickets FOR INSERT
 WITH CHECK (auth.uid() IS NOT NULL);
 
--- Users can see their own feedback; admins can see all in their org
+-- Any authenticated user can see feedback tickets
 DROP POLICY IF EXISTS feedback_tickets_select ON feedback_tickets;
 CREATE POLICY feedback_tickets_select ON feedback_tickets FOR SELECT USING (
-    -- Own submissions
-    submitted_by = auth.uid()
-    -- Org admins can see all in their org
-    OR EXISTS(
-        SELECT 1 FROM organization_memberships om
-        WHERE om.user_id = auth.uid()
-        AND om.organization_id = feedback_tickets.organization_id
-        AND om.role IN ('master_admin', 'org_super_admin')
-    )
-    -- Property admins can see for their property
-    OR EXISTS(
-        SELECT 1 FROM property_memberships pm
-        WHERE pm.user_id = auth.uid()
-        AND pm.property_id = feedback_tickets.property_id
-        AND pm.role = 'property_admin'
-        AND pm.is_active = true
-    )
-    -- Master admin bypass
-    OR (SELECT email FROM auth.users WHERE id = auth.uid()) = 'ranganathanlohitaksha@gmail.com'
+    auth.role() = 'authenticated'
 );
 
 -- Only admins can update (status changes, AI processing)

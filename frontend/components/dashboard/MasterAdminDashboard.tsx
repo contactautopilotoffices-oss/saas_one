@@ -2506,6 +2506,7 @@ const SuperTenantManagerTab = ({ users, organizations, showToast }: SuperTenantM
         const { data } = await supabase
             .from('properties')
             .select('id, name, code, organization_id')
+            .neq('status', 'crm_interest')
             .order('name');
         setAllProperties(data || []);
     };

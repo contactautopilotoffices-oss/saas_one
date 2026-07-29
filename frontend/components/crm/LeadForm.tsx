@@ -5,6 +5,8 @@ import { X, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CRMLead, LeadStatusConfig, LeadSource, CreateLeadInput } from '@/frontend/types/crm';
 
+import { Toast } from '@/frontend/components/ui/Toast';
+
 interface LeadFormProps {
     isOpen: boolean;
     onClose: () => void;
@@ -20,6 +22,24 @@ export default function LeadForm({ isOpen, onClose, onSubmit, initialData, mode 
     const [sources, setSources] = useState<LeadSource[]>([]);
     const [users, setUsers] = useState<{ id: string; full_name: string }[]>([]);
     const [properties, setProperties] = useState<{ id: string; name: string }[]>([]);
+    const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info'; visible: boolean }>({
+        message: '',
+        type: 'success',
+        visible: false
+    });
+    const [promptModal, setPromptModal] = useState<{
+        isOpen: boolean;
+        title: string;
+        placeholder: string;
+        value: string;
+        onSubmit: (val: string) => void | Promise<void>;
+    }>({
+        isOpen: false,
+        title: '',
+        placeholder: '',
+        value: '',
+        onSubmit: () => {}
+    });
     const [formData, setFormData] = useState<CreateLeadInput>({
         company_name: '',
         contact_person: '',
@@ -48,6 +68,9 @@ export default function LeadForm({ isOpen, onClose, onSubmit, initialData, mode 
                 const seatMatch = reqRaw.match(/\[seats=(\d+)/);
                 setSeats((initialData as any).seats != null ? String((initialData as any).seats) : (seatMatch ? seatMatch[1] : ''));
                 const reqClean = reqRaw.replace(/^\[seats=\d+;bucket=[^\]]*\]\s*/, '');
+                const propInterestVal = initialData.property_interest 
+                    ? initialData.property_interest 
+                    : (initialData.location ? `custom:${initialData.location}` : '');
                 setFormData({
                     company_name: initialData.company_name || '',
                     contact_person: initialData.contact_person || '',
@@ -56,7 +79,7 @@ export default function LeadForm({ isOpen, onClose, onSubmit, initialData, mode 
                     email: initialData.email || '',
                     location: initialData.location || '',
                     requirement: reqClean,
-                    property_interest: initialData.property_interest || '',
+                    property_interest: propInterestVal,
                     lead_source: initialData.lead_source || '',
                     deal_value: initialData.deal_value || 0,
                     status: initialData.status || '',
@@ -120,8 +143,12 @@ export default function LeadForm({ isOpen, onClose, onSubmit, initialData, mode 
         setIsSubmitting(true);
         try {
             const seatNum = parseInt(seats);
+            const propInterest = formData.property_interest?.startsWith('custom:')
+                ? null
+                : (formData.property_interest || null);
             const payload: any = {
                 ...formData,
+                property_interest: propInterest,
                 seats: !isNaN(seatNum) && seatNum > 0 ? seatNum : null,
             };
             await onSubmit(payload);
@@ -133,17 +160,18 @@ export default function LeadForm({ isOpen, onClose, onSubmit, initialData, mode 
         }
     };
 
-    if (!isOpen) return null;
-
     return (
-        <AnimatePresence>
-            <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
-                onClick={onClose}
-            >
+        <>
+            <AnimatePresence>
+                {isOpen && (
+                    <motion.div
+                        key="lead-form-modal"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+                        onClick={onClose}
+                    >
                 <motion.div
                     initial={{ scale: 0.95, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
@@ -280,47 +308,45 @@ export default function LeadForm({ isOpen, onClose, onSubmit, initialData, mode 
                                     <div>
                                         <label className="block text-xs font-medium text-text-secondary mb-1.5">
                                             Property Interest
-                                        </label>
-                                        <select
+                                        </label>                                         <select
                                             value={formData.property_interest || ''}
-                                            onChange={async (e) => {
+                                            onChange={(e) => {
                                                 const val = e.target.value;
                                                 if (val === '_ADD_NEW_') {
-                                                    const newName = window.prompt('Enter new Property name:');
-                                                    if (newName && newName.trim()) {
-                                                        try {
-                                                            const res = await fetch('/api/crm/settings', {
-                                                                method: 'POST',
-                                                                headers: { 'Content-Type': 'application/json' },
-                                                                body: JSON.stringify({ action: 'create_property', data: { name: newName.trim() } })
+                                                    setPromptModal({
+                                                        isOpen: true,
+                                                        title: 'Add New Location / Property',
+                                                        placeholder: 'e.g. Navi Mumbai, Andheri East...',
+                                                        value: '',
+                                                        onSubmit: (val) => {
+                                                            const customId = `custom:${val}`;
+                                                            // Dynamically add to property list in dropdown local state so it appears in the select list
+                                                            setProperties(prev => {
+                                                                if (prev.some(p => p.id === customId || p.name.toLowerCase() === val.toLowerCase())) {
+                                                                    return prev;
+                                                                }
+                                                                return [...prev, { id: customId, name: val }].sort((a, b) => a.name.localeCompare(b.name));
                                                             });
-                                                            if (res.ok) {
-                                                                const data = await res.json();
-                                                                setProperties(prev => [...prev, data.property].sort((a, b) => a.name.localeCompare(b.name)));
-                                                                handleChange('property_interest', data.property.id);
-                                                            } else {
-                                                                alert('Failed to create property.');
-                                                                handleChange('property_interest', '');
-                                                            }
-                                                        } catch (err) {
-                                                            console.error('Failed to create property', err);
-                                                            alert('An error occurred.');
-                                                            handleChange('property_interest', '');
+                                                            handleChange('location', val);
+                                                            handleChange('property_interest', customId);
+                                                            setToast({
+                                                                message: `Added "${val}" to Property Interest`,
+                                                                type: 'success',
+                                                                visible: true
+                                                            });
                                                         }
-                                                    } else {
-                                                        handleChange('property_interest', '');
-                                                    }
+                                                    });
                                                 } else {
                                                     handleChange('property_interest', val);
                                                 }
                                             }}
-                                            className="w-full border border-border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                                            className="w-full border border-border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary bg-background text-text-primary"
                                         >
                                             <option value="">Select property</option>
                                             {properties.map(p => (
                                                 <option key={p.id} value={p.id}>{p.name}</option>
                                             ))}
-                                            <option value="_ADD_NEW_" className="font-semibold text-primary">+ Add New Property</option>
+                                            <option value="_ADD_NEW_" className="font-semibold text-primary">+ Add New Location / Unlisted Property</option>
                                         </select>
                                     </div>
                                     <div>
@@ -329,38 +355,46 @@ export default function LeadForm({ isOpen, onClose, onSubmit, initialData, mode 
                                         </label>
                                         <select
                                             value={formData.lead_source || ''}
-                                            onChange={async (e) => {
+                                            onChange={(e) => {
                                                 const val = e.target.value;
                                                 if (val === '_ADD_NEW_') {
-                                                    const newName = window.prompt('Enter new Lead Source name:');
-                                                    if (newName && newName.trim()) {
-                                                        try {
-                                                            const res = await fetch('/api/crm/settings', {
-                                                                method: 'POST',
-                                                                headers: { 'Content-Type': 'application/json' },
-                                                                body: JSON.stringify({ action: 'create_source', data: { name: newName.trim() } })
-                                                            });
-                                                            if (res.ok) {
-                                                                const data = await res.json();
-                                                                setSources(prev => [...prev, data.source].sort((a, b) => a.name.localeCompare(b.name)));
-                                                                handleChange('lead_source', data.source.id);
-                                                            } else {
-                                                                alert('Failed to create lead source.');
+                                                    setPromptModal({
+                                                        isOpen: true,
+                                                        title: 'Add New Lead Source',
+                                                        placeholder: 'e.g. Referral, Newspaper, Banner...',
+                                                        value: '',
+                                                        onSubmit: async (val) => {
+                                                            try {
+                                                                const res = await fetch('/api/crm/settings', {
+                                                                    method: 'POST',
+                                                                    headers: { 'Content-Type': 'application/json' },
+                                                                    body: JSON.stringify({ action: 'create_source', data: { name: val } })
+                                                                });
+                                                                if (res.ok) {
+                                                                    const data = await res.json();
+                                                                    setSources(prev => [...prev, data.source].sort((a, b) => a.name.localeCompare(b.name)));
+                                                                    handleChange('lead_source', data.source.id);
+                                                                    setToast({
+                                                                        message: `Lead source "${val}" created`,
+                                                                        type: 'success',
+                                                                        visible: true
+                                                                    });
+                                                                } else {
+                                                                    handleChange('lead_source', '');
+                                                                    setToast({ message: 'Failed to create lead source', type: 'error', visible: true });
+                                                                }
+                                                            } catch (err) {
+                                                                console.error('Failed to create source', err);
                                                                 handleChange('lead_source', '');
+                                                                setToast({ message: 'Error creating lead source', type: 'error', visible: true });
                                                             }
-                                                        } catch (err) {
-                                                            console.error('Failed to create source', err);
-                                                            alert('An error occurred.');
-                                                            handleChange('lead_source', '');
                                                         }
-                                                    } else {
-                                                        handleChange('lead_source', '');
-                                                    }
+                                                    });
                                                 } else {
                                                     handleChange('lead_source', val);
                                                 }
                                             }}
-                                            className="w-full border border-border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                                            className="w-full border border-border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary bg-background text-text-primary"
                                         >
                                             <option value="">Select source</option>
                                             {sources.map(s => (
@@ -505,6 +539,84 @@ export default function LeadForm({ isOpen, onClose, onSubmit, initialData, mode 
                     </div>
                 </motion.div>
             </motion.div>
-        </AnimatePresence>
+                )}
+            </AnimatePresence>
+
+            {/* Custom Stylish Prompt Modal */}
+            <AnimatePresence>
+                {promptModal.isOpen && (
+                    <motion.div
+                        key="prompt-dialog-modal"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-[10000] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+                    >
+                        <motion.div
+                            initial={{ scale: 0.95, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0.95, opacity: 0 }}
+                            className="bg-surface border border-border rounded-2xl p-6 shadow-2xl w-full max-w-md space-y-4"
+                        >
+                            <div className="flex items-center justify-between">
+                                <h3 className="text-base font-semibold text-text-primary">{promptModal.title}</h3>
+                                <button
+                                    onClick={() => setPromptModal(prev => ({ ...prev, isOpen: false }))}
+                                    className="p-1 text-text-tertiary hover:text-text-primary rounded-lg"
+                                >
+                                    <X className="w-4 h-4" />
+                                </button>
+                            </div>
+                            <input
+                                type="text"
+                                autoFocus
+                                value={promptModal.value}
+                                onChange={(e) => setPromptModal(prev => ({ ...prev, value: e.target.value }))}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        if (promptModal.value.trim()) {
+                                            promptModal.onSubmit(promptModal.value.trim());
+                                            setPromptModal(prev => ({ ...prev, isOpen: false }));
+                                        }
+                                    }
+                                }}
+                                placeholder={promptModal.placeholder}
+                                className="w-full border border-border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary bg-background text-text-primary"
+                            />
+                            <div className="flex items-center justify-end gap-2 pt-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setPromptModal(prev => ({ ...prev, isOpen: false }))}
+                                    className="px-4 py-2 text-sm font-medium text-text-secondary hover:bg-surface-elevated rounded-xl transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={!promptModal.value.trim()}
+                                    onClick={() => {
+                                        if (promptModal.value.trim()) {
+                                            promptModal.onSubmit(promptModal.value.trim());
+                                            setPromptModal(prev => ({ ...prev, isOpen: false }));
+                                        }
+                                    }}
+                                    className="px-5 py-2 text-sm font-medium bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-50"
+                                >
+                                    Save
+                                </button>
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
+            <Toast
+                message={toast.message}
+                type={toast.type}
+                visible={toast.visible}
+                onClose={() => setToast(prev => ({ ...prev, visible: false }))}
+            />
+        </>
     );
 }

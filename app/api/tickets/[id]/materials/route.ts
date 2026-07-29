@@ -139,7 +139,7 @@ export async function PATCH(
         const body = await request.json();
         const { material_id, status, reason } = body;
 
-        const ALLOWED_STATUSES = ['pending', 'pending_approval', 'approved', 'rejected', 'ordered', 'delivered', 'cancelled', 'reverted'];
+        const ALLOWED_STATUSES = ['pending', 'pending_approval', 'approved', 'rejected', 'ordered', 'delivered', 'cancelled', 'reverted', 'acknowledge'];
         if (!ALLOWED_STATUSES.includes(status)) {
             return NextResponse.json({ error: 'Invalid status' }, { status: 400 });
         }
@@ -200,14 +200,20 @@ export async function PATCH(
             } else if (currentStatus === 'ordered') {
                 updateData.status = 'approved';
                 updateData.ordered_at = null;
+            } else if (currentStatus === 'pending_approval' || currentStatus === 'approved') {
+                // Cannot revert further back than pending_approval for now
+                updateData.status = 'pending_approval';
             } else {
                 return NextResponse.json({ error: 'Cannot revert from current status' }, { status: 400 });
             }
             logAction = `undo_${currentStatus}`;
             logNewValue = updateData.status;
+        } else if (status === 'acknowledge') {
+            updateData.status = requestRecord.status; // don't actually change status string
+            updateData.procurement_viewed_at = new Date().toISOString();
         }
 
-        const { data: updatedReq, error: updateErr } = await adminSupabase
+        const { data: updatedRecord, error: updateErr } = await adminSupabase
             .from('material_requests')
             .update(updateData)
             .eq('id', material_id)
@@ -270,7 +276,21 @@ export async function PATCH(
             }
         });
 
-        return NextResponse.json({ success: true, material_request: updatedReq });
+        // Notifications
+        try {
+            const { NotificationService } = await import('@/backend/services/NotificationService');
+            if (status === 'acknowledge') {
+                if (typeof NotificationService.afterMaterialRequestAcknowledged === 'function') {
+                    await NotificationService.afterMaterialRequestAcknowledged(material_id);
+                }
+            } else {
+                await NotificationService.afterMaterialRequestStatusChanged(material_id, status);
+            }
+        } catch (notifErr) {
+            console.error('Notification Error:', notifErr);
+        }
+
+        return NextResponse.json({ success: true, updated: updatedRecord });
     } catch (error) {
         console.error('PATCH Material Request Error:', error);
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

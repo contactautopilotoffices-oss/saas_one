@@ -58,13 +58,15 @@ export const EmailService = {
         property,
         requestedBy,
         requesterRole,
+        assignedToName,
         items
     }: {
-        emailTo: string;
+        emailTo: string | string[];
         ticket: any;
         property: any;
         requestedBy: any;
         requesterRole?: string;
+        assignedToName?: string;
         items: any[];
     }) {
         if (!process.env.SMTP_USER) {
@@ -77,15 +79,18 @@ export const EmailService = {
             img => `<li><b>${img.name}</b> - Qty: ${img.quantity} ${img.notes ? `(Notes: ${img.notes})` : ''}</li>`
         ).join('');
 
+        const recipients = Array.isArray(emailTo) ? emailTo.join(', ') : emailTo;
+
         const html = `
-            <h2>Material Request</h2>
-            <p>You have been tagged in a new material request for a ticket.</p>
+            <h2>New Material Request Submitted</h2>
+            <p>A new material request has been submitted for a maintenance ticket.</p>
             
             <h3>Ticket Details</h3>
             <ul>
                 <li><b>Ticket:</b> ${ticket.ticket_number} - ${ticket.title}</li>
                 <li><b>Property:</b> ${property?.name || 'N/A'}</li>
                 <li><b>Requested By:</b> ${requestedBy?.full_name || requestedBy?.email || 'System'} (${requesterRole?.toUpperCase() || 'Support'})</li>
+                <li><b>Assigned Procurement User:</b> ${assignedToName || 'Unassigned'}</li>
             </ul>
 
             <h3>Requested Materials</h3>
@@ -105,11 +110,11 @@ export const EmailService = {
         try {
             await transporter.sendMail({
                 from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
-                to: emailTo,
+                to: recipients,
                 subject,
                 html,
             });
-            console.log(`[EmailService] Material request email sent to ${emailTo}`);
+            console.log(`[EmailService] Material request email sent to ${recipients}`);
             return true;
         } catch (error) {
             console.error('[EmailService] Failed to send material request email:', error);
