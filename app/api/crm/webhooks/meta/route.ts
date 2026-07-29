@@ -191,20 +191,6 @@ async function processLeadgen(leadgenId: string, value: any, config: any) {
             jobTitle ? `Title: ${jobTitle}` : null,
         ].filter(Boolean).join(' | ') || null;
 
-        // Cross-source dedup: check phone/email against existing leads.
-        // status MUST be a value allowed by crm_meta_leads_status_check
-        // ('pending','processed','failed','duplicate'). 'duplicate_contact' is NOT
-        // allowed and previously violated the constraint — in the webhook that
-        // surfaced as a 500, causing Meta to retry the delivery repeatedly (a
-        // constraint-violation storm) and the lead to never settle. Use 'duplicate'.
-        const existingLead = await findExistingLead(config.organization_id, phone, email);
-        if (existingLead) {
-            await supabaseAdmin.from('crm_meta_leads')
-                .update({ status: 'duplicate', processed_lead_id: existingLead.id, processed_at: new Date().toISOString() })
-                .eq('id', metaRow!.id);
-            return { leadgen_id: leadgenId, status: 'duplicate', existing_lead_id: existingLead.id };
-        }
-
         const createdBy = await resolveSystemUser(config);
         if (!createdBy) throw new Error('No assignee/admin available to own the lead');
 

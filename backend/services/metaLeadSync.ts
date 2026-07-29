@@ -137,37 +137,6 @@ export async function syncMetaLeadsForOrg(orgId: string, opts: { perFormCap?: nu
             ].filter(Boolean).join(' | ') || null;
 
             const cleanedPhone = cleanPhone(phone);
-            if (cleanedPhone || email) {
-                const conditions: string[] = [];
-                if (cleanedPhone) conditions.push(`contact_number.ilike.%${cleanedPhone}%`);
-                if (email) conditions.push(`email.ilike.${email}`);
-                const { data: existing } = await supabaseAdmin
-                    .from('crm_leads').select('id').eq('organization_id', orgId)
-                    .or(conditions.join(',')).limit(1).maybeSingle();
-                if (existing) {
-                    if (!existingMeta) {
-                        // Mark this Meta lead as a duplicate of an existing CRM contact.
-                        // NOTE: status MUST be one of the values allowed by the
-                        // crm_meta_leads_status_check constraint ('pending','processed',
-                        // 'failed','duplicate'). Writing an invalid value here previously
-                        // threw and — because this insert is outside the try below —
-                        // killed the ENTIRE org sync before new leads were reached,
-                        // silently stalling Meta lead ingestion. Wrapped + valid now.
-                        try {
-                            await supabaseAdmin.from('crm_meta_leads').insert({
-                                organization_id: orgId, meta_lead_id: leadgenId, form_id: form.id,
-                                payload: lead, status: 'duplicate', processed_lead_id: existing.id,
-                                processed_at: new Date().toISOString(),
-                            });
-                        } catch (e) {
-                            console.error('[metaLeadSync] failed to mark duplicate', leadgenId, e);
-                        }
-                    }
-                    base.skipped++;
-                    continue;
-                }
-            }
-
             const distributionAssignee = await resolveDistributionAssignee(orgId, form.name, city).catch(() => null);
             // No fallback to a default admin — unmatched leads stay unassigned (null)
             // so they surface in the pool instead of dumping on one person.

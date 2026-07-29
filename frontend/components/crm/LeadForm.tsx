@@ -307,8 +307,9 @@ export default function LeadForm({ isOpen, onClose, onSubmit, initialData, mode 
                                     </div>
                                     <div>
                                         <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                                            Property Interest
-                                        </label>                                         <select
+                                            Property Interest (Optional)
+                                        </label>
+                                        <select
                                             value={formData.property_interest || ''}
                                             onChange={(e) => {
                                                 const val = e.target.value;
@@ -342,7 +343,7 @@ export default function LeadForm({ isOpen, onClose, onSubmit, initialData, mode 
                                             }}
                                             className="w-full border border-border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary bg-background text-text-primary"
                                         >
-                                            <option value="">Select property</option>
+                                            <option value="">Select property (Optional)</option>
                                             {properties.map(p => (
                                                 <option key={p.id} value={p.id}>{p.name}</option>
                                             ))}

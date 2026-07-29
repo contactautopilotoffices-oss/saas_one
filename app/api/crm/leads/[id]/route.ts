@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { resolveCrmAccess, isCrmAccessError, readOrgId, canAccessLead } from '@/backend/lib/crm/access';
+import { EmailService } from '@/backend/services/EmailService';
 
 const LEAD_SELECT = `
     *,
@@ -165,6 +166,21 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         console.error('CRM Lead UPDATE error:', error);
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
+
+    // Send email notification if assigned_to changed to a valid user
+    if (updateData.assigned_to && updateData.assigned_to !== lead0.assigned_to && data?.assigned_user?.email) {
+        EmailService.sendLeadAssignmentEmail({
+            emailTo: data.assigned_user.email,
+            assigneeName: data.assigned_user.full_name || data.assigned_user.email,
+            leadName: data.contact_person || '',
+            companyName: data.company_name || '',
+            contactNumber: data.contact_number || '',
+            requirement: data.requirement || '',
+            priority: data.priority || 'Medium',
+            leadId: id
+        }).catch(err => console.error('[CRM Lead UPDATE] email error:', err));
+    }
+
     // status_changed / assigned activity is written by the DB trigger; no manual insert.
     return NextResponse.json({ lead: data });
 }
