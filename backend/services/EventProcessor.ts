@@ -11,6 +11,8 @@ export const EventProcessor = {
             await this.handleMaterialRequestEvent(payload);
         } else if (['COMPARATIVE_UPLOADED', 'COMPARATIVE_APPROVED', 'COMPARATIVE_REJECTED', 'MATERIAL_DELIVERED'].includes(event_type)) {
             await this.handleProcurementWorkflowEvent(event_type, payload);
+        } else if (event_type === 'REQUISITION_UPLOADED') {
+            await this.handleRequisitionUploadedEvent(payload);
         } else {
             console.warn(`[EventProcessor] Unknown event type: ${event_type}`);
         }
@@ -357,5 +359,93 @@ export const EventProcessor = {
         for (const email of emails) {
             await EmailService.sendGenericNotificationEmail({ emailTo: email, subject, title, htmlBody }).catch(console.error);
         }
+    },
+
+    async handleRequisitionUploadedEvent(payload: any) {
+        const { organization_id, property_id, requisition_month, requisition_year, file_name, uploaded_by } = payload;
+
+        const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+        const monthName = months[requisition_month - 1] || `Month ${requisition_month}`;
+
+        // Get Property Name
+        const { data: property } = await supabaseAdmin
+            .from('properties')
+            .select('name')
+            .eq('id', property_id)
+            .single();
+
+        // Get Uploader Name
+        const { data: uploader } = await supabaseAdmin
+            .from('users')
+            .select('full_name, email')
+            .eq('id', uploaded_by)
+            .single();
+
+        const emailSet = new Set<string>();
+
+        // 1. Get Procurement Users / Admins in the Organization
+        const { data: orgMembers } = await supabaseAdmin
+            .from('organization_memberships')
+            .select('user:users!user_id(email), org_role')
+            .eq('organization_id', organization_id)
+            .eq('is_active', true);
+
+        if (orgMembers) {
+            for (const member of orgMembers) {
+                const role = (member.org_role || '').toLowerCase();
+                // @ts-ignore
+                const userEmail = member.user?.email;
+                if (userEmail && (role.includes('procurement') || role.includes('admin') || role.includes('owner') || role === 'master_admin')) {
+                    emailSet.add(userEmail);
+                }
+            }
+        }
+
+        // 2. Query property members with procurement role
+        const { data: propMembers } = await supabaseAdmin
+            .from('property_memberships')
+            .select('user:users!user_id(email), role')
+            .eq('property_id', property_id)
+            .eq('is_active', true);
+
+        if (propMembers) {
+            for (const member of propMembers) {
+                const role = (member.role || '').toLowerCase();
+                // @ts-ignore
+                const userEmail = member.user?.email;
+                if (userEmail && (role.includes('procurement') || role.includes('admin'))) {
+                    emailSet.add(userEmail);
+                }
+            }
+        }
+
+        // 3. Query direct users table for users with procurement/admin emails
+        const { data: directUsers } = await supabaseAdmin
+            .from('users')
+            .select('email')
+            .or('email.ilike.%procurement%,email.ilike.%admin%');
+
+        if (directUsers) {
+            for (const u of directUsers) {
+                if (u.email) emailSet.add(u.email);
+            }
+        }
+
+        if (emailSet.size === 0) {
+            console.warn(`[EventProcessor] No procurement recipients found for org ${organization_id}`);
+            return;
+        }
+
+        const emailList = Array.from(emailSet);
+        console.log(`[EventProcessor] Sending requisition uploaded alert to ${emailList.length} procurement recipients: ${emailList.join(', ')}`);
+
+        await EmailService.sendRequisitionUploadedEmail({
+            emailTo: emailList,
+            propertyName: property?.name || 'Property',
+            monthName,
+            year: requisition_year,
+            fileName: file_name,
+            uploaderName: uploader?.full_name || uploader?.email || 'Property Admin'
+        });
     }
 };

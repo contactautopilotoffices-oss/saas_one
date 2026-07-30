@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { Suspense } from 'react';
 import ProcurementDashboard from '@/frontend/components/dashboard/ProcurementDashboard';
 
 export const metadata: Metadata = {
@@ -7,5 +8,9 @@ export const metadata: Metadata = {
 };
 
 export default function Page() {
-    return <ProcurementDashboard />;
+    return (
+        <Suspense fallback={<div className="p-8 text-center text-slate-500">Loading Procurement...</div>}>
+            <ProcurementDashboard />
+        </Suspense>
+    );
 }

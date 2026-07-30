@@ -1,12 +1,17 @@
 import nodemailer from 'nodemailer';
 
+const smtpUser = process.env.SMTP_USER || process.env.EMAIL_SMTP_USER;
+const smtpPass = process.env.SMTP_PASS || process.env.EMAIL_SMTP_PASS;
+const smtpHost = process.env.SMTP_HOST || process.env.EMAIL_SMTP_HOST || 'smtp.gmail.com';
+const smtpPort = parseInt(process.env.SMTP_PORT || process.env.EMAIL_SMTP_PORT || '465');
+
 const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST || 'smtp.gmail.com', // Match your supabase config
-    port: parseInt(process.env.SMTP_PORT || '465'),
-    secure: process.env.SMTP_SECURE === 'true' || process.env.SMTP_PORT === '465',
+    host: smtpHost,
+    port: smtpPort,
+    secure: process.env.SMTP_SECURE === 'true' || smtpPort === 465,
     auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
+        user: smtpUser,
+        pass: smtpPass,
     },
 });
 
@@ -324,6 +329,69 @@ export const EmailService = {
             return true;
         } catch (error) {
             console.error('[EmailService] Failed to send lead assignment email:', error);
+            return false;
+        }
+    },
+
+    async sendRequisitionUploadedEmail({
+        emailTo,
+        propertyName,
+        monthName,
+        year,
+        fileName,
+        uploaderName
+    }: {
+        emailTo: string | string[];
+        propertyName: string;
+        monthName: string;
+        year: number;
+        fileName: string;
+        uploaderName: string;
+    }) {
+        if (!smtpUser || !emailTo) return false;
+        try {
+            const recipients = Array.isArray(emailTo) ? emailTo.join(', ') : emailTo;
+            const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fms.autopilotoffices.com';
+            const subject = `New Monthly Requisition Uploaded - ${propertyName} (${monthName} ${year})`;
+            
+            const html = `
+                <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; background-color: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
+                    <div style="text-align: center; margin-bottom: 24px;">
+                        <h2 style="color: #0284c7; margin: 0; font-size: 20px;">Monthly Requisition Uploaded</h2>
+                        <p style="color: #64748b; font-size: 14px; margin-top: 4px;">A property admin has uploaded a monthly requisition file</p>
+                    </div>
+
+                    <div style="background-color: #f0f9ff; border-left: 4px solid #0284c7; padding: 16px; border-radius: 6px; margin: 18px 0;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                            <tr><td style="padding: 4px 0; color: #64748b; width: 140px;"><b>Property:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: 600;">${propertyName}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Requisition Period:</b></td><td style="padding: 4px 0; color: #0f172a;">${monthName} ${year}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Uploaded By:</b></td><td style="padding: 4px 0; color: #0f172a;">${uploaderName}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>File Name:</b></td><td style="padding: 4px 0; color: #0f172a;">${fileName}</td></tr>
+                        </table>
+                    </div>
+
+                    <p style="font-size: 14px;">Please log in to the procurement portal to download, inspect, and acknowledge this requisition.</p>
+
+                    <div style="text-align: center; margin-top: 24px;">
+                        <a href="${appUrl}/procurement" style="display: inline-block; background-color: #0284c7; color: #ffffff; text-decoration: none; font-weight: bold; padding: 10px 24px; border-radius: 8px; font-size: 14px;">Open Procurement Requisitions</a>
+                    </div>
+
+                    <p style="font-size: 12px; color: #94a3b8; margin-top: 32px; text-align: center;">
+                        This is an automated notification from Autopilot FMS Procurement System.
+                    </p>
+                </div>
+            `;
+
+            await transporter.sendMail({
+                from: `"Autopilot Procurement" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                to: recipients,
+                subject,
+                html,
+            });
+            console.log(`[EmailService] Requisition uploaded email sent to ${recipients}`);
+            return true;
+        } catch (error) {
+            console.error('[EmailService] Failed to send requisition uploaded email:', error);
             return false;
         }
     }

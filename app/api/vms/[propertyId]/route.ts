@@ -47,7 +47,7 @@ export async function POST(
         }
 
         // Insert visitor log
-        const { data: visitor, error: insertError } = await supabaseAdmin
+        let { data: visitor, error: insertError } = await supabaseAdmin
             .from('visitor_logs')
             .insert({
                 property_id: propertyId,
@@ -65,7 +65,37 @@ export async function POST(
             .select()
             .single();
 
-        if (insertError) {
+        // If duplicate key error on visitor_id, auto-resolve with unique suffix
+        if (insertError && (insertError.code === '23505' || insertError.message?.includes('unique constraint'))) {
+            console.warn(`[VMS Check-in] Visitor ID '${visitorId}' already exists. Auto-generating unique fallback ID.`);
+            const fallbackVisitorId = `${visitorId || 'VSR'}-${Date.now().toString().slice(-4)}${Math.floor(100 + Math.random() * 900)}`;
+
+            const { data: retryVisitor, error: retryError } = await supabaseAdmin
+                .from('visitor_logs')
+                .insert({
+                    property_id: propertyId,
+                    organization_id: property.organization_id,
+                    visitor_id: fallbackVisitorId,
+                    category: body.category,
+                    name: body.name,
+                    mobile: body.mobile || null,
+                    coming_from: body.coming_from || null,
+                    whom_to_meet: body.whom_to_meet,
+                    photo_url: body.photo_url || null,
+                    checkin_time: new Date().toISOString(),
+                    status: 'checked_in',
+                })
+                .select()
+                .single();
+
+            if (retryError) {
+                console.error('Error retrying visitor check-in:', retryError);
+                return NextResponse.json({ error: retryError.message }, { status: 500 });
+            }
+
+            visitor = retryVisitor;
+            visitorId = fallbackVisitorId;
+        } else if (insertError) {
             console.error('Error creating visitor log:', insertError);
             return NextResponse.json({ error: insertError.message }, { status: 500 });
         }

@@ -4,15 +4,16 @@ import React, { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import { 
     Settings, List, ShoppingCart, 
-    Loader2, FileText 
+    Loader2, FileText, FileSpreadsheet 
 } from 'lucide-react';
 import ProcurementAdminSettings from './ProcurementAdminSettings';
 import ProcurementRequestList from './ProcurementRequestList';
 import ProcurementPOProcessor from './ProcurementPOProcessor';
 import ProcurementCatalogModal from './ProcurementCatalogModal';
+import MonthlyRequisitionsTab from './MonthlyRequisitionsTab';
 import { useAuth } from '@/frontend/context/AuthContext';
 
-type TabType = 'orders' | 'catalog' | 'po-generator' | 'settings';
+type TabType = 'orders' | 'requisitions' | 'catalog' | 'po-generator' | 'settings';
 
 export default function ProcurementModule({ orgId: propOrgId, isAdmin: propIsAdmin, properties: propProperties }: { orgId?: string, isAdmin?: boolean, properties?: any[] }) {
     const params = useParams();
@@ -79,6 +80,7 @@ export default function ProcurementModule({ orgId: propOrgId, isAdmin: propIsAdm
 
     const TABS = [
         { id: 'orders', label: 'All Orders', icon: List, show: true, count: counts.orders },
+        { id: 'requisitions', label: 'Monthly Requisitions', icon: FileSpreadsheet, show: true, count: 0 },
         { id: 'catalog', label: 'Manage Items', icon: ShoppingCart, show: isSuperAdmin || isProcurementUser, count: 0 },
         { id: 'po-generator', label: 'PO Generator', icon: FileText, show: isSuperAdmin || isProcurementUser || user?.user_metadata?.role === 'org_admin', count: 0 },
         { id: 'settings', label: 'Settings', icon: Settings, show: isSuperAdmin, count: 0 },
@@ -126,6 +128,10 @@ export default function ProcurementModule({ orgId: propOrgId, isAdmin: propIsAdm
 
                 {activeTab === 'orders' && (
                     <ProcurementRequestList organizationId={orgId} propertyId={propertyId} onAction={fetchCounts} />
+                )}
+
+                {activeTab === 'requisitions' && (
+                    <MonthlyRequisitionsTab user={user} organizationId={orgId} userRole={user?.user_metadata?.role || 'property_admin'} />
                 )}
 
                 {activeTab === 'catalog' && (isSuperAdmin || isProcurementUser) && (

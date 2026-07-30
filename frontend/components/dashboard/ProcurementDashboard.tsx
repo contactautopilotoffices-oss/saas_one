@@ -7,8 +7,9 @@ import {
     Settings, UserCircle, LogOut, Search, Filter, 
     ChevronDown, ChevronRight, Building2, Calendar, Menu, X,
     ArrowUpRight, Scan, Truck, RefreshCw, Box, Clock,
-    AlertCircle, ExternalLink, Trash2, Camera, Link2, Shield, User, Loader2, FileText, MessageSquarePlus
+    AlertCircle, ExternalLink, Trash2, Camera, Link2, Shield, User, Loader2, FileText, MessageSquarePlus, FileSpreadsheet, FileUp
 } from 'lucide-react';
+import { useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import NotificationBell from './NotificationBell';
 import ProcurementPOProcessor from '../procurement/ProcurementPOProcessor';
@@ -16,6 +17,7 @@ import ProcurementStatusModal from './ProcurementStatusModal';
 import ProcurementComparativeFlow from './ProcurementComparativeFlow';
 import ProcurementCatalogModal from '../procurement/ProcurementCatalogModal';
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
+import MonthlyRequisitionsTab from '../procurement/MonthlyRequisitionsTab';
 
 // --- Types ---
 interface MaterialRequest {
@@ -50,10 +52,11 @@ interface MaterialRequest {
     };
 }
 
-type Tab = 'overview' | 'requests' | 'history' | 'manage-items' | 'po-generator' | 'settings' | 'profile';
+type Tab = 'overview' | 'requests' | 'history' | 'manage-items' | 'po-generator' | 'monthly-requisitions' | 'settings' | 'profile';
 
 export default function ProcurementDashboard() {
     const supabase = createClient();
+    const searchParams = useSearchParams();
     const [showFeedbackModal, setShowFeedbackModal] = useState(false);
     const [user, setUser] = useState<any>(null);
     const [requests, setRequests] = useState<MaterialRequest[]>([]);
@@ -61,6 +64,13 @@ export default function ProcurementDashboard() {
     const [procurementUsers, setProcurementUsers] = useState<any[]>([]);
     const [allProperties, setAllProperties] = useState<any[]>([]);
     const [activeTab, setActiveTab] = useState<Tab>('overview');
+
+    useEffect(() => {
+        const tabParam = searchParams?.get('tab') as Tab | null;
+        if (tabParam && ['overview', 'requests', 'history', 'manage-items', 'po-generator', 'monthly-requisitions', 'settings', 'profile'].includes(tabParam)) {
+            setActiveTab(tabParam);
+        }
+    }, [searchParams]);
     const [statusFilter, setStatusFilter] = useState('all');
     const [propertyFilter, setPropertyFilter] = useState('all');
     const [timeRange, setTimeRange] = useState<'today' | 'month' | 'all'>('all');
@@ -452,6 +462,7 @@ export default function ProcurementDashboard() {
                                 {[
                                     { id: 'overview', icon: LayoutDashboard, label: 'Dashboard' },
                                     { id: 'requests', icon: Package, label: 'Active Orders' },
+                                    { id: 'monthly-requisitions', icon: FileSpreadsheet, label: 'Monthly Requisitions' },
                                     { id: 'history', icon: CheckCircle2, label: 'Order History' },
                                     { id: 'manage-items', icon: ShoppingCart, label: 'Manage Items' },
                                     { id: 'po-generator', icon: FileText, label: 'PO Generator' },
@@ -625,7 +636,14 @@ export default function ProcurementDashboard() {
                                 fetchRequests={fetchRequests}
                             />
                         )}
-                                                {activeTab === 'history' && <HistoryTab requests={requests} user={user} />}
+                        {activeTab === 'history' && <HistoryTab requests={requests} user={user} />}
+                        {activeTab === 'monthly-requisitions' && (
+                            <MonthlyRequisitionsTab
+                                user={user}
+                                organizationId={user?.user_metadata?.organization_id}
+                                userRole={user?.user_metadata?.role || 'procurement_user'}
+                            />
+                        )}
                         {activeTab === 'manage-items' && (
                             <ManageItemsTab 
                                 organizationId={user?.user_metadata?.organization_id} 

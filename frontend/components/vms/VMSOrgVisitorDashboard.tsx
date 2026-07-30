@@ -3,9 +3,10 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     Users, LogIn, LogOut, Search, FileDown,
-    User, Truck, Building2, X, ChevronDown, MapPin
+    User, Truck, Building2, X, ChevronDown, MapPin, Plus
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import VMSKiosk from './VMSKiosk';
 
 interface VMSOrgVisitorDashboardProps {
     orgId: string;
@@ -47,6 +48,8 @@ const VMSOrgVisitorDashboard: React.FC<VMSOrgVisitorDashboardProps> = ({ orgId }
     const [propertyFilter, setPropertyFilter] = useState('');
     const [selectedVisitor, setSelectedVisitor] = useState<VisitorLog | null>(null);
     const [actionLoading, setActionLoading] = useState(false);
+    const [showCheckInModal, setShowCheckInModal] = useState(false);
+    const [selectedCheckInPropertyId, setSelectedCheckInPropertyId] = useState<string>('');
 
     // Debounce search query - wait 300ms after user stops typing before searching
     useEffect(() => {
@@ -307,6 +310,19 @@ const VMSOrgVisitorDashboard: React.FC<VMSOrgVisitorDashboardProps> = ({ orgId }
                         >
                             <FileDown className="w-4 h-4" /> Export
                         </button>
+
+                        {/* Check-In Visitor Button */}
+                        <button
+                            onClick={() => {
+                                if (!selectedCheckInPropertyId && properties.length > 0) {
+                                    setSelectedCheckInPropertyId(properties[0].id);
+                                }
+                                setShowCheckInModal(true);
+                            }}
+                            className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary-dark text-white rounded-xl text-sm font-bold transition-all shadow-sm hover:shadow"
+                        >
+                            <Plus className="w-4 h-4" /> Check-In Visitor
+                        </button>
                     </div>
                 </div>
 
@@ -390,9 +406,9 @@ const VMSOrgVisitorDashboard: React.FC<VMSOrgVisitorDashboardProps> = ({ orgId }
                                             <button
                                                 onClick={() => handleForceCheckout(visitor)}
                                                 disabled={actionLoading}
-                                                className="px-3 py-1 bg-rose-50 text-rose-600 rounded-lg text-xs font-bold hover:bg-rose-100 transition-all border border-rose-100 disabled:opacity-50"
+                                                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm disabled:opacity-50"
                                             >
-                                                Force Out
+                                                <LogOut className="w-3.5 h-3.5" /> Check Out
                                             </button>
                                         )}
                                     </td>
@@ -556,6 +572,61 @@ const VMSOrgVisitorDashboard: React.FC<VMSOrgVisitorDashboardProps> = ({ orgId }
                             </div>
                         </motion.div>
                     </motion.div>
+                )}
+            </AnimatePresence>
+
+            {/* Modal: Check-In Visitor (Org Super Admin) */}
+            <AnimatePresence>
+                {showCheckInModal && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+                        <motion.div
+                            initial={{ opacity: 0, scale: 0.95 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            exit={{ opacity: 0, scale: 0.95 }}
+                            className="bg-white dark:bg-slate-800 w-full max-w-4xl max-h-[90vh] rounded-3xl border border-slate-200 dark:border-slate-700 shadow-2xl overflow-hidden flex flex-col"
+                        >
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-6 py-4 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900">
+                                <div className="flex items-center gap-2">
+                                    <LogIn className="w-5 h-5 text-primary" />
+                                    <h3 className="font-bold text-slate-900 dark:text-white text-lg">Visitor Entry & Check-In</h3>
+                                </div>
+
+                                <div className="flex items-center gap-3">
+                                    {properties.length > 1 && (
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-xs font-semibold text-slate-500">Property:</span>
+                                            <select
+                                                value={selectedCheckInPropertyId}
+                                                onChange={(e) => setSelectedCheckInPropertyId(e.target.value)}
+                                                className="px-3 py-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-900 dark:text-white"
+                                            >
+                                                {properties.map(p => (
+                                                    <option key={p.id} value={p.id}>{p.name}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    )}
+                                    <button
+                                        onClick={() => {
+                                            setShowCheckInModal(false);
+                                            fetchVisitors();
+                                        }}
+                                        className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                                    >
+                                        <X className="w-5 h-5" />
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="p-4 flex-1 overflow-y-auto min-h-[550px]">
+                                {selectedCheckInPropertyId ? (
+                                    <VMSKiosk propertyId={selectedCheckInPropertyId} propertyName="" />
+                                ) : (
+                                    <div className="p-8 text-center text-slate-500">Please select a property to check in a visitor.</div>
+                                )}
+                            </div>
+                        </motion.div>
+                    </div>
                 )}
             </AnimatePresence>
         </div>
