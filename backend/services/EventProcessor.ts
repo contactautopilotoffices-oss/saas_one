@@ -383,25 +383,25 @@ export const EventProcessor = {
 
         const emailSet = new Set<string>();
 
-        // 1. Get Procurement Users / Admins in the Organization
+        // 1. Query organization memberships for STRICT procurement roles
         const { data: orgMembers } = await supabaseAdmin
             .from('organization_memberships')
-            .select('user:users!user_id(email), org_role')
+            .select('user:users!user_id(email), org_role, role')
             .eq('organization_id', organization_id)
             .eq('is_active', true);
 
         if (orgMembers) {
             for (const member of orgMembers) {
-                const role = (member.org_role || '').toLowerCase();
+                const role = (member.role || member.org_role || '').toLowerCase();
                 // @ts-ignore
-                const userEmail = member.user?.email;
-                if (userEmail && (role.includes('procurement') || role.includes('admin') || role.includes('owner') || role === 'master_admin')) {
+                const userEmail = member.user?.email || member.user?.[0]?.email;
+                if (userEmail && (role === 'procurement' || role === 'procurement_user')) {
                     emailSet.add(userEmail);
                 }
             }
         }
 
-        // 2. Query property members with procurement role
+        // 2. Query property memberships for STRICT procurement roles
         const { data: propMembers } = await supabaseAdmin
             .from('property_memberships')
             .select('user:users!user_id(email), role')
@@ -412,22 +412,27 @@ export const EventProcessor = {
             for (const member of propMembers) {
                 const role = (member.role || '').toLowerCase();
                 // @ts-ignore
-                const userEmail = member.user?.email;
-                if (userEmail && (role.includes('procurement') || role.includes('admin'))) {
+                const userEmail = member.user?.email || member.user?.[0]?.email;
+                if (userEmail && (role === 'procurement' || role === 'procurement_user')) {
                     emailSet.add(userEmail);
                 }
             }
         }
 
-        // 3. Query direct users table for users with procurement/admin emails
+        // 3. Query direct users table for users with role='procurement' or procurement/purchase email addresses
         const { data: directUsers } = await supabaseAdmin
             .from('users')
-            .select('email')
-            .or('email.ilike.%procurement%,email.ilike.%admin%');
+            .select('email, role')
+            .or('role.eq.procurement,role.eq.procurement_user,email.ilike.%procurement%,email.ilike.%purchase%');
 
         if (directUsers) {
             for (const u of directUsers) {
-                if (u.email) emailSet.add(u.email);
+                if (u.email) {
+                    const e = u.email.toLowerCase();
+                    if (e.includes('procurement') || e.includes('purchase') || u.role === 'procurement' || u.role === 'procurement_user') {
+                        emailSet.add(u.email);
+                    }
+                }
             }
         }
 
@@ -437,7 +442,7 @@ export const EventProcessor = {
         }
 
         const emailList = Array.from(emailSet);
-        console.log(`[EventProcessor] Sending requisition uploaded alert to ${emailList.length} procurement recipients: ${emailList.join(', ')}`);
+        console.log(`[EventProcessor] Sending requisition uploaded alert strictly to ${emailList.length} procurement recipient(s): ${emailList.join(', ')}`);
 
         await EmailService.sendRequisitionUploadedEmail({
             emailTo: emailList,
