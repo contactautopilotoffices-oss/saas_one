@@ -158,7 +158,7 @@ export default function PrivacyPolicyPage() {
                         </p>
                         <div className="p-5 rounded-2xl bg-slate-950/60 border border-slate-800/60 space-y-2 text-xs text-slate-400">
                             <p>• Contact your property administrator or organization super admin to deactivate account access.</p>
-                            <p>• Contact support at <span className="text-teal-400 font-semibold">support@autopilotfms.com</span> for direct account deletion or data removal requests.</p>
+                            <p>• Contact support at <span className="text-teal-400 font-semibold">contact.autopilotoffices@gmail.com</span> for direct account deletion or data removal requests.</p>
                         </div>
                     </section>
 
@@ -172,10 +172,10 @@ export default function PrivacyPolicyPage() {
                             <p className="text-slate-400 text-xs">Reach out to our support team for any data protection or account requests.</p>
                         </div>
                         <a
-                            href="mailto:support@autopilotfms.com"
+                            href="mailto:contact.autopilotoffices@gmail.com"
                             className="px-6 py-3 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold rounded-2xl text-sm transition-all shadow-lg shadow-teal-500/20 shrink-0"
                         >
-                            support@autopilotfms.com
+                            contact.autopilotoffices@gmail.com
                         </a>
                     </section>
                 </div>
