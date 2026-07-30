@@ -57,6 +57,7 @@ import { playTickleSound } from "@/frontend/utils/sounds";
 import ProcurementCatalogModal from "@/frontend/components/procurement/ProcurementCatalogModal";
 import ConfirmModal from "@/frontend/components/ui/ConfirmModal";
 import { Toast } from "@/frontend/components/ui/Toast";
+import ProcurementComparativeFlow from "@/frontend/components/dashboard/ProcurementComparativeFlow";
 
 // Types
 interface Ticket {
@@ -561,7 +562,7 @@ export default function TicketDetailPage() {
 
     if (propMember?.role === "property_admin") {
       setUserRole("admin");
-    } else if (propMember?.role?.toLowerCase() === "procurement") {
+    } else if (propMember?.role?.toLowerCase().includes("procurement")) {
       setUserRole("procurement");
     } else if (
       propMember &&
@@ -2649,11 +2650,19 @@ export default function TicketDetailPage() {
                       <div className="space-y-4">
                         <div className="flex items-center justify-between gap-4">
                           <div>
-                            <p
-                              className={`text-sm font-black ${isDark ? "text-white" : "text-slate-900"} tracking-tight`}
-                            >
-                              Order #{req.id.slice(0, 8).toUpperCase()}
-                            </p>
+                            <div className="flex items-center gap-3">
+                              <p
+                                className={`text-sm font-black ${isDark ? "text-white" : "text-slate-900"} tracking-tight`}
+                              >
+                                Order #{req.id.slice(0, 8).toUpperCase()}
+                              </p>
+                              {req.procurement_viewed_at && (
+                                <div className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800">
+                                  <Eye className="w-3 h-3 text-emerald-500" />
+                                  <span>Seen by Procurement: {new Date(req.procurement_viewed_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                                </div>
+                              )}
+                            </div>
                             <p
                               className={`text-[10px] ${isDark ? "text-slate-500" : "text-slate-400"} font-bold uppercase tracking-widest mt-1`}
                             >
@@ -2713,18 +2722,20 @@ export default function TicketDetailPage() {
                         {/* Visual Progress Steps */}
                         <div className="flex items-center gap-1.5">
                           {[
-                            req.status === "pending_approval" ? "pending_approval" : "pending_quotation",
-                            req.status === "pending_approval" || req.status === "approved" ? "approved" : "quoted",
+                            "pending_quotation",
+                            "pending_approval",
+                            "approved",
                             "ordered",
                             "delivered",
                           ].map((s, idx, arr) => {
                             const statusMap: Record<string, number> = {
                               pending_quotation: 0,
-                              pending_approval: 0,
-                              quoted: 1,
-                              approved: 1,
-                              ordered: 2,
-                              delivered: 3,
+                              negotiating: 0,
+                              pending_approval: 1,
+                              quoted: 2,
+                              approved: 2,
+                              ordered: 3,
+                              delivered: 4,
                               rejected: -1,
                               cancelled: -1
                             };
@@ -2740,6 +2751,15 @@ export default function TicketDetailPage() {
                               ordered: 'Ordered',
                               delivered: 'Delivered'
                             };
+                            const timeMap: Record<string, string | null> = {
+                              pending_quotation: req.created_at,
+                              pending_approval: req.procurement_viewed_at,
+                              approved: req.comparatives?.find((c: any) => c.status === 'approved')?.action_at,
+                              ordered: req.ordered_at,
+                              delivered: req.delivered_at
+                            };
+                            const stepTime = timeMap[s];
+
                             return (
                               <div
                                 key={s}
@@ -2765,6 +2785,11 @@ export default function TicketDetailPage() {
                                 >
                                   {labelMap[s] || s.split("_")[0]}
                                 </span>
+                                {stepTime && isActive && (
+                                  <span className={`text-[7px] text-center uppercase font-medium ${isDark ? "text-slate-500" : "text-slate-400"}`}>
+                                    {new Date(stepTime).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                )}
                               </div>
                             );
                           })}
@@ -2853,6 +2878,28 @@ export default function TicketDetailPage() {
                           </div>
                         )}
                       </div>
+                      
+                      {/* Delivery Action */}
+                      {(req.status === 'ordered' || req.status === 'approved') && (
+                        userRole === 'admin' || userRole === 'procurement' || req.requested_by === userId
+                      ) && (
+                        <div className="mt-4 pt-4 border-t border-slate-100 dark:border-[#30363d]">
+                          <button
+                            onClick={() => handleMaterialAction(req.id, 'delivered')}
+                            className="w-full bg-[#238636] hover:bg-[#2ea043] text-white font-semibold py-2 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors shadow-md"
+                          >
+                            <CheckCircle2 className="w-4 h-4" />
+                            MARK AS DELIVERED / RECEIVED
+                          </button>
+                        </div>
+                      )}
+                      
+                      <ProcurementComparativeFlow
+                        request={req}
+                        isAdmin={userRole === 'admin'}
+                        isProcurementUser={userRole === 'procurement'}
+                        onAction={fetchMaterialRequests}
+                      />
                     </div>
                   ))}
                 </div>

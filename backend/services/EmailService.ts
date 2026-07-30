@@ -1,12 +1,17 @@
 import nodemailer from 'nodemailer';
 
+const smtpUser = process.env.SMTP_USER || process.env.EMAIL_SMTP_USER;
+const smtpPass = process.env.SMTP_PASS || process.env.EMAIL_SMTP_PASS;
+const smtpHost = process.env.SMTP_HOST || process.env.EMAIL_SMTP_HOST || 'smtp.gmail.com';
+const smtpPort = parseInt(process.env.SMTP_PORT || process.env.EMAIL_SMTP_PORT || '465');
+
 const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST || 'smtp.gmail.com', // Match your supabase config
-    port: parseInt(process.env.SMTP_PORT || '465'),
-    secure: process.env.SMTP_SECURE === 'true' || process.env.SMTP_PORT === '465',
+    host: smtpHost,
+    port: smtpPort,
+    secure: process.env.SMTP_SECURE === 'true' || smtpPort === 465,
     auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
+        user: smtpUser,
+        pass: smtpPass,
     },
 });
 
@@ -31,19 +36,42 @@ export const EmailService = {
         }
     },
 
+    async sendGenericNotificationEmail({ emailTo, subject, title, htmlBody }: { emailTo: string; subject: string; title: string; htmlBody: string }) {
+        if (!process.env.SMTP_USER) return false;
+        try {
+            const html = `
+                <h2>${title}</h2>
+                <div style="margin-top:16px;">${htmlBody}</div>
+                <p style="margin-top:24px; color: #555;">Log in to Autopilot FMS to view the details.</p>
+            `;
+            await transporter.sendMail({
+                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                to: emailTo,
+                subject,
+                html,
+            });
+            return true;
+        } catch (error) {
+            console.error('[EmailService] Failed to send generic notification email:', error);
+            return false;
+        }
+    },
+
     async sendMaterialRequestEmail({
         emailTo,
         ticket,
         property,
         requestedBy,
         requesterRole,
+        assignedToName,
         items
     }: {
-        emailTo: string;
+        emailTo: string | string[];
         ticket: any;
         property: any;
         requestedBy: any;
         requesterRole?: string;
+        assignedToName?: string;
         items: any[];
     }) {
         if (!process.env.SMTP_USER) {
@@ -51,20 +79,24 @@ export const EmailService = {
             return false;
         }
 
-        const subject = `Material Request for Ticket #${ticket.ticket_number}`;
+        const propertyName = property?.name ? ` - ${property.name}` : '';
+        const subject = `Material Request for Ticket #${ticket.ticket_number}${propertyName}`;
         const itemsHtml = items.map(
             img => `<li><b>${img.name}</b> - Qty: ${img.quantity} ${img.notes ? `(Notes: ${img.notes})` : ''}</li>`
         ).join('');
 
+        const recipients = Array.isArray(emailTo) ? emailTo.join(', ') : emailTo;
+
         const html = `
-            <h2>Material Request</h2>
-            <p>You have been tagged in a new material request for a ticket.</p>
+            <h2>New Material Request Submitted</h2>
+            <p>A new material request has been submitted for a maintenance ticket.</p>
             
             <h3>Ticket Details</h3>
             <ul>
                 <li><b>Ticket:</b> ${ticket.ticket_number} - ${ticket.title}</li>
                 <li><b>Property:</b> ${property?.name || 'N/A'}</li>
                 <li><b>Requested By:</b> ${requestedBy?.full_name || requestedBy?.email || 'System'} (${requesterRole?.toUpperCase() || 'Support'})</li>
+                <li><b>Assigned Procurement User:</b> ${assignedToName || 'Unassigned'}</li>
             </ul>
 
             <h3>Requested Materials</h3>
@@ -84,11 +116,11 @@ export const EmailService = {
         try {
             await transporter.sendMail({
                 from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
-                to: emailTo,
+                to: recipients,
                 subject,
                 html,
             });
-            console.log(`[EmailService] Material request email sent to ${emailTo}`);
+            console.log(`[EmailService] Material request email sent to ${recipients}`);
             return true;
         } catch (error) {
             console.error('[EmailService] Failed to send material request email:', error);
@@ -231,6 +263,135 @@ export const EmailService = {
             return true;
         } catch (error) {
             console.error('[EmailService] Failed to send meeting room booking email:', error);
+            return false;
+        }
+    },
+
+    async sendLeadAssignmentEmail({
+        emailTo,
+        assigneeName,
+        leadName,
+        companyName,
+        contactNumber,
+        requirement,
+        priority,
+        leadId
+    }: {
+        emailTo: string;
+        assigneeName: string;
+        leadName: string;
+        companyName?: string;
+        contactNumber?: string;
+        requirement?: string;
+        priority?: string;
+        leadId: string;
+    }) {
+        if (!process.env.SMTP_USER || !emailTo) return false;
+        try {
+            const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fms.autopilotoffices.com';
+            const subject = `New Lead Assigned: ${companyName || leadName || 'CRM Lead'}`;
+            const html = `
+                <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; background-color: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
+                    <div style="text-align: center; margin-bottom: 24px;">
+                        <h2 style="color: #4f46e5; margin: 0; font-size: 20px;">New CRM Lead Assigned to You</h2>
+                        <p style="color: #64748b; font-size: 14px; margin-top: 4px;">You have been assigned a new lead in Autopilot CRM</p>
+                    </div>
+
+                    <p style="font-size: 14px;">Hello <b>${assigneeName}</b>,</p>
+                    <p style="font-size: 14px;">A new lead has been assigned to you. Here are the key details:</p>
+
+                    <div style="background-color: #f8fafc; border-left: 4px solid #4f46e5; padding: 16px; border-radius: 6px; margin: 18px 0;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                            ${companyName ? `<tr><td style="padding: 4px 0; color: #64748b; width: 140px;"><b>Company:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: 600;">${companyName}</td></tr>` : ''}
+                            ${leadName ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Contact Person:</b></td><td style="padding: 4px 0; color: #0f172a;">${leadName}</td></tr>` : ''}
+                            ${contactNumber ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Phone:</b></td><td style="padding: 4px 0; color: #0f172a;">${contactNumber}</td></tr>` : ''}
+                            ${priority ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Priority:</b></td><td style="padding: 4px 0; color: #0f172a;"><span style="background: #fef3c7; color: #d97706; padding: 2px 8px; rounded: 4px; font-size: 12px; font-weight: bold;">${priority}</span></td></tr>` : ''}
+                            ${requirement ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Requirement:</b></td><td style="padding: 4px 0; color: #0f172a;">${requirement}</td></tr>` : ''}
+                        </table>
+                    </div>
+
+                    <div style="text-align: center; margin-top: 24px;">
+                        <a href="${appUrl}/crm" style="display: inline-block; background-color: #4f46e5; color: #ffffff; text-decoration: none; font-weight: bold; padding: 10px 24px; border-radius: 8px; font-size: 14px;">Open CRM Dashboard</a>
+                    </div>
+
+                    <p style="font-size: 12px; color: #94a3b8; margin-top: 32px; text-align: center;">
+                        This is an automated notification from Autopilot CRM.
+                    </p>
+                </div>
+            `;
+            await transporter.sendMail({
+                from: `"Autopilot CRM" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                to: emailTo,
+                subject,
+                html,
+            });
+            console.log(`[EmailService] Lead assignment email sent to ${emailTo}`);
+            return true;
+        } catch (error) {
+            console.error('[EmailService] Failed to send lead assignment email:', error);
+            return false;
+        }
+    },
+
+    async sendRequisitionUploadedEmail({
+        emailTo,
+        propertyName,
+        monthName,
+        year,
+        fileName,
+        uploaderName
+    }: {
+        emailTo: string | string[];
+        propertyName: string;
+        monthName: string;
+        year: number;
+        fileName: string;
+        uploaderName: string;
+    }) {
+        if (!smtpUser || !emailTo) return false;
+        try {
+            const recipients = Array.isArray(emailTo) ? emailTo.join(', ') : emailTo;
+            const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fms.autopilotoffices.com';
+            const subject = `New Monthly Requisition Uploaded - ${propertyName} (${monthName} ${year})`;
+            
+            const html = `
+                <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; background-color: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
+                    <div style="text-align: center; margin-bottom: 24px;">
+                        <h2 style="color: #0284c7; margin: 0; font-size: 20px;">Monthly Requisition Uploaded</h2>
+                        <p style="color: #64748b; font-size: 14px; margin-top: 4px;">A property admin has uploaded a monthly requisition file</p>
+                    </div>
+
+                    <div style="background-color: #f0f9ff; border-left: 4px solid #0284c7; padding: 16px; border-radius: 6px; margin: 18px 0;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                            <tr><td style="padding: 4px 0; color: #64748b; width: 140px;"><b>Property:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: 600;">${propertyName}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Requisition Period:</b></td><td style="padding: 4px 0; color: #0f172a;">${monthName} ${year}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Uploaded By:</b></td><td style="padding: 4px 0; color: #0f172a;">${uploaderName}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>File Name:</b></td><td style="padding: 4px 0; color: #0f172a;">${fileName}</td></tr>
+                        </table>
+                    </div>
+
+                    <p style="font-size: 14px;">Please log in to the procurement portal to download, inspect, and acknowledge this requisition.</p>
+
+                    <div style="text-align: center; margin-top: 24px;">
+                        <a href="${appUrl}/procurement" style="display: inline-block; background-color: #0284c7; color: #ffffff; text-decoration: none; font-weight: bold; padding: 10px 24px; border-radius: 8px; font-size: 14px;">Open Procurement Requisitions</a>
+                    </div>
+
+                    <p style="font-size: 12px; color: #94a3b8; margin-top: 32px; text-align: center;">
+                        This is an automated notification from Autopilot FMS Procurement System.
+                    </p>
+                </div>
+            `;
+
+            await transporter.sendMail({
+                from: `"Autopilot Procurement" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                to: recipients,
+                subject,
+                html,
+            });
+            console.log(`[EmailService] Requisition uploaded email sent to ${recipients}`);
+            return true;
+        } catch (error) {
+            console.error('[EmailService] Failed to send requisition uploaded email:', error);
             return false;
         }
     }

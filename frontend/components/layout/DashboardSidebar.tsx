@@ -49,6 +49,7 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
             { label: 'Flow Map', href: `/${orgId}/flow-map`, icon: GitMerge, domain: 'tickets' as const },
             { label: 'Inventory', href: `/${orgId}/procurement-management`, icon: Package, domain: 'procurement' as const },
             { label: 'Procurement', href: `/${orgId}/procurement-management`, icon: ShoppingCart, domain: 'procurement' as const },
+            { label: 'Monthly Requisitions', href: `/${orgId}/procurement-management?tab=monthly-requisitions`, icon: FileUp, domain: 'procurement' as const },
             { label: 'Staff', href: `/${orgId}/users`, icon: Users, domain: 'users' as const },
         ];
 

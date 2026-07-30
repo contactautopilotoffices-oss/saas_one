@@ -72,7 +72,7 @@ const STATUS_BADGE: Record<string, string> = {
     closed: 'bg-green-100 text-green-700',
 };
 const formatStatus = (s: string) => s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-const formatDate = (iso: string) => new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+const formatDate = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
 // ── Coming Soon ────────────────────────────────────────────────────────────────
 

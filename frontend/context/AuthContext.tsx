@@ -34,6 +34,8 @@ interface AuthContextType {
     // Auth actions
     signIn: (email: string, password: string) => Promise<any>;
     signUp: (email: string, password: string, fullName: string) => Promise<any>;
+    sendOtp: (email: string) => Promise<any>;
+    verifyOtp: (email: string, token: string) => Promise<any>;
     signInWithGoogle: (propertyCode?: string, redirectPath?: string) => Promise<void>;
     signInWithApple: (propertyCode?: string, redirectPath?: string) => Promise<void>;
     signInWithZoho: (propertyCode?: string, redirectPath?: string) => void;
@@ -224,8 +226,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             });
 
             let result: any = {};
-            if (response.ok || response.status === 503) {
-                result = await response.json().catch(() => ({ error: '' }));
+            try {
+                result = await response.json();
+            } catch {
+                result = {};
             }
 
             // If server route is unreachable (503 / fetch failed), fall back to client-side login
@@ -317,19 +321,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const result = await response.json();
 
         // Sync session to browser client
-        const { data: sessionData, error } = await supabase.auth.getSession();
-        if (error) throw error;
-
-        // Manually update local state if session exists
-        if (sessionData.session) {
-            setSession(sessionData.session);
-            setUser(sessionData.session.user);
-            await fetchMembership(sessionData.session.user.id);
+        const newSession = result.data?.session;
+        if (newSession) {
+            await supabase.auth.setSession(newSession);
+            setSession(newSession);
+            setUser(newSession.user);
+            fetchMembership(newSession.user.id).catch(() => {});
+        } else {
+            const { data: sessionData } = await supabase.auth.getSession();
+            if (sessionData?.session) {
+                setSession(sessionData.session);
+                setUser(sessionData.session.user);
+                fetchMembership(sessionData.session.user.id).catch(() => {});
+            }
         }
 
         return {
-            user: sessionData.session?.user || result.data?.user || null,
-            session: sessionData.session || result.data?.session || null
+            user: newSession?.user || result.data?.user || null,
+            session: newSession || result.data?.session || null
         };
     }, [supabase, fetchMembership]);
 
@@ -372,6 +381,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         window.location.href = url.toString();
     }, []);
 
+    const sendOtp = useCallback(async (email: string) => {
+        const { data, error } = await supabase.auth.signInWithOtp({
+            email,
+            options: {
+                shouldCreateUser: true,
+            },
+        });
+        if (error) throw new Error(error.message);
+        return data;
+    }, [supabase]);
+
+    const verifyOtp = useCallback(async (email: string, token: string) => {
+        const { data, error } = await supabase.auth.verifyOtp({
+            email,
+            token,
+            type: 'email',
+        });
+        if (error) throw new Error(error.message);
+
+        if (data?.session) {
+            setSession(data.session);
+            setUser(data.session.user);
+            membershipCache.delete(data.session.user.id);
+            await fetchMembership(data.session.user.id);
+        }
+
+        return data;
+    }, [supabase, fetchMembership]);
+
     // Memoize the context value to prevent unnecessary re-renders
     const value = useMemo(() => ({
         user,
@@ -381,13 +419,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isMembershipLoading,
         signIn,
         signUp,
+        sendOtp,
+        verifyOtp,
         signInWithGoogle,
         signInWithApple,
         signInWithZoho,
         signOut,
         resetPassword,
         refreshMembership
-    }), [user, session, isLoading, membership, isMembershipLoading, signIn, signUp, signInWithGoogle, signInWithApple, signInWithZoho, signOut, resetPassword, refreshMembership]);
+    }), [user, session, isLoading, membership, isMembershipLoading, signIn, signUp, sendOtp, verifyOtp, signInWithGoogle, signInWithApple, signInWithZoho, signOut, resetPassword, refreshMembership]);
 
     return (
         <AuthContext.Provider value={value}>

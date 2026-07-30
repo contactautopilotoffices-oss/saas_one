@@ -28,19 +28,44 @@ function AuthContent() {
     const urlError = searchParams.get('error');
     const redirectPath = searchParams.get('redirect');
 
-    const [authMode, setAuthMode] = useState<'signin' | 'signup' | 'forgot' | 'reset-success' | 'update-password'>('signin');
+    const [authMode, setAuthMode] = useState<'signin' | 'otp-verify' | 'signup' | 'forgot' | 'reset-success' | 'update-password'>('signin');
     const [mounted, setMounted] = useState(false);
 
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
     const [fullName, setFullName] = useState('');
+    const [otpCode, setOtpCode] = useState('');
+    const [resendTimer, setResendTimer] = useState(0);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
     const [loading, setLoading] = useState(false);
     const [currentFeature, setCurrentFeature] = useState(0);
     const [showPassword, setShowPassword] = useState(false);
     const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
+    // Brute-force lockout state
+    const [failedAttempts, setFailedAttempts] = useState(0);
+    const [lockUntil, setLockUntil] = useState<number | null>(null);
+    const [lockoutCountdown, setLockoutCountdown] = useState<number>(0);
+
+    // Timer effect to update countdown
+    useEffect(() => {
+        if (!lockUntil) return;
+
+        const interval = setInterval(() => {
+            const remainingSec = Math.max(0, Math.ceil((lockUntil - Date.now()) / 1000));
+            setLockoutCountdown(remainingSec);
+
+            if (remainingSec <= 0) {
+                setLockUntil(null);
+                setFailedAttempts(0);
+                clearInterval(interval);
+            }
+        }, 1000);
+
+        return () => clearInterval(interval);
+    }, [lockUntil]);
 
     // Synchronize mode after mount to avoid hydration mismatch
     useEffect(() => {
@@ -54,7 +79,7 @@ function AuthContent() {
 
     const formRef = React.useRef<HTMLFormElement>(null);
 
-    const { signIn, signUp, signInWithGoogle, signInWithZoho, resetPassword, signOut } = useAuth();
+    const { signIn, signUp, sendOtp, verifyOtp, signInWithGoogle, signInWithZoho, resetPassword, signOut } = useAuth();
     const router = useRouter();
 
     useEffect(() => {
@@ -142,35 +167,93 @@ function AuthContent() {
         handlePasswordResetSession();
     }, []); // Removed ALL dependencies to prevent loops -> only runs on mount
 
+    const handleSendOtp = async (e?: React.FormEvent) => {
+        if (e) e.preventDefault();
+        if (!email) {
+            setError('Please enter your email address.');
+            return;
+        }
+        setLoading(true);
+        setError('');
+        setSuccess('');
+
+        try {
+            await sendOtp(email);
+            setAuthMode('otp-verify');
+            setSuccess(`6-digit OTP code sent to ${email}. Please check your inbox.`);
+        } catch (err: any) {
+            console.error('Send OTP error:', err);
+            setError(err.message || 'Failed to send OTP code. Please check your email.');
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const handleAuthAction = async (e: React.FormEvent) => {
         e.preventDefault();
+
+        // Handle OTP verification stage
+        if (authMode === 'otp-verify') {
+            if (!otpCode || otpCode.trim().length !== 6) {
+                setError('Please enter a valid 6-digit OTP code.');
+                return;
+            }
+            setLoading(true);
+            setError('');
+            try {
+                const res = await verifyOtp(email, otpCode.trim());
+                const authUser = res?.session?.user;
+                if (!authUser) throw new Error('Invalid or expired OTP code.');
+
+                // Check if new user -> route to onboarding
+                const { data: userProfile } = await supabase
+                    .from('users')
+                    .select('id, is_master_admin, full_name')
+                    .eq('id', authUser.id)
+                    .maybeSingle();
+
+                if (!userProfile) {
+                    window.location.href = '/onboarding';
+                    return;
+                }
+
+                // If existing user, complete normal post-auth route resolution
+                if (userProfile.is_master_admin) {
+                    router.replace(redirectPath && redirectPath !== '/' ? redirectPath : '/master');
+                    return;
+                }
+                
+                // Refresh window location to let AuthProvider handle route resolution cleanly
+                window.location.reload();
+            } catch (err: any) {
+                console.error('Verify OTP error:', err);
+                setError(err.message || 'Invalid or expired verification code.');
+            } finally {
+                setLoading(false);
+            }
+            return;
+        }
+
+        // Check if currently locked out
+        if (lockUntil && Date.now() < lockUntil) {
+            const mins = Math.floor(lockoutCountdown / 60);
+            const secs = lockoutCountdown % 60;
+            setError(`Too many failed login attempts. Please wait ${mins}:${secs < 10 ? '0' : ''}${secs} before trying again.`);
+            return;
+        }
+
         setLoading(true);
         setError('');
         setSuccess('');
 
         try {
             if (authMode === 'signup') {
-                // Account creation only. Role, organization and property are
-                // selected in the onboarding flow after sign-up.
-                const response = await fetch('/api/auth/signup', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email, password, fullName })
-                });
-
-                const result = await response.json();
-
-                if (!response.ok) {
-                    throw new Error(result.error || 'Signup failed');
-                }
-
-                if (result.data?.session) {
-                    console.log('Signup successful, session found. Redirecting...');
-                    router.push('/onboarding');
-                } else if (result.data?.user) {
-                    console.log('Signup successful, but no session. Email confirmation likely required.');
+                const res = await signUp(email, password, fullName);
+                if (res?.session) {
+                    window.location.href = '/onboarding';
+                    return;
+                } else if (res?.user) {
                     setSuccess('Account created! Please check your email inbox to verify your account before logging in.');
-                    // Don't redirect if there's no session, as onboarding requires a logged-in user
                 } else {
                     throw new Error('Signup failed to return user data.');
                 }
@@ -356,11 +439,39 @@ function AuthContent() {
             }
         } catch (err: any) {
             console.error('Auth action error:', err);
+
+            // Handle failed login attempt limit (5 failed attempts = 2 minute lockout)
+            if (authMode === 'signin') {
+                const nextAttempts = failedAttempts + 1;
+                setFailedAttempts(nextAttempts);
+
+                if (nextAttempts >= 5) {
+                    const lockExpiry = Date.now() + 120 * 1000;
+                    setLockUntil(lockExpiry);
+                    setLockoutCountdown(120);
+                    setError('Too many failed login attempts. A security alert email has been sent to your inbox. Please wait 2:00 before trying again.');
+                    
+                    // Trigger security alert email via API (non-blocking)
+                    fetch('/api/internal/security-alert', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            email,
+                            userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+                        }),
+                    }).catch((e) => console.error('Failed to trigger security email:', e));
+
+                    setLoading(false);
+                    return;
+                }
+            }
+
             // Provide user-friendly error messages for common auth failures
             const errorMessage = err.message?.toLowerCase() || '';
 
             if (errorMessage.includes('invalid login credentials')) {
-                setError('Invalid email or password. Please check your credentials and try again.');
+                const remaining = 5 - (failedAttempts + 1);
+                setError(`Invalid email or password. ${remaining > 0 ? `(${remaining} attempt${remaining === 1 ? '' : 's'} remaining before lockout)` : ''}`);
             } else if (errorMessage.includes('email not confirmed')) {
                 setError('Please verify your email address before signing in. Check your inbox for a verification link.');
             } else if (errorMessage.includes('user not found')) {
@@ -462,12 +573,48 @@ function AuthContent() {
                             >
                                 <div className="mb-8">
                                     <h1 className="text-3xl lg:text-4xl font-display font-bold text-text-primary mb-2 leading-tight">
-                                        {authMode === 'signup' ? 'Start Your Journey' : authMode === 'forgot' ? 'Reset Password' : authMode === 'update-password' ? 'New Password' : 'Welcome Back'}
+                                        {authMode === 'otp-verify' ? 'Verify OTP' : authMode === 'signup' ? 'Start Your Journey' : authMode === 'forgot' ? 'Reset Password' : authMode === 'update-password' ? 'New Password' : 'Welcome Back'}
                                     </h1>
                                     <p className="text-text-secondary font-body">
-                                        {authMode === 'signup' ? 'Create your account to get started' : authMode === 'forgot' ? 'Enter your email to receive a recovery link' : authMode === 'update-password' ? 'Secure your account with a new password' : 'Sign in to your facility management hub'}
+                                        {authMode === 'otp-verify' ? `Enter the 6-digit code sent to ${email}` : authMode === 'signup' ? 'Create your account to get started' : authMode === 'forgot' ? 'Enter your email to receive a recovery link' : authMode === 'update-password' ? 'Secure your account with a new password' : 'Sign in to your facility management hub'}
                                     </p>
                                 </div>
+
+                                {authMode === 'otp-verify' && (
+                                    <div className="space-y-4">
+                                        <div className="space-y-2">
+                                            <label className="text-sm font-semibold text-text-primary font-body">6-Digit Code*</label>
+                                            <input
+                                                type="text"
+                                                maxLength={6}
+                                                placeholder="Enter 6-digit code"
+                                                value={otpCode}
+                                                onChange={(e) => setOtpCode(e.target.value)}
+                                                autoFocus
+                                                required
+                                                className="w-full h-12 px-4 text-center tracking-[0.5em] text-xl font-mono font-bold rounded-[var(--radius-md)] border border-border bg-surface text-text-primary transition-smooth focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
+                                            />
+                                        </div>
+
+                                        <div className="flex justify-between items-center text-xs">
+                                            <button
+                                                type="button"
+                                                onClick={() => { setAuthMode('signin'); setError(''); setSuccess(''); }}
+                                                className="text-text-secondary hover:text-text-primary transition-smooth"
+                                            >
+                                                ← Change Email
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleSendOtp()}
+                                                disabled={loading}
+                                                className="text-primary font-semibold hover:underline transition-smooth disabled:opacity-50"
+                                            >
+                                                Resend OTP
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
 
                                 {(authMode === 'signin' || authMode === 'signup') && (
                                     <div className="flex gap-1 mb-8 p-1 bg-muted rounded-xl border border-border w-full">
@@ -598,14 +745,16 @@ function AuthContent() {
 
                                     <button
                                         type="submit"
-                                        disabled={loading}
+                                        disabled={loading || (authMode === 'signin' && !!lockUntil && Date.now() < lockUntil)}
                                         className="w-full bg-secondary hover:bg-secondary-dark text-text-inverse font-semibold py-3 rounded-[var(--radius-md)] shadow-sm transition-smooth flex items-center justify-center gap-2 group border border-secondary-dark disabled:opacity-50"
                                     >
                                         {loading ? (
                                             <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                        ) : authMode === 'signin' && lockUntil && Date.now() < lockUntil ? (
+                                            `Locked (${Math.floor(lockoutCountdown / 60)}:${lockoutCountdown % 60 < 10 ? '0' : ''}${lockoutCountdown % 60})`
                                         ) : (
                                             <>
-                                                {authMode === 'signup' ? 'Create Account' : authMode === 'forgot' ? 'Send Reset Link' : authMode === 'update-password' ? 'Update Password' : 'Sign In'}
+                                                {authMode === 'otp-verify' ? 'Verify & Continue' : authMode === 'signup' ? 'Create Account' : authMode === 'forgot' ? 'Send Reset Link' : authMode === 'update-password' ? 'Update Password' : 'Sign In'}
                                                 <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-smooth" />
                                             </>
                                         )}

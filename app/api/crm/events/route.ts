@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
     // If attached to a lead, verify access and org match.
     if (body.lead_id) {
         const { data: lead } = await supabaseAdmin
-            .from('crm_leads').select('id, organization_id, created_by, assigned_to, city').eq('id', body.lead_id).maybeSingle();
+            .from('crm_leads').select('id, organization_id, created_by, assigned_to, city, location, campaign').eq('id', body.lead_id).maybeSingle();
         if (!lead) return NextResponse.json({ error: 'Lead not found' }, { status: 404 });
         if (!canAccessLead(lead, access)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }

@@ -2,19 +2,20 @@
 
 import React, { useState, useEffect } from 'react';
 import {
-    X, Phone, Mail, MapPin, Building, Calendar, User, DollarSign,
+    X, Phone, Mail, MapPin, Building, Calendar, User, Users, DollarSign,
     Edit, Trash2, PhoneCall, Video, Map, FileText, MessageSquare,
     Clock, ChevronRight, Plus, CheckCircle, CalendarPlus, Pencil, Save,
     FileSignature, LayoutGrid, MapPin as MapPinIcon, Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { CRMLead, CRMActivity, CRMNote, CRMEvent, TimelineItem, LeadStatusConfig, EventType } from '@/frontend/types/crm';
+import { CRMLead, CRMActivity, CRMNote, CRMEvent, TimelineItem, LeadStatusConfig, LeadSource, EventType } from '@/frontend/types/crm';
 import StagePipeline from '@/frontend/components/crm/StagePipeline';
 import AddEventModal from '@/frontend/components/crm/AddEventModal';
 import CallCoachPanel from '@/frontend/components/crm/CallCoachPanel';
 import { getStageVisual, COMMENT_REQUIRED_STAGES } from '@/frontend/lib/crm/stages';
 import { getSourceVisual } from '@/frontend/lib/crm/sourceIcons';
 import { TextShimmer } from '@/frontend/components/ui/text-shimmer';
+import { Toast } from '@/frontend/components/ui/Toast';
 
 interface LeadDetailDrawerProps {
     leadId: string | null;
@@ -89,9 +90,114 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
     const [savingStageComment, setSavingStageComment] = useState(false);
     const [editingActivity, setEditingActivity] = useState<{ id: string; description: string } | null>(null);
     const [savingActivity, setSavingActivity] = useState(false);
-    const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
-    const [editingNoteText, setEditingNoteText] = useState('');
-    const [isSavingNote, setIsSavingNote] = useState(false);
+    const [editingField, setEditingField] = useState<string | null>(null);
+    const [fieldDraft, setFieldDraft] = useState('');
+    const [savingField, setSavingField] = useState(false);
+    const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info'; visible: boolean }>({
+        message: '',
+        type: 'success',
+        visible: false
+    });
+
+    const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
+        setToast({ message, type, visible: true });
+    };
+
+    const saveField = async (field: keyof CRMLead) => {
+        if (!lead) {
+            setEditingField(null);
+            return;
+        }
+        const valToSend = field === 'seats'
+            ? (fieldDraft !== '' && !isNaN(Number(fieldDraft)) ? Number(fieldDraft) : null)
+            : (fieldDraft || null);
+
+        if (valToSend === (lead[field] ?? null)) {
+            setEditingField(null);
+            return;
+        }
+        setSavingField(true);
+        try {
+            const res = await fetch(`/api/crm/leads/${lead.id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ [field]: valToSend }),
+            });
+            if (res.ok) {
+                const data = await res.json().catch(() => null);
+                const updated = data?.lead ? data.lead : ({ ...lead, [field]: valToSend } as CRMLead);
+                setLead(updated);
+                onLeadUpdate?.(updated);
+
+                const fieldNames: Record<string, string> = {
+                    deal_value: 'Deal Value',
+                    priority: 'Priority',
+                    property_interest: 'Property Interest',
+                    move_in_timeline: 'Move-in Timeline',
+                    lead_source: 'Lead Source',
+                    company_name: 'Company Name',
+                    contact_person: 'Contact Person',
+                    contact_number: 'Primary Contact Number',
+                    secondary_contact_number: 'Secondary Contact Number',
+                    email: 'Email',
+                    location: 'City/Location',
+                    seats: 'Seat Requirement'
+                };
+                const labelName = fieldNames[field as string] || String(field).replace(/_/g, ' ');
+                showToast(`${labelName} updated successfully!`);
+            } else {
+                showToast('Failed to update field', 'error');
+            }
+        } catch {
+            showToast('Error saving changes', 'error');
+        }
+        setSavingField(false);
+        setEditingField(null);
+    };
+
+    const renderEditable = (label: string, field: keyof CRMLead, val: any, icon: React.ReactNode) => {
+        const isEditing = editingField === field;
+        return (
+            <div className="flex items-start gap-3 group">
+                <div className="mt-0.5 text-text-tertiary">{icon}</div>
+                <div className="flex-1 min-w-0">
+                    <p className="text-xs text-text-tertiary">{label}</p>
+                    {isEditing ? (
+                        <div className="flex items-center gap-1.5 mt-1">
+                            <input
+                                autoFocus
+                                type="text"
+                                value={fieldDraft}
+                                onChange={(e) => setFieldDraft(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') saveField(field);
+                                    if (e.key === 'Escape') setEditingField(null);
+                                }}
+                                disabled={savingField}
+                                className="w-full min-w-0 px-2 py-1 text-sm border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+                            />
+                            <button onClick={() => saveField(field)} disabled={savingField} className="p-1 text-emerald-600 hover:bg-emerald-50 rounded shrink-0">
+                                <CheckCircle className="w-4 h-4" />
+                            </button>
+                            <button onClick={() => setEditingField(null)} disabled={savingField} className="p-1 text-red-600 hover:bg-red-50 rounded shrink-0">
+                                <X className="w-4 h-4" />
+                            </button>
+                        </div>
+                    ) : (
+                        <div className="flex items-center gap-2 mt-0.5">
+                            <p className="text-sm font-medium text-text-primary break-words">{val || '–'}</p>
+                            <button
+                                onClick={() => { setFieldDraft(val || ''); setEditingField(field); }}
+                                className="opacity-0 group-hover:opacity-100 p-1 hover:bg-muted rounded transition-opacity"
+                            >
+                                <Pencil className="w-3.5 h-3.5 text-text-tertiary" />
+                            </button>
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    };
     // Reassignment (admins + reps)
 
     const [formResponses, setFormResponses] = useState<{ question: string; answer: string }[]>([]);
@@ -101,6 +207,60 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
     const [reps, setReps] = useState<{ id: string; full_name?: string; email?: string }[]>([]);
     const [showReassign, setShowReassign] = useState(false);
     const [reassigning, setReassigning] = useState(false);
+    // Note editing state
+    const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+    const [noteDraft, setNoteDraft] = useState('');
+    const [savingNote, setSavingNote] = useState(false);
+    const [availableSources, setAvailableSources] = useState<LeadSource[]>([]);
+    const [availableProperties, setAvailableProperties] = useState<{ id: string; name: string }[]>([]);
+
+    useEffect(() => {
+        if (!isOpen) return;
+        fetch('/api/crm/settings?type=all&scope=bd')
+            .then(r => r.ok ? r.json() : null)
+            .then(data => {
+                if (data?.sources) setAvailableSources(data.sources);
+                if (data?.properties) setAvailableProperties(data.properties);
+            })
+            .catch(() => {});
+    }, [isOpen]);
+
+    const handleSaveNoteEdit = async (noteId: string) => {
+        if (!noteDraft.trim()) return;
+        setSavingNote(true);
+        try {
+            const res = await fetch('/api/crm/notes', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: noteId, note: noteDraft.trim() })
+            });
+            if (res.ok) {
+                const data = await res.json();
+                setNotes(prev => prev.map(n => n.id === noteId ? { ...n, note: data.note.note } : n));
+                setEditingNoteId(null);
+                showToast('Note updated successfully!');
+            }
+        } catch (err) {
+            console.error('Failed to update note:', err);
+            showToast('Failed to update note', 'error');
+        } finally {
+            setSavingNote(false);
+        }
+    };
+
+    const handleDeleteNote = async (noteId: string) => {
+        if (!confirm('Are you sure you want to delete this note?')) return;
+        try {
+            const res = await fetch(`/api/crm/notes?id=${noteId}`, { method: 'DELETE' });
+            if (res.ok) {
+                setNotes(prev => prev.filter(n => n.id !== noteId));
+                showToast('Note deleted successfully!');
+            }
+        } catch (err) {
+            console.error('Failed to delete note:', err);
+            showToast('Failed to delete note', 'error');
+        }
+    };
 
     const handleSaveRequestDetails = async () => {
         if (!lead) return;
@@ -217,47 +377,13 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
                     user_info: { id: '', full_name: 'You', email: '' }
                 } as CRMActivity, ...prev]);
                 setNewNote('');
+                showToast('Note added successfully!');
             }
         } catch (error) {
             console.error('Failed to add note:', error);
+            showToast('Failed to add note', 'error');
         } finally {
             setIsAddingNote(false);
-        }
-    };
-
-    const handleEditNote = async (noteId: string) => {
-        if (!editingNoteText.trim()) return;
-        setIsSavingNote(true);
-        try {
-            const res = await fetch('/api/crm/notes', {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: noteId, note: editingNoteText })
-            });
-            if (res.ok) {
-                const data = await res.json();
-                setNotes(prev => prev.map(n => n.id === noteId ? data.note : n));
-                setEditingNoteId(null);
-                setEditingNoteText('');
-            }
-        } catch (error) {
-            console.error('Failed to edit note:', error);
-        } finally {
-            setIsSavingNote(false);
-        }
-    };
-
-    const handleDeleteNote = async (noteId: string) => {
-        if (!confirm('Are you sure you want to delete this note?')) return;
-        try {
-            const res = await fetch(`/api/crm/notes?id=${noteId}`, {
-                method: 'DELETE'
-            });
-            if (res.ok) {
-                setNotes(prev => prev.filter(n => n.id !== noteId));
-            }
-        } catch (error) {
-            console.error('Failed to delete note:', error);
         }
     };
 
@@ -300,6 +426,7 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
             setLead(updated);
             onLeadUpdate?.(updated);
             setShowReassign(false);
+            showToast(rep ? `Lead reassigned to ${rep.full_name || rep.email}` : 'Lead unassigned');
             setActivities(prev => [{
                 id: `temp-${Date.now()}`, lead_id: leadId, user_id: '',
                 activity_type: 'updated', description: rep ? `Reassigned to ${rep.full_name}` : 'Unassigned',
@@ -324,6 +451,7 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
             const updated: CRMLead = { ...lead, status: statusId, status_info: { ...(lead.status_info as any), ...target } };
             setLead(updated);
             onLeadUpdate?.(updated);
+            showToast(`Stage updated to "${target.name}"`);
             const desc = comment
                 ? `Status changed to ${target.name} — ${comment}`
                 : `Status changed to ${target.name}`;
@@ -432,9 +560,9 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
     };
 
     const formatDate = (date: string) => {
-        return new Date(date).toLocaleDateString('en-IN', {
-            day: 'numeric',
-            month: 'short',
+        return new Date(date).toLocaleString('en-GB', {
+            day: '2-digit',
+            month: '2-digit',
             year: 'numeric',
             hour: '2-digit',
             minute: '2-digit',
@@ -509,6 +637,7 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
         <>
         <AnimatePresence>
             <motion.div
+                key="lead-drawer-backdrop"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
@@ -516,6 +645,7 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
                 onClick={onClose}
             />
             <motion.div
+                key="lead-drawer-panel"
                 initial={{ x: '100%' }}
                 animate={{ x: 0 }}
                 exit={{ x: '100%' }}
@@ -616,38 +746,11 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
                                                     </div>
                                                 </div>
                                             )}
-                                            <div className="flex items-center gap-3">
-                                                <Phone className="w-4 h-4 text-text-tertiary" />
-                                                <div>
-                                                    <p className="text-xs text-text-tertiary">Primary Contact</p>
-                                                    <p className="text-sm font-medium text-text-primary">{lead.contact_number || '–'}</p>
-                                                </div>
-                                            </div>
-                                            <div className="flex items-center gap-3">
-                                                <Phone className="w-4 h-4 text-text-tertiary" />
-                                                <div>
-                                                    <p className="text-xs text-text-tertiary">Secondary Contact</p>
-                                                    <p className="text-sm font-medium text-text-primary">{lead.secondary_contact_number || '–'}</p>
-                                                </div>
-                                            </div>
-                                            {lead.email && (
-                                                <div className="flex items-center gap-3">
-                                                    <Mail className="w-4 h-4 text-text-tertiary" />
-                                                    <div>
-                                                        <p className="text-xs text-text-tertiary">Email</p>
-                                                        <p className="text-sm font-medium text-text-primary">{lead.email}</p>
-                                                    </div>
-                                                </div>
-                                            )}
-                                            {lead.location && (
-                                                <div className="flex items-center gap-3">
-                                                    <MapPin className="w-4 h-4 text-text-tertiary" />
-                                                    <div>
-                                                        <p className="text-xs text-text-tertiary">Location</p>
-                                                        <p className="text-sm font-medium text-text-primary">{lead.location}</p>
-                                                    </div>
-                                                </div>
-                                            )}
+                                            {renderEditable('Primary Contact', 'contact_number', lead.contact_number, <Phone className="w-4 h-4" />)}
+                                            {renderEditable('Secondary Contact', 'secondary_contact_number', lead.secondary_contact_number, <Phone className="w-4 h-4" />)}
+                                            {renderEditable('Email', 'email', lead.email, <Mail className="w-4 h-4" />)}
+                                            {renderEditable('City/Location', 'location', lead.location, <MapPin className="w-4 h-4" />)}
+                                            {renderEditable('Seat Requirement', 'seats', lead.seats, <Users className="w-4 h-4" />)}
                                         </div>
                                     </div>
 
@@ -742,37 +845,129 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
                                     <div className="bg-surface-elevated rounded-xl p-4 space-y-4">
                                         <h3 className="font-bold text-text-primary">Deal Information</h3>
                                         <div className="grid grid-cols-2 gap-4">
-                                            <div>
-                                                <p className="text-xs text-text-tertiary">Deal Value</p>
-                                                <p className="text-xl font-bold text-text-primary">{formatCurrency(lead.deal_value)}</p>
-                                            </div>
+                                            {renderEditable('Deal Value', 'deal_value', lead.deal_value ? formatCurrency(lead.deal_value) : '₹0', <DollarSign className="w-4 h-4" />)}
                                             <div>
                                                 <p className="text-xs text-text-tertiary">Priority</p>
-                                                <p className={`text-sm font-medium ${
-                                                    lead.priority === 'Urgent' ? 'text-red-600' :
-                                                    lead.priority === 'High' ? 'text-orange-600' :
-                                                    'text-text-primary'
-                                                }`}>{lead.priority}</p>
-                                            </div>
-                                            {lead.property_info && (
-                                                <div>
-                                                    <p className="text-xs text-text-tertiary">Property Interest</p>
-                                                    <p className="text-sm font-medium text-text-primary">{lead.property_info.name}</p>
-                                                </div>
-                                            )}
-                                            {lead.source_info && (() => {
-                                                const sv = getSourceVisual(lead.source_info.name);
-                                                const SourceIcon = sv.icon;
-                                                return (
-                                                    <div>
-                                                        <p className="text-xs text-text-tertiary">Lead Source</p>
-                                                        <p className="text-sm font-medium text-text-primary flex items-center gap-1.5">
-                                                            <SourceIcon className="w-4 h-4" style={{ color: sv.color }} />
-                                                            {lead.source_info.name}
-                                                        </p>
+                                                {editingField === 'priority' ? (
+                                                    <div className="flex items-center gap-1.5 mt-1">
+                                                        <select
+                                                            autoFocus
+                                                            value={fieldDraft}
+                                                            onChange={(e) => setFieldDraft(e.target.value)}
+                                                            className="px-2 py-1 text-sm border border-border rounded bg-surface text-text-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                                                        >
+                                                            <option value="Low">Low</option>
+                                                            <option value="Medium">Medium</option>
+                                                            <option value="High">High</option>
+                                                            <option value="Urgent">Urgent</option>
+                                                        </select>
+                                                        <button onClick={() => saveField('priority')} disabled={savingField} className="p-1 text-emerald-600 hover:bg-emerald-50 rounded shrink-0">
+                                                            <CheckCircle className="w-4 h-4" />
+                                                        </button>
+                                                        <button onClick={() => setEditingField(null)} disabled={savingField} className="p-1 text-red-600 hover:bg-red-50 rounded shrink-0">
+                                                            <X className="w-4 h-4" />
+                                                        </button>
                                                     </div>
-                                                );
-                                            })()}
+                                                ) : (
+                                                    <div className="flex items-center gap-2 mt-0.5 group">
+                                                        <p className={`text-sm font-medium ${
+                                                            lead.priority === 'Urgent' ? 'text-red-600' :
+                                                            lead.priority === 'High' ? 'text-orange-600' :
+                                                            'text-text-primary'
+                                                        }`}>{lead.priority}</p>
+                                                        <button
+                                                            onClick={() => { setFieldDraft(lead.priority || 'Medium'); setEditingField('priority'); }}
+                                                            className="opacity-0 group-hover:opacity-100 p-1 hover:bg-muted rounded transition-opacity"
+                                                            title="Edit Priority"
+                                                        >
+                                                            <Pencil className="w-3.5 h-3.5 text-text-tertiary" />
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <div>
+                                                <p className="text-xs text-text-tertiary">Property Interest</p>
+                                                {editingField === 'property_interest' ? (
+                                                    <div className="flex items-center gap-1.5 mt-1">
+                                                        <select
+                                                            autoFocus
+                                                            value={fieldDraft}
+                                                            onChange={(e) => setFieldDraft(e.target.value)}
+                                                            className="px-2 py-1 text-sm border border-border rounded bg-surface text-text-primary focus:outline-none focus:ring-1 focus:ring-primary max-w-[150px]"
+                                                        >
+                                                            <option value="">Select property...</option>
+                                                            {availableProperties.map(p => (
+                                                                <option key={p.id} value={p.id}>{p.name}</option>
+                                                            ))}
+                                                        </select>
+                                                        <button onClick={() => saveField('property_interest')} disabled={savingField} className="p-1 text-emerald-600 hover:bg-emerald-50 rounded shrink-0" title="Save Property Interest">
+                                                            <CheckCircle className="w-4 h-4" />
+                                                        </button>
+                                                        <button onClick={() => setEditingField(null)} disabled={savingField} className="p-1 text-red-600 hover:bg-red-50 rounded shrink-0" title="Cancel">
+                                                            <X className="w-4 h-4" />
+                                                        </button>
+                                                    </div>
+                                                ) : (
+                                                    <div className="flex items-center gap-2 mt-0.5 group">
+                                                        <p className="text-sm font-medium text-text-primary">
+                                                            {lead.property_info?.name || availableProperties.find(p => p.id === lead.property_interest)?.name || lead.property_interest || '–'}
+                                                        </p>
+                                                        <button
+                                                            onClick={() => { setFieldDraft(lead.property_interest || lead.property_info?.id || ''); setEditingField('property_interest'); }}
+                                                            className="opacity-0 group-hover:opacity-100 p-1 hover:bg-muted rounded transition-opacity"
+                                                            title="Edit Property Interest"
+                                                        >
+                                                            <Pencil className="w-3.5 h-3.5 text-text-tertiary" />
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </div>
+                                            {renderEditable('Move-in Timeline', 'move_in_timeline', lead.move_in_timeline, <Clock className="w-4 h-4" />)}
+                                            <div>
+                                                <p className="text-xs text-text-tertiary">Lead Source</p>
+                                                {editingField === 'lead_source' ? (
+                                                    <div className="flex items-center gap-1.5 mt-1">
+                                                        <select
+                                                            autoFocus
+                                                            value={fieldDraft}
+                                                            onChange={(e) => setFieldDraft(e.target.value)}
+                                                            className="px-2 py-1 text-sm border border-border rounded bg-surface text-text-primary focus:outline-none focus:ring-1 focus:ring-primary max-w-[150px]"
+                                                        >
+                                                            <option value="">Select source...</option>
+                                                            {availableSources.map(s => (
+                                                                <option key={s.id} value={s.id}>{s.name}</option>
+                                                            ))}
+                                                        </select>
+                                                        <button onClick={() => saveField('lead_source')} disabled={savingField} className="p-1 text-emerald-600 hover:bg-emerald-50 rounded shrink-0">
+                                                            <CheckCircle className="w-4 h-4" />
+                                                        </button>
+                                                        <button onClick={() => setEditingField(null)} disabled={savingField} className="p-1 text-red-600 hover:bg-red-50 rounded shrink-0">
+                                                            <X className="w-4 h-4" />
+                                                        </button>
+                                                    </div>
+                                                ) : (
+                                                    <div className="flex items-center gap-2 mt-0.5 group">
+                                                        {(() => {
+                                                            const sourceName = lead.source_info?.name || availableSources.find(s => s.id === lead.lead_source)?.name || 'Other';
+                                                            const sv = getSourceVisual(sourceName);
+                                                            const SourceIcon = sv.icon;
+                                                            return (
+                                                                <p className="text-sm font-medium text-text-primary flex items-center gap-1.5">
+                                                                    <SourceIcon className="w-4 h-4" style={{ color: sv.color }} />
+                                                                    {sourceName}
+                                                                </p>
+                                                            );
+                                                        })()}
+                                                        <button
+                                                            onClick={() => { setFieldDraft(lead.lead_source || ''); setEditingField('lead_source'); }}
+                                                            className="opacity-0 group-hover:opacity-100 p-1 hover:bg-muted rounded transition-opacity"
+                                                            title="Edit Lead Source"
+                                                        >
+                                                            <Pencil className="w-3.5 h-3.5 text-text-tertiary" />
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </div>
                                         </div>
                                     </div>
 
@@ -1112,40 +1307,63 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
                                                                     <span className="text-xs text-text-tertiary whitespace-nowrap">
                                                                         {formatDate(item.timestamp)}
                                                                     </span>
-                                                                    {/* Edit + Delete — only timeline activities have an API for this */}
-                                                                    {!isEditing && item.type === 'activity' && (
+                                                                    {!isEditing && (item.type === 'activity' || item.type === 'note') && (
                                                                         <>
                                                                             <button
-                                                                                onClick={() => setEditingActivity({ id: item.id, description: item.description || '' })}
-                                                                                className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-surface-elevated transition-all"
-                                                                                title="Edit"
+                                                                                onClick={() => {
+                                                                                    if (item.type === 'activity') {
+                                                                                        setEditingActivity({ id: item.id, description: item.description || '' });
+                                                                                    } else if (item.type === 'note') {
+                                                                                        const rawNoteId = item.id.replace(/^n-/, '');
+                                                                                        setEditingNoteId(rawNoteId);
+                                                                                        setNoteDraft(item.description || '');
+                                                                                    }
+                                                                                }}
+                                                                                className="p-1 rounded hover:bg-muted text-text-tertiary hover:text-primary transition-all"
+                                                                                title="Edit Comment"
                                                                             >
-                                                                                <Pencil className="w-3 h-3 text-text-tertiary" />
+                                                                                <Pencil className="w-3.5 h-3.5" />
                                                                             </button>
                                                                             <button
-                                                                                onClick={() => { if (confirm('Remove this timeline entry?')) handleDeleteActivity(item.id); }}
-                                                                                className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-all"
-                                                                                title="Delete"
+                                                                                onClick={() => {
+                                                                                    if (item.type === 'activity') {
+                                                                                        if (confirm('Remove this timeline entry?')) handleDeleteActivity(item.id);
+                                                                                    } else if (item.type === 'note') {
+                                                                                        const rawNoteId = item.id.replace(/^n-/, '');
+                                                                                        handleDeleteNote(rawNoteId);
+                                                                                    }
+                                                                                }}
+                                                                                className="p-1 rounded hover:bg-rose-50 dark:hover:bg-rose-950/40 text-text-tertiary hover:text-rose-500 transition-all"
+                                                                                title="Delete Comment"
                                                                             >
-                                                                                <Trash2 className="w-3 h-3 text-text-tertiary hover:text-rose-500" />
+                                                                                <Trash2 className="w-3.5 h-3.5" />
                                                                             </button>
                                                                         </>
                                                                     )}
                                                                 </div>
                                                             </div>
-                                                            {isEditing ? (
+                                                            {isEditing || (item.type === 'note' && editingNoteId === item.id.replace(/^n-/, '')) ? (
                                                                 <div className="mt-2 space-y-1.5">
                                                                     <textarea
-                                                                        value={editingActivity.description}
-                                                                        onChange={e => setEditingActivity({ ...editingActivity, description: e.target.value })}
+                                                                        value={item.type === 'note' ? noteDraft : editingActivity?.description || ''}
+                                                                        onChange={e => {
+                                                                            if (item.type === 'note') setNoteDraft(e.target.value);
+                                                                            else if (editingActivity) setEditingActivity({ ...editingActivity, description: e.target.value });
+                                                                        }}
                                                                         rows={2}
                                                                         className="w-full border border-border rounded-lg px-2.5 py-1.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
                                                                     />
                                                                     <div className="flex gap-2">
-                                                                        <button onClick={handleSaveActivityEdit} disabled={savingActivity} className="px-3 py-1 bg-primary text-white rounded-lg text-xs font-bold disabled:opacity-50">
-                                                                            {savingActivity ? 'Saving…' : 'Save'}
+                                                                        <button onClick={() => {
+                                                                            if (item.type === 'note') handleSaveNoteEdit(item.id.replace(/^n-/, ''));
+                                                                            else handleSaveActivityEdit();
+                                                                        }} disabled={savingActivity || savingNote} className="px-3 py-1 bg-primary text-white rounded-lg text-xs font-bold disabled:opacity-50">
+                                                                            {(savingActivity || savingNote) ? 'Saving…' : 'Save'}
                                                                         </button>
-                                                                        <button onClick={() => setEditingActivity(null)} className="px-3 py-1 text-xs font-bold text-text-secondary hover:bg-surface-elevated rounded-lg">Cancel</button>
+                                                                        <button onClick={() => {
+                                                                            setEditingActivity(null);
+                                                                            setEditingNoteId(null);
+                                                                        }} className="px-3 py-1 text-xs font-bold text-text-secondary hover:bg-surface-elevated rounded-lg">Cancel</button>
                                                                     </div>
                                                                 </div>
                                                             ) : (
@@ -1200,69 +1418,69 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
                                             <p>No notes yet</p>
                                         </div>
                                     ) : (
-                                        notes.map(note => (
-                                            <div key={note.id} className="p-4 bg-surface-elevated rounded-xl group relative">
-                                                {editingNoteId === note.id ? (
-                                                    <div className="space-y-2">
-                                                        <textarea
-                                                            value={editingNoteText}
-                                                            onChange={(e) => setEditingNoteText(e.target.value)}
-                                                            className="w-full border border-border rounded-lg p-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary bg-surface text-text-primary"
-                                                            rows={3}
-                                                        />
-                                                        <div className="flex gap-2">
-                                                            <button
-                                                                onClick={() => handleEditNote(note.id)}
-                                                                disabled={!editingNoteText.trim() || isSavingNote}
-                                                                className="px-3 py-1 bg-primary text-white rounded-lg text-xs font-bold disabled:opacity-50"
-                                                            >
-                                                                {isSavingNote ? 'Saving...' : 'Save'}
-                                                            </button>
-                                                            <button
-                                                                onClick={() => {
-                                                                    setEditingNoteId(null);
-                                                                    setEditingNoteText('');
-                                                                }}
-                                                                className="px-3 py-1 text-xs font-bold text-text-secondary hover:bg-surface rounded-lg"
-                                                            >
-                                                                Cancel
-                                                            </button>
+                                        notes.map(note => {
+                                            const isEditing = editingNoteId === note.id;
+                                            return (
+                                                <div key={note.id} className="p-4 bg-surface-elevated rounded-xl group relative">
+                                                    {isEditing ? (
+                                                        <div className="space-y-2">
+                                                            <textarea
+                                                                value={noteDraft}
+                                                                onChange={(e) => setNoteDraft(e.target.value)}
+                                                                rows={3}
+                                                                className="w-full border border-border rounded-lg p-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary bg-surface text-text-primary"
+                                                            />
+                                                            <div className="flex gap-2 justify-end">
+                                                                <button
+                                                                    onClick={() => setEditingNoteId(null)}
+                                                                    className="px-3 py-1.5 text-xs font-bold text-text-secondary hover:bg-muted rounded-lg"
+                                                                >
+                                                                    Cancel
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => handleSaveNoteEdit(note.id)}
+                                                                    disabled={savingNote}
+                                                                    className="px-3 py-1.5 bg-primary text-white rounded-lg text-xs font-bold disabled:opacity-50"
+                                                                >
+                                                                    {savingNote ? 'Saving...' : 'Save'}
+                                                                </button>
+                                                            </div>
                                                         </div>
-                                                    </div>
-                                                ) : (
-                                                    <>
-                                                        <p className="text-sm text-text-primary whitespace-pre-wrap break-words">{note.note}</p>
-                                                        <div className="flex items-center justify-between mt-3">
-                                                            <span className="text-xs text-text-tertiary">
-                                                                {note.user_info?.full_name || 'Unknown'}
-                                                            </span>
-                                                            <div className="flex items-center gap-3">
-                                                                <span className="text-xs text-text-tertiary">{formatDate(note.created_at)}</span>
-                                                                <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                    ) : (
+                                                        <>
+                                                            <div className="flex items-start justify-between gap-3">
+                                                                <p className="text-sm text-text-primary whitespace-pre-wrap break-words flex-1">{note.note}</p>
+                                                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                                                     <button
                                                                         onClick={() => {
                                                                             setEditingNoteId(note.id);
-                                                                            setEditingNoteText(note.note);
+                                                                            setNoteDraft(note.note);
                                                                         }}
-                                                                        className="p-1 text-text-tertiary hover:text-primary transition-colors"
+                                                                        className="p-1 rounded hover:bg-surface transition-all text-text-tertiary hover:text-text-primary"
                                                                         title="Edit Note"
                                                                     >
                                                                         <Pencil className="w-3.5 h-3.5" />
                                                                     </button>
                                                                     <button
                                                                         onClick={() => handleDeleteNote(note.id)}
-                                                                        className="p-1 text-text-tertiary hover:text-red-500 transition-colors"
+                                                                        className="p-1 rounded hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-all text-text-tertiary hover:text-rose-500"
                                                                         title="Delete Note"
                                                                     >
                                                                         <Trash2 className="w-3.5 h-3.5" />
                                                                     </button>
                                                                 </div>
                                                             </div>
-                                                        </div>
-                                                    </>
-                                                )}
-                                            </div>
-                                        ))
+                                                            <div className="flex items-center justify-between mt-3">
+                                                                <span className="text-xs text-text-tertiary">
+                                                                    {note.user_info?.full_name || 'Unknown'}
+                                                                </span>
+                                                                <span className="text-xs text-text-tertiary">{formatDate(note.created_at)}</span>
+                                                            </div>
+                                                        </>
+                                                    )}
+                                                </div>
+                                            );
+                                        })
                                     )}
                                 </div>
                             )}
@@ -1316,6 +1534,7 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
         <AnimatePresence>
             {stageComment.open && (
                 <motion.div
+                    key="stage-comment-backdrop"
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
@@ -1370,6 +1589,12 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
                 </motion.div>
             )}
         </AnimatePresence>
+        <Toast
+            message={toast.message}
+            type={toast.type}
+            visible={toast.visible}
+            onClose={() => setToast(prev => ({ ...prev, visible: false }))}
+        />
         </>
     );
 }

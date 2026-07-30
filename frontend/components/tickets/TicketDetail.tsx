@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import {
-    ArrowLeft, Clock, User, MapPin, Send, CheckCircle, Circle, Camera,
+    ArrowLeft, Clock, User, MapPin, Send, CheckCircle, CheckCircle2, Circle, Camera,
     AlertTriangle, Pause, Play, Video, Upload, X, Loader2, Package, ShoppingBag, Paperclip
 } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -116,6 +116,9 @@ export default function TicketDetail({ ticketId, onBack, isAdmin = false }: Tick
     const { user } = useAuth();
     const userRole = user?.user_metadata?.role || '';
     const isTenant = userRole === 'tenant';
+    const isMasterAdmin = userRole === 'master_admin';
+    const isOrgSuperAdmin = userRole === 'org_super_admin';
+    const isProcurement = userRole.includes('procurement');
 
     const [ticket, setTicket] = useState<Record<string, unknown> | null>(null);
     const [timeline, setTimeline] = useState<TimelineStep[]>([]);
@@ -197,7 +200,7 @@ export default function TicketDetail({ ticketId, onBack, isAdmin = false }: Tick
         }
     };
 
-    const handleProcurementAction = async (requestId: string, status: 'approved' | 'rejected') => {
+    const handleProcurementAction = async (requestId: string, status: 'approved' | 'rejected' | 'delivered') => {
         try {
             const res = await fetch(`/api/procurement/requests/${requestId}`, {
                 method: 'PATCH',
@@ -808,7 +811,20 @@ export default function TicketDetail({ ticketId, onBack, isAdmin = false }: Tick
                                         </div>
                                     </div>
                                     
-
+                                    {/* Actions */}
+                                    {(req.status === 'ordered' || req.status === 'approved') && (
+                                        isMasterAdmin || isOrgSuperAdmin || isProcurement || req.requested_by === user?.id
+                                    ) && (
+                                        <div className="mt-4 border-t border-[#30363d] pt-4">
+                                            <button
+                                                onClick={() => handleProcurementAction(req.id, 'delivered')}
+                                                className="w-full bg-[#238636] hover:bg-[#2ea043] text-white font-semibold py-2 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors"
+                                            >
+                                                <CheckCircle2 className="w-4 h-4" />
+                                                MARK AS DELIVERED / RECEIVED
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
                             ))}
                         </div>

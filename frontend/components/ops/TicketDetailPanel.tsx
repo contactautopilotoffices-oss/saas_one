@@ -23,11 +23,13 @@ export default function TicketDetailPanel({
 
     const formatDate = (dateStr: string | null) => {
         if (!dateStr) return 'Not yet';
-        return new Date(dateStr).toLocaleString([], {
-            month: 'short',
-            day: 'numeric',
+        return new Date(dateStr).toLocaleString('en-GB', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
             hour: '2-digit',
-            minute: '2-digit'
+            minute: '2-digit',
+            hour12: true
         });
     };
 

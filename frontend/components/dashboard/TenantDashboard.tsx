@@ -387,23 +387,13 @@ const TenantDashboard = () => {
         <div className="p-10 text-center">
             <h2 className="text-xl font-bold text-error">Error Loading Dashboard</h2>
             <p className="text-text-secondary mt-2">{errorMsg || 'Property not found.'}</p>
-            
-                    <button
-                        onClick={() => setShowFeedbackModal(true)}
-                        className="w-full flex items-center gap-3 px-4 py-3 rounded-[var(--radius-md)] transition-smooth font-bold text-sm ${activeTab === 'overview' ? 'bg-primary text-text-inverse shadow-sm' : 'text-text-secondary hover:bg-muted hover:text-text-primary' } group"
-                    >
-                        <MessageSquarePlus className="w-4 h-4 group-hover:scale-110 transition-transform" />
-                        Feedback / Bug
-                    </button>
-
-            <FeedbackModal isOpen={showFeedbackModal} onClose={() => setShowFeedbackModal(false)} />
-
-<button onClick={() => router.back()} className="mt-4 text-primary font-bold hover:underline">Go Back</button>
+            <button onClick={() => router.back()} className="mt-4 text-primary font-bold hover:underline">Go Back</button>
         </div>
     );
 
     return (
         <div className="min-h-screen w-full bg-background text-foreground flex overflow-x-hidden">
+            <FeedbackModal isOpen={showFeedbackModal} onClose={() => setShowFeedbackModal(false)} />
 
 
             {/* Overlay when sidebar is open */}
@@ -530,6 +520,13 @@ const TenantDashboard = () => {
                                     System & Personal
                                 </p>
                                 <div className="space-y-1">
+                                    <button
+                                        onClick={() => { setShowFeedbackModal(true); setSidebarOpen(false); }}
+                                        className="w-full flex items-center gap-3 px-4 py-3 rounded-[var(--radius-md)] transition-smooth font-bold text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
+                                    >
+                                        <MessageSquarePlus className="w-4 h-4 text-primary" />
+                                        Feedback / Bug
+                                    </button>
                                     <button
                                         onClick={() => { handleTabChange('settings'); setSidebarOpen(false); }}
                                         className={`w-full flex items-center gap-3 px-4 py-3 rounded-[var(--radius-md)] transition-smooth font-bold text-sm ${activeTab === 'settings'

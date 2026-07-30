@@ -11,7 +11,7 @@ async function activityGuard(request: NextRequest, id: string) {
 
     const { data: lead } = await supabaseAdmin
         .from('crm_leads')
-        .select('id, organization_id, created_by, assigned_to, city')
+        .select('id, organization_id, created_by, assigned_to, city, location, campaign')
         .eq('id', activity.lead_id)
         .maybeSingle();
     if (!lead) return { error: NextResponse.json({ error: 'Lead not found' }, { status: 404 }) };

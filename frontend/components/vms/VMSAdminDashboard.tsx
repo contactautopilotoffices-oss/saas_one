@@ -3,9 +3,10 @@
 import React, { useState, useEffect } from 'react';
 import {
     Users, Clock, LogIn, LogOut, Search, FileDown,
-    CheckCircle2, User, Truck, Building2, X, Calendar, ChevronDown
+    CheckCircle2, User, Truck, Building2, X, Calendar, ChevronDown, Plus
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import VMSKiosk from './VMSKiosk';
 
 interface VMSAdminDashboardProps {
     propertyId: string;
@@ -38,6 +39,7 @@ const VMSAdminDashboard: React.FC<VMSAdminDashboardProps> = ({ propertyId }) => 
     const [customDate, setCustomDate] = useState('');
     const [selectedVisitor, setSelectedVisitor] = useState<VisitorLog | null>(null);
     const [actionLoading, setActionLoading] = useState(false);
+    const [showCheckInModal, setShowCheckInModal] = useState(false);
 
     // Debounce search query - wait 300ms after user stops typing before searching
     useEffect(() => {
@@ -401,6 +403,14 @@ const VMSAdminDashboard: React.FC<VMSAdminDashboardProps> = ({ propertyId }) => 
                         >
                             <FileDown className="w-4 h-4" /> Export
                         </button>
+
+                        {/* Check-In Visitor Button */}
+                        <button
+                            onClick={() => setShowCheckInModal(true)}
+                            className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary-dark text-white rounded-xl text-sm font-bold transition-all shadow-sm hover:shadow"
+                        >
+                            <Plus className="w-4 h-4" /> Check-In Visitor
+                        </button>
                     </div>
                 </div>
 
@@ -490,9 +500,9 @@ const VMSAdminDashboard: React.FC<VMSAdminDashboardProps> = ({ propertyId }) => 
                                                 <button
                                                     onClick={() => handleForceCheckout(visitor)}
                                                     disabled={actionLoading}
-                                                    className="px-3 py-1 bg-rose-50 text-rose-600 rounded-lg text-xs font-bold hover:bg-rose-100 transition-all disabled:opacity-50"
+                                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm disabled:opacity-50"
                                                 >
-                                                    Force Out
+                                                    <LogOut className="w-3.5 h-3.5" /> Check Out
                                                 </button>
                                             )}
                                         </td>
@@ -679,6 +689,39 @@ const VMSAdminDashboard: React.FC<VMSAdminDashboardProps> = ({ propertyId }) => 
                             </div>
                         </motion.div>
                     </motion.div>
+                )}
+            </AnimatePresence>
+
+            {/* Modal: Check-In Visitor (VMSKiosk) */}
+            <AnimatePresence>
+                {showCheckInModal && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+                        <motion.div
+                            initial={{ opacity: 0, scale: 0.95 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            exit={{ opacity: 0, scale: 0.95 }}
+                            className="bg-white dark:bg-slate-800 w-full max-w-4xl max-h-[90vh] rounded-3xl border border-slate-200 dark:border-slate-700 shadow-2xl overflow-hidden flex flex-col"
+                        >
+                            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900">
+                                <div className="flex items-center gap-2">
+                                    <LogIn className="w-5 h-5 text-primary" />
+                                    <h3 className="font-bold text-slate-900 dark:text-white text-lg">Visitor Entry & Check-In</h3>
+                                </div>
+                                <button
+                                    onClick={() => {
+                                        setShowCheckInModal(false);
+                                        fetchVisitors();
+                                    }}
+                                    className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                                >
+                                    <X className="w-5 h-5" />
+                                </button>
+                            </div>
+                            <div className="p-4 flex-1 overflow-y-auto min-h-[550px]">
+                                <VMSKiosk propertyId={propertyId} propertyName="" />
+                            </div>
+                        </motion.div>
+                    </div>
                 )}
             </AnimatePresence>
         </div>

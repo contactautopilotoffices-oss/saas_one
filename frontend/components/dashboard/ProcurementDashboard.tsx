@@ -7,14 +7,17 @@ import {
     Settings, UserCircle, LogOut, Search, Filter, 
     ChevronDown, ChevronRight, Building2, Calendar, Menu, X,
     ArrowUpRight, Scan, Truck, RefreshCw, Box, Clock,
-    AlertCircle, ExternalLink, Trash2, Camera, Link2, Shield, User, Loader2, FileText, MessageSquarePlus
+    AlertCircle, ExternalLink, Trash2, Camera, Link2, Shield, User, Loader2, FileText, MessageSquarePlus, FileSpreadsheet, FileUp
 } from 'lucide-react';
+import { useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import NotificationBell from './NotificationBell';
 import ProcurementPOProcessor from '../procurement/ProcurementPOProcessor';
 import ProcurementStatusModal from './ProcurementStatusModal';
+import ProcurementComparativeFlow from './ProcurementComparativeFlow';
 import ProcurementCatalogModal from '../procurement/ProcurementCatalogModal';
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
+import MonthlyRequisitionsTab from '../procurement/MonthlyRequisitionsTab';
 
 // --- Types ---
 interface MaterialRequest {
@@ -22,6 +25,7 @@ interface MaterialRequest {
     ticket_id: string;
     status: string;
     requested_by: string;
+    procurement_viewed_at?: string;
     assignee_uid: string;
     created_at: string;
     updated_at: string;
@@ -48,10 +52,11 @@ interface MaterialRequest {
     };
 }
 
-type Tab = 'overview' | 'requests' | 'history' | 'manage-items' | 'po-generator' | 'settings' | 'profile';
+type Tab = 'overview' | 'requests' | 'history' | 'manage-items' | 'po-generator' | 'monthly-requisitions' | 'settings' | 'profile';
 
 export default function ProcurementDashboard() {
     const supabase = createClient();
+    const searchParams = useSearchParams();
     const [showFeedbackModal, setShowFeedbackModal] = useState(false);
     const [user, setUser] = useState<any>(null);
     const [requests, setRequests] = useState<MaterialRequest[]>([]);
@@ -59,6 +64,13 @@ export default function ProcurementDashboard() {
     const [procurementUsers, setProcurementUsers] = useState<any[]>([]);
     const [allProperties, setAllProperties] = useState<any[]>([]);
     const [activeTab, setActiveTab] = useState<Tab>('overview');
+
+    useEffect(() => {
+        const tabParam = searchParams?.get('tab') as Tab | null;
+        if (tabParam && ['overview', 'requests', 'history', 'manage-items', 'po-generator', 'monthly-requisitions', 'settings', 'profile'].includes(tabParam)) {
+            setActiveTab(tabParam);
+        }
+    }, [searchParams]);
     const [statusFilter, setStatusFilter] = useState('all');
     const [propertyFilter, setPropertyFilter] = useState('all');
     const [timeRange, setTimeRange] = useState<'today' | 'month' | 'all'>('all');
@@ -197,7 +209,9 @@ export default function ProcurementDashboard() {
                 body: JSON.stringify({ material_id: requestId, status: newStatus })
             });
             if (res.ok) {
-                setRequests(prev => prev.map(r => r.id === requestId ? { ...r, status: newStatus } : r));
+                setRequests(prev => prev.map(r => r.id === requestId ? 
+                    (newStatus === 'acknowledge' ? { ...r, procurement_viewed_at: new Date().toISOString() } : { ...r, status: newStatus }) 
+                : r));
                 fetchActivities();
                 showToast(`Request marked as ${newStatus}`, 'success');
             }
@@ -240,6 +254,24 @@ export default function ProcurementDashboard() {
         setSelectedTicketId(ticketId);
         setStatusModalOpen(true);
     };
+
+    const isProcurementUser = useMemo(() => {
+        const role = user?.user_metadata?.role?.toLowerCase() || '';
+        return role.includes('procurement') || role === 'org_super_admin' || role === 'master_admin' || role === 'admin';
+    }, [user]);
+
+    const isAdmin = useMemo(() => {
+        const role = user?.user_metadata?.role?.toLowerCase() || '';
+        return ['org_super_admin', 'master_admin', 'property_admin', 'org_admin'].includes(role);
+    }, [user]);
+
+    const canMarkDelivered = useMemo(() => {
+        const role = user?.user_metadata?.role?.toLowerCase() || '';
+        const isSiteTeamOrAdmin = ['org_super_admin', 'master_admin', 'org_admin', 'property_admin', 'staff', 'mst'].includes(role);
+        const isPureProcurement = role.includes('procurement') && !['org_super_admin', 'master_admin', 'org_admin', 'property_admin'].includes(role);
+        return isSiteTeamOrAdmin && !isPureProcurement;
+    }, [user]);
+
     const requestProperties = useMemo(() => {
         const map = new Map<string, string>();
         requests.forEach(r => {
@@ -430,6 +462,7 @@ export default function ProcurementDashboard() {
                                 {[
                                     { id: 'overview', icon: LayoutDashboard, label: 'Dashboard' },
                                     { id: 'requests', icon: Package, label: 'Active Orders' },
+                                    { id: 'monthly-requisitions', icon: FileSpreadsheet, label: 'Monthly Requisitions' },
                                     { id: 'history', icon: CheckCircle2, label: 'Order History' },
                                     { id: 'manage-items', icon: ShoppingCart, label: 'Manage Items' },
                                     { id: 'po-generator', icon: FileText, label: 'PO Generator' },
@@ -600,9 +633,17 @@ export default function ProcurementDashboard() {
                                 selectedRequestId={selectedRequestId}
                                 setSelectedRequestId={setSelectedRequestId}
                                 handleOpenStatusModal={handleOpenStatusModal}
+                                fetchRequests={fetchRequests}
                             />
                         )}
-                                                {activeTab === 'history' && <HistoryTab requests={requests} user={user} />}
+                        {activeTab === 'history' && <HistoryTab requests={requests} user={user} />}
+                        {activeTab === 'monthly-requisitions' && (
+                            <MonthlyRequisitionsTab
+                                user={user}
+                                organizationId={user?.user_metadata?.organization_id}
+                                userRole={user?.user_metadata?.role || 'procurement_user'}
+                            />
+                        )}
                         {activeTab === 'manage-items' && (
                             <ManageItemsTab 
                                 organizationId={user?.user_metadata?.organization_id} 
@@ -796,9 +837,26 @@ function RequestsTab({
     tabCounts, updatingId, reassigningId, setReassigningId, onUpdateStatus, 
     onReassign, onDeleteRequest, procurementUsers, user, shouldShowPrice,
     statusModalOpen, setStatusModalOpen, selectedRequestId, setSelectedRequestId,
-    handleOpenStatusModal
+    handleOpenStatusModal, fetchRequests
 }: any) {
     const [expandedId, setExpandedId] = useState<string | null>(null);
+
+    const isProcurementUser = React.useMemo(() => {
+        const role = user?.user_metadata?.role?.toLowerCase() || '';
+        return role.includes('procurement') || role === 'org_super_admin' || role === 'master_admin' || role === 'admin';
+    }, [user]);
+
+    const isAdmin = React.useMemo(() => {
+        const role = user?.user_metadata?.role?.toLowerCase() || '';
+        return ['org_super_admin', 'master_admin', 'property_admin', 'org_admin'].includes(role);
+    }, [user]);
+
+    const canMarkDelivered = React.useMemo(() => {
+        const role = user?.user_metadata?.role?.toLowerCase() || '';
+        const isSiteTeamOrAdmin = ['org_super_admin', 'master_admin', 'org_admin', 'property_admin', 'staff', 'mst'].includes(role);
+        const isPureProcurement = role.includes('procurement') && !['org_super_admin', 'master_admin', 'org_admin', 'property_admin'].includes(role);
+        return isSiteTeamOrAdmin && !isPureProcurement;
+    }, [user]);
 
     return (
         <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-6">
@@ -1026,6 +1084,12 @@ function RequestsTab({
                                             </div>
                                         ))}
                                     </div>
+                                    <ProcurementComparativeFlow
+                                        request={req}
+                                        isAdmin={isAdmin}
+                                        isProcurementUser={isProcurementUser}
+                                        onAction={fetchRequests}
+                                    />
                                     <div className="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between gap-4">
                                         <div className="flex items-center gap-2">
                                             <a href={`/tickets/${req.ticket_id}`} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 px-5 py-2.5 bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all">
@@ -1038,12 +1102,17 @@ function RequestsTab({
                                             )}
                                         </div>
                                         <div className="flex items-center gap-2">
-                                            {req.status === 'pending_quotation' && (
+                                            {!req.procurement_viewed_at && req.status !== 'delivered' && req.status !== 'ordered' && isProcurementUser && (
+                                                <button onClick={() => onUpdateStatus(req.id, 'acknowledge', req.ticket_id)} disabled={updatingId === req.id} className="flex items-center justify-center gap-2 px-5 py-2.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all active:scale-95 disabled:opacity-50">
+                                                    {updatingId === req.id ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />} Acknowledge
+                                                </button>
+                                            )}
+                                            {req.status === 'approved' && (
                                                 <button onClick={() => onUpdateStatus(req.id, 'ordered', req.ticket_id)} disabled={updatingId === req.id} className="flex items-center justify-center gap-2 px-8 py-3 bg-primary text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all active:scale-95 disabled:opacity-50 shadow-lg shadow-primary/20 hover:bg-primary-dark">
                                                     {updatingId === req.id ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ShoppingCart className="w-4 h-4" />} Buy
                                                 </button>
                                             )}
-                                            {req.status === 'ordered' && (
+                                            {req.status === 'ordered' && (canMarkDelivered || req.requested_by === user?.id) && (
                                                 <button onClick={() => onUpdateStatus(req.id, 'delivered', req.ticket_id)} disabled={updatingId === req.id} className="flex items-center justify-center gap-2 px-8 py-3 bg-emerald-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all active:scale-95 disabled:opacity-50 shadow-lg shadow-emerald-200 hover:bg-emerald-700">
                                                     {updatingId === req.id ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Truck className="w-4 h-4" />} Delivered
                                                 </button>

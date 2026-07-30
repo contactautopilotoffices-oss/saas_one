@@ -119,3 +119,36 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
     }
 }
+
+/**
+ * DELETE /api/properties?id=<propertyId>
+ * Soft delete property (sets is_active = false and deleted_at = NOW())
+ */
+export async function DELETE(request: NextRequest) {
+    try {
+        const { searchParams } = new URL(request.url);
+        const propertyId = searchParams.get('id');
+
+        if (!propertyId) {
+            return NextResponse.json({ error: 'Property ID is required' }, { status: 400 });
+        }
+
+        const { error } = await supabaseAdmin
+            .from('properties')
+            .update({
+                is_active: false,
+                status: 'inactive'
+            })
+            .eq('id', propertyId);
+
+        if (error) {
+            console.error('Error soft deleting property:', error);
+            return NextResponse.json({ error: error.message }, { status: 500 });
+        }
+
+        return NextResponse.json({ success: true, message: 'Property soft-deleted' });
+    } catch (error: any) {
+        console.error('Property delete API error:', error);
+        return NextResponse.json({ error: 'Internal server error', details: error.message }, { status: 500 });
+    }
+}

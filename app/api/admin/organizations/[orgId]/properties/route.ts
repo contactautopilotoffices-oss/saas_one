@@ -17,6 +17,7 @@ export async function GET(
         .from('properties')
         .select('*')
         .eq('organization_id', orgId)
+        .neq('status', 'crm_interest')
         .order('created_at', { ascending: false });
 
     if (error) {

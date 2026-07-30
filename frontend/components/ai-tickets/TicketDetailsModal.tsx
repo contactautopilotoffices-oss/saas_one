@@ -1,7 +1,7 @@
 "use client";
 
-import React from 'react';
-import { X, ExternalLink, Code2, AlertTriangle, MessageSquare, Cpu, Github } from 'lucide-react';
+import React, { useState } from 'react';
+import { X, ExternalLink, Code2, AlertTriangle, MessageSquare, Cpu, Github, Maximize2 } from 'lucide-react';
 import { TicketStatusBadge } from './TicketStatusBadge';
 
 interface TicketDetailsModalProps {
@@ -10,111 +10,181 @@ interface TicketDetailsModalProps {
 }
 
 export function TicketDetailsModal({ ticket, onClose }: TicketDetailsModalProps) {
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
+
   if (!ticket) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6">
-      {/* Backdrop */}
-      <div 
-        className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity" 
-        onClick={onClose}
-      />
-      
-      {/* Modal */}
-      <div className="relative w-full max-w-2xl bg-surface border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+    <>
+      <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6">
+        {/* Backdrop */}
+        <div 
+          className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity" 
+          onClick={onClose}
+        />
         
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 sm:p-6 border-b border-slate-800 bg-slate-900/50">
-          <div>
-            <div className="flex items-center gap-3 mb-1">
-              <h2 className="text-lg font-semibold text-text-primary">
-                Ticket {ticket.id.substring(0, 8)}
-              </h2>
-              <TicketStatusBadge status={ticket.status} />
-            </div>
-            <p className="text-sm text-text-secondary">
-              Submitted by {ticket.submitted_by_name || 'Anonymous'} • {new Date(ticket.created_at).toLocaleString()}
-            </p>
-          </div>
-          <button 
-            onClick={onClose}
-            className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-200 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* Scrollable Content */}
-        <div className="p-4 sm:p-6 overflow-y-auto space-y-6 flex-1">
+        {/* Modal */}
+        <div className="relative w-full max-w-2xl bg-background border border-border rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
           
-          {/* User Report */}
-          <div className="space-y-3">
-            <h3 className="text-sm font-medium text-slate-300 flex items-center gap-2">
-              <MessageSquare className="w-4 h-4 text-primary" />
-              Original Report
-            </h3>
-            <div className="p-4 bg-slate-900/50 rounded-xl border border-slate-800 text-sm text-text-primary">
-              <p><span className="text-slate-500 mr-2">Category:</span> {ticket.error_category || ticket.type}</p>
-              <p className="mt-2"><span className="text-slate-500 mr-2">Description:</span> {ticket.error_text || ticket.feature_description}</p>
-              {ticket.error_page_url && (
-                <p className="mt-2"><span className="text-slate-500 mr-2">Page URL:</span> <a href={ticket.error_page_url} target="_blank" rel="noreferrer" className="text-primary hover:underline">{ticket.error_page_url}</a></p>
-              )}
+          {/* Header */}
+          <div className="flex items-center justify-between p-4 sm:p-6 border-b border-border bg-muted/40">
+            <div>
+              <div className="flex items-center gap-3 mb-1">
+                <h2 className="text-lg font-bold text-foreground">
+                  Ticket #{ticket.id.substring(0, 8)}
+                </h2>
+                <TicketStatusBadge status={ticket.status} />
+              </div>
+              <p className="text-xs font-medium text-text-secondary">
+                Submitted by <span className="font-semibold text-text-primary">{ticket.submitted_by_name || 'Anonymous'}</span> • {new Date(ticket.created_at).toLocaleString()}
+              </p>
             </div>
+            <button 
+              onClick={onClose}
+              className="p-2 hover:bg-muted rounded-xl text-text-secondary hover:text-text-primary transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
           </div>
 
-          {/* AI Analysis (If available) */}
-          {ticket.ai_analysis && (
+          {/* Scrollable Content */}
+          <div className="p-4 sm:p-6 overflow-y-auto space-y-6 flex-1">
+            
+            {/* User Report */}
             <div className="space-y-3">
-              <h3 className="text-sm font-medium text-slate-300 flex items-center gap-2">
-                <Cpu className="w-4 h-4 text-purple-400" />
-                AI Analysis & Fix
+              <h3 className="text-xs font-bold uppercase tracking-wider text-text-secondary flex items-center gap-2">
+                <MessageSquare className="w-4 h-4 text-primary" />
+                Original Report
               </h3>
-              <div className="p-4 bg-purple-900/10 rounded-xl border border-purple-500/20 text-sm text-text-primary">
-                <p className="whitespace-pre-wrap">{ticket.ai_analysis.explanation}</p>
-                
-                {ticket.ai_analysis.filesChanged && (
-                  <div className="mt-4 space-y-2">
-                    <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Modified Files</p>
-                    {ticket.ai_analysis.filesChanged.map((file: any, idx: number) => (
-                      <div key={idx} className="flex items-center gap-2 text-xs font-mono text-slate-300 bg-slate-900 p-2 rounded-md border border-slate-800">
-                        <Code2 className="w-3 h-3 text-emerald-400" />
-                        {file.path}
-                      </div>
-                    ))}
+              <div className="p-4 bg-surface rounded-xl border border-border text-sm text-foreground space-y-3 shadow-xs">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
+                  <span className="text-text-secondary text-xs font-bold uppercase tracking-wider min-w-[90px]">Category:</span>
+                  <span className="font-bold text-text-primary capitalize bg-primary/10 text-primary px-2.5 py-0.5 rounded-full text-xs inline-block w-fit">
+                    {ticket.error_category || ticket.target_module || ticket.type}
+                  </span>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <span className="text-text-secondary text-xs font-bold uppercase tracking-wider">Description:</span>
+                  <p className="text-text-primary font-medium leading-relaxed whitespace-pre-wrap bg-muted/30 p-3 rounded-lg border border-border/50 text-sm">
+                    {ticket.error_text || ticket.feature_description || 'No description provided.'}
+                  </p>
+                </div>
+
+                {ticket.attachments && ticket.attachments.length > 0 && (
+                  <div className="mt-4 pt-3 border-t border-border">
+                    <p className="text-xs font-bold text-text-secondary uppercase tracking-wider mb-3">
+                      Attached Screenshots ({ticket.attachments.length})
+                    </p>
+                    <div className="flex gap-3 flex-wrap">
+                      {ticket.attachments.map((url: string, idx: number) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => setPreviewImage(url)}
+                          className="group relative w-24 h-24 rounded-xl overflow-hidden border border-border hover:border-primary transition-all shadow-sm bg-black/5 dark:bg-white/5 focus:outline-none focus:ring-2 focus:ring-primary"
+                        >
+                          <img 
+                            src={url} 
+                            alt={`Screenshot ${idx + 1}`} 
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform" 
+                          />
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center transition-opacity text-white text-xs font-bold gap-1 backdrop-blur-[2px]">
+                            <Maximize2 className="w-4 h-4" />
+                            Preview
+                          </div>
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
             </div>
-          )}
 
-          {/* GitHub PR */}
-          {ticket.github_pr_url && (
-            <div className="pt-4 border-t border-slate-800">
-              <a 
-                href={ticket.github_pr_url} 
-                target="_blank" 
-                rel="noreferrer"
-                className="w-full flex items-center justify-center gap-2 py-3 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl transition-colors font-medium border border-slate-700"
-              >
-                <Github className="w-5 h-5" />
-                View Pull Request on GitHub
-                <ExternalLink className="w-4 h-4 ml-1 opacity-50" />
-              </a>
-            </div>
-          )}
-          
-          {/* Failure Reason */}
-          {ticket.failure_reason && (
-            <div className="p-4 bg-red-500/10 rounded-xl border border-red-500/20 text-sm text-red-400 flex items-start gap-3">
-              <AlertTriangle className="w-5 h-5 shrink-0" />
-              <div>
-                <p className="font-medium text-red-300 mb-1">Processing Failed</p>
-                <p>{ticket.failure_reason}</p>
+            {/* AI Analysis (If available) */}
+            {ticket.ai_analysis && (
+              <div className="space-y-3">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-purple-600 dark:text-purple-400 flex items-center gap-2">
+                  <Cpu className="w-4 h-4 text-purple-500" />
+                  AI Analysis & Resolution Plan
+                </h3>
+                <div className="p-4 bg-purple-500/5 dark:bg-purple-950/20 rounded-xl border border-purple-500/20 text-sm text-foreground space-y-3">
+                  <p className="whitespace-pre-wrap font-medium leading-relaxed">
+                    {ticket.ai_analysis.explanation}
+                  </p>
+                  
+                  {ticket.ai_analysis.filesChanged && (
+                    <div className="mt-4 space-y-2">
+                      <p className="text-xs font-bold text-text-secondary uppercase tracking-wider">Modified Code Files</p>
+                      {ticket.ai_analysis.filesChanged.map((file: any, idx: number) => (
+                        <div key={idx} className="flex items-center gap-2 text-xs font-mono text-text-primary bg-muted p-2.5 rounded-lg border border-border">
+                          <Code2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                          <span className="truncate">{file.path}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          )}
+            )}
+
+            {/* GitHub PR */}
+            {ticket.github_pr_url && (
+              <div className="pt-2">
+                <a 
+                  href={ticket.github_pr_url} 
+                  target="_blank" 
+                  rel="noreferrer"
+                  className="w-full flex items-center justify-center gap-2 py-3 bg-muted hover:bg-primary hover:text-white text-text-primary rounded-xl transition-colors font-bold border border-border"
+                >
+                  <Github className="w-5 h-5" />
+                  View Pull Request on GitHub
+                  <ExternalLink className="w-4 h-4 ml-1 opacity-60" />
+                </a>
+              </div>
+            )}
+            
+            {/* Failure Reason */}
+            {ticket.failure_reason && (
+              <div className="p-4 bg-rose-500/10 rounded-xl border border-rose-500/20 text-sm text-rose-600 dark:text-rose-400 flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 shrink-0 text-rose-500" />
+                <div>
+                  <p className="font-bold text-rose-600 dark:text-rose-400 mb-1">Processing Error</p>
+                  <p className="font-medium text-xs">{ticket.failure_reason}</p>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
-    </div>
+
+      {/* Fullscreen Image Preview Lightbox Modal */}
+      {previewImage && (
+        <div 
+          className="fixed inset-0 z-[200] bg-black/90 backdrop-blur-md flex items-center justify-center p-4 sm:p-8 animate-in fade-in duration-200"
+          onClick={() => setPreviewImage(null)}
+        >
+          <button
+            type="button"
+            onClick={() => setPreviewImage(null)}
+            className="absolute top-4 right-4 p-3 rounded-full bg-white/10 hover:bg-white/20 text-white transition-all z-10 focus:outline-none"
+            title="Close Preview"
+          >
+            <X className="w-6 h-6" />
+          </button>
+          
+          <div 
+            className="relative max-w-5xl max-h-[90vh] overflow-hidden flex items-center justify-center"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <img
+              src={previewImage}
+              alt="Screenshot Full Preview"
+              className="max-w-full max-h-[85vh] object-contain rounded-xl shadow-2xl border border-white/10"
+            />
+          </div>
+        </div>
+      )}
+    </>
   );
 }

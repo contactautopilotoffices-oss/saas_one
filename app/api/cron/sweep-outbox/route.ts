@@ -6,9 +6,10 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
     try {
-        // Vercel Cron secures the endpoint via a header
+        // Vercel Cron secures the endpoint via a header. Allow localhost testing.
         const authHeader = request.headers.get('authorization');
-        if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+        const isLocal = request.headers.get('host')?.includes('localhost');
+        if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}` && !isLocal) {
             return new NextResponse('Unauthorized', { status: 401 });
         }
 

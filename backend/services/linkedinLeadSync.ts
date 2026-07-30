@@ -143,13 +143,6 @@ export async function syncLinkedInLeadsForOrg(cfg: LinkedInConfig): Promise<Lead
         const seats = seatNums.length ? Math.max(...seatNums) : null;
 
         const cleaned = cleanPhone(phone);
-        const existing = await findExistingLead(cfg.organization_id, phone, email);
-        if (existing) {
-            // Tag the existing lead with the LinkedIn id so we don't re-evaluate it.
-            await supabaseAdmin.from('crm_leads').update({ linkedin_lead_id: String(leadId) }).eq('id', existing.id);
-            skipped++;
-            continue;
-        }
 
         const campaignName = resp.campaignName || resp.campaign || urnId(resp.campaign) || 'LinkedIn Lead Gen';
         const assignedTo = (await resolveDistributionAssignee(cfg.organization_id, campaignName, city).catch(() => null))

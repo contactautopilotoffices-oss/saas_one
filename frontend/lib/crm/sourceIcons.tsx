@@ -25,12 +25,17 @@ const WhatsAppIcon = ({ className, style }: { className?: string; style?: React.
     </svg>
 );
 
+const ABMIcon = ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+    <img src="/abm-icon.png" alt="ABM" className={`${className || 'w-4 h-4'} object-contain inline-block rounded-full`} style={style} />
+);
+
 interface SourceVisual {
     icon: React.ComponentType<{ className?: string; style?: React.CSSProperties }>;
     color: string;
 }
 
 const SOURCE_MAP: Record<string, SourceVisual> = {
+    abm: { icon: ABMIcon, color: '#0284C7' },
     facebook: { icon: FacebookIcon, color: '#1877F2' },
     linkedin: { icon: LinkedInIcon, color: '#0A66C2' },
     instagram: { icon: InstagramIcon, color: '#E4405F' },
@@ -44,6 +49,9 @@ const SOURCE_MAP: Record<string, SourceVisual> = {
 
 export function getSourceVisual(sourceName: string): SourceVisual {
     const key = sourceName.toLowerCase().trim();
+    if (key.includes('abm') || key.includes('account based')) {
+        return SOURCE_MAP.abm;
+    }
     for (const [k, v] of Object.entries(SOURCE_MAP)) {
         if (key.includes(k)) return v;
     }

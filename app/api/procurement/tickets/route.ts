@@ -20,6 +20,7 @@ export async function GET(request: NextRequest) {
             .select(`
                 *,
                 line_items:material_request_items(*),
+                comparatives:material_request_comparatives(*, created_by_user:users!material_request_comparatives_created_by_fkey(full_name), action_by_user:users!material_request_comparatives_action_by_fkey(full_name)),
                 ticket:tickets (
                     id,
                     ticket_number,
@@ -100,6 +101,12 @@ export async function GET(request: NextRequest) {
             if (req.target_approver_id) allUserIdsToResolve.add(req.target_approver_id);
             if (req.approved_by) allUserIdsToResolve.add(req.approved_by);
             if (req.rejected_by) allUserIdsToResolve.add(req.rejected_by);
+            
+            if (req.comparatives) {
+                req.comparatives.forEach((c: any) => {
+                    if (c.approver_uid) allUserIdsToResolve.add(c.approver_uid);
+                });
+            }
         });
 
         let userMap: Record<string, string> = {};
@@ -147,6 +154,14 @@ export async function GET(request: NextRequest) {
             const target_approver_names = (req.target_approver_ids || [])
                 .map((id: string) => userMap[id])
                 .filter(Boolean);
+
+            if (req.comparatives) {
+                req.comparatives.forEach((c: any) => {
+                    if (c.approver_uid) {
+                        c.approver_user = { full_name: userMap[c.approver_uid] };
+                    }
+                });
+            }
 
             const { line_items, ...rest } = req;
             

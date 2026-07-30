@@ -25,6 +25,7 @@ export async function PATCH(
             vendor_contact,
             vendor_email,
             vendor_address,
+            action,
             items // Array of { name, quantity, unit_price, photo_url, description, links }
         } = body;
 
@@ -61,6 +62,10 @@ export async function PATCH(
         // Set timestamps for ordered status
         if (status === 'ordered') {
             updateData.ordered_at = new Date().toISOString();
+        }
+
+        if (action === 'acknowledge') {
+            updateData.procurement_viewed_at = new Date().toISOString();
         }
 
         // 3. If items provided, upsert them and recalculate total
@@ -125,8 +130,8 @@ export async function PATCH(
             .insert({
                 ticket_id: mRequest.ticket_id,
                 user_id: user.id,
-                action: actionMap[status] || `procurement_${status}`,
-                new_value: notes || `${status} the procurement request.${vendor_name ? ` Vendor: ${vendor_name}` : ''}`
+                action: action === 'acknowledge' ? 'procurement_acknowledged' : (actionMap[status] || `procurement_${status}`),
+                new_value: action === 'acknowledge' ? 'Procurement team acknowledged the request.' : (notes || `${status} the procurement request.${vendor_name ? ` Vendor: ${vendor_name}` : ''}`)
             });
 
         // 5. Budget deduction on 'ordered' status
@@ -143,11 +148,15 @@ export async function PATCH(
         try {
             const { NotificationService } = await import('@/backend/services/NotificationService');
             
-            if (status === 'quoted') {
+            if (action === 'acknowledge') {
+                if (typeof NotificationService.afterMaterialRequestAcknowledged === 'function') {
+                    await NotificationService.afterMaterialRequestAcknowledged(id);
+                }
+            } else if (status === 'quoted') {
                 await NotificationService.afterMaterialRequestQuoted(id);
             } else if (status === 'escalated') {
                 await NotificationService.afterMaterialRequestEscalated(id);
-            } else {
+            } else if (status) {
                 await NotificationService.afterMaterialRequestStatusChanged(id, status);
             }
         } catch (notifErr) {

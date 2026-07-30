@@ -5,9 +5,9 @@ import {
     Clock, CheckCircle2, XCircle, ChevronRight, 
     ShoppingBag, User, Building2, Wallet, 
     ArrowRight, Loader2, Package, Eye, ChevronDown, Trash2,
-    Plus, FileText, Truck, ClipboardList, Pencil
+    Plus, FileText, Truck, ClipboardList, Pencil, UserCheck
 } from 'lucide-react';
-import { formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNow, format } from 'date-fns';
 import ConfirmModal from '../ui/ConfirmModal';
 import { Toast } from '../ui/Toast';
 import { useAuth } from '@/frontend/context/AuthContext';
@@ -30,7 +30,7 @@ interface ProcurementRequest {
     requester: { full_name: string };
     budget_type: 'rnm' | 'general';
     total_amount: number | null;
-    status: 'pending_quotation' | 'pending_approval' | 'quoted' | 'approved' | 'rejected' | 'ordered' | 'delivered' | 'cancelled';
+    status: 'pending_quotation' | 'pending_approval' | 'quoted' | 'approved' | 'rejected' | 'negotiating' | 'ordered' | 'delivered' | 'cancelled';
     service_description?: string;
     vendor_name?: string;
     vendor_contact?: string;
@@ -48,7 +48,20 @@ interface ProcurementRequest {
     target_approver_id?: string;
     target_approver_ids?: string[];
     target_approver_names?: string[];
-    assignee?: { full_name: string };
+    assignee_uid?: string;
+    assignee?: { id?: string; full_name: string };
+    comparatives?: {
+        id: string;
+        file_url: string;
+        total_cost: number;
+        status: string;
+        created_at: string;
+        notes?: string;
+        created_by_user?: { full_name: string };
+        action_by_user?: { full_name: string };
+        action_at?: string;
+    }[];
+    procurement_viewed_at?: string;
 }
 
 interface Props {
@@ -86,6 +99,11 @@ export default function ProcurementRequestList({
     const [quotVendorEmail, setQuotVendorEmail] = useState('');
     const [quotItems, setQuotItems] = useState<RequestItem[]>([]);
     
+    // Comparative Flow State
+    const [comparativeFile, setComparativeFile] = useState<File | null>(null);
+    const [comparativePrice, setComparativePrice] = useState('');
+    const [comparativeNotes, setComparativeNotes] = useState('');
+    
     // Internal state for uncontrolled mode
     const [internalFloorFilter, setInternalFloorFilter] = useState('all');
     
@@ -107,6 +125,18 @@ export default function ProcurementRequestList({
         return role.includes('procurement') || role === 'org_super_admin' || role === 'master_admin' || role === 'admin';
     }, [user]);
 
+    const isAdmin = useMemo(() => {
+        const role = user?.user_metadata?.role?.toLowerCase() || '';
+        return ['org_super_admin', 'master_admin', 'property_admin', 'org_admin'].includes(role);
+    }, [user]);
+
+    const canMarkDelivered = useMemo(() => {
+        const role = user?.user_metadata?.role?.toLowerCase() || '';
+        const isSiteTeamOrAdmin = ['org_super_admin', 'master_admin', 'org_admin', 'property_admin', 'staff', 'mst'].includes(role);
+        const isPureProcurement = role.includes('procurement') && !['org_super_admin', 'master_admin', 'org_admin', 'property_admin'].includes(role);
+        return isSiteTeamOrAdmin && !isPureProcurement;
+    }, [user]);
+
     const toggleTimeline = (e: React.MouseEvent, id: string) => {
         e.stopPropagation();
         const newSet = new Set(expandedRequests);
@@ -117,23 +147,29 @@ export default function ProcurementRequestList({
 
     const getStatusStep = (status: string) => {
         switch (status) {
-            case 'pending_quotation':
-            case 'pending_approval': return 1;
-            case 'quoted':
-            case 'approved': return 2;
-            case 'ordered': return 3;
-            case 'delivered': return 4;
+            case 'pending_quotation': return 1;
+            case 'pending_approval': return 2;
+            case 'quoted': return 2;
+            case 'approved': return 3;
+            case 'ordered': return 4;
+            case 'delivered': return 5;
             default: return 0;
         }
+    };
+
+    const formatExactTime = (dateString: string | null | undefined) => {
+        if (!dateString) return '';
+        return format(new Date(dateString), 'dd MMM yyyy, hh:mm a');
     };
 
     const getStatusLabel = (status: string) => {
         switch (status) {
             case 'pending_quotation': return 'Pending Quotation';
-            case 'pending_approval': return 'Waiting';
+            case 'pending_approval': return 'Waiting for Approval';
             case 'quoted': return 'Quoted';
             case 'approved': return 'Approved';
             case 'rejected': return 'Rejected';
+            case 'negotiating': return 'Negotiating';
             case 'ordered': return 'Ordered';
             case 'delivered': return 'Received';
             case 'cancelled': return 'Cancelled';
@@ -163,7 +199,8 @@ export default function ProcurementRequestList({
             case 'approved': return 'bg-blue-50 text-blue-500';
             case 'ordered': return 'bg-indigo-50 text-indigo-500';
             case 'delivered': return 'bg-green-50 text-green-500';
-            case 'rejected': return 'bg-red-50 text-red-500';
+            case 'rejected':
+            case 'negotiating': return 'bg-red-50 text-red-500';
             default: return 'bg-slate-50 text-slate-500';
         }
     };
@@ -215,13 +252,89 @@ export default function ProcurementRequestList({
                 body: JSON.stringify(body)
             });
             if (res.ok) {
+                // If we are just updating read receipts, don't close the modal
+                if (!status && extra?.procurement_viewed_at) {
+                    setIsSubmitting(false);
+                    return;
+                }
                 setSelectedRequest(null);
                 setIsEditingQuotation(false);
                 if (onAction) onAction();
-                showToast(`Request marked as ${getStatusLabel(status)}`, 'success');
+                showToast(status ? `Request marked as ${getStatusLabel(status)}` : 'Updated', 'success');
             } else {
                 const data = await res.json();
                 showToast(data.error || 'Action failed', 'error');
+            }
+        } catch (err) {
+            console.error(err);
+            showToast('Network error', 'error');
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    const handleUploadComparative = async () => {
+        if (!selectedRequest || !comparativeFile || !comparativePrice) {
+            showToast('File and total cost are required', 'error');
+            return;
+        }
+        setIsSubmitting(true);
+        try {
+            // 1. Upload File
+            const formData = new FormData();
+            formData.append('file', comparativeFile);
+            const uploadRes = await fetch(`/api/procurement/requests/${selectedRequest.id}/upload`, {
+                method: 'POST',
+                body: formData
+            });
+            if (!uploadRes.ok) throw new Error('Failed to upload comparative file');
+            const uploadData = await uploadRes.json();
+
+            // 2. Submit Comparative
+            const res = await fetch(`/api/procurement/requests/${selectedRequest.id}/comparatives`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    file_url: uploadData.url,
+                    total_cost: parseFloat(comparativePrice),
+                    notes: comparativeNotes
+                })
+            });
+            if (res.ok) {
+                setComparativeFile(null);
+                setComparativePrice('');
+                setComparativeNotes('');
+                showToast('Comparative uploaded for approval', 'success');
+                if (onAction) onAction();
+                fetchRequests(); // refresh local data
+            } else {
+                const data = await res.json();
+                showToast(data.error || 'Failed to upload comparative', 'error');
+            }
+        } catch (err: any) {
+            console.error(err);
+            showToast(err.message || 'Network error', 'error');
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    const handleApproveRejectComparative = async (comparativeId: string, actionStatus: string) => {
+        if (!selectedRequest) return;
+        setIsSubmitting(true);
+        try {
+            const res = await fetch(`/api/procurement/requests/${selectedRequest.id}/comparatives`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ comparative_id: comparativeId, status: actionStatus })
+            });
+            if (res.ok) {
+                showToast(`Comparative marked as ${actionStatus}`, 'success');
+                if (onAction) onAction();
+                fetchRequests(); // refresh local data
+            } else {
+                const data = await res.json();
+                showToast(data.error || 'Failed to update comparative', 'error');
             }
         } catch (err) {
             console.error(err);
@@ -479,20 +592,31 @@ export default function ProcurementRequestList({
                                         <div className="mt-6 pt-6 border-t border-slate-100 animate-in slide-in-from-top-2 duration-300">
                                             <div className="relative">
                                                 {/* Labels */}
-                                                <div className="grid grid-cols-4 gap-2 mb-4">
-                                                    {['REQUESTED', 'QUOTED', 'ORDERED', 'DELIVERED'].map((step, idx) => (
-                                                        <div key={step} className="text-center">
+                                                <div className="grid grid-cols-5 gap-2 mb-4">
+                                                    {[
+                                                        { label: 'REQUESTED', time: req.created_at },
+                                                        { label: 'PENDING', time: (req as any).procurement_viewed_at },
+                                                        { label: 'APPROVED', time: req.comparatives?.find((c: any) => c.status === 'approved')?.action_at },
+                                                        { label: 'ORDERED', time: (req as any).ordered_at },
+                                                        { label: 'DELIVERED', time: (req as any).delivered_at }
+                                                    ].map((step, idx) => (
+                                                        <div key={step.label} className="text-center">
                                                             <p className={`text-[8px] font-black tracking-widest uppercase transition-colors
                                                                 ${currentStep >= idx + 1 ? 'text-primary' : 'text-slate-300'}`}>
-                                                                {step}
+                                                                {step.label}
                                                             </p>
+                                                            {step.time && currentStep >= idx + 1 && (
+                                                                <p className="text-[7px] text-slate-400 mt-1 uppercase font-medium">
+                                                                    {formatExactTime(step.time)}
+                                                                </p>
+                                                            )}
                                                         </div>
                                                     ))}
                                                 </div>
                                                 
                                                 {/* Progress Bar segments */}
                                                 <div className="flex gap-1.5 px-1">
-                                                    {[1, 2, 3, 4].map((i) => (
+                                                    {[1, 2, 3, 4, 5].map((i) => (
                                                         <div 
                                                             key={i}
                                                             className={`h-1.5 flex-1 rounded-full transition-all duration-500
@@ -509,7 +633,8 @@ export default function ProcurementRequestList({
                                                         <User className="w-2.5 h-2.5 text-slate-400" />
                                                     </div>
                                                 <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
-                                                    Requested by {req.requester.full_name}
+                                                    Requested by {req.requester?.full_name || 'Unknown'}
+                                                    {(req as any).status === 'delivered' && (req as any).delivered_by_user?.full_name && ` • Delivered by ${(req as any).delivered_by_user.full_name}`}
                                                     {req.status === 'pending_quotation' && ' • Awaiting quotation'}
                                                     {req.vendor_name && ` • Vendor: ${req.vendor_name}`}
                                                 </p>
@@ -710,7 +835,121 @@ export default function ProcurementRequestList({
                                 </div>
                             )}
 
-                            {/* PROCUREMENT ACTIONS: Quoted → Ordered → Delivered */}
+                            {/* COMPARATIVE HISTORY & ACTIONS */}
+                            <div className="space-y-4 pb-6 border-b border-slate-100">
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center justify-between">
+                                    <span>Comparative History</span>
+                                </p>
+                                
+                                {selectedRequest.comparatives && selectedRequest.comparatives.length > 0 ? (
+                                    <div className="space-y-3">
+                                        {selectedRequest.comparatives.map((comp: any) => (
+                                            <div key={comp.id} className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                                                <div className="flex justify-between items-start mb-2">
+                                                    <div>
+                                                        <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${getStatusBadgeClass(comp.status)}`}>
+                                                            {comp.status}
+                                                        </span>
+                                                        <p className="text-xs font-bold text-slate-800 mt-2">Total Cost: ₹{comp.total_cost.toLocaleString()}</p>
+                                                    </div>
+                                                    <a href={comp.file_url} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[10px] font-bold text-primary hover:underline bg-primary/10 px-2 py-1 rounded-md">
+                                                        <FileText className="w-3 h-3" /> View File
+                                                    </a>
+                                                </div>
+                                                {comp.notes && <p className="text-[10px] text-slate-500 mt-2">{comp.notes}</p>}
+                                                <div className="flex flex-col gap-1 mt-3 pt-3 border-t border-slate-100">
+                                                    <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest flex items-center gap-1">
+                                                        <User className="w-3 h-3" /> Uploaded by {comp.created_by_user?.full_name || 'Procurement User'}
+                                                        <span className="normal-case tracking-normal font-medium opacity-80">
+                                                            ({formatExactTime(comp.created_at)})
+                                                        </span>
+                                                    </p>
+                                                    {comp.action_by_user && comp.action_at && (
+                                                        <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest flex items-center gap-1 mt-1">
+                                                            <CheckCircle2 className={`w-3 h-3 ${comp.status === 'rejected' ? 'text-red-400' : 'text-green-400'}`} /> 
+                                                            {comp.status === 'rejected' ? 'Rejected' : 'Approved'} by {comp.action_by_user.full_name}
+                                                            <span className="normal-case tracking-normal font-medium opacity-80">
+                                                                ({formatExactTime(comp.action_at)})
+                                                            </span>
+                                                        </p>
+                                                    )}
+                                                    {comp.status === 'pending_approval' && comp.approver_user && (
+                                                        <p className="text-[9px] text-amber-500 font-bold uppercase tracking-widest flex items-center gap-1 mt-1">
+                                                            <UserCheck className="w-3 h-3" /> Pending Approval from {comp.approver_user.full_name}
+                                                        </p>
+                                                    )}
+                                                </div>
+                                                
+                                                {comp.status === 'pending_approval' && isAdmin && (
+                                                    <div className="flex gap-2 mt-4 pt-4 border-t border-slate-200">
+                                                        <button 
+                                                            onClick={() => handleApproveRejectComparative(comp.id, 'rejected')}
+                                                            disabled={isSubmitting}
+                                                            className="flex-1 py-2 rounded-lg bg-rose-50 text-rose-500 hover:bg-rose-100 transition-all font-black text-[9px] uppercase tracking-widest"
+                                                        >
+                                                            Negotiate / Reject
+                                                        </button>
+                                                        <button 
+                                                            onClick={() => handleApproveRejectComparative(comp.id, 'approved')}
+                                                            disabled={isSubmitting}
+                                                            className="flex-1 py-2 rounded-lg bg-green-500 text-white hover:bg-green-600 transition-all font-black text-[9px] uppercase tracking-widest shadow-md"
+                                                        >
+                                                            Approve Cost
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <p className="text-[10px] text-slate-400 font-medium">No comparatives uploaded yet.</p>
+                                )}
+
+                                {(() => {
+                                    const reqStatus = (selectedRequest.status || '').toLowerCase();
+                                    const isUploadAllowedStatus = ['pending_quotation', 'pending', 'negotiating', 'quoted', 'requested'].includes(reqStatus);
+                                    const isAssigned = user?.id && selectedRequest.assignee_uid === user.id;
+                                    const canUpload = isUploadAllowedStatus && (isProcurementUser || isAdmin || isAssigned);
+
+                                    if (!canUpload) return null;
+
+                                    return (
+                                        <div className="mt-4 p-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 space-y-4">
+                                            <p className="text-[10px] font-black text-primary uppercase tracking-widest flex items-center gap-2">
+                                                <Plus className="w-3.5 h-3.5" /> Upload New Comparative
+                                            </p>
+                                        <input
+                                            type="file"
+                                            accept="application/pdf,image/*,.xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                                            onChange={(e) => setComparativeFile(e.target.files?.[0] || null)}
+                                            className="w-full text-xs text-slate-600 file:mr-4 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-[10px] file:font-black file:uppercase file:bg-primary/10 file:text-primary hover:file:bg-primary/20"
+                                        />
+                                        <input
+                                            type="number"
+                                            placeholder="Total Comparative Cost ₹"
+                                            value={comparativePrice}
+                                            onChange={(e) => setComparativePrice(e.target.value)}
+                                            className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-primary/20"
+                                        />
+                                        <textarea
+                                            placeholder="Notes / Vendor info (optional)"
+                                            value={comparativeNotes}
+                                            onChange={(e) => setComparativeNotes(e.target.value)}
+                                            className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-primary/20"
+                                            rows={2}
+                                        />
+                                        <button
+                                            onClick={handleUploadComparative}
+                                            disabled={isSubmitting || !comparativeFile || !comparativePrice}
+                                            className="w-full py-2.5 rounded-xl bg-blue-500 text-white hover:bg-blue-600 transition-all font-black text-[10px] uppercase tracking-widest shadow-lg shadow-blue-200 disabled:opacity-50"
+                                        >
+                                        </button>
+                                    </div>
+                                );
+                            })()}
+                            </div>
+
+                            {/* PROCUREMENT ACTIONS: Quoted/Approved → Ordered → Delivered */}
                             {selectedRequest.status === 'quoted' && isProcurementUser && (
                                 <button
                                     onClick={() => handleStatusChange(selectedRequest.id, 'ordered')}
@@ -722,7 +961,7 @@ export default function ProcurementRequestList({
                                 </button>
                             )}
 
-                            {selectedRequest.status === 'ordered' && isProcurementUser && (
+                            {(selectedRequest.status === 'ordered' || selectedRequest.status === 'approved') && (canMarkDelivered || (selectedRequest as any).requested_by === user?.id) && (
                                 <button
                                     onClick={() => handleStatusChange(selectedRequest.id, 'delivered')}
                                     disabled={isSubmitting}

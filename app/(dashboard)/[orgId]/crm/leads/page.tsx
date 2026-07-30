@@ -93,24 +93,33 @@ export default function LeadsPage() {
     const autoOpenedRef = useRef(false);
     const queryLeadRef = useRef<string | null>(null);
 
-    // Auto-open lead drawer when navigated from dashboard with ?lead=id
+    // Auto-open lead drawer when navigated from search / dashboard with ?lead=id
     useEffect(() => {
         const leadId = searchParams.get('lead');
         if (!leadId) return;
-        if (queryLeadRef.current === leadId) return;
-        queryLeadRef.current = leadId;
 
         fetch(`/api/crm/leads/${leadId}`)
-            .then(r => r.ok ? r.json() : null)
+            .then(r => {
+                if (!r.ok) {
+                    if (r.status === 403) {
+                        setToast({ message: 'You do not have permission to view this lead', type: 'error', visible: true });
+                    } else if (r.status === 404) {
+                        setToast({ message: 'Lead not found', type: 'error', visible: true });
+                    }
+                    return null;
+                }
+                return r.json();
+            })
             .then(data => {
                 if (data?.lead) {
                     setSelectedLead(data.lead);
                     setIsDetailOpen(true);
-                    router.replace(`/${orgId}/crm/leads`);
                 }
             })
-            .catch(() => {});
-    }, [searchParams, orgId, router]);
+            .catch((err) => {
+                console.error('Error opening lead detail:', err);
+            });
+    }, [searchParams, orgId]);
 
     const handleLeadSelect = (lead: CRMLead) => {
         setSelectedLead(lead);

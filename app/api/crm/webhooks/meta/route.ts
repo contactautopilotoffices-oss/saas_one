@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { resolveDistributionAssignee } from '@/backend/lib/crm/distribution';
-import { EmailService } from '@/backend/services/EmailService';
 import { NotificationService } from '@/backend/services/NotificationService';
 
 const GRAPH_VERSION = 'v19.0';
@@ -138,62 +137,6 @@ async function findExistingLead(orgId: string, phone: string | null, email: stri
     return data;
 }
 
-async function notifyNewLead(config: any, lead: any, assignedTo: string | null, formName: string | null) {
-    try {
-        const { data: users } = assignedTo
-            ? await supabaseAdmin
-                .from('users')
-                .select('id, email, full_name')
-                .in('id', [assignedTo])
-            : { data: [] as any[] };
-
-        // Fetch Business Development Admins (bd_admin)
-        const { data: bdAdmins } = await supabaseAdmin
-            .from('organization_memberships')
-            .select('user_id, users:user_id(email)')
-            .eq('organization_id', config.organization_id)
-            .eq('role', 'bd_admin')
-            .eq('is_active', true);
-
-        const emails = new Set<string>();
-        
-        // 1. Always add the assigned sales rep ("other persons")
-        users?.forEach((u: any) => { if (u.email) emails.add(u.email); });
-        
-        // 2. Always add all Business Development Admins
-        bdAdmins?.forEach((a: any) => {
-            const e = (a.users as any)?.email;
-            if (e) emails.add(e);
-        });
-        
-        // 3. ONLY these two specific Org Super Admins should receive CRM lead emails
-        emails.add('rushab@worksquare.in');
-        emails.add('saniel@worksquare.in');
-
-        if (emails.size === 0) return;
-
-        const repName = users?.[0]?.full_name || 'Unassigned';
-        const html = `
-            <h2>New Meta Lead Received</h2>
-            <table style="border-collapse:collapse;font-family:sans-serif;">
-                <tr><td style="padding:4px 12px 4px 0;font-weight:bold;">Name</td><td>${lead.contact_person || 'N/A'}</td></tr>
-                <tr><td style="padding:4px 12px 4px 0;font-weight:bold;">Phone</td><td>${lead.contact_number || 'N/A'}</td></tr>
-                <tr><td style="padding:4px 12px 4px 0;font-weight:bold;">Email</td><td>${lead.email || 'N/A'}</td></tr>
-                <tr><td style="padding:4px 12px 4px 0;font-weight:bold;">City</td><td>${lead.city || 'N/A'}</td></tr>
-                <tr><td style="padding:4px 12px 4px 0;font-weight:bold;">Form</td><td>${formName || 'N/A'}</td></tr>
-                <tr><td style="padding:4px 12px 4px 0;font-weight:bold;">Assigned To</td><td>${repName}</td></tr>
-            </table>
-            <p style="margin-top:16px;">Log in to <b>Autopilot CRM</b> to follow up.</p>
-        `;
-
-        for (const to of emails) {
-            await EmailService.sendNewLeadEmail({ emailTo: to, subject: `New Meta Lead: ${lead.contact_person || 'Unknown'}`, html });
-        }
-    } catch (err) {
-        console.error('[Meta webhook] email notification failed:', err);
-    }
-}
-
 async function processLeadgen(leadgenId: string, value: any, config: any) {
     const { data: existing } = await supabaseAdmin
         .from('crm_meta_leads').select('id, status').eq('meta_lead_id', leadgenId).maybeSingle();
@@ -247,20 +190,6 @@ async function processLeadgen(leadgenId: string, value: any, config: any) {
             companyName ? `Company: ${companyName}` : null,
             jobTitle ? `Title: ${jobTitle}` : null,
         ].filter(Boolean).join(' | ') || null;
-
-        // Cross-source dedup: check phone/email against existing leads.
-        // status MUST be a value allowed by crm_meta_leads_status_check
-        // ('pending','processed','failed','duplicate'). 'duplicate_contact' is NOT
-        // allowed and previously violated the constraint — in the webhook that
-        // surfaced as a 500, causing Meta to retry the delivery repeatedly (a
-        // constraint-violation storm) and the lead to never settle. Use 'duplicate'.
-        const existingLead = await findExistingLead(config.organization_id, phone, email);
-        if (existingLead) {
-            await supabaseAdmin.from('crm_meta_leads')
-                .update({ status: 'duplicate', processed_lead_id: existingLead.id, processed_at: new Date().toISOString() })
-                .eq('id', metaRow!.id);
-            return { leadgen_id: leadgenId, status: 'duplicate', existing_lead_id: existingLead.id };
-        }
 
         const createdBy = await resolveSystemUser(config);
         if (!createdBy) throw new Error('No assignee/admin available to own the lead');
@@ -325,8 +254,7 @@ async function processLeadgen(leadgenId: string, value: any, config: any) {
             })
             .eq('id', metaRow!.id);
 
-        // Fire-and-forget email notification.
-        notifyNewLead(config, leadData, assignedTo, formName).catch(() => {});
+
 
         // Fire-and-forget WhatsApp notification.
         NotificationService.afterLeadCreated(lead.id).catch(e => console.error('[Meta webhook] WA error:', e));

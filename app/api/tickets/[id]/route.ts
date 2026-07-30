@@ -14,6 +14,7 @@ export async function GET(
     try {
         const { id: ticketId } = await params;
         const supabase = await createClient();
+        const { data: { user } } = await supabase.auth.getUser();
 
         const { data: ticket, error } = await supabase
             .from('tickets')
@@ -57,7 +58,7 @@ export async function GET(
             .eq('ticket_id', ticketId)
             .order('escalated_at', { ascending: true });
 
-        // Get material requests (Procurement)
+        // Get material requests (Procurement) with comparative quotes
         const { data: procurementRequests } = await adminSupabase
             .from('material_requests')
             .select(`
@@ -65,12 +66,75 @@ export async function GET(
                 line_items:material_request_items(
                     *
                 ),
+                comparatives:material_request_comparatives(
+                    *,
+                    created_by_user:users!material_request_comparatives_created_by_fkey(full_name, email),
+                    action_by_user:users!material_request_comparatives_action_by_fkey(full_name, email)
+                ),
                 requester:users!material_requests_requested_by_fkey(full_name)
             `)
             .eq('ticket_id', ticketId)
             .order('created_at', { ascending: false });
 
         const formattedProcurementRequests = procurementRequests || [];
+
+        // Hydrate approver_user for comparatives if approver_uid is set
+        const allComparatives = formattedProcurementRequests.flatMap((r: any) => r.comparatives || []);
+        const approverUids = Array.from(new Set(allComparatives.map((c: any) => c.approver_uid).filter(Boolean)));
+        if (approverUids.length > 0) {
+            const { data: approverUsers } = await adminSupabase
+                .from('users')
+                .select('id, full_name, email')
+                .in('id', approverUids);
+            
+            const userMap = new Map(approverUsers?.map((u: any) => [u.id, u]) || []);
+            allComparatives.forEach((c: any) => {
+                if (c.approver_uid) {
+                    c.approver_user = userMap.get(c.approver_uid) || null;
+                }
+            });
+        }
+
+        // Hydrate delivered_by_user manually
+        const deliveredUids = Array.from(new Set(formattedProcurementRequests.map((r: any) => r.delivered_by).filter(Boolean)));
+        if (deliveredUids.length > 0) {
+            const { data: deliveredUsers } = await adminSupabase
+                .from('users')
+                .select('id, full_name')
+                .in('id', deliveredUids);
+            
+            const deliveredMap = new Map(deliveredUsers?.map((u: any) => [u.id, u]) || []);
+            formattedProcurementRequests.forEach((r: any) => {
+                if (r.delivered_by) {
+                    r.delivered_by_user = deliveredMap.get(r.delivered_by) || null;
+                }
+            });
+        }
+
+        // If accessed by a procurement user or assigned user, auto-mark unviewed material requests with procurement_viewed_at
+        if (user && formattedProcurementRequests.length > 0) {
+            const isProcurementUser = (user.user_metadata?.role || '').toLowerCase().includes('procurement');
+            const unviewedIds = formattedProcurementRequests
+                .filter((r: any) => !r.procurement_viewed_at && (isProcurementUser || r.assignee_uid === user.id))
+                .map((r: any) => r.id);
+
+            if (unviewedIds.length > 0) {
+                const nowIso = new Date().toISOString();
+                adminSupabase
+                    .from('material_requests')
+                    .update({ procurement_viewed_at: nowIso })
+                    .in('id', unviewedIds)
+                    .then(({ error }) => {
+                        if (error) console.error('[Ticket API] Error updating procurement_viewed_at:', error.message);
+                    });
+
+                formattedProcurementRequests.forEach((r: any) => {
+                    if (unviewedIds.includes(r.id)) {
+                        r.procurement_viewed_at = nowIso;
+                    }
+                });
+            }
+        }
 
         // Check if validation is enabled for this property
         const { data: feature } = await adminSupabase

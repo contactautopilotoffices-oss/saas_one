@@ -11,7 +11,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (bucketErr && (bucketErr as any).code === '404') {
       const { error: createErr } = await adminSupabase.storage.createBucket('procurement_quotations', {
         public: true,
-        allowedMimeTypes: ['application/pdf', 'image/*'],
+        allowedMimeTypes: ['application/pdf', 'image/*', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'text/csv'],
       });
       if (createErr) throw createErr;
     }

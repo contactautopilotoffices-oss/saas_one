@@ -72,6 +72,8 @@
     "src",
     "supabase",
     "scripts",
-    "scratch"
+    "scratch",
+    "hyperframes",
+    "onboarding-video-project"
   ]
 }

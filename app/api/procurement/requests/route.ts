@@ -162,6 +162,7 @@ export async function GET(request: NextRequest) {
                 *,
                 ticket:tickets!inner(ticket_number, title, floor_number),
                 line_items:material_request_items(*),
+                comparatives:material_request_comparatives(*, created_by_user:users!material_request_comparatives_created_by_fkey(full_name), action_by_user:users!material_request_comparatives_action_by_fkey(full_name)),
                 requester:users!material_requests_requested_by_fkey(full_name),
                 assignee:users!material_requests_assignee_uid_fkey(full_name)
             `)
@@ -230,6 +231,39 @@ export async function GET(request: NextRequest) {
                 code: error.code,
                 details: error.details
             }, { status: 500 });
+        }
+
+        // Hydrate approver_user for comparatives if approver_uid is set
+        const allComps = (data || []).flatMap((r: any) => r.comparatives || []);
+        const compApproverUids = Array.from(new Set(allComps.map((c: any) => c.approver_uid).filter(Boolean)));
+        if (compApproverUids.length > 0) {
+            const { data: compApprovers } = await adminSupabase
+                .from('users')
+                .select('id, full_name, email')
+                .in('id', compApproverUids);
+            
+            const userMap = new Map(compApprovers?.map((u: any) => [u.id, u]) || []);
+            allComps.forEach((c: any) => {
+                if (c.approver_uid) {
+                    c.approver_user = userMap.get(c.approver_uid) || null;
+                }
+            });
+        }
+
+        // Hydrate delivered_by_user manually
+        const deliveredUids = Array.from(new Set((data || []).map((r: any) => r.delivered_by).filter(Boolean)));
+        if (deliveredUids.length > 0) {
+            const { data: deliveredUsers } = await adminSupabase
+                .from('users')
+                .select('id, full_name')
+                .in('id', deliveredUids);
+            
+            const deliveredMap = new Map(deliveredUsers?.map((u: any) => [u.id, u]) || []);
+            (data || []).forEach((r: any) => {
+                if (r.delivered_by) {
+                    r.delivered_by_user = deliveredMap.get(r.delivered_by) || null;
+                }
+            });
         }
 
         const formatted = await Promise.all((data || []).map(async req => {

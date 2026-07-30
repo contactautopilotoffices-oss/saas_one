@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
     // 3. Verify the rep can act on the lead
     const { data: lead, error: leadErr } = await supabaseAdmin
         .from('crm_leads')
-        .select('id, organization_id, created_by, assigned_to, city, company_name, contact_person')
+        .select('id, organization_id, created_by, assigned_to, city, location, campaign, company_name, contact_person')
         .eq('id', leadId)
         .maybeSingle();
 
@@ -165,7 +165,7 @@ export async function GET(request: NextRequest) {
 
     const { data: lead } = await supabaseAdmin
         .from('crm_leads')
-        .select('id, organization_id, created_by, assigned_to, city')
+        .select('id, organization_id, created_by, assigned_to, city, location, campaign')
         .eq('id', leadId)
         .maybeSingle();
 

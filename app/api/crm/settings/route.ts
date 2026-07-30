@@ -50,7 +50,7 @@ export async function GET(request: NextRequest) {
     }
     if (type === 'properties') {
         const { data: properties } = await supabaseAdmin
-            .from('properties').select('id, name, code').eq('organization_id', org).order('name');
+            .from('properties').select('id, name, code').eq('organization_id', org).eq('is_active', true).neq('status', 'crm_interest').order('name');
         return NextResponse.json({ properties });
     }
     if (type === 'meta') {
@@ -90,16 +90,27 @@ export async function GET(request: NextRequest) {
     }
 
     // type === 'all' (or unspecified): bundle everything the settings UI needs.
-    const [statusesRes, sourcesRes, propsRes] = await Promise.all([
+    const [statusesRes, sourcesRes, propsRes, leadsLocRes] = await Promise.all([
         orgOrGlobal(supabaseAdmin.from('crm_lead_statuses').select('*').eq('is_active', true), org).order('sort_order'),
         orgOrGlobal(supabaseAdmin.from('crm_lead_sources').select('*').eq('is_active', true), org).order('name'),
-        supabaseAdmin.from('properties').select('id, name, code').eq('organization_id', org).order('name'),
+        supabaseAdmin.from('properties').select('id, name, code').eq('organization_id', org).eq('is_active', true).neq('status', 'crm_interest').order('name'),
+        supabaseAdmin.from('crm_leads').select('location').eq('organization_id', org).not('location', 'is', null)
     ]);
     const scope = new URL(request.url).searchParams.get('scope');
-    const BD_CITIES = ['mumbai', 'bangalore', 'noida', 'andheri', 'lower parel', 'kalyan'];
-    const filteredProps = scope === 'bd'
-        ? (propsRes.data || []).filter((p: any) => BD_CITIES.some(c => p.name?.toLowerCase().includes(c)))
-        : propsRes.data || [];
+
+    // Extract unique locations stored on existing leads so custom added locations persist across page refreshes
+    const existingPropNames = new Set((propsRes.data || []).map((p: any) => p.name?.toLowerCase()));
+    const customLocProps: { id: string; name: string }[] = [];
+    (leadsLocRes.data || []).forEach((l: any) => {
+        const locName = l.location?.trim();
+        if (locName && !existingPropNames.has(locName.toLowerCase())) {
+            existingPropNames.add(locName.toLowerCase());
+            customLocProps.push({ id: `custom:${locName}`, name: locName });
+        }
+    });
+
+    const combinedProps = [...(propsRes.data || []), ...customLocProps].sort((a, b) => a.name.localeCompare(b.name));
+
     const memberIds = scope === 'bd' ? await bdMemberIds(org) : await orgMemberIds(org);
     const { data: users } = memberIds.length
         ? await supabaseAdmin.from('users').select('id, full_name, email').in('id', memberIds).order('full_name')
@@ -108,7 +119,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
         statuses: statusesRes.data || [],
         sources: sourcesRes.data || [],
-        properties: filteredProps,
+        properties: combinedProps,
         users: users || [],
     });
 }
@@ -120,13 +131,14 @@ export async function POST(request: NextRequest) {
 
     const access = await resolveCrmAccess(request, readOrgId(request, body));
     if (isCrmAccessError(access)) return access;
-    if (!access.isAdmin) return NextResponse.json({ error: 'Forbidden: admin only' }, { status: 403 });
+
 
     const org = access.organizationId;
     const { action, data: d } = body;
 
     switch (action) {
         case 'create_status': {
+            if (!access.isAdmin) return NextResponse.json({ error: 'Forbidden: admin only' }, { status: 403 });
             // Reactivate a previously soft-deleted same-name status instead of colliding.
             const { data: existing } = await supabaseAdmin
                 .from('crm_lead_statuses').select('id').eq('organization_id', org).ilike('name', d.name).maybeSingle();
@@ -147,6 +159,7 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ status: res.data }, { status: 201 });
         }
         case 'update_status': {
+            if (!access.isAdmin) return NextResponse.json({ error: 'Forbidden: admin only' }, { status: 403 });
             // Cannot edit the shared global defaults — clone-on-write semantics are out of scope;
             // only org-owned statuses are mutable here.
             const { data: row } = await supabaseAdmin.from('crm_lead_statuses').select('organization_id').eq('id', d.id).maybeSingle();
@@ -164,6 +177,7 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ status: res.data });
         }
         case 'delete_status': {
+            if (!access.isAdmin) return NextResponse.json({ error: 'Forbidden: admin only' }, { status: 403 });
             const { data: row } = await supabaseAdmin.from('crm_lead_statuses').select('organization_id').eq('id', d.id).maybeSingle();
             if (!row) return NextResponse.json({ error: 'Status not found' }, { status: 404 });
             if (row.organization_id !== org) return NextResponse.json({ error: 'Cannot delete shared default statuses' }, { status: 403 });
@@ -184,7 +198,37 @@ export async function POST(request: NextRequest) {
             if (res.error) return NextResponse.json({ error: res.error.message }, { status: 500 });
             return NextResponse.json({ source: res.data }, { status: 201 });
         }
+        case 'create_property': {
+            // Quick property creation just with a name (defaults rest)
+            const { data: codeData } = await supabaseAdmin.rpc('generate_property_code', { p_org_id: org });
+            const { data: property, error: insertError } = await supabaseAdmin
+                .from('properties')
+                .insert({
+                    organization_id: org,
+                    name: d.name,
+                    code: codeData || 'PROP-' + Date.now(),
+                    is_active: true,
+                    status: 'crm_interest'
+                })
+                .select('id, name, code')
+                .single();
+            
+            if (insertError) return NextResponse.json({ error: insertError.message }, { status: 500 });
+            return NextResponse.json({ property }, { status: 201 });
+        }
+        case 'delete_property': {
+            if (!access.isAdmin) return NextResponse.json({ error: 'Forbidden: admin only' }, { status: 403 });
+            // Soft delete property so CRM lead relations remain completely untouched & intact
+            const { error } = await supabaseAdmin
+                .from('properties')
+                .update({ is_active: false, status: 'inactive' })
+                .eq('id', d.id)
+                .eq('organization_id', org);
+            if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+            return NextResponse.json({ success: true });
+        }
         case 'delete_source': {
+            if (!access.isAdmin) return NextResponse.json({ error: 'Forbidden: admin only' }, { status: 403 });
             const { data: row } = await supabaseAdmin.from('crm_lead_sources').select('organization_id').eq('id', d.id).maybeSingle();
             if (!row) return NextResponse.json({ error: 'Source not found' }, { status: 404 });
             if (row.organization_id !== org) return NextResponse.json({ error: 'Cannot delete shared default sources' }, { status: 403 });
@@ -193,6 +237,7 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ success: true });
         }
         case 'update_property_mapping': {
+            if (!access.isAdmin) return NextResponse.json({ error: 'Forbidden: admin only' }, { status: 403 });
             const res = await supabaseAdmin
                 .from('crm_property_mapping')
                 .upsert({ property_id: d.property_id, crm_property_name: d.crm_property_name }, { onConflict: 'property_id' })
@@ -201,6 +246,7 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ mapping: res.data });
         }
         case 'save_meta_config': {
+            if (!access.isAdmin) return NextResponse.json({ error: 'Forbidden: admin only' }, { status: 403 });
             // Only overwrite secrets when a real (non-masked) value is supplied.
             const upd: Record<string, any> = {
                 organization_id: org,
@@ -226,6 +272,7 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ success: true });
         }
         case 'save_linkedin_config': {
+            if (!access.isAdmin) return NextResponse.json({ error: 'Forbidden: admin only' }, { status: 403 });
             const isLinkedInAdmin = isBdSuperAdmin(access.user.email) || access.roles?.includes('bd_super_admin') || access.isMasterAdmin;
             if (!isLinkedInAdmin) {
                 return NextResponse.json({ error: 'Forbidden — BD super admin only' }, { status: 403 });

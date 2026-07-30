@@ -8,6 +8,7 @@ import {
     sanitizeSearchTerm,
 } from '@/backend/lib/crm/access';
 import { NotificationService } from '@/backend/services/NotificationService';
+import { EmailService } from '@/backend/services/EmailService';
 import { cityFilterOr } from '@/backend/lib/crm/cityGroups';
 
 const LEAD_SELECT = `
@@ -153,8 +154,19 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'No default lead status configured' }, { status: 500 });
     }
 
-    // Only admins may assign to other users; a rep's lead defaults to themselves.
-    const assignedTo = access.isAdmin ? (body.assigned_to ?? null) : access.user.id;
+    // Resolve assignment: use body.assigned_to if valid org member, else default to creator.
+    let assignedTo = body.assigned_to || access.user.id;
+    if (body.assigned_to) {
+        const [{ data: om }, { data: pm }] = await Promise.all([
+            supabaseAdmin.from('organization_memberships').select('user_id')
+                .eq('organization_id', access.organizationId).eq('user_id', body.assigned_to).eq('is_active', true).maybeSingle(),
+            supabaseAdmin.from('property_memberships').select('user_id')
+                .eq('organization_id', access.organizationId).eq('user_id', body.assigned_to).eq('is_active', true).maybeSingle(),
+        ]);
+        if (!om && !pm) {
+            assignedTo = access.user.id;
+        }
+    }
 
     const leadData = {
         organization_id: access.organizationId,
@@ -193,6 +205,18 @@ export async function POST(request: NextRequest) {
 
     if (data?.id) {
         NotificationService.afterLeadCreated(data.id).catch(e => console.error('[CRM Lead CREATE] WA error:', e));
+        if (data.assigned_user?.email) {
+            EmailService.sendLeadAssignmentEmail({
+                emailTo: data.assigned_user.email,
+                assigneeName: data.assigned_user.full_name || data.assigned_user.email,
+                leadName: data.contact_person || '',
+                companyName: data.company_name || '',
+                contactNumber: data.contact_number || '',
+                requirement: data.requirement || '',
+                priority: data.priority || 'Medium',
+                leadId: data.id
+            }).catch(e => console.error('[CRM Lead CREATE] email error:', e));
+        }
     }
 
     // The 'created' activity is written by the crm_auto_activity DB trigger.

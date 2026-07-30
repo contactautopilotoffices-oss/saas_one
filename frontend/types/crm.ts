@@ -296,6 +296,7 @@ export interface CRMLead {
     next_followup_date?: string;
     followup_notes?: string;
     last_contacted?: string;
+    move_in_timeline?: string;
     remarks?: string;
     meta_lead_id?: string;
     meta_campaign_id?: string;
