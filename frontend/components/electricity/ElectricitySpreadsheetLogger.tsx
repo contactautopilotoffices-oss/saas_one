@@ -1,9 +1,10 @@
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { Save, Calendar, ArrowRight, Activity, Download, Upload, X, Plus, Trash2, Settings, LayoutTemplate } from 'lucide-react';
+import { Save, Calendar, ArrowRight, Activity, Download, Upload, X, Plus, Trash2, Settings, LayoutTemplate, FileSpreadsheet, ClipboardCheck, ClipboardPaste, Scissors } from 'lucide-react';
 import { motion } from 'framer-motion';
 import FacilityConfigImportModal from './FacilityConfigImportModal';
+import { Toast } from '../ui/Toast';
 
 interface Meter {
     id: string;
@@ -48,6 +49,19 @@ export default function ElectricitySpreadsheetLogger({ propertyId, isDark = fals
     const [isSaving, setIsSaving] = useState(false);
     const [isMigrating, setIsMigrating] = useState(false);
     const [showImportModal, setShowImportModal] = useState(false);
+
+    // Excel Paste State
+    const [showPasteModal, setShowPasteModal] = useState(false);
+    const [pasteTargetMeterId, setPasteTargetMeterId] = useState<string>('');
+    const [pasteStartDay, setPasteStartDay] = useState<string>('');
+    const [pasteField, setPasteField] = useState<'final_reading' | 'initial_reading'>('final_reading');
+    const [pasteRawText, setPasteRawText] = useState<string>('');
+    const [toast, setToast] = useState<{ message: string; type: 'success' | 'error'; visible: boolean }>({ message: '', type: 'success', visible: false });
+
+    // Excel-like Mouse Drag Selection State
+    const [selectionStart, setSelectionStart] = useState<{ dayIndex: number; meterId: string } | null>(null);
+    const [selectionEnd, setSelectionEnd] = useState<{ dayIndex: number; meterId: string } | null>(null);
+    const [isMouseDownSelecting, setIsMouseDownSelecting] = useState(false);
 
     // Custom Modal State
     const [modalConfig, setModalConfig] = useState<{
@@ -265,6 +279,367 @@ export default function ElectricitySpreadsheetLogger({ propertyId, isDark = fals
             
             return newState;
         });
+    };
+
+    const activeMeters = useMemo(() => {
+        const meters: { id: string; name: string; groupName: string; meter_constant: number }[] = [];
+        activeCategory?.groups.forEach(g => {
+            g.meters.forEach(m => {
+                meters.push({ id: m.id, name: m.name, groupName: g.name, meter_constant: m.meter_constant });
+            });
+        });
+        return meters;
+    }, [activeCategory]);
+
+    const applyBatchValues = (entries: { dateStr: string; meterId: string; field: 'initial_reading' | 'final_reading'; value: string; meterConstant: number }[]) => {
+        setReadings(prev => {
+            const newState = { ...prev };
+            entries.forEach(entry => {
+                const { dateStr, meterId, field, value, meterConstant } = entry;
+                if (!newState[dateStr]) newState[dateStr] = {};
+
+                const currentReading = newState[dateStr][meterId] || {
+                    meter_id: meterId,
+                    reading_date: dateStr,
+                    initial_reading: null,
+                    final_reading: null,
+                    consumption: null,
+                    meter_constant_used: meterConstant,
+                    is_rollover: false
+                };
+
+                const val = value === '' ? null : value;
+                const updatedReading = { ...currentReading, [field]: val };
+
+                if (updatedReading.initial_reading !== null && updatedReading.initial_reading !== '' && updatedReading.final_reading !== null && updatedReading.final_reading !== '') {
+                    const initVal = typeof updatedReading.initial_reading === 'string' ? parseFloat(updatedReading.initial_reading) : updatedReading.initial_reading;
+                    const finalVal = typeof updatedReading.final_reading === 'string' ? parseFloat(updatedReading.final_reading) : updatedReading.final_reading;
+
+                    if (!isNaN(initVal) && !isNaN(finalVal)) {
+                        const diff = finalVal - initVal;
+                        if (diff < 0) {
+                            updatedReading.is_rollover = true;
+                            updatedReading.consumption = null;
+                        } else {
+                            updatedReading.is_rollover = false;
+                            updatedReading.consumption = Number((diff * updatedReading.meter_constant_used).toFixed(2));
+                        }
+                    } else {
+                        updatedReading.consumption = null;
+                    }
+                } else {
+                    updatedReading.consumption = null;
+                }
+
+                newState[dateStr][meterId] = updatedReading;
+
+                if (field === 'final_reading') {
+                    const currDate = new Date(dateStr);
+                    currDate.setDate(currDate.getDate() + 1);
+                    const nextDateStr = currDate.toISOString().split('T')[0];
+
+                    if (newState[nextDateStr]) {
+                        const nextDay = newState[nextDateStr][meterId] || {
+                            meter_id: meterId,
+                            reading_date: nextDateStr,
+                            initial_reading: null,
+                            final_reading: null,
+                            consumption: null,
+                            meter_constant_used: meterConstant,
+                            is_rollover: false
+                        };
+
+                        nextDay.initial_reading = val;
+                        if (nextDay.final_reading !== null && nextDay.final_reading !== '') {
+                            const initVal = val !== null && val !== '' ? parseFloat(val as string) : NaN;
+                            const finalVal = typeof nextDay.final_reading === 'string' ? parseFloat(nextDay.final_reading) : nextDay.final_reading;
+
+                            if (!isNaN(initVal) && !isNaN(finalVal)) {
+                                const diff = finalVal - initVal;
+                                nextDay.consumption = diff >= 0 ? Number((diff * nextDay.meter_constant_used).toFixed(2)) : null;
+                            } else {
+                                nextDay.consumption = null;
+                            }
+                        } else {
+                            nextDay.consumption = null;
+                        }
+                        newState[nextDateStr][meterId] = nextDay;
+                    }
+                }
+            });
+            return newState;
+        });
+    };
+
+    const handleCellPaste = (
+        e: React.ClipboardEvent<HTMLInputElement>,
+        startDateStr: string,
+        startMeterId: string,
+        field: 'initial_reading' | 'final_reading',
+        meterConstant: number
+    ) => {
+        const rawText = e.clipboardData.getData('text');
+        if (!rawText) return;
+
+        const lines = rawText.split(/\r?\n/).map(l => l.trim()).filter(l => l !== '');
+        if (lines.length <= 1 && !lines[0]?.includes('\t')) {
+            return;
+        }
+
+        e.preventDefault();
+
+        const startMeterIndex = activeMeters.findIndex(m => m.id === startMeterId);
+        const startDayIndex = daysInMonth.findIndex(d => d.dateStr === startDateStr);
+
+        if (startDayIndex === -1) return;
+
+        const entries: { dateStr: string; meterId: string; field: 'initial_reading' | 'final_reading'; value: string; meterConstant: number }[] = [];
+
+        lines.forEach((line, lineIdx) => {
+            const targetDayIdx = startDayIndex + lineIdx;
+            if (targetDayIdx >= daysInMonth.length) return;
+            const targetDateStr = daysInMonth[targetDayIdx].dateStr;
+
+            const colValues = line.split('\t');
+            colValues.forEach((colVal, colIdx) => {
+                const targetMeterIdx = (startMeterIndex !== -1 ? startMeterIndex : 0) + colIdx;
+                if (targetMeterIdx >= activeMeters.length) return;
+                const targetMeter = activeMeters[targetMeterIdx];
+                const cleanVal = colVal.trim().replace(/,/g, '');
+
+                if (cleanVal !== '' && !isNaN(Number(cleanVal))) {
+                    entries.push({
+                        dateStr: targetDateStr,
+                        meterId: targetMeter.id,
+                        field,
+                        value: cleanVal,
+                        meterConstant: targetMeter.meter_constant
+                    });
+                }
+            });
+        });
+
+        if (entries.length > 0) {
+            applyBatchValues(entries);
+            setToast({ message: `Pasted ${entries.length} readings from Excel!`, type: 'success', visible: true });
+        }
+    };
+
+    const handleCellCut = (
+        e: React.ClipboardEvent<HTMLInputElement>,
+        dateStr: string,
+        meterId: string,
+        field: 'initial_reading' | 'final_reading',
+        meterConstant: number
+    ) => {
+        const target = e.currentTarget;
+        const currentVal = target.value;
+        if (!currentVal) return;
+
+        e.clipboardData.setData('text/plain', currentVal);
+        e.preventDefault();
+
+        handleValueChange(dateStr, meterId, field, '', meterConstant);
+        setToast({ message: 'Cut reading to clipboard', type: 'success', visible: true });
+    };
+
+    const handleClearMeterColumn = (meterId: string, meterName: string) => {
+        if (!confirm(`Clear all readings for ${meterName} in ${month}?`)) return;
+
+        setReadings(prev => {
+            const newState = { ...prev };
+            Object.keys(newState).forEach(dateStr => {
+                if (newState[dateStr]?.[meterId]) {
+                    const reading = { ...newState[dateStr][meterId] };
+                    reading.final_reading = null;
+                    reading.consumption = null;
+                    reading.is_rollover = false;
+                    newState[dateStr][meterId] = reading;
+                }
+            });
+            return newState;
+        });
+
+        setToast({ message: `Cleared readings for ${meterName}`, type: 'success', visible: true });
+    };
+
+    const selectedRangeBounds = useMemo(() => {
+        if (!selectionStart || !selectionEnd) return null;
+        const startDayIdx = Math.min(selectionStart.dayIndex, selectionEnd.dayIndex);
+        const endDayIdx = Math.max(selectionStart.dayIndex, selectionEnd.dayIndex);
+
+        const startMeterIdx = activeMeters.findIndex(m => m.id === selectionStart.meterId);
+        const endMeterIdx = activeMeters.findIndex(m => m.id === selectionEnd.meterId);
+
+        if (startMeterIdx === -1 || endMeterIdx === -1) return null;
+
+        const minMeterIdx = Math.min(startMeterIdx, endMeterIdx);
+        const maxMeterIdx = Math.max(startMeterIdx, endMeterIdx);
+
+        return { startDayIdx, endDayIdx, minMeterIdx, maxMeterIdx };
+    }, [selectionStart, selectionEnd, activeMeters]);
+
+    const isCellSelected = (dayIndex: number, meterId: string) => {
+        if (!selectedRangeBounds) return false;
+        if (dayIndex < selectedRangeBounds.startDayIdx || dayIndex > selectedRangeBounds.endDayIdx) return false;
+        const mIdx = activeMeters.findIndex(m => m.id === meterId);
+        if (mIdx === -1) return false;
+        return mIdx >= selectedRangeBounds.minMeterIdx && mIdx <= selectedRangeBounds.maxMeterIdx;
+    };
+
+    const handleCellMouseDown = (dayIndex: number, meterId: string) => {
+        setSelectionStart({ dayIndex, meterId });
+        setSelectionEnd({ dayIndex, meterId });
+        setIsMouseDownSelecting(true);
+    };
+
+    const handleCellMouseEnter = (dayIndex: number, meterId: string) => {
+        if (isMouseDownSelecting) {
+            setSelectionEnd({ dayIndex, meterId });
+        }
+    };
+
+    useEffect(() => {
+        const handleGlobalMouseUp = () => {
+            setIsMouseDownSelecting(false);
+        };
+        window.addEventListener('mouseup', handleGlobalMouseUp);
+        return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
+    }, []);
+
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (!selectedRangeBounds) return;
+            const activeElem = document.activeElement;
+            if (activeElem && (activeElem.tagName === 'TEXTAREA' || activeElem.tagName === 'SELECT')) return;
+
+            const { startDayIdx, endDayIdx, minMeterIdx, maxMeterIdx } = selectedRangeBounds;
+            const rowsCount = endDayIdx - startDayIdx + 1;
+            const colsCount = maxMeterIdx - minMeterIdx + 1;
+
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+                const lines: string[] = [];
+                for (let dIdx = startDayIdx; dIdx <= endDayIdx; dIdx++) {
+                    const dateStr = daysInMonth[dIdx]?.dateStr;
+                    if (!dateStr) continue;
+                    const rowVals: string[] = [];
+                    for (let mIdx = minMeterIdx; mIdx <= maxMeterIdx; mIdx++) {
+                        const meter = activeMeters[mIdx];
+                        if (!meter) continue;
+                        const reading = readings[dateStr]?.[meter.id];
+                        rowVals.push(reading?.final_reading !== null && reading?.final_reading !== undefined ? String(reading.final_reading) : '');
+                    }
+                    lines.push(rowVals.join('\t'));
+                }
+                const copyStr = lines.join('\n');
+                navigator.clipboard.writeText(copyStr);
+                setToast({ message: `Copied ${rowsCount}×${colsCount} cell selection to clipboard`, type: 'success', visible: true });
+            } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'x') {
+                e.preventDefault();
+                const lines: string[] = [];
+                const clearEntries: { dateStr: string; meterId: string; field: 'initial_reading' | 'final_reading'; value: string; meterConstant: number }[] = [];
+
+                for (let dIdx = startDayIdx; dIdx <= endDayIdx; dIdx++) {
+                    const dateStr = daysInMonth[dIdx]?.dateStr;
+                    if (!dateStr) continue;
+                    const rowVals: string[] = [];
+                    for (let mIdx = minMeterIdx; mIdx <= maxMeterIdx; mIdx++) {
+                        const meter = activeMeters[mIdx];
+                        if (!meter) continue;
+                        const reading = readings[dateStr]?.[meter.id];
+                        rowVals.push(reading?.final_reading !== null && reading?.final_reading !== undefined ? String(reading.final_reading) : '');
+                        clearEntries.push({
+                            dateStr,
+                            meterId: meter.id,
+                            field: 'final_reading',
+                            value: '',
+                            meterConstant: meter.meter_constant
+                        });
+                    }
+                    lines.push(rowVals.join('\t'));
+                }
+                const cutStr = lines.join('\n');
+                navigator.clipboard.writeText(cutStr);
+                applyBatchValues(clearEntries);
+                setToast({ message: `Cut ${rowsCount}×${colsCount} cell selection to clipboard`, type: 'success', visible: true });
+            } else if (e.key === 'Delete' || e.key === 'Backspace') {
+                if (activeElem && activeElem.tagName === 'INPUT') {
+                    const input = activeElem as HTMLInputElement;
+                    if (input.selectionStart !== null && input.selectionEnd !== null && input.selectionStart !== input.selectionEnd) {
+                        return;
+                    }
+                }
+                const clearEntries: { dateStr: string; meterId: string; field: 'initial_reading' | 'final_reading'; value: string; meterConstant: number }[] = [];
+                for (let dIdx = startDayIdx; dIdx <= endDayIdx; dIdx++) {
+                    const dateStr = daysInMonth[dIdx]?.dateStr;
+                    if (!dateStr) continue;
+                    for (let mIdx = minMeterIdx; mIdx <= maxMeterIdx; mIdx++) {
+                        const meter = activeMeters[mIdx];
+                        if (!meter) continue;
+                        clearEntries.push({
+                            dateStr,
+                            meterId: meter.id,
+                            field: 'final_reading',
+                            value: '',
+                            meterConstant: meter.meter_constant
+                        });
+                    }
+                }
+                applyBatchValues(clearEntries);
+                setToast({ message: `Cleared ${rowsCount}×${colsCount} selected cells`, type: 'success', visible: true });
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [selectedRangeBounds, daysInMonth, activeMeters, readings]);
+
+    const parsedPastePreview = useMemo(() => {
+        if (!pasteRawText.trim() || !pasteStartDay) return [];
+        const lines = pasteRawText.split(/\r?\n/).map(l => l.trim()).filter(l => l !== '');
+        const startDayIdx = daysInMonth.findIndex(d => d.dateStr === pasteStartDay);
+        if (startDayIdx === -1) return [];
+
+        const targetMeter = activeMeters.find(m => m.id === pasteTargetMeterId) || activeMeters[0];
+        if (!targetMeter) return [];
+
+        return lines.map((line, idx) => {
+            const targetDayIdx = startDayIdx + idx;
+            const dayObj = daysInMonth[targetDayIdx];
+            if (!dayObj) return null;
+
+            const firstVal = line.split('\t')[0].trim().replace(/,/g, '');
+            const numVal = parseFloat(firstVal);
+            return {
+                dateStr: dayObj.dateStr,
+                dayName: dayObj.dayName,
+                meterId: targetMeter.id,
+                meterName: targetMeter.name,
+                meterConstant: targetMeter.meter_constant,
+                value: !isNaN(numVal) ? String(numVal) : null,
+                rawInput: firstVal
+            };
+        }).filter(Boolean) as { dateStr: string; dayName: string; meterId: string; meterName: string; meterConstant: number; value: string | null; rawInput: string }[];
+    }, [pasteRawText, pasteStartDay, pasteTargetMeterId, activeMeters, daysInMonth]);
+
+    const handleApplyExcelPaste = () => {
+        const validEntries = parsedPastePreview.filter(p => p.value !== null).map(p => ({
+            dateStr: p.dateStr,
+            meterId: p.meterId,
+            field: pasteField,
+            value: p.value!,
+            meterConstant: p.meterConstant
+        }));
+
+        if (validEntries.length === 0) {
+            setToast({ message: 'No valid numeric column values found to paste.', type: 'error', visible: true });
+            return;
+        }
+
+        applyBatchValues(validEntries);
+        setShowPasteModal(false);
+        setPasteRawText('');
+        setToast({ message: `Successfully pasted ${validEntries.length} daily readings!`, type: 'success', visible: true });
     };
 
     const handleSave = async () => {
@@ -606,6 +981,22 @@ export default function ElectricitySpreadsheetLogger({ propertyId, isDark = fals
                         <LayoutTemplate className="w-4 h-4" />
                         Import Layout
                     </button>
+
+                    <button
+                        onClick={() => {
+                            if (activeMeters.length > 0) setPasteTargetMeterId(activeMeters[0].id);
+                            if (daysInMonth.length > 0) setPasteStartDay(daysInMonth[0].dateStr);
+                            setPasteRawText('');
+                            setShowPasteModal(true);
+                        }}
+                        className={`px-3 py-2 rounded-lg font-bold text-sm whitespace-nowrap transition-colors flex items-center gap-1.5 border border-dashed ${
+                            isDark ? 'border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/10' : 'border-emerald-500/40 text-emerald-700 bg-emerald-50/50 hover:bg-emerald-100/60'
+                        }`}
+                        title="Paste column data copied from Excel or Google Sheets"
+                    >
+                        <FileSpreadsheet className="w-4 h-4 text-emerald-500" />
+                        Paste from Excel
+                    </button>
                     
                     <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border ${isDark ? 'bg-[#0d1117] border-[#30363d]' : 'bg-slate-50 border-slate-200'}`}>
                         <Calendar className="w-4 h-4 text-slate-500" />
@@ -768,18 +1159,35 @@ export default function ElectricitySpreadsheetLogger({ propertyId, isDark = fals
                                     {activeCategory?.groups.map(grp => (
                                         grp.meters.map(meter => {
                                             const reading = readings[day.dateStr]?.[meter.id];
+                                            const isSelected = isCellSelected(rowIndex, meter.id);
                                             return (
                                                 <React.Fragment key={meter.id}>
                                                     <td className={`border-r border-b p-1 text-center text-xs font-bold bg-transparent ${isDark ? 'border-[#30363d] text-white' : 'border-slate-200 text-black'}`}>
                                                         {reading?.initial_reading !== undefined && reading?.initial_reading !== null ? Number(Number(reading.initial_reading).toFixed(2)) : '-'}
                                                     </td>
-                                                    <td className={`border-r border-b p-0 bg-transparent ${isDark ? 'border-[#30363d]' : 'border-slate-200'}`}>
+                                                    <td 
+                                                        onMouseDown={() => handleCellMouseDown(rowIndex, meter.id)}
+                                                        onMouseEnter={() => handleCellMouseEnter(rowIndex, meter.id)}
+                                                        className={`border-r border-b p-0 relative transition-all ${
+                                                            isSelected 
+                                                                ? 'bg-blue-500/20 dark:bg-blue-500/30 ring-2 ring-blue-500 z-20' 
+                                                                : 'bg-transparent'
+                                                        } ${isDark ? 'border-[#30363d]' : 'border-slate-200'}`}
+                                                    >
                                                         <input 
                                                             type="text"
                                                             inputMode="decimal"
                                                             value={reading?.final_reading ?? ''}
                                                             onChange={(e) => handleValueChange(day.dateStr, meter.id, 'final_reading', e.target.value, meter.meter_constant)}
-                                                            className={`w-full h-full p-1 text-xs bg-transparent text-center focus:outline-none focus:bg-primary/10 transition-colors font-bold ${isDark ? 'text-white placeholder:text-slate-600' : 'text-black placeholder:text-slate-300'}`}
+                                                            onPaste={(e) => handleCellPaste(e, day.dateStr, meter.id, 'final_reading', meter.meter_constant)}
+                                                            onCut={(e) => handleCellCut(e, day.dateStr, meter.id, 'final_reading', meter.meter_constant)}
+                                                            onMouseDown={() => handleCellMouseDown(rowIndex, meter.id)}
+                                                            onMouseEnter={() => handleCellMouseEnter(rowIndex, meter.id)}
+                                                            className={`w-full h-full p-1 text-xs bg-transparent text-center focus:outline-none focus:bg-primary/10 transition-colors font-bold ${
+                                                                isSelected 
+                                                                    ? (isDark ? 'text-white font-black' : 'text-blue-950 font-black') 
+                                                                    : (isDark ? 'text-white placeholder:text-slate-600' : 'text-black placeholder:text-slate-300')
+                                                            }`}
                                                             placeholder="-"
                                                         />
                                                     </td>
@@ -851,6 +1259,144 @@ export default function ElectricitySpreadsheetLogger({ propertyId, isDark = fals
                 onSuccess={() => {
                     fetchConfig();
                 }}
+            />
+
+            {/* Excel Paste Modal */}
+            {showPasteModal && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+                    <div className={`p-6 rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col ${isDark ? 'bg-[#161b22] border border-[#30363d]' : 'bg-white'}`}>
+                        <div className="flex items-center justify-between pb-4 border-b border-slate-200 dark:border-[#30363d]">
+                            <div className="flex items-center gap-2">
+                                <FileSpreadsheet className="w-5 h-5 text-emerald-500" />
+                                <h3 className={`text-lg font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>Paste Data from Excel / Google Sheets</h3>
+                            </div>
+                            <button onClick={() => setShowPasteModal(false)} className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400">
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+
+                        <div className="space-y-4 my-4 overflow-y-auto flex-1 pr-1">
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                <div>
+                                    <label className={`block text-xs font-bold mb-1 ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>Target Meter</label>
+                                    <select
+                                        value={pasteTargetMeterId}
+                                        onChange={(e) => setPasteTargetMeterId(e.target.value)}
+                                        className={`w-full px-3 py-2 text-xs font-bold rounded-lg border outline-none ${
+                                            isDark ? 'bg-[#0d1117] border-[#30363d] text-white' : 'bg-white border-slate-200 text-slate-900'
+                                        }`}
+                                    >
+                                        {activeMeters.map(m => (
+                                            <option key={m.id} value={m.id}>{m.groupName} - {m.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                <div>
+                                    <label className={`block text-xs font-bold mb-1 ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>Start Date</label>
+                                    <select
+                                        value={pasteStartDay}
+                                        onChange={(e) => setPasteStartDay(e.target.value)}
+                                        className={`w-full px-3 py-2 text-xs font-bold rounded-lg border outline-none ${
+                                            isDark ? 'bg-[#0d1117] border-[#30363d] text-white' : 'bg-white border-slate-200 text-slate-900'
+                                        }`}
+                                    >
+                                        {daysInMonth.map(d => (
+                                            <option key={d.dateStr} value={d.dateStr}>{d.dateStr.split('-').reverse().join('/')} ({d.dayName})</option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                <div>
+                                    <label className={`block text-xs font-bold mb-1 ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>Field</label>
+                                    <select
+                                        value={pasteField}
+                                        onChange={(e) => setPasteField(e.target.value as any)}
+                                        className={`w-full px-3 py-2 text-xs font-bold rounded-lg border outline-none ${
+                                            isDark ? 'bg-[#0d1117] border-[#30363d] text-white' : 'bg-white border-slate-200 text-slate-900'
+                                        }`}
+                                    >
+                                        <option value="final_reading">Final Reading</option>
+                                        <option value="initial_reading">Initial Reading</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className={`block text-xs font-bold mb-1 ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                                    Paste Column Data (Ctrl+V)
+                                </label>
+                                <textarea
+                                    rows={5}
+                                    value={pasteRawText}
+                                    onChange={(e) => setPasteRawText(e.target.value)}
+                                    placeholder="Copy a column from Excel or Google Sheets and paste here (e.g. 105.2, 112.4, 120.1...)"
+                                    className={`w-full p-3 text-xs font-mono rounded-lg border outline-none focus:ring-2 focus:ring-emerald-500/50 ${
+                                        isDark ? 'bg-[#0d1117] border-[#30363d] text-white placeholder-slate-600' : 'bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400'
+                                    }`}
+                                />
+                            </div>
+
+                            {parsedPastePreview.length > 0 && (
+                                <div>
+                                    <div className="flex items-center justify-between mb-2">
+                                        <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                                            Live Preview ({parsedPastePreview.filter(p => p.value !== null).length} valid rows found)
+                                        </span>
+                                    </div>
+                                    <div className={`max-h-40 overflow-y-auto rounded-lg border ${isDark ? 'border-[#30363d] bg-[#0d1117]' : 'border-slate-200 bg-white'}`}>
+                                        <table className="w-full text-left text-xs border-collapse">
+                                            <thead className={`sticky top-0 ${isDark ? 'bg-[#161b22] text-slate-400' : 'bg-slate-100 text-slate-600'}`}>
+                                                <tr>
+                                                    <th className="p-2 border-b border-r">Date</th>
+                                                    <th className="p-2 border-b border-r">Target Meter</th>
+                                                    <th className="p-2 border-b">Pasted Value</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {parsedPastePreview.map((row, i) => (
+                                                    <tr key={i} className={`border-b border-slate-100 dark:border-slate-800 ${row.value === null ? 'opacity-40' : ''}`}>
+                                                        <td className="p-2 border-r font-mono">{row.dateStr.split('-').reverse().join('/')} ({row.dayName})</td>
+                                                        <td className="p-2 border-r">{row.meterName}</td>
+                                                        <td className="p-2 font-bold text-emerald-600 dark:text-emerald-400">
+                                                            {row.value !== null ? row.value : <span className="text-red-400">Invalid ({row.rawInput})</span>}
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="pt-4 border-t border-slate-200 dark:border-[#30363d] flex justify-end gap-3">
+                            <button
+                                type="button"
+                                onClick={() => setShowPasteModal(false)}
+                                className={`px-4 py-2 rounded-lg font-medium text-xs ${isDark ? 'hover:bg-slate-800 text-slate-300' : 'hover:bg-slate-100 text-slate-600'}`}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleApplyExcelPaste}
+                                disabled={parsedPastePreview.filter(p => p.value !== null).length === 0}
+                                className="px-5 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg font-bold text-xs shadow-md transition-all disabled:opacity-50 flex items-center gap-1.5"
+                            >
+                                <ClipboardCheck className="w-4 h-4" />
+                                Apply {parsedPastePreview.filter(p => p.value !== null).length} Readings
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            <Toast
+                message={toast.message}
+                type={toast.type}
+                visible={toast.visible}
+                onClose={() => setToast(prev => ({ ...prev, visible: false }))}
             />
         </div>
     );
