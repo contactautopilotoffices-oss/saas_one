@@ -244,13 +244,23 @@ export default function RequestsReportPage() {
         return new Date(dateString).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: true });
     };
 
+    const formatDateTime = (dateString: string | null) => {
+        if (!dateString) return '-';
+        const d = new Date(dateString);
+        if (isNaN(d.getTime())) return '-';
+        const dateStr = d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        const timeStr = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: true });
+        return `${dateStr} ${timeStr.toUpperCase()}`;
+    };
+
     const handleExportCSV = () => {
         if (!reportData) return;
-        const headers = ['ticket id', 'title', 'description', 'category', 'floor', 'location', 'status', 'priority', 'contact person', 'assignee', 'reported date', 'closure date'];
+        const headers = ['ticket id', 'title', 'description', 'category', 'floor', 'location', 'status', 'priority', 'raised by', 'assigned person', 'raised date & time', 'closure date & time'];
         const rows = filteredTickets.map(t => [
             t.ticketNumberDisplay, t.title, t.description?.replace(/,/g, ';') || '',
             t.category, t.floorLabel, t.location || '-', t.status, t.priority,
-            t.contactPersonName, t.assigneeName, formatDate(t.reportedDate), formatDate(t.closedDate),
+            (t as any).spocName || t.contactPersonName || 'Unknown', t.assigneeName || 'Unassigned',
+            formatDateTime(t.reportedDate), formatDateTime(t.closedDate),
         ]);
         const csvContent = [headers.join(','), ...rows.map(row => row.map(cell => `"${cell}"`).join(','))].join('\n');
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });

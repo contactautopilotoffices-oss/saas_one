@@ -190,6 +190,15 @@ export default function SnagReportPage() {
         });
     };
 
+    const formatDateTime = (dateString: string | null) => {
+        if (!dateString) return '-';
+        const d = new Date(dateString);
+        if (isNaN(d.getTime())) return '-';
+        const dateStr = d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        const timeStr = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: true });
+        return `${dateStr} ${timeStr.toUpperCase()}`;
+    };
+
     const handlePrint = () => {
         window.print();
     };
@@ -197,7 +206,7 @@ export default function SnagReportPage() {
     const handleExportCSV = () => {
         if (!reportData) return;
 
-        const headers = ['ticket id', 'title', 'description', 'category', 'floor', 'location', 'status', 'priority', 'contact person', 'reported date', 'closure date'];
+        const headers = ['ticket id', 'title', 'description', 'category', 'floor', 'location', 'status', 'priority', 'raised by', 'assigned person', 'raised date & time', 'closure date & time'];
         const rows = reportData.tickets.map(t => [
             t.ticketNumberDisplay,
             t.title,
@@ -207,9 +216,10 @@ export default function SnagReportPage() {
             t.location || '-',
             t.status,
             t.priority,
-            t.contactPersonName,
-            formatDate(t.reportedDate),
-            formatDate(t.closedDate)
+            (t as any).spocName || t.contactPersonName || 'Unknown',
+            (t as any).assigneeName || 'Unassigned',
+            formatDateTime(t.reportedDate),
+            formatDateTime(t.closedDate)
         ]);
 
         const csvContent = [

@@ -67,6 +67,7 @@ export async function GET(request: NextRequest) {
                 floor_number,
                 location,
                 created_at,
+                updated_at,
                 resolved_at,
                 raised_by,
                 assigned_to,
@@ -152,7 +153,7 @@ export async function GET(request: NextRequest) {
             .from('ticket_activity_log')
             .select('ticket_id, action, new_value, old_value, created_at')
             .in('ticket_id', ticketIds)
-            .or('action.eq.photo_before_uploaded,action.eq.video_before_uploaded,action.eq.photo_after_uploaded,action.eq.video_after_uploaded,action.eq.photo_upload,action.eq.video_upload');
+            .or('action.eq.photo_before_uploaded,action.eq.video_before_uploaded,action.eq.photo_after_uploaded,action.eq.video_after_uploaded,action.eq.photo_upload,action.eq.video_upload,action.eq.status_changed');
 
         const formattedTickets = allTickets.map(ticket => {
             // Find authentic capture timestamps from activity logs
@@ -172,9 +173,15 @@ export async function GET(request: NextRequest) {
                 (l.action === 'video_upload' && (l.new_value as string)?.includes('after'))
             );
 
+            const statusLog = logs.find(l =>
+                l.action === 'status_changed' &&
+                ['pending_validation', 'resolved', 'closed', 'completed'].includes(l.new_value as string)
+            );
+
             // Use old_value (takenAt) as priority, then created_at from log, then ticket fields
             const reportedDate = beforeLog?.old_value || beforeLog?.created_at || ticket.created_at;
-            const closedDate = afterLog?.old_value || afterLog?.created_at || ticket.resolved_at;
+            const closedDate = afterLog?.old_value || afterLog?.created_at || statusLog?.created_at || ticket.resolved_at ||
+                (['pending_validation', 'resolved', 'closed', 'completed'].includes(ticket.status) ? ticket.updated_at : null);
 
             return {
                 id: ticket.id,
