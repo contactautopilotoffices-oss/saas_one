@@ -1,13 +1,71 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Mail, Lock, User, Phone, ArrowRight, CheckCircle2, ShieldCheck, Zap } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
+import { createClient } from '@/frontend/utils/supabase/client';
+import Loader from '@/frontend/components/ui/Loader';
 
 const JoinPropertyPage = () => {
     const params = useParams();
+    const router = useRouter();
     const propertyCode = params.propertyCode as string;
+    const [isCheckingSession, setIsCheckingSession] = useState(true);
+
+    useEffect(() => {
+        let isMounted = true;
+
+        async function verifySessionAndMembership() {
+            try {
+                const supabase = createClient();
+                const { data: { session } } = await supabase.auth.getSession();
+
+                if (session && session.user) {
+                    // Check if this property exists by code or ID
+                    const { data: property } = await supabase
+                        .from('properties')
+                        .select('id, name')
+                        .or(`code.eq.${propertyCode},id.eq.${propertyCode}`)
+                        .maybeSingle();
+
+                    if (property) {
+                        // Check if user has an active membership for this property or organization
+                        const { data: membership } = await supabase
+                            .from('property_memberships')
+                            .select('property_id')
+                            .eq('user_id', session.user.id)
+                            .eq('property_id', property.id)
+                            .maybeSingle();
+
+                        if (membership) {
+                            // Scenario A: User is onboarded and active! Redirect straight to their dashboard
+                            if (isMounted) {
+                                router.replace(`/property/${property.id}/dashboard`);
+                                return;
+                            }
+                        }
+                    }
+
+                    // Scenario B: User logged in but deleted / no membership / invalid session on this property
+                    // Sign out dead session so new client can register without hitting Access Denied
+                    await supabase.auth.signOut();
+                }
+            } catch (err) {
+                console.error("Session verification error on join page:", err);
+            } finally {
+                if (isMounted) {
+                    setIsCheckingSession(false);
+                }
+            }
+        }
+
+        verifySessionAndMembership();
+
+        return () => {
+            isMounted = false;
+        };
+    }, [propertyCode, router]);
 
     // In a real app, you would fetch property details based on propertyCode here
     const displayedPropertyName = propertyCode?.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ') || 'your property';
@@ -35,6 +93,17 @@ const JoinPropertyPage = () => {
             color: "from-orange-500 to-red-600"
         }
     ];
+
+    if (isCheckingSession) {
+        return (
+            <div className="min-h-screen w-full flex flex-col items-center justify-center bg-[#f3f4f6]">
+                <Loader />
+                <p className="text-slate-500 text-sm mt-4 font-medium animate-pulse">
+                    Verifying workspace invite...
+                </p>
+            </div>
+        );
+    }
 
     return (
         <div className="min-h-screen w-full flex items-center justify-center bg-[#f3f4f6] p-4 font-sans overflow-hidden">

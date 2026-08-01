@@ -109,6 +109,19 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // Verify foreign keys exist if provided to avoid FK constraint violations
+    let validUserId = user_id || null;
+    if (validUserId) {
+      const { data: userExists } = await adminSupabase
+        .from('users')
+        .select('id')
+        .eq('id', validUserId)
+        .maybeSingle();
+      if (!userExists) {
+        validUserId = null;
+      }
+    }
+
     // Insert new issue
     const { data: issue, error: insertError } = await adminSupabase
       .from('issue_logs')
@@ -130,7 +143,7 @@ export async function POST(request: NextRequest) {
         os,
         device,
         screen_size,
-        user_id,
+        user_id: validUserId,
         property_id,
         organization_id,
         user_description,

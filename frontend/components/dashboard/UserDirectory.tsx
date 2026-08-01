@@ -5,11 +5,12 @@ import {
     Users, Search, Filter, UserPlus, Trash2, RefreshCw,
     Plus, Mail, Phone, Shield, Building2,
     Calendar, MoreVertical, Edit2, X, Check,
-    Wrench, Hammer, Briefcase, Sparkles, Star, UserCircle, ChevronDown, Key
+    Wrench, Hammer, Briefcase, Sparkles, Star, UserCircle, ChevronDown, Key, QrCode
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
 import InviteMemberModal from './InviteMemberModal'; // This is actually our AddMemberModal now
+import ClientQRGeneratorModal from '../vms/ClientQRGeneratorModal';
 
 interface UserWithMembership {
     id: string;
@@ -69,6 +70,7 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
     };
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
     const [showInviteModal, setShowInviteModal] = useState(false);
+    const [showClientQRModal, setShowClientQRModal] = useState(false);
     const [selectedUserForProfile, setSelectedUserForProfile] = useState<UserWithMembership | null>(null);
 
     // Super Tenant property management
@@ -417,23 +419,32 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                     </div>
                     <p className="text-slate-500 font-medium text-sm mt-1">Manage user access, roles, and permissions.</p>
                 </div>
-                {orgId && (
+                <div className="flex items-center gap-3">
                     <button
-                        onClick={() => {
-                            // Check if a parent component (like PropertyAdminDashboard) provided a specific modal trigger
-                            const parentTrigger = (onUserUpdated as any)?.__triggerModal;
-                            if (parentTrigger) {
-                                parentTrigger();
-                            } else {
-                                setShowInviteModal(true);
-                            }
-                        }}
-                        className="flex items-center gap-2 px-6 py-3 bg-slate-900 text-white font-black text-sm rounded-xl hover:bg-slate-800 transition-all shadow-lg shadow-slate-200"
+                        onClick={() => setShowClientQRModal(true)}
+                        className="flex items-center gap-2 px-5 py-3 bg-teal-600 hover:bg-teal-700 text-white font-bold text-sm rounded-xl transition-all shadow-md shadow-teal-600/20"
                     >
-                        <UserPlus className="w-4 h-4" />
-                        Add Member
+                        <QrCode className="w-4 h-4" />
+                        Client Onboarding QR
                     </button>
-                )}
+                    {orgId && (
+                        <button
+                            onClick={() => {
+                                // Check if a parent component (like PropertyAdminDashboard) provided a specific modal trigger
+                                const parentTrigger = (onUserUpdated as any)?.__triggerModal;
+                                if (parentTrigger) {
+                                    parentTrigger();
+                                } else {
+                                    setShowInviteModal(true);
+                                }
+                            }}
+                            className="flex items-center gap-2 px-6 py-3 bg-slate-900 text-white font-black text-sm rounded-xl hover:bg-slate-800 transition-all shadow-lg shadow-slate-200"
+                        >
+                            <UserPlus className="w-4 h-4" />
+                            Add Member
+                        </button>
+                    )}
+                </div>
             </div>
 
             {/* Filters */}
@@ -1013,6 +1024,14 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                     </motion.div>
                 )}
             </AnimatePresence>
+
+            {/* Client QR Generator Modal */}
+            <ClientQRGeneratorModal
+                isOpen={showClientQRModal}
+                onClose={() => setShowClientQRModal(false)}
+                propertyId={propertyId || (properties && properties.length > 0 ? properties[0].id : '')}
+                propertyName={(properties && properties.find(p => p.id === (propertyId || properties[0]?.id))?.name) || 'Property Workspace'}
+            />
         </div>
     );
 };

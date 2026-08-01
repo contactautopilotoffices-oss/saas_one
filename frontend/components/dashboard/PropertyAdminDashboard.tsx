@@ -42,6 +42,7 @@ import UniversalQRScannerModal, { QRScanResult } from '@/frontend/components/sha
 import { RosterDashboard } from '@/frontend/components/roster/RosterDashboard';
 import { WaterDashboard } from '@/frontend/components/water/WaterDashboard';
 import WaterAnalyticsDashboard from '@/frontend/components/water/WaterAnalyticsDashboard';
+import ClientQRGeneratorModal from '@/frontend/components/vms/ClientQRGeneratorModal';
 
 import VendorManagementModal from '@/frontend/components/vendor/VendorManagementModal';
 import GuestExperienceDashboard from '@/frontend/components/guest-experience/GuestExperienceDashboard';
@@ -134,6 +135,7 @@ const PropertyAdminDashboard = () => {
         [membership]
     );
     const [showPropertyDropdown, setShowPropertyDropdown] = useState(false);
+    const [showClientQRModal, setShowClientQRModal] = useState(false);
     const propertyDropdownRef = useRef<HTMLDivElement>(null);
 
     // Ref to prevent duplicate fetches
@@ -970,6 +972,14 @@ const PropertyAdminDashboard = () => {
                     }}
                 />
             )}
+
+            {/* Modal: Client QR Generator */}
+            <ClientQRGeneratorModal
+                isOpen={showClientQRModal}
+                onClose={() => setShowClientQRModal(false)}
+                propertyId={propertyId}
+                propertyName={property?.name || ''}
+            />
         </div>
     );
 };
