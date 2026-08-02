@@ -8,7 +8,7 @@ import {
     Menu, X, GitMerge, Calendar, ShoppingCart, UsersRound, BarChart3,
     FileUp, Bot, Building2, Send, CalendarDays, Droplets, Coffee,
     Sparkles, DollarSign, ClipboardList, Target, TrendingUp,
-    BellRing, HelpCircle, Megaphone, Radio, BookOpen, Smartphone, MessageSquarePlus
+    BellRing, HelpCircle, Megaphone, Radio, BookOpen, Smartphone, MessageSquarePlus, ShieldCheck
 } from 'lucide-react';
 import CapabilityWrapper from '../auth/CapabilityWrapper';
 import { useAuth } from '@/frontend/context/AuthContext';
@@ -318,6 +318,14 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
                             >
                                 <Settings className="w-4 h-4 shrink-0" />
                                 <span className="text-xs font-semibold font-body">Settings</span>
+                            </Link>
+                            <Link
+                                href="/privacy-policy"
+                                target="_blank"
+                                className="flex items-center justify-center p-2 lg:p-2 rounded-[var(--radius-md)] text-text-tertiary hover:text-text-primary hover:bg-surface-elevated transition-smooth"
+                                title="Privacy Policy"
+                            >
+                                <ShieldCheck className="w-4 h-4 shrink-0" />
                             </Link>
                             <ThemeToggle />
                         </div>

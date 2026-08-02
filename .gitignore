@@ -42,3 +42,8 @@ next-env.d.ts
 
 # agent
 .agent/
+
+# onboarding walkthrough video — source project, rendered MP4, and the
+# vendored HyperFrames checkout. Large binary output, not app code.
+/onboarding-video-project/
+/hyperframes/

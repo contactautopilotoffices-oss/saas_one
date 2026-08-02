@@ -622,6 +622,33 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
                     </div>
                 </section>
 
+                {/* Legal & Privacy Policy */}
+                <section className="bg-surface border border-border rounded-2xl md:rounded-3xl p-4 md:p-6 shadow-sm space-y-4">
+                    <div className="flex items-center gap-3">
+                        <div className="p-2 bg-teal-50 dark:bg-teal-950/40 text-teal-600 dark:text-teal-400 rounded-xl">
+                            <Shield className="w-5 h-5" />
+                        </div>
+                        <div>
+                            <h3 className="font-bold text-text-primary text-base">Legal & Data Protection</h3>
+                            <p className="text-xs text-text-tertiary">Review data security practices and account privacy terms.</p>
+                        </div>
+                    </div>
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 bg-surface-elevated border border-border rounded-xl">
+                        <div>
+                            <p className="text-xs font-semibold text-text-primary">Autopilot Privacy Policy</p>
+                            <p className="text-[11px] text-text-tertiary">Learn how your data, media attachments, and account details are protected.</p>
+                        </div>
+                        <a
+                            href="/privacy-policy"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-2 px-4 py-2 bg-primary/10 hover:bg-primary/20 text-primary font-bold text-xs rounded-xl transition-colors shrink-0"
+                        >
+                            <ExternalLink className="w-3.5 h-3.5" /> View Privacy Policy
+                        </a>
+                    </div>
+                </section>
+
                 {/* Actions */}
                 <div className="flex justify-end pt-2 md:pt-4">
                     <button

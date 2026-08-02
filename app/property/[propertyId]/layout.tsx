@@ -12,7 +12,7 @@ export default function PropertyLayout({
 }: {
     children: React.ReactNode;
 }) {
-    const { user, isLoading: authLoading, membership, isMembershipLoading } = useAuth();
+    const { user, isLoading: authLoading, membership, isMembershipLoading, signOut } = useAuth();
     const router = useRouter();
     const params = useParams();
     const pathname = usePathname();
@@ -156,7 +156,10 @@ export default function PropertyLayout({
                         You don't have permission to access this property. Please contact your administrator if you believe this is an error.
                     </p>
                     <button
-                        onClick={() => router.push('/login')}
+                        onClick={async () => {
+                            await signOut();
+                            router.push('/login');
+                        }}
                         className="px-6 py-3 bg-primary text-white rounded-lg font-semibold hover:bg-primary-dark transition-colors"
                     >
                         Return to Login

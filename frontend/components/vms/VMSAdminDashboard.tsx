@@ -3,10 +3,11 @@
 import React, { useState, useEffect } from 'react';
 import {
     Users, Clock, LogIn, LogOut, Search, FileDown,
-    CheckCircle2, User, Truck, Building2, X, Calendar, ChevronDown, Plus
+    CheckCircle2, User, Truck, Building2, X, Calendar, ChevronDown, Plus, QrCode
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import VMSKiosk from './VMSKiosk';
+import ClientQRGeneratorModal from './ClientQRGeneratorModal';
 
 interface VMSAdminDashboardProps {
     propertyId: string;
@@ -40,6 +41,7 @@ const VMSAdminDashboard: React.FC<VMSAdminDashboardProps> = ({ propertyId }) => 
     const [selectedVisitor, setSelectedVisitor] = useState<VisitorLog | null>(null);
     const [actionLoading, setActionLoading] = useState(false);
     const [showCheckInModal, setShowCheckInModal] = useState(false);
+    const [showClientQRModal, setShowClientQRModal] = useState(false);
 
     // Debounce search query - wait 300ms after user stops typing before searching
     useEffect(() => {
@@ -724,6 +726,14 @@ const VMSAdminDashboard: React.FC<VMSAdminDashboardProps> = ({ propertyId }) => 
                     </div>
                 )}
             </AnimatePresence>
+
+            {/* Modal: Client QR Generator */}
+            <ClientQRGeneratorModal
+                isOpen={showClientQRModal}
+                onClose={() => setShowClientQRModal(false)}
+                propertyId={propertyId}
+                propertyName=""
+            />
         </div>
     );
 };

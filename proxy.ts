@@ -48,6 +48,7 @@ export async function proxy(request: NextRequest) {
         '/q',          // Public QR code entry points
         '/api',        // API routes handle their own auth
         '/kiosk',
+        '/onboard',    // Public client onboarding QR route
         '/onboarding', // Has its own client-side auth check
         '/_next',
         '/favicon.ico',
@@ -55,6 +56,7 @@ export async function proxy(request: NextRequest) {
         '/firebase-messaging-sw.js', // Allow service worker
         '/landing_animation', // Public landing animation page
         '/privacy',
+        '/privacy-policy',
         '/terms',
     ]
 

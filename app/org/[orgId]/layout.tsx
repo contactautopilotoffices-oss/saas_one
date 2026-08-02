@@ -16,7 +16,7 @@ export default function OrgLayout({
 }: {
     children: React.ReactNode;
 }) {
-    const { user, isLoading: authLoading } = useAuth();
+    const { user, isLoading: authLoading, signOut } = useAuth();
     const router = useRouter();
     const params = useParams();
     const orgId = params.orgId as string;
@@ -128,7 +128,10 @@ export default function OrgLayout({
                         You don't have permission to access this organization. Please contact your administrator if you believe this is an error.
                     </p>
                     <button
-                        onClick={() => router.push('/login')}
+                        onClick={async () => {
+                            await signOut();
+                            router.push('/login');
+                        }}
                         className="px-6 py-3 bg-primary text-white rounded-lg font-semibold hover:bg-primary-dark transition-colors"
                     >
                         Return to Login
