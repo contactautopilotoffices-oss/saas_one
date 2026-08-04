@@ -1,11 +1,12 @@
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { EmailService } from '@/backend/services/EmailService';
+import { EmailRecipientResolver } from '@/backend/services/EmailRecipientResolver';
 
 export const EventProcessor = {
     async processEvent(event: any) {
         const { event_type, payload } = event;
 
-        if (event_type === 'MEETING_ROOM_BOOKED' || event_type === 'MEETING_ROOM_CANCELLED') {
+        if (['MEETING_ROOM_BOOKED', 'MEETING_ROOM_CANCELLED', 'ROOM_BOOKED', 'ROOM_CANCELLED', 'ROOM_BOOKING_CANCELLED'].includes(event_type)) {
             await this.handleMeetingRoomEvent(event_type, payload);
         } else if (event_type === 'MATERIAL_REQUEST_CREATED') {
             await this.handleMaterialRequestEvent(payload);
@@ -19,49 +20,36 @@ export const EventProcessor = {
     },
 
     async handleMeetingRoomEvent(eventType: string, payload: any) {
-        const propertyId = payload.property_id;
+        let propertyId = payload.property_id;
         const meetingRoomId = payload.meeting_room_id;
         const userId = payload.user_id;
+
+        if (!propertyId && meetingRoomId) {
+            const { data: room } = await supabaseAdmin
+                .from('meeting_rooms')
+                .select('property_id')
+                .eq('id', meetingRoomId)
+                .maybeSingle();
+            if (room?.property_id) {
+                propertyId = room.property_id;
+            }
+        }
+
+        if (!propertyId) {
+            console.error('[EventProcessor] Meeting room event missing property_id:', payload);
+            return;
+        }
 
         const { data: property } = await supabaseAdmin
             .from('properties')
             .select('organization_id, name')
             .eq('id', propertyId)
-            .single();
-
-        if (!property?.organization_id) throw new Error('Property or org_id not found');
-
-        const { data: orgData } = await supabaseAdmin
-            .from('organization_settings')
-            .select('email_preferences, email_templates')
-            .eq('organization_id', property.organization_id)
             .maybeSingle();
 
-        const emailPrefs = orgData?.email_preferences || {};
-        if (emailPrefs.meeting_rooms === false) {
-            console.log(`[EventProcessor] Meeting rooms email disabled for org ${property.organization_id}`);
+        if (!property?.organization_id) {
+            console.error(`[EventProcessor] Property ${propertyId} or org_id not found`);
             return;
         }
-
-        const customHtml = (orgData as any)?.email_templates?.meeting_rooms?.html || null;
-
-        const { data: admins } = await supabaseAdmin
-            .from('property_memberships')
-            .select('user:users!user_id(email)')
-            .eq('property_id', propertyId)
-            .eq('role', 'property_admin')
-            .eq('is_active', true);
-
-        if (!admins || admins.length === 0) {
-            console.warn(`[EventProcessor] No property admins found for property ${propertyId}`);
-            return;
-        }
-
-        const { data: roomData } = await supabaseAdmin
-            .from('meeting_rooms')
-            .select('name')
-            .eq('id', meetingRoomId)
-            .single();
 
         const { data: userData } = await supabaseAdmin
             .from('users')
@@ -69,26 +57,48 @@ export const EventProcessor = {
             .eq('id', userId)
             .single();
 
-        const isCancellation = eventType === 'MEETING_ROOM_CANCELLED';
+        const { enabled, emails } = await EmailRecipientResolver.resolveRecipients({
+            organizationId: property.organization_id,
+            propertyId,
+            featureKey: 'meeting_rooms',
+            contextualEmails: [userData?.email]
+        });
 
-        for (const admin of admins) {
-            // @ts-ignore
-            const emailTo = admin.user?.email || admin.user?.[0]?.email;
-            if (emailTo) {
-                await EmailService.sendMeetingRoomEmail({
-                    emailTo: emailTo,
-                    roomName: roomData?.name || 'Meeting Room',
-                    date: payload.booking_date,
-                    startTime: payload.start_time,
-                    endTime: payload.end_time,
-                    propertyName: property.name || 'Your Property',
-                    requesterName: userData?.full_name || 'Tenant User',
-                    requesterEmail: userData?.email || 'N/A',
-                    isCancellation,
-                    comment: payload.comment || null,
-                    customHtml
-                });
-            }
+        if (!enabled || emails.length === 0) {
+            console.log(`[EventProcessor] Meeting room email disabled or no recipients for org ${property.organization_id}`);
+            return;
+        }
+
+        const { data: orgData } = await supabaseAdmin
+            .from('organization_settings')
+            .select('email_templates')
+            .eq('organization_id', property.organization_id)
+            .maybeSingle();
+
+        const customHtml = (orgData as any)?.email_templates?.meeting_rooms?.html || null;
+
+        const { data: roomData } = await supabaseAdmin
+            .from('meeting_rooms')
+            .select('name')
+            .eq('id', meetingRoomId)
+            .single();
+
+        const isCancellation = ['MEETING_ROOM_CANCELLED', 'ROOM_CANCELLED', 'ROOM_BOOKING_CANCELLED'].includes(eventType);
+
+        for (const emailTo of emails) {
+            await EmailService.sendMeetingRoomEmail({
+                emailTo,
+                roomName: roomData?.name || 'Meeting Room',
+                date: payload.booking_date,
+                startTime: payload.start_time,
+                endTime: payload.end_time,
+                propertyName: property.name || 'Your Property',
+                requesterName: userData?.full_name || 'Tenant User',
+                requesterEmail: userData?.email || 'N/A',
+                isCancellation,
+                comment: payload.comment || null,
+                customHtml
+            });
         }
     },
 
@@ -97,46 +107,28 @@ export const EventProcessor = {
         const ticketId = payload.ticket_id;
         const requestId = payload.id;
         const userId = payload.requested_by;
-
         const orgId = payload.organization_id;
-        if (orgId) {
-            const { data: orgData } = await supabaseAdmin
-                .from('organization_settings')
-                .select('email_preferences')
-                .eq('organization_id', orgId)
-                .maybeSingle();
-            
-            if (orgData?.email_preferences?.procurement === false) {
-                 console.log(`[EventProcessor] Procurement emails disabled for org ${orgId}`);
-                 return;
-            }
-        }
 
         let assigneeName = '';
-        const recipientEmails = new Set<string>();
+        let assigneeEmail = '';
 
         if (assigneeUid) {
             const { data: assignee } = await supabaseAdmin.from('users').select('full_name, email').eq('id', assigneeUid).single();
             if (assignee?.full_name) assigneeName = assignee.full_name;
-            if (assignee?.email) recipientEmails.add(assignee.email);
+            if (assignee?.email) assigneeEmail = assignee.email;
         }
 
-        // Fetch all procurement users for the organization
-        if (orgId) {
-            const { data: procurementMembers } = await supabaseAdmin
-                .from('organization_memberships')
-                .select('user_id, users:users!user_id(email, full_name)')
-                .eq('organization_id', orgId)
-                .eq('role', 'procurement');
+        const { enabled, emails } = await EmailRecipientResolver.resolveRecipients({
+            organizationId: orgId,
+            propertyId: payload.property_id,
+            featureKey: 'material_requests',
+            contextualEmails: [assigneeEmail]
+        });
 
-            (procurementMembers || []).forEach((m: any) => {
-                const email = m.users?.email || m.users?.[0]?.email;
-                if (email) recipientEmails.add(email);
-            });
-        }
+        console.log(`[EventProcessor] Material Request ${requestId} resolved emails (${emails.length}):`, emails);
 
-        if (recipientEmails.size === 0) {
-            console.log(`[EventProcessor] No recipient emails found for material request. Skipping email.`);
+        if (!enabled || emails.length === 0) {
+            console.log(`[EventProcessor] Material request email disabled or no recipients for org ${orgId}`);
             return;
         }
 
@@ -145,8 +137,9 @@ export const EventProcessor = {
         const { data: items } = await supabaseAdmin.from('material_request_items').select('*').eq('request_id', requestId);
 
         if (ticket) {
+            console.log(`[EventProcessor] Sending Material Request email for Request ID ${requestId} to: ${emails.join(', ')}`);
             await EmailService.sendMaterialRequestEmail({
-                emailTo: Array.from(recipientEmails),
+                emailTo: emails,
                 ticket,
                 property: ticket.property,
                 requestedBy: requester,
@@ -157,7 +150,6 @@ export const EventProcessor = {
     },
 
     async handleProcurementWorkflowEvent(eventType: string, payload: any) {
-        // payload is either a material_request (for DELIVERED) or comparative (for others)
         let requestId = payload.request_id || payload.id;
         
         const { data: request } = await supabaseAdmin
@@ -191,35 +183,26 @@ export const EventProcessor = {
 
         const assigneeObj = Array.isArray(request.assignee) ? request.assignee[0] : (request.assignee as any);
         const assigneeName = assigneeObj?.full_name || 'Procurement User';
+        const assigneeEmail = assigneeObj?.email || null;
 
         const itemsList: any[] = (request.items as any[]) || [];
         const appUrl = (process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://fms.autopilotoffices.com').replace(/\/$/, '');
 
-        // Collect emails based on event
-        const emails = new Set<string>();
+        let featureKey = 'comparative_quotes';
+        if (eventType === 'MATERIAL_DELIVERED') {
+            featureKey = 'material_delivery';
+        }
 
-        const getAdmins = async () => {
-            const [orgMems, propMems] = await Promise.all([
-                supabaseAdmin.from('organization_memberships').select('users!inner(email)').eq('organization_id', orgId).in('role', ['org_super_admin', 'org_admin']),
-                supabaseAdmin.from('property_memberships').select('users!inner(email)').eq('property_id', propId).eq('role', 'property_admin')
-            ]);
-            orgMems.data?.forEach((m: any) => m.users?.email && emails.add(m.users.email));
-            propMems.data?.forEach((m: any) => m.users?.email && emails.add(m.users.email));
-        };
+        const { enabled, emails } = await EmailRecipientResolver.resolveRecipients({
+            organizationId: orgId,
+            propertyId: propId,
+            featureKey,
+            contextualEmails: [assigneeEmail, requesterEmail]
+        });
 
-        const getAssignee = async () => {
-            if (request.assignee_uid) {
-                const { data: u } = await supabaseAdmin.from('users').select('email').eq('id', request.assignee_uid).single();
-                if (u?.email) emails.add(u.email);
-            }
-        };
+        if (!enabled || emails.length === 0) return;
 
-        const getRequester = async () => {
-            if (request.requested_by) {
-                const { data: u } = await supabaseAdmin.from('users').select('email').eq('id', request.requested_by).single();
-                if (u?.email) emails.add(u.email);
-            }
-        };
+        const emailSet = new Set<string>(emails);
 
         let subject = '';
         let title = '';
@@ -269,73 +252,133 @@ export const EventProcessor = {
                         </div>` : ''}
 
                         <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #e2e8f0;">
-                            ${payload.file_url ? `<a href="${payload.file_url}" target="_blank" style="background-color: #2563eb; color: #ffffff; padding: 10px 18px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block; margin-right: 8px; margin-bottom: 8px;">📄 View Uploaded Comparative File</a>` : ''}
+                            ${payload.file_url ? `<a href="${payload.file_url}" target="_blank" style="background-color: #2563eb; color: #ffffff; padding: 10px 18px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block; margin-right: 8px; margin-bottom: 8px;">📄 Download / View Comparative Statement</a>` : ''}
                             ${ticketId ? `<a href="${appUrl}/tickets/${ticketId}" target="_blank" style="background-color: #059669; color: #ffffff; padding: 10px 18px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block; margin-bottom: 8px;">✅ Review & Approve / Negotiate</a>` : ''}
                         </div>
                     </div>
                 `;
-                await EmailService.sendGenericNotificationEmail({ emailTo: assignedApproverUser.email, subject: appSubject, title: appTitle, htmlBody: appBody }).catch(console.error);
+
+                const getAttachmentFilename = () => {
+                    if (payload.file_name) return payload.file_name;
+                    if (payload.file_url) {
+                        try {
+                            const urlPath = new URL(payload.file_url).pathname;
+                            const nameFromUrl = urlPath.split('/').pop();
+                            if (nameFromUrl && nameFromUrl.includes('.')) return decodeURIComponent(nameFromUrl);
+                        } catch {
+                            // ignore URL parse errors
+                        }
+                    }
+                    return `Comparative_Statement_${ticketNum}`;
+                };
+
+                const fileAttachments = payload.file_url ? [
+                    {
+                        filename: getAttachmentFilename(),
+                        path: payload.file_url
+                    }
+                ] : [];
+
+                await EmailService.sendGenericNotificationEmail({ 
+                    emailTo: assignedApproverUser.email, 
+                    subject: appSubject, 
+                    title: appTitle, 
+                    htmlBody: appBody,
+                    attachments: fileAttachments
+                }).catch(console.error);
             }
 
-            // 2. Send Informational Audit Notice to Org Super Admins
-            const { data: orgSuperAdmins } = await supabaseAdmin
-                .from('organization_memberships')
-                .select('users!inner(email)')
-                .eq('organization_id', orgId)
-                .in('role', ['org_super_admin', 'master_admin']);
-
+            // 2. Send Audit / Informational Notice to Dynamic Recipients
             const targetApproverLabel = assignedApproverUser ? assignedApproverUser.full_name : 'Designated Approver';
 
-            if (orgSuperAdmins && orgSuperAdmins.length > 0) {
-                const auditSubject = `[Audit Notice] Comparative Uploaded for Ticket #${ticketNum}`;
+            if (emailSet.size > 0) {
+                const auditSubject = `[Notice] Comparative Uploaded for Ticket #${ticketNum}`;
                 const auditTitle = 'Comparative Quote Uploaded';
                 const auditBody = `
                     <div style="font-family: 'Segoe UI', Arial, sans-serif; color: #334155; line-height: 1.6;">
                         <p style="font-size: 15px;">A new comparative quote of <b style="color: #059669; font-size: 16px;">₹${(payload.total_cost || 0).toLocaleString()}</b> for <b>Ticket #${ticketNum} (${ticketTitle})</b> at <b>${propertyName}</b> has been uploaded by <b>${assigneeName}</b> and assigned to <b>${targetApproverLabel}</b> for approval.</p>
                         
                         <div style="background-color: #f8fafc; padding: 14px; border-radius: 8px; margin: 16px 0; border: 1px solid #e2e8f0;">
-                            <p style="margin: 4px 0; font-size: 13px; color: #64748b;"><b>Note for Super Admins:</b> This notification is for your tracking. If <b>${targetApproverLabel}</b> is unavailable or absent, you can review and override approval directly in the dashboard.</p>
+                            <p style="margin: 4px 0; font-size: 13px; color: #64748b;">This notification is for your tracking. If <b>${targetApproverLabel}</b> is unavailable or absent, authorized users can review and approve directly in the dashboard.</p>
                         </div>
 
-                        ${ticketId ? `<div style="margin-top: 16px;"><a href="${appUrl}/tickets/${ticketId}" target="_blank" style="background-color: #0f172a; color: #ffffff; padding: 10px 18px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">🔗 View Ticket & Override in Dashboard</a></div>` : ''}
+                        ${ticketId ? `<div style="margin-top: 16px;"><a href="${appUrl}/tickets/${ticketId}" target="_blank" style="background-color: #0f172a; color: #ffffff; padding: 10px 18px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">🔗 View Ticket in Dashboard</a></div>` : ''}
                     </div>
                 `;
-                for (const adminMem of orgSuperAdmins) {
-                    // @ts-ignore
-                    const adminEmail = adminMem.users?.email || adminMem.users?.[0]?.email;
-                    if (adminEmail && adminEmail !== assignedApproverUser?.email) {
-                        await EmailService.sendGenericNotificationEmail({ emailTo: adminEmail, subject: auditSubject, title: auditTitle, htmlBody: auditBody }).catch(console.error);
+                const getAttachmentFilename = () => {
+                    if (payload.file_name) return payload.file_name;
+                    if (payload.file_url) {
+                        try {
+                            const urlPath = new URL(payload.file_url).pathname;
+                            const nameFromUrl = urlPath.split('/').pop();
+                            if (nameFromUrl && nameFromUrl.includes('.')) return decodeURIComponent(nameFromUrl);
+                        } catch {
+                            // ignore URL parse errors
+                        }
+                    }
+                    return `Comparative_Statement_${ticketNum}`;
+                };
+
+                const fileAttachments = payload.file_url ? [
+                    {
+                        filename: getAttachmentFilename(),
+                        path: payload.file_url
+                    }
+                ] : [];
+                for (const adminEmail of emailSet) {
+                    if (adminEmail !== assignedApproverUser?.email) {
+                        await EmailService.sendGenericNotificationEmail({ 
+                            emailTo: adminEmail, 
+                            subject: auditSubject, 
+                            title: auditTitle, 
+                            htmlBody: auditBody,
+                            attachments: fileAttachments
+                        }).catch(console.error);
                     }
                 }
             }
 
-            return; // Finished handling COMPARATIVE_UPLOADED custom multi-email dispatch
-        } else if (eventType === 'COMPARATIVE_APPROVED') {
-            await getAssignee();
+            return;
+        } 
+        
+        // Fetch approver comment if comparative_id is available
+        let approverComment: string | null = payload.approver_comment || null;
+        if (!approverComment && payload.comparative_id) {
+            const { data: comp } = await supabaseAdmin.from('material_request_comparatives').select('approver_comment').eq('id', payload.comparative_id).maybeSingle();
+            if (comp?.approver_comment) approverComment = comp.approver_comment;
+        }
+
+        if (eventType === 'COMPARATIVE_APPROVED') {
             subject = `Comparative Approved for Ticket #${ticketNum}`;
             title = 'Comparative Cost Approved';
             htmlBody = `
                 <div style="font-family: 'Segoe UI', Arial, sans-serif; color: #334155; line-height: 1.6;">
-                    <p style="font-size: 15px;">Your comparative quote of <b style="color: #059669; font-size: 16px;">₹${(payload.total_cost || 0).toLocaleString()}</b> for <b>Ticket #${ticketNum} (${ticketTitle})</b> at <b>${propertyName}</b> has been approved by <b>${actionByName}</b>!</p>
-                    <p style="font-size: 14px; color: #64748b;">You may now proceed with placing the order with the selected vendor.</p>
+                    <p style="font-size: 15px;">The comparative quote of <b style="color: #059669; font-size: 16px;">₹${(payload.total_cost || 0).toLocaleString()}</b> for <b>Ticket #${ticketNum} (${ticketTitle})</b> at <b>${propertyName}</b> has been approved by <b>${actionByName}</b>!</p>
+                    ${approverComment ? `
+                    <div style="background-color: #ecfdf5; padding: 14px; border-radius: 8px; margin: 16px 0; border: 1px solid #a7f3d0;">
+                        <b style="color: #065f46; font-size: 14px;">💬 Approval Comment / Note:</b>
+                        <p style="margin: 6px 0 0 0; color: #047857; font-size: 14px; font-weight: 500;">"${approverComment}"</p>
+                    </div>` : ''}
+                    <p style="font-size: 14px; color: #64748b;">Procurement may now proceed with placing the order with the selected vendor.</p>
                     ${ticketId ? `<div style="margin-top: 20px;"><a href="${appUrl}/tickets/${ticketId}" target="_blank" style="background-color: #059669; color: #ffffff; padding: 10px 18px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">🛒 View Ticket & Place Order</a></div>` : ''}
                 </div>
             `;
         } else if (eventType === 'COMPARATIVE_REJECTED') {
-            await getAssignee();
             subject = `Comparative Rejected/Negotiating for Ticket #${ticketNum}`;
             title = 'Negotiation Requested';
             htmlBody = `
                 <div style="font-family: 'Segoe UI', Arial, sans-serif; color: #334155; line-height: 1.6;">
                     <p style="font-size: 15px;">The comparative quote of <b style="color: #dc2626; font-size: 16px;">₹${(payload.total_cost || 0).toLocaleString()}</b> for <b>Ticket #${ticketNum} (${ticketTitle})</b> was marked for negotiation/rejection by <b>${actionByName}</b>.</p>
+                    ${approverComment ? `
+                    <div style="background-color: #fff1f2; padding: 14px; border-radius: 8px; margin: 16px 0; border: 1px solid #fecdd3;">
+                        <b style="color: #9f1239; font-size: 14px;">💬 Negotiation Reason / Comment:</b>
+                        <p style="margin: 6px 0 0 0; color: #be123c; font-size: 14px; font-weight: 500;">"${approverComment}"</p>
+                    </div>` : ''}
                     <p style="font-size: 14px; color: #64748b;">Please negotiate with vendors or adjust the quotation details, then upload a revised comparative statement.</p>
                     ${ticketId ? `<div style="margin-top: 20px;"><a href="${appUrl}/tickets/${ticketId}" target="_blank" style="background-color: #0f172a; color: #ffffff; padding: 10px 18px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">🔗 View Ticket Details</a></div>` : ''}
                 </div>
             `;
         } else if (eventType === 'MATERIAL_DELIVERED') {
-            await getAdmins();
-            await getAssignee();
-            await getRequester();
             subject = `Material Delivered for Ticket #${ticketNum}`;
             title = 'Material Delivered Successfully';
             htmlBody = `
@@ -354,9 +397,9 @@ export const EventProcessor = {
             `;
         }
 
-        if (emails.size === 0) return;
+        if (emailSet.size === 0) return;
 
-        for (const email of emails) {
+        for (const email of emailSet) {
             await EmailService.sendGenericNotificationEmail({ emailTo: email, subject, title, htmlBody }).catch(console.error);
         }
     },
@@ -367,85 +410,33 @@ export const EventProcessor = {
         const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
         const monthName = months[requisition_month - 1] || `Month ${requisition_month}`;
 
-        // Get Property Name
         const { data: property } = await supabaseAdmin
             .from('properties')
             .select('name')
             .eq('id', property_id)
             .single();
 
-        // Get Uploader Name
         const { data: uploader } = await supabaseAdmin
             .from('users')
             .select('full_name, email')
             .eq('id', uploaded_by)
             .single();
 
-        const emailSet = new Set<string>();
+        const { enabled, emails } = await EmailRecipientResolver.resolveRecipients({
+            organizationId: organization_id,
+            propertyId: property_id,
+            featureKey: 'monthly_requisitions'
+        });
 
-        // 1. Query organization memberships for STRICT procurement roles
-        const { data: orgMembers } = await supabaseAdmin
-            .from('organization_memberships')
-            .select('user:users!user_id(email), org_role, role')
-            .eq('organization_id', organization_id)
-            .eq('is_active', true);
-
-        if (orgMembers) {
-            for (const member of orgMembers) {
-                const role = (member.role || member.org_role || '').toLowerCase();
-                // @ts-ignore
-                const userEmail = member.user?.email || member.user?.[0]?.email;
-                if (userEmail && (role === 'procurement' || role === 'procurement_user')) {
-                    emailSet.add(userEmail);
-                }
-            }
-        }
-
-        // 2. Query property memberships for STRICT procurement roles
-        const { data: propMembers } = await supabaseAdmin
-            .from('property_memberships')
-            .select('user:users!user_id(email), role')
-            .eq('property_id', property_id)
-            .eq('is_active', true);
-
-        if (propMembers) {
-            for (const member of propMembers) {
-                const role = (member.role || '').toLowerCase();
-                // @ts-ignore
-                const userEmail = member.user?.email || member.user?.[0]?.email;
-                if (userEmail && (role === 'procurement' || role === 'procurement_user')) {
-                    emailSet.add(userEmail);
-                }
-            }
-        }
-
-        // 3. Query direct users table for users with role='procurement' or procurement/purchase email addresses
-        const { data: directUsers } = await supabaseAdmin
-            .from('users')
-            .select('email, role')
-            .or('role.eq.procurement,role.eq.procurement_user,email.ilike.%procurement%,email.ilike.%purchase%');
-
-        if (directUsers) {
-            for (const u of directUsers) {
-                if (u.email) {
-                    const e = u.email.toLowerCase();
-                    if (e.includes('procurement') || e.includes('purchase') || u.role === 'procurement' || u.role === 'procurement_user') {
-                        emailSet.add(u.email);
-                    }
-                }
-            }
-        }
-
-        if (emailSet.size === 0) {
-            console.warn(`[EventProcessor] No procurement recipients found for org ${organization_id}`);
+        if (!enabled || emails.length === 0) {
+            console.warn(`[EventProcessor] No recipients found for requisition upload in org ${organization_id}`);
             return;
         }
 
-        const emailList = Array.from(emailSet);
-        console.log(`[EventProcessor] Sending requisition uploaded alert strictly to ${emailList.length} procurement recipient(s): ${emailList.join(', ')}`);
+        console.log(`[EventProcessor] Sending requisition uploaded alert to ${emails.length} recipient(s): ${emails.join(', ')}`);
 
         await EmailService.sendRequisitionUploadedEmail({
-            emailTo: emailList,
+            emailTo: emails,
             propertyName: property?.name || 'Property',
             monthName,
             year: requisition_year,

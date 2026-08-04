@@ -57,6 +57,7 @@ export const SessionProvider: React.FC<SessionProviderProps> = ({ children }) =>
                 // Store in cookie
                 Cookies.set(SESSION_COOKIE_NAME, newSessionId, {
                     expires: SESSION_COOKIE_TTL,
+                    path: '/',
                     sameSite: 'Lax',
                     secure: process.env.NODE_ENV === 'production'
                 });
@@ -119,6 +120,7 @@ export const SessionProvider: React.FC<SessionProviderProps> = ({ children }) =>
     }, [sessionId, startSession]);
 
     const { user, isLoading: isAuthLoading } = useAuth();
+    const initializedUserIdRef = useRef<string | null>(null);
 
     // Initialize session on mount/auth change
     useEffect(() => {
@@ -126,22 +128,26 @@ export const SessionProvider: React.FC<SessionProviderProps> = ({ children }) =>
         if (!user) {
             setSessionId(null);
             setIsSessionActive(false);
+            initializedUserIdRef.current = null;
             return;
         }
+
+        // Prevent duplicate session initialization for the same user ID
+        if (initializedUserIdRef.current === user.id) return;
 
         const existingSessionId = Cookies.get(SESSION_COOKIE_NAME);
 
         if (existingSessionId) {
+            initializedUserIdRef.current = user.id;
             console.log('[SessionProvider] Found existing session:', existingSessionId);
             setSessionId(existingSessionId);
             setIsSessionActive(true);
-            // Send initial ping to validate session
             sendPing();
         } else {
-            // No session, start new one
+            initializedUserIdRef.current = user.id;
             startSession();
         }
-    }, [user, isAuthLoading, startSession, sendPing]);
+    }, [user?.id, isAuthLoading, startSession, sendPing]);
 
     // Send ping on route change
     useEffect(() => {

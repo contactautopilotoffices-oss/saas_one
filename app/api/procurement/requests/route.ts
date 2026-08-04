@@ -112,12 +112,12 @@ export async function POST(request: NextRequest) {
 
         // 4. Trigger Notifications (Non-blocking for instant response)
         const { NotificationService } = await import('@/backend/services/NotificationService');
-        NotificationService.afterMaterialRequestCreated(mRequest.id).catch(err => {
+        NotificationService.afterMaterialRequestCreated?.(mRequest.id)?.catch(err => {
             console.error('[Procurement API] Notification failed:', err);
         });
 
-        // Note: Email to Assignee is now handled asynchronously via the Event Outbox 
-        // (Supabase Database Trigger -> webhook -> EventProcessor)
+        // Note: Email to Assignee is handled asynchronously via the Event Outbox 
+        // (Supabase Database Trigger on material_requests -> event_outbox -> webhook -> EventProcessor)
 
         return NextResponse.json(mRequest);
     } catch (error) {

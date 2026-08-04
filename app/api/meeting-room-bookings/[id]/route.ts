@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
+import { EventProcessor } from '@/backend/services/EventProcessor';
 
 /**
  * DELETE /api/meeting-room-bookings/[id]
@@ -25,7 +26,7 @@ export async function DELETE(
         // 1. Fetch booking to get property_id
         const { data: booking, error: bookingError } = await adminSupabase
             .from('meeting_room_bookings')
-            .select('property_id, user_id, company_id, booking_date, start_time, end_time, meeting_room_id, meeting_rooms(name), users(full_name, email)')
+            .select('property_id, user_id, company_id, booking_date, start_time, end_time, meeting_room_id, comment, meeting_rooms(name), users(full_name, email)')
             .eq('id', bookingId)
             .single();
 
@@ -100,15 +101,57 @@ export async function DELETE(
                 .from('notification_delivery')
                 .delete()
                 .in('notification_id', ids);
-
-            // Delete notifications
-            await adminSupabase
-                .from('notifications')
-                .delete()
-                .eq('booking_id', bookingId);
         }
 
-        // 5. Perform deletion of the booking
+        // 5. Refund credits BEFORE deleting booking (so Foreign Key booking_id constraint passes)
+        const [startH, startM] = booking.start_time.split(':').map(Number);
+        const [endH, endM] = booking.end_time.split(':').map(Number);
+        const durationHours = (endH * 60 + endM - startH * 60 - startM) / 60;
+
+        try {
+            const { data: refundSuccess, error: refundErr } = await supabaseAdmin.rpc(
+                'refund_meeting_room_credit',
+                {
+                    p_property_id: booking.property_id,
+                    p_user_id: booking.user_id,
+                    p_company_id: booking.company_id,
+                    p_hours: durationHours,
+                    p_booking_id: bookingId,
+                    p_performed_by: user.id,
+                    p_notes: 'Credit refund on booking cancellation'
+                }
+            );
+
+            if (refundErr) {
+                console.error('[Booking DELETE API] Credit refund RPC error:', refundErr);
+            } else {
+                console.log(`[Booking DELETE API] Successfully refunded ${durationHours}h credit for booking ${bookingId}`);
+            }
+        } catch (creditErr) {
+            console.error('[Booking DELETE API] Failed to refund credits:', creditErr);
+        }
+
+        // 6. Dispatch cancellation email via EventProcessor & EmailRecipientResolver BEFORE deleting booking
+        await EventProcessor.processEvent({
+            event_type: 'MEETING_ROOM_CANCELLED',
+            payload: {
+                property_id: booking.property_id,
+                meeting_room_id: booking.meeting_room_id,
+                user_id: booking.user_id,
+                booking_date: booking.booking_date,
+                start_time: booking.start_time,
+                end_time: booking.end_time,
+                comment: booking.comment
+            }
+        }).catch(err => console.error('[Booking DELETE API] Event dispatch error:', err));
+
+        // 7. Delete notifications
+        await adminSupabase
+            .from('notifications')
+            .delete()
+            .eq('booking_id', bookingId);
+
+        // 8. Perform deletion of the booking
         const { error: deleteError } = await adminSupabase
             .from('meeting_room_bookings')
             .delete()
@@ -119,9 +162,8 @@ export async function DELETE(
             return NextResponse.json({ error: 'Failed to delete booking' }, { status: 500 });
         }
 
-        // 7. Log admin action (non-blocking)
+        // 9. Log activity (non-blocking)
         try {
-            // Fetch organization_id from properties (required NOT NULL column)
             const { data: prop } = await adminSupabase
                 .from('properties')
                 .select('organization_id')
@@ -139,32 +181,7 @@ export async function DELETE(
             console.error('Activity log insertion failed:', err);
         }
 
-        // 8. Refund credits if booking is in the future (which is guaranteed by the check above, but keeping the safeguard)
-        if (bookingStart > new Date()) {
-            const [startH, startM] = booking.start_time.split(':').map(Number);
-            const [endH, endM] = booking.end_time.split(':').map(Number);
-            const durationHours = (endH * 60 + endM - startH * 60 - startM) / 60;
-
-            // Atomic refund via RPC (handles company credits correctly)
-            await supabaseAdmin.rpc(
-                'refund_meeting_room_credit',
-                {
-                    p_property_id: booking.property_id,
-                    p_user_id: booking.user_id,
-                    p_company_id: booking.company_id,
-                    p_hours: durationHours,
-                    p_booking_id: bookingId,
-                    p_performed_by: user.id,
-                    p_notes: 'Credit refund on booking cancellation'
-                }
-            );
-        }
-
-        // 9. Email cancellation is now strictly handled at the database level.
-        // A Postgres Trigger listens for DELETE on meeting_room_bookings and queues 
-        // the 'MEETING_ROOM_CANCELLED' event into the outbox automatically.
-
-        return NextResponse.json({ success: true, message: 'Booking deleted successfully' });
+        return NextResponse.json({ success: true, message: 'Booking deleted and credits refunded successfully' });
     } catch (error) {
         console.error('Booking DELETE error:', error);
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

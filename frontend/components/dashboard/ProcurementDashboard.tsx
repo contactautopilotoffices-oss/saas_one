@@ -7,7 +7,7 @@ import {
     Settings, UserCircle, LogOut, Search, Filter, 
     ChevronDown, ChevronRight, Building2, Calendar, Menu, X,
     ArrowUpRight, Scan, Truck, RefreshCw, Box, Clock,
-    AlertCircle, ExternalLink, Trash2, Camera, Link2, Shield, User, Loader2, FileText, MessageSquarePlus, FileSpreadsheet, FileUp
+    AlertCircle, ExternalLink, Trash2, Camera, Link2, Shield, User, Loader2, FileText, MessageSquarePlus, FileSpreadsheet, FileUp, Eye
 } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -1128,6 +1128,20 @@ function RequestsTab({
                                                 </button>
                                             )}
                                         </div>
+                                        {req.delivery_photos && req.delivery_photos.length > 0 && (
+                                            <div className="mt-3 bg-emerald-50/50 p-3 rounded-xl border border-emerald-100/60 space-y-1.5">
+                                                <p className="text-[9px] font-black text-emerald-700 uppercase tracking-widest flex items-center gap-1">
+                                                    <Eye className="w-3 h-3" /> Received Item Photos ({req.delivery_photos.length})
+                                                </p>
+                                                <div className="flex flex-wrap gap-1.5">
+                                                    {req.delivery_photos.map((url: string, idx: number) => (
+                                                        <a key={idx} href={url} target="_blank" rel="noreferrer" className="block relative group overflow-hidden rounded-lg border border-emerald-200">
+                                                            <img src={url} alt={`Delivery ${idx + 1}`} className="w-12 h-12 object-cover" />
+                                                        </a>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 </motion.div>
                             )}

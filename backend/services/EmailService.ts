@@ -36,7 +36,19 @@ export const EmailService = {
         }
     },
 
-    async sendGenericNotificationEmail({ emailTo, subject, title, htmlBody }: { emailTo: string; subject: string; title: string; htmlBody: string }) {
+    async sendGenericNotificationEmail({ 
+        emailTo, 
+        subject, 
+        title, 
+        htmlBody,
+        attachments
+    }: { 
+        emailTo: string; 
+        subject: string; 
+        title: string; 
+        htmlBody: string;
+        attachments?: Array<{ filename: string; path?: string; href?: string; contentType?: string }>;
+    }) {
         if (!process.env.SMTP_USER) return false;
         try {
             const html = `
@@ -49,6 +61,7 @@ export const EmailService = {
                 to: emailTo,
                 subject,
                 html,
+                attachments: attachments || [],
             });
             return true;
         } catch (error) {
@@ -105,12 +118,6 @@ export const EmailService = {
             </ul>
 
             <p>Please check the Procurement Dashboard or view the ticket directly to fulfill this request.</p>
-            
-            <p style="margin-top: 20px;">
-                <a href="${process.env.NEXT_PUBLIC_SITE_URL || 'https://autopilotoffices.com'}/tickets/${ticket.id}?from=requests" style="display: inline-block; padding: 12px 24px; background-color: #000000; color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: 500; font-family: sans-serif;">
-                    View Ticket Details
-                </a>
-            </p>
         `;
 
         try {

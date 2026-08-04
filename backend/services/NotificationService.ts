@@ -3,6 +3,9 @@ import { firebaseAdmin } from '@/backend/lib/firebase';
 import { WhatsAppService } from './WhatsAppService';
 import { WhatsAppQueueService } from './WhatsAppQueueService';
 import { EmailService } from './EmailService';
+import { EventProcessor } from './EventProcessor';
+import { EmailRecipientResolver } from './EmailRecipientResolver';
+
 
 export interface NotificationPayload {
     userId: string;
@@ -635,6 +638,20 @@ export class NotificationService {
                     }
                 });
             }
+
+            // Dispatch Email notification using EmailRecipientResolver & EventProcessor
+            await EventProcessor.processEvent({
+                event_type: 'ROOM_BOOKED',
+                payload: {
+                    property_id: booking.property_id,
+                    meeting_room_id: booking.meeting_room_id,
+                    user_id: booking.user_id,
+                    booking_date: booking.booking_date,
+                    start_time: booking.start_time,
+                    end_time: booking.end_time,
+                    comment: booking.comment
+                }
+            }).catch(err => console.error('[NotificationService] Room booking email dispatch error:', err));
         } catch (error) {
             console.error('[NotificationService] afterRoomBooked error:', error);
         }
@@ -1435,19 +1452,36 @@ static async afterSOPItemRated(
                 eventType: 'CRM_NEW_LEAD',
             });
 
-            // Fetch emails for the recipient IDs
-            const { data: users } = await supabaseAdmin
-                .from('users')
-                .select('email')
-                .in('id', Array.from(recipientIds));
-
             const emails = new Set<string>();
-            users?.forEach(u => { if (u.email) emails.add(u.email); });
 
-            // Hardcode specific emails as requested
-            emails.add('saniel@worksquare.in');
-            emails.add('rushab@worksquare.in');
-            emails.add('lohitexplores@gmail.com');
+            // Resolve recipients dynamically via the UI settings configuration
+            const { enabled: isFeatureEnabled, emails: resolvedEmails } = await EmailRecipientResolver.resolveRecipients({
+                organizationId: orgId,
+                featureKey: 'crm_leads',
+                contextualEmails: []
+            });
+
+            if (isFeatureEnabled && resolvedEmails && resolvedEmails.length > 0) {
+                resolvedEmails.forEach(e => {
+                    if (e && typeof e === 'string' && e.trim()) {
+                        emails.add(e.trim().toLowerCase());
+                    }
+                });
+            }
+
+            // Exclude the assigned person's email from this general intake email
+            // to avoid sending them duplicate notifications (since they get the direct assignment email)
+            if (lead.assigned_to) {
+                const { data: assignedUser } = await supabaseAdmin
+                    .from('users')
+                    .select('email')
+                    .eq('id', lead.assigned_to)
+                    .maybeSingle();
+                if (assignedUser?.email) {
+                    const assignedUserEmail = assignedUser.email.trim().toLowerCase();
+                    emails.delete(assignedUserEmail);
+                }
+            }
 
             if (emails.size > 0) {
                 const html = `

@@ -31,6 +31,7 @@ export async function GET(request: NextRequest) {
             `)
             .eq('property_id', propertyId)
             .eq('is_active', true)
+            .or('hide_from_roster.is.null,hide_from_roster.eq.false')
             .neq('role', 'vendor')
             .neq('role', 'tenant')
             .neq('role', 'super_tenant');

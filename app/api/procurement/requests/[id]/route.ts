@@ -26,6 +26,7 @@ export async function PATCH(
             vendor_email,
             vendor_address,
             action,
+            delivery_photos,
             items // Array of { name, quantity, unit_price, photo_url, description, links }
         } = body;
 
@@ -58,10 +59,14 @@ export async function PATCH(
         if (vendor_contact !== undefined) updateData.vendor_contact = vendor_contact;
         if (vendor_email !== undefined) updateData.vendor_email = vendor_email;
         if (vendor_address !== undefined) updateData.vendor_address = vendor_address;
+        if (delivery_photos !== undefined) updateData.delivery_photos = delivery_photos;
 
-        // Set timestamps for ordered status
+        // Set timestamps for ordered and delivered statuses
         if (status === 'ordered') {
             updateData.ordered_at = new Date().toISOString();
+        } else if (status === 'delivered') {
+            updateData.delivered_at = new Date().toISOString();
+            updateData.delivered_by = user.id;
         }
 
         if (action === 'acknowledge') {
