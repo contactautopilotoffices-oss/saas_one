@@ -5,8 +5,8 @@ import {
     LayoutDashboard, Building2, Users, UserPlus, Ticket, Settings, UserCircle, Activity,
     Search, Plus, Filter, LogOut, ChevronRight, MapPin, Edit, Trash2, X, Check, UsersRound,
     Coffee, IndianRupee, FileDown, ChevronDown, Fuel, Menu, Upload, FileBarChart, Zap, Package, ClipboardCheck, Scan, Key,
-    AlertCircle, CheckCircle2, Clock, GitBranch, DoorOpen, MessageCircle, Send, Loader2, CalendarDays, Calendar, Wrench, ShoppingCart, Sun, Moon, Droplets, TrendingUp, Smartphone,
-  MessageSquarePlus
+    AlertCircle, CheckCircle2, Clock, GitBranch, DoorOpen, MessageCircle, Send, Loader2, CalendarDays, Calendar, Wrench, ShoppingCart, Sun, Moon, Droplets, TrendingUp, Smartphone,
+    MessageSquarePlus, Bot
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
@@ -46,12 +46,13 @@ import UniversalQRScannerModal, { QRScanResult } from '@/frontend/components/sha
 import WaterAnalyticsDashboard from '@/frontend/components/water/WaterAnalyticsDashboard';
 import VendorManagementModal from '@/frontend/components/vendor/VendorManagementModal';
 import GuestExperienceDashboard from '@/frontend/components/guest-experience/GuestExperienceDashboard';
+import AITicketsDashboard from '@/frontend/components/ai-tickets/AITicketsDashboard';
 
 import { BDQuickStats } from './UnifiedDashboard';
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
 
 // Types
-type Tab = 'overview' | 'properties' | 'requests' | 'reports' | 'visitors' | 'settings' | 'profile' | 'revenue' | 'users' | 'diesel_logger' | 'diesel' | 'electricity_logger' | 'electricity' | 'stock_reports' | 'checklist' | 'super_tenants' | 'escalation' | 'rooms' | 'ppm' | 'vendors' | 'procurement' | 'roster' | 'water_logger' | 'water' | 'guest_experience';
+type Tab = 'overview' | 'properties' | 'requests' | 'reports' | 'visitors' | 'settings' | 'profile' | 'revenue' | 'users' | 'diesel_logger' | 'diesel' | 'electricity_logger' | 'electricity' | 'stock_reports' | 'checklist' | 'super_tenants' | 'escalation' | 'rooms' | 'ppm' | 'vendors' | 'procurement' | 'roster' | 'water_logger' | 'water' | 'guest_experience' | 'ai_tickets';
 
 interface Property {
     id: string;
@@ -889,11 +890,7 @@ const OrgAdminDashboard = () => {
                 overflow-hidden
             `}>
                 {/* Mobile Close Button */}
-
-
-            <FeedbackModal isOpen={showFeedbackModal} onClose={() => setShowFeedbackModal(false)} />
-
-<button
+                <button
                     onClick={() => setSidebarOpen(false)}
                     className="absolute top-4 right-4 lg:hidden p-2 rounded-lg hover:bg-surface-elevated transition-colors"
                 >
@@ -936,8 +933,7 @@ const OrgAdminDashboard = () => {
                             <button
                                 onClick={() => selectedPropertyId !== 'all' && setIsScannerModalOpen(true)}
                                 disabled={selectedPropertyId === 'all'}
-                                className={`w-full flex flex-col items-center justify-center gap-1.5 p-2 bg-white text-text-primary rounded-xl transition-all border-2 border-primary/20 group shadow-sm ${selectedPropertyId === 'all' ? 'opacity-50 cursor-not-allowed' : 'hover:bg-muted'
-                                    }`}
+                                className={`w-full flex flex-col items-center justify-center gap-1.5 p-2 bg-white text-text-primary rounded-xl transition-all border-2 border-primary/20 group shadow-sm ${selectedPropertyId === 'all' ? 'opacity-50 cursor-not-allowed' : 'hover:bg-muted'}`}
                                 title={selectedPropertyId === 'all' ? 'Select a property first' : 'Stock Scanner'}
                             >
                                 <div className="w-7 h-7 bg-primary/10 rounded-lg flex items-center justify-center text-primary group-hover:scale-110 transition-transform">
@@ -1192,6 +1188,16 @@ const OrgAdminDashboard = () => {
                             System & Personal
                         </p>
                         <div className="space-y-1">
+                            <button
+                                onClick={() => handleTabChange('ai_tickets')}
+                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm group ${activeTab === 'ai_tickets'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-primary/10 hover:text-primary'
+                                    }`}
+                            >
+                                <Bot className={`w-4 h-4 transition-transform ${activeTab === 'ai_tickets' ? '' : 'group-hover:scale-110'}`} />
+                                AI Automation
+                            </button>
                             <button
                                 onClick={() => setShowFeedbackModal(true)}
                                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm text-text-secondary hover:bg-muted hover:text-text-primary`}
@@ -1484,6 +1490,7 @@ const OrgAdminDashboard = () => {
                                 properties={properties}
                             />
                         )}
+                        {activeTab === 'ai_tickets' && <AITicketsDashboard propertyId={selectedPropertyId === 'all' ? undefined : selectedPropertyId} />}
                         {activeTab === 'revenue' && <RevenueTab key="revenue-tab" properties={properties} selectedPropertyId={selectedPropertyId} />}
                         {activeTab === 'properties' && (
                             <PropertiesTab

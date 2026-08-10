@@ -188,70 +188,75 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
 
         if (isElectricity) {
             // --- DUAL WRITE TO LEGACY TABLE ---
-            const legacyPayload = await Promise.all(readings.map(async (r: any) => {
-                let tariffRate = 0;
-                let tariffId = null;
-                
-                try {
-                    const { data: tariffData } = await supabase.rpc('get_active_grid_tariff', {
-                        p_property_id: propertyId,
-                        p_date: r.reading_date
-                    });
-                    if (tariffData && tariffData.length > 0) {
-                        tariffId = tariffData[0].id;
-                        tariffRate = tariffData[0].rate_per_unit || 0;
-                    }
-                } catch (e) {
-                    console.warn('Tariff lookup failed', e);
+            // Fetch single tariff for entire batch to avoid N RPC calls
+            let tariffId = null;
+            let tariffRate = 0;
+            try {
+                const sampleDate = readings[0]?.reading_date || new Date().toISOString().split('T')[0];
+                const { data: tariffData } = await supabase.rpc('get_active_grid_tariff', {
+                    p_property_id: propertyId,
+                    p_date: sampleDate
+                });
+                if (tariffData && tariffData.length > 0) {
+                    tariffId = tariffData[0].id;
+                    tariffRate = tariffData[0].rate_per_unit || 0;
                 }
+            } catch (e) {
+                console.warn('Tariff lookup failed', e);
+            }
 
-                return {
-                    property_id: propertyId,
-                    meter_id: r.meter_id,
-                    reading_date: r.reading_date,
-                    opening_reading: r.initial_reading,
-                    closing_reading: r.final_reading,
-                    final_units: r.consumption,
-                    multiplier_value_used: r.meter_constant_used || 1.0,
-                    tariff_id: tariffId,
-                    tariff_rate_used: tariffRate,
-                    computed_cost: (r.consumption || 0) * tariffRate,
-                    created_by: user.id,
-                    updated_at: new Date().toISOString()
-                };
+            const legacyPayload = readings.map((r: any) => ({
+                property_id: propertyId,
+                meter_id: r.meter_id,
+                reading_date: r.reading_date,
+                opening_reading: r.initial_reading,
+                closing_reading: r.final_reading,
+                final_units: r.consumption,
+                multiplier_value_used: r.meter_constant_used || 1.0,
+                tariff_id: tariffId,
+                tariff_rate_used: tariffRate,
+                computed_cost: (r.consumption || 0) * tariffRate,
+                created_by: user.id,
+                updated_at: new Date().toISOString()
             }));
 
-            for (const reading of legacyPayload) {
-                const { data: existingReading } = await supabase
-                    .from('electricity_readings')
-                    .select('id')
-                    .eq('meter_id', reading.meter_id)
-                    .eq('reading_date', reading.reading_date)
-                    .maybeSingle();
+            // Perform batch upsert on electricity_readings directly
+            const { error: legacyError } = await supabase
+                .from('electricity_readings')
+                .upsert(legacyPayload, {
+                    onConflict: 'meter_id,reading_date',
+                    ignoreDuplicates: false
+                });
 
-                if (existingReading) {
-                    const { error: updateError } = await supabase
+            if (legacyError) {
+                console.warn('Legacy electricity_readings upsert fallback:', legacyError.message);
+                // Fallback parallel execution if composite unique constraint doesn't exist
+                await Promise.all(legacyPayload.map(async (reading: any) => {
+                    const { data: existing } = await supabase
                         .from('electricity_readings')
-                        .update(reading)
-                        .eq('id', existingReading.id);
-                    if (updateError) throw updateError;
-                } else {
-                    const { error: insertError } = await supabase
-                        .from('electricity_readings')
-                        .insert(reading);
-                    if (insertError) throw insertError;
-                }
+                        .select('id')
+                        .eq('meter_id', reading.meter_id)
+                        .eq('reading_date', reading.reading_date)
+                        .maybeSingle();
+
+                    if (existing) {
+                        await supabase.from('electricity_readings').update(reading).eq('id', existing.id);
+                    } else {
+                        await supabase.from('electricity_readings').insert(reading);
+                    }
+                }));
             }
 
-            // Update last_reading on electricity_meters
-            for (const r of readings) {
-                if (r.final_reading !== null && r.final_reading !== undefined) {
-                    await supabase
+            // Update last_reading on electricity_meters in parallel
+            const meterUpdates = readings
+                .filter((r: any) => r.final_reading !== null && r.final_reading !== undefined)
+                .map((r: any) => 
+                    supabase
                         .from('electricity_meters')
                         .update({ last_reading: r.final_reading, updated_at: new Date().toISOString() })
-                        .eq('id', r.meter_id);
-                }
-            }
+                        .eq('id', r.meter_id)
+                );
+            await Promise.all(meterUpdates);
         }
 
         return NextResponse.json({ success: true, count: payload.length });

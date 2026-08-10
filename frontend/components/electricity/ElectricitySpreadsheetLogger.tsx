@@ -138,10 +138,29 @@ export default function ElectricitySpreadsheetLogger({ propertyId, isDark = fals
                 // This ensures if a day is skipped, the next day's INITIAL perfectly matches the last recorded FINAL
                 const lastKnownFinal: Record<string, number> = {};
                 
-                // First, try to seed lastKnownFinal from previous month's data (which the API now includes)
+                // First, seed lastKnownFinal using previous month's final reading (or fallback to initial reading)
+                // Filter and sort prev month data chronologically so the latest date wins
+                const prevMonthReadings = data
+                    .filter(r => r.reading_date < month + '-01')
+                    .sort((a, b) => a.reading_date.localeCompare(b.reading_date));
+
+                prevMonthReadings.forEach(r => {
+                    const finalVal = r.final_reading !== null && r.final_reading !== undefined ? Number(r.final_reading) : null;
+                    const initVal = r.initial_reading !== null && r.initial_reading !== undefined ? Number(r.initial_reading) : null;
+                    if (finalVal !== null && !isNaN(finalVal)) {
+                        lastKnownFinal[r.meter_id] = finalVal;
+                    } else if (initVal !== null && !isNaN(initVal)) {
+                        lastKnownFinal[r.meter_id] = initVal;
+                    }
+                });
+
+                // Find the latest date in this month that has a recorded final_reading
+                let maxDateWithReading: string | null = null;
                 data.forEach(r => {
-                    if (r.reading_date < month + '-01' && r.final_reading !== null) {
-                        lastKnownFinal[r.meter_id] = Number(r.final_reading);
+                    if (r.reading_date >= month + '-01' && r.final_reading !== null && r.final_reading !== undefined && r.final_reading !== '') {
+                        if (!maxDateWithReading || r.reading_date > maxDateWithReading) {
+                            maxDateWithReading = r.reading_date;
+                        }
                     }
                 });
 
@@ -152,20 +171,37 @@ export default function ElectricitySpreadsheetLogger({ propertyId, isDark = fals
                             const existingRecord = newReadings[day.dateStr][m.id];
                             
                             if (existingRecord) {
-                                // If reading exists but has no initial, populate it
-                                if (existingRecord.initial_reading === null && lastKnownFinal[m.id] !== undefined) {
+                                // Day 1 of month always carries over the latest reading from previous month!
+                                if (day.dateNum === 1 && lastKnownFinal[m.id] !== undefined) {
+                                    existingRecord.initial_reading = lastKnownFinal[m.id];
+                                } else if ((!existingRecord.initial_reading || Number(existingRecord.initial_reading) === 0) && lastKnownFinal[m.id] !== undefined) {
                                     existingRecord.initial_reading = lastKnownFinal[m.id];
                                 }
-                                // Update tracker for the next day
-                                if (existingRecord.final_reading !== null) {
+
+                                // Recalculate consumption if both initial and final exist
+                                if (existingRecord.initial_reading !== null && existingRecord.initial_reading !== undefined && existingRecord.initial_reading !== '' &&
+                                    existingRecord.final_reading !== null && existingRecord.final_reading !== undefined && existingRecord.final_reading !== '') {
+                                    const initVal = Number(existingRecord.initial_reading);
+                                    const finalVal = Number(existingRecord.final_reading);
+                                    if (!isNaN(initVal) && !isNaN(finalVal)) {
+                                        const diff = finalVal - initVal;
+                                        existingRecord.consumption = diff >= 0 ? Number((diff * (existingRecord.meter_constant_used || m.meter_constant)).toFixed(2)) : null;
+                                    }
+                                }
+                                // Update tracker with final_reading or initial_reading for subsequent days
+                                if (existingRecord.final_reading !== null && existingRecord.final_reading !== undefined && existingRecord.final_reading !== '' && !isNaN(Number(existingRecord.final_reading))) {
                                     lastKnownFinal[m.id] = Number(existingRecord.final_reading);
-                                } else {
-                                    // If there's an existing record but no final reading, we still want to carry forward
-                                    // the last known final to the next day's initial reading, so we don't delete it.
+                                } else if (existingRecord.initial_reading !== null && existingRecord.initial_reading !== undefined && existingRecord.initial_reading !== '' && !isNaN(Number(existingRecord.initial_reading))) {
+                                    lastKnownFinal[m.id] = Number(existingRecord.initial_reading);
                                 }
                             } else {
-                                // If reading row is totally empty, inject a 'ghost' record just to show the initial reading!
-                                if (lastKnownFinal[m.id] !== undefined) {
+                                // Only inject initial reading for the immediate day right after a recorded reading
+                                // Stop propagating to far future days where no readings exist yet
+                                const isNextDayAfterLastReading = maxDateWithReading ? (
+                                    new Date(day.dateStr).getTime() <= new Date(maxDateWithReading).getTime() + (86400000 * 1)
+                                ) : (day.dateNum === 1); // Or day 1 of the month
+
+                                if (lastKnownFinal[m.id] !== undefined && isNextDayAfterLastReading) {
                                     newReadings[day.dateStr][m.id] = {
                                         meter_id: m.id,
                                         reading_date: day.dateStr,
@@ -175,7 +211,6 @@ export default function ElectricitySpreadsheetLogger({ propertyId, isDark = fals
                                         meter_constant_used: m.meter_constant,
                                         is_rollover: false
                                     };
-                                    // Do not delete lastKnownFinal, allow it to carry forward to subsequent missing days
                                 }
                             }
                         });
@@ -564,10 +599,8 @@ export default function ElectricitySpreadsheetLogger({ propertyId, isDark = fals
                 setToast({ message: `Cut ${rowsCount}×${colsCount} cell selection to clipboard`, type: 'success', visible: true });
             } else if (e.key === 'Delete' || e.key === 'Backspace') {
                 if (activeElem && activeElem.tagName === 'INPUT') {
-                    const input = activeElem as HTMLInputElement;
-                    if (input.selectionStart !== null && input.selectionEnd !== null && input.selectionStart !== input.selectionEnd) {
-                        return;
-                    }
+                    // Focus is inside input - allow native single-character delete/backspace
+                    return;
                 }
                 const clearEntries: { dateStr: string; meterId: string; field: 'initial_reading' | 'final_reading'; value: string; meterConstant: number }[] = [];
                 for (let dIdx = startDayIdx; dIdx <= endDayIdx; dIdx++) {

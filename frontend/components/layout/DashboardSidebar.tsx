@@ -31,15 +31,16 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
     const [showSignOutModal, setShowSignOutModal] = React.useState(false);
     const [showFeedbackModal, setShowFeedbackModal] = React.useState(false);
 
-    const userRole = user?.user_metadata?.role || membership?.role;
+    const userRole = user?.user_metadata?.role || membership?.org_role;
     // Gate the BD Super Admin nav off the SAME source as page.tsx / layout.tsx /
     // CrmOnboardingGate (email allowlist + membership.org_role) so all four
     // call sites agree. user_metadata.role is not reliably populated.
     const isBdSuperAdmin = checkBdSuperAdmin(user?.email, membership?.org_role);
-    const isBDRole = userRole === 'bd_rep' || userRole === 'bd_admin' || isBdSuperAdmin;
+    const isCrmRoute = pathname?.split('/').includes('crm') ?? false;
+    const isBDRole = (userRole === 'bd_rep' || userRole === 'bd_admin' || isBdSuperAdmin) && isCrmRoute;
 
     const NAV_ITEMS = React.useMemo(() => {
-        const isAdmin = userRole === 'org_super_admin' || userRole === 'property_admin' || membership?.role === 'org_super_admin';
+        const isAdmin = userRole === 'org_super_admin' || userRole === 'property_admin' || membership?.org_role === 'org_super_admin';
 
         if (isBDRole) return [];
 
@@ -54,7 +55,7 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
         ];
 
         if (isAdmin || userRole === 'org_super_admin') {
-            items.push({ label: 'AI Automation', href: `/${orgId}/ai-tickets`, icon: Bot, domain: 'dashboards' as const });
+            items.push({ label: 'AI Automation', href: `/${orgId}/dashboard?tab=ai_tickets`, icon: Bot, domain: 'dashboards' as const });
             items.push({ label: 'Roster Management', href: `/${orgId}/dashboard?tab=roster`, icon: CalendarDays, domain: 'dashboards' as const });
             items.push({ label: 'Client Support', href: `/${orgId}/dashboard?tab=guest_experience`, icon: Smartphone, domain: 'dashboards' as const });
         }
@@ -192,7 +193,7 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
                     ))}
 
                     {/* BD Super Admin (CEO) — grouped Overview / Tools sections */}
-                    {isBdSuperAdmin && (
+                    {isBdSuperAdmin && isCrmRoute && (
                         <div className="space-y-5">
                             {BD_SUPER_NAV_SECTIONS.map((section) => (
                                 <div key={section.title}>
@@ -229,7 +230,7 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
                     )}
 
                     {/* CRM Section (standard rep/admin) */}
-                    {!isBdSuperAdmin && (
+                    {(!isBdSuperAdmin || !isCrmRoute) && (
                         <div className={isBDRole ? '' : 'pt-4 mt-4 border-t border-border'}>
                             <p className="px-3 text-[10px] font-medium text-text-tertiary tracking-wider mb-3 font-body">
                                 CRM
