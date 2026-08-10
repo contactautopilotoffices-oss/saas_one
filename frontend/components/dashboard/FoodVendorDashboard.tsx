@@ -430,15 +430,7 @@ const FoodVendorDashboard = () => {
                         </div>
 
                         
-                    <button
-                        onClick={() => setShowFeedbackModal(true)}
-                        className="w-72 bg-white border-r border-slate-100 flex flex-col fixed h-full z-30 p-8 transition-transform duration-300 ease-in-out lg:translate-x-0 text-slate-400 hover:text-slate-600 hover:bg-slate-50 group"
-                    >
-                        <MessageSquarePlus className="w-4 h-4 group-hover:scale-110 transition-transform" />
-                        Feedback / Bug
-                    </button>
 
-            <FeedbackModal isOpen={showFeedbackModal} onClose={() => setShowFeedbackModal(false)} />
 
 <button
                             onClick={handleSubmitRevenue}
