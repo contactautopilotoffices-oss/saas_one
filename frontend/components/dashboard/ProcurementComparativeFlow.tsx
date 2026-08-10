@@ -17,6 +17,7 @@ export default function ProcurementComparativeFlow({
     const [comparativeFile, setComparativeFile] = useState<File | null>(null);
     const [comparativePrice, setComparativePrice] = useState('');
     const [comparativeNotes, setComparativeNotes] = useState('');
+    const [approverComment, setApproverComment] = useState('');
     const [selectedApproverUid, setSelectedApproverUid] = useState('');
     const [approverOptions, setApproverOptions] = useState<any[]>([]);
     const [approverSearchQuery, setApproverSearchQuery] = useState('');
@@ -90,8 +91,8 @@ export default function ProcurementComparativeFlow({
     };
 
     const handleUploadComparative = async () => {
-        if (!comparativeFile || !comparativePrice) {
-            setError('File and total cost are required');
+        if (!comparativeFile) {
+            setError('File is required');
             return;
         }
         setIsSubmitting(true);
@@ -111,7 +112,7 @@ export default function ProcurementComparativeFlow({
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     file_url: uploadData.url,
-                    total_cost: parseFloat(comparativePrice),
+                    total_cost: comparativePrice ? parseFloat(comparativePrice) : null,
                     notes: comparativeNotes,
                     approver_uid: selectedApproverUid || null
                 })
@@ -139,10 +140,15 @@ export default function ProcurementComparativeFlow({
             const res = await fetch(`/api/procurement/requests/${request.id}/comparatives`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ comparative_id: comparativeId, status: actionStatus })
+                body: JSON.stringify({ 
+                    comparative_id: comparativeId, 
+                    status: actionStatus,
+                    approver_comment: approverComment || null 
+                })
             });
             if (res.ok) {
                 setSuccessMsg(`Comparative ${actionStatus === 'approved' ? 'approved' : 'rejected'} successfully!`);
+                setApproverComment('');
                 setTimeout(() => setSuccessMsg(null), 3000);
                 onAction();
             } else {
@@ -190,7 +196,9 @@ export default function ProcurementComparativeFlow({
                                         <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${getStatusBadgeClass(comp.status)}`}>
                                             {comp.status}
                                         </span>
-                                        <p className="text-xs font-bold text-slate-800 mt-2">Total Cost: ₹{comp.total_cost.toLocaleString()}</p>
+                                        {comp.total_cost !== null && comp.total_cost !== undefined && (
+                                            <p className="text-xs font-bold text-slate-800 mt-2">Total Cost: ₹{comp.total_cost.toLocaleString()}</p>
+                                        )}
                                     </div>
                                     <a href={comp.file_url} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[10px] font-bold text-primary hover:underline bg-primary/10 px-2 py-1 rounded-md">
                                         <FileText className="w-3 h-3" /> View File
@@ -205,6 +213,12 @@ export default function ProcurementComparativeFlow({
                                 )}
 
                                 {comp.notes && <p className="text-[10px] text-slate-500 mt-2">{comp.notes}</p>}
+
+                                {comp.approver_comment && (
+                                    <div className="mt-2.5 text-[10px] bg-amber-50/80 text-amber-800 p-2.5 rounded-lg border border-amber-200/60 font-medium">
+                                        <span className="font-bold text-amber-900">Approver Comment:</span> {comp.approver_comment}
+                                    </div>
+                                )}
 
                                 <div className="flex flex-col gap-1 mt-3 pt-3 border-t border-slate-100">
                                     <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest flex items-center gap-1">
@@ -227,22 +241,31 @@ export default function ProcurementComparativeFlow({
                                 </div>
                                 
                                 {comp.status === 'pending_approval' && canApproveThisComp && (
-                                    <div className="flex gap-2 mt-4 pt-4 border-t border-slate-200">
-                                        <button 
-                                            onClick={() => handleApproveRejectComparative(comp.id, 'rejected')}
-                                            disabled={isSubmitting}
-                                            className="flex-1 py-2 rounded-lg bg-rose-50 text-rose-500 hover:bg-rose-100 transition-all font-black text-[9px] uppercase tracking-widest"
-                                        >
-                                            Negotiate / Reject
-                                        </button>
-                                        <button 
-                                            onClick={() => handleApproveRejectComparative(comp.id, 'approved')}
-                                            disabled={isSubmitting}
-                                            className="flex-1 py-2 rounded-lg bg-green-500 text-white hover:bg-green-600 transition-all font-black text-[9px] uppercase tracking-widest shadow-md flex items-center justify-center gap-1"
-                                        >
-                                            {isOverride && <ShieldCheck className="w-3 h-3 opacity-90" />}
-                                            {isOverride ? 'Approve (Super Admin Override)' : 'Approve Cost'}
-                                        </button>
+                                    <div className="mt-4 pt-4 border-t border-slate-200 space-y-3">
+                                        <textarea
+                                            placeholder="Add comment or reason for approval / negotiation (optional)..."
+                                            value={approverComment}
+                                            onChange={(e) => setApproverComment(e.target.value)}
+                                            className="w-full bg-white border border-slate-200 rounded-lg p-2.5 text-xs font-medium text-slate-700 outline-none focus:ring-2 focus:ring-primary/20 placeholder:text-slate-400"
+                                            rows={2}
+                                        />
+                                        <div className="flex gap-2">
+                                            <button 
+                                                onClick={() => handleApproveRejectComparative(comp.id, 'rejected')}
+                                                disabled={isSubmitting}
+                                                className="flex-1 py-2 rounded-lg bg-rose-50 text-rose-500 hover:bg-rose-100 transition-all font-black text-[9px] uppercase tracking-widest"
+                                            >
+                                                Negotiate / Reject
+                                            </button>
+                                            <button 
+                                                onClick={() => handleApproveRejectComparative(comp.id, 'approved')}
+                                                disabled={isSubmitting}
+                                                className="flex-1 py-2 rounded-lg bg-green-500 text-white hover:bg-green-600 transition-all font-black text-[9px] uppercase tracking-widest shadow-md flex items-center justify-center gap-1"
+                                            >
+                                                {isOverride && <ShieldCheck className="w-3 h-3 opacity-90" />}
+                                                {isOverride ? 'Approve (Super Admin Override)' : 'Approve Cost'}
+                                            </button>
+                                        </div>
                                     </div>
                                 )}
                             </div>
@@ -344,7 +367,7 @@ export default function ProcurementComparativeFlow({
                     />
                     <input
                         type="number"
-                        placeholder="Total Comparative Cost ₹"
+                        placeholder="Total Comparative Cost ₹ (Optional)"
                         value={comparativePrice}
                         onChange={(e) => setComparativePrice(e.target.value)}
                         className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-primary/20"
@@ -359,7 +382,7 @@ export default function ProcurementComparativeFlow({
                     {error && <p className="text-rose-500 text-xs font-bold">{error}</p>}
                     <button
                         onClick={handleUploadComparative}
-                        disabled={isSubmitting || !comparativeFile || !comparativePrice}
+                        disabled={isSubmitting || !comparativeFile}
                         className="w-full py-2.5 rounded-xl bg-blue-500 text-white hover:bg-blue-600 transition-all font-black text-[10px] uppercase tracking-widest shadow-lg shadow-blue-200 disabled:opacity-50 flex items-center justify-center gap-2"
                     >
                         {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Upload Comparative'}

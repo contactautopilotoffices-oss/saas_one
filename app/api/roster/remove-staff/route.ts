@@ -32,16 +32,16 @@ export async function DELETE(request: NextRequest) {
             return NextResponse.json({ error: 'Only property admins can remove staff from the roster' }, { status: 403 });
         }
 
-        // Deactivate membership
+        // Hide staff from roster view without revoking property access (is_active remains true)
         const { error } = await supabase
             .from('property_memberships')
-            .update({ is_active: false })
+            .update({ hide_from_roster: true })
             .eq('user_id', staffUserId)
             .eq('property_id', propertyId);
 
         if (error) {
             console.error('[DELETE /api/roster/remove-staff] Update error:', error);
-            return NextResponse.json({ error: 'Failed to remove staff from property' }, { status: 500 });
+            return NextResponse.json({ error: 'Failed to remove staff from roster' }, { status: 500 });
         }
 
         const adminClient = createAdminClient();

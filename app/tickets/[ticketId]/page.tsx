@@ -38,6 +38,7 @@ import {
   Pencil,
   X,
   RefreshCw,
+  Loader2,
   Trash2,
   PackagePlus,
   Mic,
@@ -940,12 +941,15 @@ export default function TicketDetailPage() {
     }
   };
 
-    const handleMaterialAction = async (requestId: string, status: string) => {
+    const [ticketDeliveryFiles, setTicketDeliveryFiles] = useState<{ [reqId: string]: FileList | null }>({});
+    const [uploadingDeliveryReqId, setUploadingDeliveryReqId] = useState<string | null>(null);
+
+    const handleMaterialAction = async (requestId: string, status: string, extra?: any) => {
         try {
             const res = await fetch(`/api/procurement/requests/${requestId}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status })
+                body: JSON.stringify({ status, ...extra })
             });
             if (res.ok) {
                 fetchMaterialRequests();
@@ -958,6 +962,35 @@ export default function TicketDetailPage() {
             console.error(err);
             showToast(err.message || 'Failed to update order status', 'error');
         }
+    };
+
+    const handleTicketMarkDelivered = async (requestId: string) => {
+        const files = ticketDeliveryFiles[requestId];
+        let uploadedUrls: string[] = [];
+        if (files && files.length > 0) {
+            setUploadingDeliveryReqId(requestId);
+            try {
+                for (let i = 0; i < files.length; i++) {
+                    const file = files[i];
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    const uploadRes = await fetch(`/api/procurement/requests/${requestId}/upload`, {
+                        method: 'POST',
+                        body: formData
+                    });
+                    if (uploadRes.ok) {
+                        const uploadData = await uploadRes.json();
+                        if (uploadData.url) uploadedUrls.push(uploadData.url);
+                    }
+                }
+            } catch (e) {
+                console.error('Error uploading delivery photos:', e);
+            } finally {
+                setUploadingDeliveryReqId(null);
+            }
+        }
+        setTicketDeliveryFiles((prev) => ({ ...prev, [requestId]: null }));
+        await handleMaterialAction(requestId, 'delivered', { delivery_photos: uploadedUrls });
     };
 
     const handleEditSubmit = async () => {
@@ -2879,18 +2912,51 @@ export default function TicketDetailPage() {
                         )}
                       </div>
                       
-                      {/* Delivery Action */}
+                      {/* Delivery Action & Photos */}
                       {(req.status === 'ordered' || req.status === 'approved') && (
                         userRole === 'admin' || userRole === 'procurement' || req.requested_by === userId
                       ) && (
-                        <div className="mt-4 pt-4 border-t border-slate-100 dark:border-[#30363d]">
+                        <div className="mt-4 pt-4 border-t border-slate-100 dark:border-[#30363d] space-y-3">
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">
+                              Upload Received Item Photos
+                            </label>
+                            <input
+                              type="file"
+                              multiple
+                              accept="image/*"
+                              onChange={(e) => setTicketDeliveryFiles(prev => ({ ...prev, [req.id]: e.target.files }))}
+                              className="w-full text-xs text-slate-600 dark:text-slate-300 file:mr-3 file:py-1 file:px-2.5 file:rounded-lg file:border-0 file:text-[10px] file:font-bold file:uppercase file:bg-emerald-600 file:text-white hover:file:bg-emerald-700 cursor-pointer"
+                            />
+                            {ticketDeliveryFiles[req.id] && (ticketDeliveryFiles[req.id]?.length || 0) > 0 && (
+                              <p className="text-[10px] text-emerald-600 font-semibold mt-1">
+                                {ticketDeliveryFiles[req.id]?.length} photo(s) selected
+                              </p>
+                            )}
+                          </div>
                           <button
-                            onClick={() => handleMaterialAction(req.id, 'delivered')}
-                            className="w-full bg-[#238636] hover:bg-[#2ea043] text-white font-semibold py-2 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors shadow-md"
+                            onClick={() => handleTicketMarkDelivered(req.id)}
+                            disabled={uploadingDeliveryReqId === req.id}
+                            className="w-full bg-[#238636] hover:bg-[#2ea043] text-white font-semibold py-2 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors shadow-md disabled:opacity-50"
                           >
-                            <CheckCircle2 className="w-4 h-4" />
+                            {uploadingDeliveryReqId === req.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
                             MARK AS DELIVERED / RECEIVED
                           </button>
+                        </div>
+                      )}
+
+                      {req.delivery_photos && req.delivery_photos.length > 0 && (
+                        <div className="mt-4 pt-4 border-t border-slate-100 dark:border-[#30363d] space-y-2">
+                          <p className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+                            <Eye className="w-3.5 h-3.5" /> Received Item Photos ({req.delivery_photos.length})
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {req.delivery_photos.map((url: string, idx: number) => (
+                              <a key={idx} href={url} target="_blank" rel="noreferrer" className="block relative group overflow-hidden rounded-lg border border-slate-200 dark:border-[#30363d]">
+                                <img src={url} alt={`Delivery Photo ${idx + 1}`} className="w-16 h-16 object-cover transition-transform group-hover:scale-105" />
+                              </a>
+                            ))}
+                          </div>
                         </div>
                       )}
                       

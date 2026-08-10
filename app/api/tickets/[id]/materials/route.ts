@@ -137,7 +137,7 @@ export async function PATCH(
         }
 
         const body = await request.json();
-        const { material_id, status, reason } = body;
+        const { material_id, status, reason, delivery_photos } = body;
 
         const ALLOWED_STATUSES = ['pending', 'pending_approval', 'approved', 'rejected', 'ordered', 'delivered', 'cancelled', 'reverted', 'acknowledge'];
         if (!ALLOWED_STATUSES.includes(status)) {
@@ -188,6 +188,10 @@ export async function PATCH(
             updateData.ordered_at = new Date().toISOString();
         } else if (status === 'delivered') {
             updateData.delivered_at = new Date().toISOString();
+            updateData.delivered_by = user.id;
+            if (delivery_photos !== undefined) {
+                updateData.delivery_photos = delivery_photos;
+            }
         } else if (status === 'cancelled') {
             updateData.cancelled_at = new Date().toISOString();
             updateData.cancellation_reason = reason;

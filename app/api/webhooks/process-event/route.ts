@@ -13,29 +13,36 @@ export async function POST(request: NextRequest) {
 
         const payload = await request.json();
         
-        // Supabase Webhook payload format: { type: 'INSERT', record: { id: '...', ... } }
-        const eventId = payload.record?.id; 
-        
+        // Supabase Database Webhook on `event_outbox` table sends: { type: 'INSERT', record: { id, event_type, payload, status } }
+        let event = payload.record || payload; 
+        const eventId = event?.id || payload.record?.id || payload.id; 
+
         if (!eventId) {
-            return NextResponse.json({ error: 'Invalid payload, missing record.id' }, { status: 400 });
+            return NextResponse.json({ error: 'Invalid payload, missing event id' }, { status: 400 });
         }
 
         // 1. Atomic Claim (Locking)
-        // We only claim events that are pending or have been marked for retry.
-        const { data: claimData, error: claimError } = await supabaseAdmin
+        // Check database for current status
+        const { data: existingEvent } = await supabaseAdmin
             .from('event_outbox')
-            .update({ status: 'processing', updated_at: new Date().toISOString() })
-            .in('status', ['pending', 'retry'])
+            .select('*')
             .eq('id', eventId)
-            .select()
             .maybeSingle();
 
-        if (claimError || !claimData) {
-            console.log(`[EventProcessor] Event ${eventId} not found, already processed, or locked. Skipping.`);
-            return NextResponse.json({ message: 'Event already processed or unavailable' });
+        if (existingEvent) {
+            // Use fresh data from DB
+            event = existingEvent;
+            if (event.status === 'completed') {
+                console.log(`[EventProcessor] Event ${eventId} already completed. Skipping.`);
+                return NextResponse.json({ message: 'Event already completed' });
+            }
+            // Mark processing
+            await supabaseAdmin
+                .from('event_outbox')
+                .update({ status: 'processing', updated_at: new Date().toISOString() })
+                .eq('id', eventId);
         }
 
-        const event = claimData;
         console.log(`[EventProcessor] Processing event ${event.id}: ${event.event_type}`);
 
         try {

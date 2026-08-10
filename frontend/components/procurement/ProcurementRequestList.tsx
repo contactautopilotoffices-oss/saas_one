@@ -57,11 +57,13 @@ interface ProcurementRequest {
         status: string;
         created_at: string;
         notes?: string;
+        approver_comment?: string;
         created_by_user?: { full_name: string };
         action_by_user?: { full_name: string };
         action_at?: string;
     }[];
     procurement_viewed_at?: string;
+    delivery_photos?: string[];
 }
 
 interface Props {
@@ -91,6 +93,8 @@ export default function ProcurementRequestList({
     const [isDeleting, setIsDeleting] = useState(false);
     const [budgets, setBudgets] = useState<any[]>([]);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [deliveryFiles, setDeliveryFiles] = useState<FileList | null>(null);
+    const [isUploadingDeliveryPhotos, setIsUploadingDeliveryPhotos] = useState(false);
     
     // Quotation form state (procurement can edit items + add vendor)
     const [isEditingQuotation, setIsEditingQuotation] = useState(false);
@@ -111,6 +115,34 @@ export default function ProcurementRequestList({
     const requests = propRequests !== undefined ? propRequests : internalRequests;
     const floorFilter = propFloorFilter !== undefined ? propFloorFilter : internalFloorFilter;
     const setFloorFilter = propSetFloorFilter !== undefined ? propSetFloorFilter : setInternalFloorFilter;
+
+    const handleMarkDeliveredWithPhotos = async (requestId: string) => {
+        let uploadedUrls: string[] = [];
+        if (deliveryFiles && deliveryFiles.length > 0) {
+            setIsUploadingDeliveryPhotos(true);
+            try {
+                for (let i = 0; i < deliveryFiles.length; i++) {
+                    const file = deliveryFiles[i];
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    const uploadRes = await fetch(`/api/procurement/requests/${requestId}/upload`, {
+                        method: 'POST',
+                        body: formData
+                    });
+                    if (uploadRes.ok) {
+                        const uploadData = await uploadRes.json();
+                        if (uploadData.url) uploadedUrls.push(uploadData.url);
+                    }
+                }
+            } catch (e) {
+                console.error('Error uploading delivery photos:', e);
+            } finally {
+                setIsUploadingDeliveryPhotos(false);
+            }
+        }
+        setDeliveryFiles(null);
+        handleStatusChange(requestId, 'delivered', { delivery_photos: uploadedUrls });
+    };
 
     const showToast = (message: string, type: 'success' | 'error') => {
         setNotification({ message, type });
@@ -962,14 +994,51 @@ export default function ProcurementRequestList({
                             )}
 
                             {(selectedRequest.status === 'ordered' || selectedRequest.status === 'approved') && (canMarkDelivered || (selectedRequest as any).requested_by === user?.id) && (
-                                <button
-                                    onClick={() => handleStatusChange(selectedRequest.id, 'delivered')}
-                                    disabled={isSubmitting}
-                                    className="w-full py-3 rounded-xl bg-green-500 text-white hover:bg-green-600 transition-all font-black text-xs uppercase tracking-widest shadow-lg shadow-green-200 flex items-center justify-center gap-2"
-                                >
-                                    {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                                    Mark as Delivered / Received
-                                </button>
+                                <div className="p-4 bg-emerald-50/60 rounded-2xl border border-emerald-200/60 space-y-3">
+                                    <p className="text-[10px] font-black text-emerald-800 uppercase tracking-widest flex items-center gap-1.5">
+                                        <Truck className="w-3.5 h-3.5 text-emerald-600" /> Confirm Delivery Receipt
+                                    </p>
+                                    <div>
+                                        <label className="block text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">
+                                            Upload Received Item Photos
+                                        </label>
+                                        <input
+                                            type="file"
+                                            multiple
+                                            accept="image/*"
+                                            onChange={(e) => setDeliveryFiles(e.target.files)}
+                                            className="w-full text-xs text-slate-600 file:mr-3 file:py-1 file:px-2.5 file:rounded-lg file:border-0 file:text-[9px] file:font-black file:uppercase file:bg-emerald-600 file:text-white hover:file:bg-emerald-700 cursor-pointer"
+                                        />
+                                        {deliveryFiles && deliveryFiles.length > 0 && (
+                                            <p className="text-[10px] text-emerald-700 font-bold mt-1">
+                                                {deliveryFiles.length} photo{deliveryFiles.length > 1 ? 's' : ''} selected
+                                            </p>
+                                        )}
+                                    </div>
+                                    <button
+                                        onClick={() => handleMarkDeliveredWithPhotos(selectedRequest.id)}
+                                        disabled={isSubmitting || isUploadingDeliveryPhotos}
+                                        className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white transition-all font-black text-xs uppercase tracking-widest shadow-lg shadow-emerald-200 flex items-center justify-center gap-2 disabled:opacity-50"
+                                    >
+                                        {isSubmitting || isUploadingDeliveryPhotos ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                                        Mark as Delivered / Received
+                                    </button>
+                                </div>
+                            )}
+
+                            {selectedRequest.delivery_photos && selectedRequest.delivery_photos.length > 0 && (
+                                <div className="bg-emerald-50/50 p-4 rounded-2xl border border-emerald-100 space-y-2">
+                                    <p className="text-[10px] font-black text-emerald-700 uppercase tracking-widest flex items-center gap-1.5">
+                                        <Eye className="w-3.5 h-3.5" /> Received Item Photos ({selectedRequest.delivery_photos.length})
+                                    </p>
+                                    <div className="flex flex-wrap gap-2 pt-1">
+                                        {selectedRequest.delivery_photos.map((url: string, idx: number) => (
+                                            <a key={idx} href={url} target="_blank" rel="noreferrer" className="block relative group overflow-hidden rounded-xl border border-emerald-200 shadow-sm">
+                                                <img src={url} alt={`Delivery Photo ${idx + 1}`} className="w-16 h-16 object-cover transition-transform group-hover:scale-105" />
+                                            </a>
+                                        ))}
+                                    </div>
+                                </div>
                             )}
 
                             {/* Items List */}

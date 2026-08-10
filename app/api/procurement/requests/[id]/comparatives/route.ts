@@ -19,8 +19,8 @@ export async function POST(
         const body = await request.json();
         const { file_url, total_cost, vendor_details, notes, approver_uid } = body;
 
-        if (!file_url || !total_cost) {
-            return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+        if (!file_url) {
+            return NextResponse.json({ error: 'Missing file URL' }, { status: 400 });
         }
 
         const adminSupabase = createAdminClient();
@@ -50,12 +50,13 @@ export async function POST(
         }
 
         // 1. Insert Comparative with approver_uid
+        const parsedCost = total_cost !== undefined && total_cost !== null && total_cost !== '' ? parseFloat(total_cost) : null;
         const { data: comparative, error: insertError } = await adminSupabase
             .from('material_request_comparatives')
             .insert({
                 request_id: requestId,
                 file_url,
-                total_cost,
+                total_cost: parsedCost,
                 vendor_details,
                 notes,
                 approver_uid: approver_uid || null,
@@ -98,7 +99,7 @@ export async function PATCH(
         }
 
         const body = await request.json();
-        const { comparative_id, status } = body;
+        const { comparative_id, status, approver_comment } = body;
 
         if (!comparative_id || !status || !['approved', 'rejected', 'negotiating'].includes(status)) {
             return NextResponse.json({ error: 'Invalid payload' }, { status: 400 });
@@ -145,13 +146,18 @@ export async function PATCH(
         const isOverride = comparative.approver_uid && comparative.approver_uid !== user.id && isOrgAdmin;
 
         // 2. Update comparative
+        const compUpdate: any = {
+            status,
+            action_by: user.id,
+            action_at: new Date().toISOString()
+        };
+        if (approver_comment !== undefined) {
+            compUpdate.approver_comment = approver_comment;
+        }
+
         const { error: updateError } = await adminSupabase
             .from('material_request_comparatives')
-            .update({ 
-                status,
-                action_by: user.id,
-                action_at: new Date().toISOString()
-            })
+            .update(compUpdate)
             .eq('id', comparative_id);
 
         if (updateError) {
@@ -171,11 +177,12 @@ export async function PATCH(
             const actionText = status === 'approved' ? 'APPROVED' : 'REJECTED/NEGOTIATION REQUESTED';
             const costFormatted = comparative.total_cost ? ` (₹${Number(comparative.total_cost).toLocaleString()})` : '';
             const overrideContext = isOverride && assignedApproverName ? ` (Override for assigned approver ${assignedApproverName})` : '';
+            const commentNote = approver_comment ? ` | Note: "${approver_comment}"` : '';
 
             adminSupabase.from('ticket_comments').insert({
                 ticket_id: ticketId,
                 user_id: user.id,
-                comment: `Comparative quote${costFormatted} was ${actionText} by ${actorName}${overrideContext}.`,
+                comment: `Comparative quote${costFormatted} was ${actionText} by ${actorName}${overrideContext}${commentNote}.`,
                 is_internal: false
             }).then(({ error }) => {
                 if (error) console.error('[Comparative API] Comment log error:', error.message);
@@ -185,7 +192,7 @@ export async function PATCH(
                 ticket_id: ticketId,
                 user_id: user.id,
                 action: status === 'approved' ? 'comparative_approved' : 'comparative_rejected',
-                new_value: `Comparative ${status} by ${actorName}${costFormatted}${overrideContext}`
+                new_value: `Comparative ${status} by ${actorName}${costFormatted}${overrideContext}${commentNote}`
             }).then(({ error }) => {
                 if (error) console.error('[Comparative API] Activity log error:', error.message);
             });
