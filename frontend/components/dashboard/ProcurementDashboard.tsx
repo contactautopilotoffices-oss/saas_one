@@ -7,17 +7,20 @@ import {
     Settings, UserCircle, LogOut, Search, Filter, 
     ChevronDown, ChevronRight, Building2, Calendar, Menu, X,
     ArrowUpRight, Scan, Truck, RefreshCw, Box, Clock,
-    AlertCircle, ExternalLink, Trash2, Camera, Link2, Shield, User, Loader2, FileText, MessageSquarePlus, FileSpreadsheet, FileUp, Eye
+    AlertCircle, ExternalLink, Trash2, Camera, Link2, Shield, User, Loader2, FileText, MessageSquarePlus, FileSpreadsheet, FileUp, Eye, Zap
 } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
+import { useAuth } from '@/frontend/context/AuthContext';
 import { motion, AnimatePresence } from 'framer-motion';
 import NotificationBell from './NotificationBell';
+import PendingActionsBell from './PendingActionsBell';
 import ProcurementPOProcessor from '../procurement/ProcurementPOProcessor';
 import ProcurementStatusModal from './ProcurementStatusModal';
 import ProcurementComparativeFlow from './ProcurementComparativeFlow';
 import ProcurementCatalogModal from '../procurement/ProcurementCatalogModal';
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
 import MonthlyRequisitionsTab from '../procurement/MonthlyRequisitionsTab';
+import ElectricityTrackerTab from '../procurement/ElectricityTrackerTab';
 
 // --- Types ---
 interface MaterialRequest {
@@ -52,7 +55,7 @@ interface MaterialRequest {
     };
 }
 
-type Tab = 'overview' | 'requests' | 'history' | 'manage-items' | 'po-generator' | 'monthly-requisitions' | 'settings' | 'profile';
+type Tab = 'overview' | 'requests' | 'history' | 'manage-items' | 'po-generator' | 'monthly-requisitions' | 'electricity' | 'settings' | 'profile';
 
 export default function ProcurementDashboard() {
     const supabase = createClient();
@@ -67,7 +70,7 @@ export default function ProcurementDashboard() {
 
     useEffect(() => {
         const tabParam = searchParams?.get('tab') as Tab | null;
-        if (tabParam && ['overview', 'requests', 'history', 'manage-items', 'po-generator', 'monthly-requisitions', 'settings', 'profile'].includes(tabParam)) {
+        if (tabParam && ['overview', 'requests', 'history', 'manage-items', 'po-generator', 'monthly-requisitions', 'electricity', 'settings', 'profile'].includes(tabParam)) {
             setActiveTab(tabParam);
         }
     }, [searchParams]);
@@ -463,6 +466,7 @@ export default function ProcurementDashboard() {
                                     { id: 'overview', icon: LayoutDashboard, label: 'Dashboard' },
                                     { id: 'requests', icon: Package, label: 'Active Orders' },
                                     { id: 'monthly-requisitions', icon: FileSpreadsheet, label: 'Monthly Requisitions' },
+                                    { id: 'electricity', icon: Zap, label: 'Electricity Tracker' },
                                     { id: 'history', icon: CheckCircle2, label: 'Order History' },
                                     { id: 'manage-items', icon: ShoppingCart, label: 'Manage Items' },
                                     { id: 'po-generator', icon: FileText, label: 'PO Generator' },
@@ -589,6 +593,7 @@ export default function ProcurementDashboard() {
                         </div>
 
                         <div className="flex items-center gap-4">
+                            <PendingActionsBell />
                             <NotificationBell />
                             <div className="w-10 h-10 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-center text-slate-400 font-black text-sm">
                                 {user?.email?.[0].toUpperCase() || 'P'}
@@ -643,6 +648,9 @@ export default function ProcurementDashboard() {
                                 organizationId={user?.user_metadata?.organization_id}
                                 userRole={user?.user_metadata?.role || 'procurement_user'}
                             />
+                        )}
+                        {activeTab === 'electricity' && (
+                            <ElectricityTrackerTab orgId={user?.user_metadata?.organization_id} />
                         )}
                         {activeTab === 'manage-items' && (
                             <ManageItemsTab 
@@ -1227,18 +1235,40 @@ function PlaceholderTab({ title, icon: Icon, desc }: any) {
     );
 }
 
+// Human-readable label for a membership role slug. Previously the profile card hardcoded
+// "Procurement Manager" for everyone, which mislabelled non-procurement users (e.g. an
+// accounts user reaching this page via the `procurement: ['view']` capability).
+const ROLE_LABELS: Record<string, string> = {
+    master_admin: 'Master Admin',
+    org_super_admin: 'Organisation Super Admin',
+    org_admin: 'Organisation Admin',
+    procurement: 'Procurement',
+    purchase_manager: 'Procurement Manager',
+    purchase_executive: 'Procurement Executive',
+    property_admin: 'Property Admin',
+    accounts: 'Accounts',
+};
+
+const roleLabel = (slug?: string | null) =>
+    (slug && ROLE_LABELS[slug]) ||
+    (slug ? slug.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'Unassigned');
+
 function ProfileTab({ user }: any) {
+    const { membership } = useAuth();
+    const displayRole = membership?.is_master_admin
+        ? ROLE_LABELS.master_admin
+        : roleLabel(membership?.org_role || membership?.properties?.[0]?.role);
     return (
         <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="flex justify-center py-10">
             <div className="w-full max-w-xl bg-white rounded-[40px] border border-slate-200 shadow-2xl p-10 flex flex-col items-center">
                 <div className="w-32 h-32 rounded-3xl bg-gradient-to-br from-primary to-indigo-600 flex items-center justify-center text-white text-5xl font-black shadow-xl mb-8">
                     {user?.email?.[0].toUpperCase()}
                 </div>
-                <h2 className="text-2xl font-black text-slate-900 mb-1">{user?.user_metadata?.full_name || 'Procurement Officer'}</h2>
+                <h2 className="text-2xl font-black text-slate-900 mb-1">{user?.user_metadata?.full_name || user?.email || 'User'}</h2>
                 <p className="text-[10px] text-slate-400 font-black uppercase tracking-[0.3em] mb-10">Security Tier: Authorized</p>
                 <div className="w-full space-y-4">
                     <ProfileRow label="Official Email" value={user?.email} />
-                    <ProfileRow label="Assigned Role" value="Procurement Manager" highlight />
+                    <ProfileRow label="Assigned Role" value={displayRole} highlight />
                     <ProfileRow label="Office Hours" value="09:00 - 18:00 (IST)" />
                 </div>
             </div>

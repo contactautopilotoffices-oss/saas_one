@@ -28,6 +28,8 @@ export class WhatsAppQueueService {
             moduleName = 'ppm';
         } else if (payload.eventType.startsWith('CRM_')) {
             moduleName = 'crm';
+        } else if (payload.eventType.startsWith('ELECTRICITY_')) {
+            moduleName = 'electricity';
         }
 
         const keys = ['whatsapp_notifications_enabled'];

@@ -28,7 +28,9 @@ const securityHeaders = {
         `img-src 'self' data: blob: ${process.env.NEXT_PUBLIC_SUPABASE_URL?.replace('https://', 'https://') || 'https://*.supabase.co'} https://images.unsplash.com https://loremflickr.com https://placehold.co https://*.githubusercontent.com`,
         `media-src 'self' blob: ${process.env.NEXT_PUBLIC_SUPABASE_URL?.replace('https://', 'https://') || 'https://*.supabase.co'}`,
         "font-src 'self' data: https://fonts.gstatic.com",
-        `connect-src 'self' http://localhost:3000 ws://localhost:3000 ${process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://*.supabase.co'} ${process.env.NEXT_PUBLIC_SUPABASE_URL?.replace('https://', 'wss://') || 'wss://*.supabase.co'} https://www.gstatic.com https://firebaseinstallations.googleapis.com https://fcmregistrations.googleapis.com https://*.firebaseio.com`,
+        // api.openai.com: the council 1:1 voice call opens its WebRTC leg from
+        // the browser with a server-minted ephemeral secret (never the API key).
+        `connect-src 'self' http://localhost:3000 ws://localhost:3000 ${process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://*.supabase.co'} ${process.env.NEXT_PUBLIC_SUPABASE_URL?.replace('https://', 'wss://') || 'wss://*.supabase.co'} https://www.gstatic.com https://firebaseinstallations.googleapis.com https://fcmregistrations.googleapis.com https://*.firebaseio.com https://api.openai.com`,
         "frame-ancestors 'none'",
         "base-uri 'self'",
         "form-action 'self'",
@@ -55,6 +57,7 @@ export async function proxy(request: NextRequest) {
         '/manifest.json', // Allow manifest file for PWA
         '/firebase-messaging-sw.js', // Allow service worker
         '/landing_animation', // Public landing animation page
+        '/cc-preview', // TEMP: command-center design verification routes, removed after the revamp lands
         '/privacy',
         '/privacy-policy',
         '/terms',

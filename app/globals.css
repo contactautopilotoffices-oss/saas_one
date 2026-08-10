@@ -1540,3 +1540,1885 @@
     scroll-behavior: auto !important;
   }
 }
+/* ============================================================================
+   OPS WIDGET DASHBOARD — additive design language.
+
+   Added for the customizable widget grid. Everything here is NEW; no brand
+   colour, font, or existing class above is redefined. The palette is drawn
+   entirely from the tokens already declared in :root.
+
+   Two ideas drive this block:
+
+   1. GLASS THAT SURVIVES A NEAR-WHITE CANVAS. The existing .glass-card blurs a
+      #FAFBFC background, which on its own reads as grey fog rather than glass.
+      What actually sells glass is not the blur — it is the 1px inset highlight
+      along the top edge (light catching a bevel) plus a saturate() boost so
+      colour behind the pane stays alive. Both are added here.
+
+   2. A SEVERITY LADDER YOU CAN READ ACROSS 12 TILES AT ONCE. The brief was the
+      green LED beside a webcam: quiet, peripheral, unmistakable. So severity is
+      carried by a small fixed-position dot and a hairline top edge, never by
+      tinting a whole card. Twelve tinted cards is a Christmas tree; twelve
+      cards with one glowing dot has exactly one thing to look at.
+   ============================================================================ */
+
+:root {
+  /* Widget grid geometry. Row height and gutter are the whole layout system —
+     every widget size is a multiple of these, so a card can never half-align. */
+  --w-gutter: 16px;
+  /* 104px was too short: after a 40px header and a headline line it left ~44px of body,
+     which clipped the metric's own subtitle. 152px fits header + headline + metric + sub +
+     a chip row at the 1-row sizes, and gives 320px for a 2-row card. */
+  --w-row: 152px;
+  --w-radius: 20px;
+  --w-radius-inner: 12px;
+
+  /* Glass v2 — the validated recipe from research/glass-ambient.md (A1–A2).
+     Crispness comes from an asymmetric tint + a 1px gradient rim + dual inset
+     highlights, NOT from blur: over a near-white canvas blur is a mathematical
+     no-op (A0) and the classic flat rgba(255,255,255,.55) tint is "the fog".
+     Real backdrop blur is opt-in via .is-live (≤3 blurred cards on screen —
+     12 blurred cards ≈ 9.5M device-px of extra fill per frame, A3). */
+  --w-glass-blur: 20px;
+  --w-glass-saturate: 180%;        /* 16–24px blur ⇒ 175–190%, Apple ≈ 180% (A2) */
+  --w-glass-bright: 1.02;          /* lifts glass ~2% above canvas without a white veil */
+  --w-glass-tint-top: rgba(255, 255, 255, 0.78);
+  --w-glass-tint-bottom: rgba(244, 247, 249, 0.62);
+  --w-glass-rim-top: rgba(255, 255, 255, 0.92);   /* specular arc */
+  --w-glass-rim-bot: rgba(112, 143, 150, 0.16);   /* primary-tinted lower rim */
+  --w-glass-hl-top: rgba(255, 255, 255, 0.90);    /* 1px inset specular — ΔL* ≈ 2.6, inside the 2.5–4.0 band (A2) */
+  --w-glass-hl-under: rgba(16, 24, 32, 0.05);     /* bevel shadow directly beneath it */
+  --w-glass-hl-bottom: rgba(112, 143, 150, 0.10); /* bounce light */
+
+  /* Elevation — Vercel's ladder (vercel/DESIGN.md, "Elevation & Depth"):
+     STACKED small offsets at 4–12% black + an inset hairline, never a single
+     generic drop-shadow. Three rungs used here: rest / hover / drag, so a card
+     can outrank another only while it is being acted on. */
+  --w-shadow:        0 0 0 1px rgba(0,0,0,0.08), 0px 1px 1px rgba(0,0,0,0.02), 0px 2px 2px rgba(0,0,0,0.04);          /* Vercel L2 */
+  --w-shadow-hover:  0 0 0 1px rgba(0,0,0,0.08), 0px 2px 2px rgba(0,0,0,0.04), 0px 8px 8px -8px rgba(0,0,0,0.04);    /* Vercel L3 */
+  --w-shadow-drag:   0px 1px 1px rgba(0,0,0,0.02), 0px 8px 16px -4px rgba(0,0,0,0.04), 0px 24px 32px -8px rgba(0,0,0,0.06); /* Vercel L5 */
+
+  /* Severity ladder — glass-ambient.md B1. Health is communicated by ABSENCE:
+     the resting board shows no dots at all, so the one signal that exists is
+     findable in peripheral vision. Shape is the redundant channel
+     (hollow → solid → solid+halo → +rim+shadow), never colour alone. */
+  --sev-info: 170, 137, 95;        /* brand secondary — static, zero motion   */
+  --sev-warn: 217, 119, 6;         /* #D97706, 3.07:1 — NOT #F59E0B at 2.07:1 */
+  --sev-critical: 239, 68, 68;
+  --sig-calm: cubic-bezier(0.37, 0, 0.63, 1);
+  --sig-enter: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --sig-beat: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Numeric type scale — Binance (binance/DESIGN.md): numbers get their own
+     ramp because "numbers need to read at a glance… compete with dense data".
+     Labels stay on the text scale; digits never share weights with chrome. */
+  --w-num-display: 700 40px/1.1 var(--font-display), sans-serif;  /* tracking -0.3px set on class */
+  --w-num-lg: 700 32px/1.1 var(--font-display), sans-serif;
+  --w-num-md: 500 16px/1.4 var(--font-display), sans-serif;
+  --w-num-sm: 500 14px/1.4 var(--font-display), sans-serif;
+
+  --w-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --w-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  /* Monopo's patient curve — the glide. Used for transforms and the alive-glass
+     motions; nothing on the board should snap. */
+  --w-ease-patient: cubic-bezier(0.19, 1, 0.22, 1);
+}
+
+.dark {
+  --w-glass-tint-top: rgba(28, 35, 46, 0.82);
+  --w-glass-tint-bottom: rgba(18, 24, 33, 0.68);
+  --w-glass-rim-top: rgba(255, 255, 255, 0.16);
+  --w-glass-rim-bot: rgba(255, 255, 255, 0.05);
+  --w-glass-hl-top: rgba(255, 255, 255, 0.12);
+  --w-glass-hl-under: rgba(0, 0, 0, 0.25);
+  --w-glass-hl-bottom: rgba(255, 255, 255, 0.05);
+  --w-shadow:       0 0 0 1px rgba(0,0,0,0.40), 0px 1px 1px rgba(0,0,0,0.20), 0px 2px 2px rgba(0,0,0,0.25);
+  --w-shadow-hover: 0 0 0 1px rgba(0,0,0,0.40), 0px 2px 2px rgba(0,0,0,0.25), 0px 8px 8px -8px rgba(0,0,0,0.30);
+  --w-shadow-drag:  0px 1px 1px rgba(0,0,0,0.20), 0px 8px 16px -4px rgba(0,0,0,0.30), 0px 24px 32px -8px rgba(0,0,0,0.40);
+}
+
+@layer components {
+
+  /* --- The widget shell -------------------------------------------------
+     Layered per glass-ambient.md A1: canvas chroma → (opt-in blur) →
+     asymmetric tint → gradient rim → dual inset highlight → stacked shadow. */
+  .w-card {
+    position: relative;
+    isolation: isolate;            /* Safari radius/overflow fix + own stacking ctx */
+    display: flex;
+    flex-direction: column;
+    min-width: 0;              /* lets flex children truncate instead of overflowing */
+    min-height: 0;
+    border: 0;                   /* the rim is drawn by ::before, never a uniform border */
+    border-radius: var(--card-radius, var(--w-radius));
+
+    /* Layer 3 — asymmetric tint. NEVER a flat rgba(255,255,255,.x). */
+    background: linear-gradient(180deg, var(--w-glass-tint-top) 0%, var(--w-glass-tint-bottom) 100%);
+
+    /* Layers 5 + 6 — inset bevel pair + Vercel stacked shadow, one declaration.
+       The bright 1px line PLUS the dark step directly beneath it is the minimum
+       sufficient cue for "this pane has thickness"; the bright line alone is
+       why most glassmorphism looks like stickers (A2). */
+    box-shadow:
+      inset 0  1px 0 0     var(--w-glass-hl-top),
+      inset 0  2px 1px -1px var(--w-glass-hl-under),
+      inset 0 -1px 0 0     var(--w-glass-hl-bottom),
+      var(--w-shadow);
+    transition:
+      background 300ms var(--w-ease),
+      box-shadow 300ms var(--w-ease),
+      transform 360ms var(--w-ease-patient);
+  }
+
+  /* Layer 4 — 1px gradient rim, bright at the top arc, fading to a
+     primary-tinted line at the bottom. A uniform ring reads as a stroke;
+     a gradient ring reads as a lit edge. This rim is ALSO the severity
+     carrier: warn/critical recolour it instead of adding new elements. */
+  .w-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    border-radius: inherit;
+    padding: 1px;
+    pointer-events: none;
+    background: linear-gradient(170deg, var(--w-glass-rim-top) 0%,
+                                        rgba(255, 255, 255, 0.35) 38%,
+                                        var(--w-glass-rim-bot) 100%);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+            mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+            mask-composite: exclude;
+  }
+
+  /* Layer 2 — REAL blur, opt-in only. Over the current near-featureless canvas
+     blur is a no-op with real GPU cost (12 cards ≈ 9.5M device-px/frame, A3),
+     so it is reserved for cards that sit over imagery or live video. */
+  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .w-card.is-live {
+      --w-glass-tint-top: rgba(255, 255, 255, 0.60);
+      --w-glass-tint-bottom: rgba(244, 247, 249, 0.44);
+      -webkit-backdrop-filter: blur(var(--w-glass-blur)) saturate(var(--w-glass-saturate)) brightness(var(--w-glass-bright));
+              backdrop-filter: blur(var(--w-glass-blur)) saturate(var(--w-glass-saturate)) brightness(var(--w-glass-bright));
+    }
+  }
+
+  /* Thickness scales with size — Apple's Liquid Glass rule: larger elements
+     simulate thicker material (deeper shadow, more lensing). Free here because
+     the grid is already snap-sized; this is what makes "drag bigger" feel
+     physical rather than a reflow. */
+  .w-card[data-size='sm'] { --card-radius: 16px; --w-glass-blur: 14px; }
+  .w-card[data-size='md'] { --card-radius: 20px; }
+  .w-card[data-size='lg'] { --card-radius: 22px; --w-glass-blur: 24px; }
+  .w-card[data-size='xl'] { --card-radius: 26px; --w-glass-blur: 28px; }
+
+  /* --- The ink anchor (crypto-shot move) ----------------------------------
+     ONE widget per board renders opaque instead of glass: a solid ink panel
+     with the glow painted INSIDE it. The contrast between one dark anchor and
+     the pale board is what makes the surrounding panes read as glass at all —
+     a board where everything is translucent has no anchor and reads as fog.
+     White bevel, inverted text, severity edge still applies on top. */
+  .w-card[data-tone='ink'] {
+    background:
+      radial-gradient(120% 90% at 85% -10%, rgba(99, 102, 241, 0.28), transparent 55%),
+      radial-gradient(90% 70% at 10% 110%, rgba(16, 185, 129, 0.14), transparent 60%),
+      #0d1526;
+    --w-glass-rim-top: rgba(255, 255, 255, 0.22);
+    --w-glass-rim-bot: rgba(255, 255, 255, 0.06);
+    box-shadow: 0 0 0 1px rgba(13, 21, 38, 0.9),
+      0 2px 4px rgba(13, 21, 38, 0.25),
+      0 18px 40px -10px rgba(13, 21, 38, 0.45);
+  }
+  .w-card[data-tone='ink']:hover {
+    background:
+      radial-gradient(120% 90% at 85% -10%, rgba(99, 102, 241, 0.36), transparent 55%),
+      radial-gradient(90% 70% at 10% 110%, rgba(16, 185, 129, 0.18), transparent 60%),
+      #101a30;
+  }
+  .w-card[data-tone='ink'] .w-title { color: rgba(226, 232, 240, 0.75); }
+  .w-card[data-tone='ink'] .w-metric { color: #f8fafc; }
+  .w-card[data-tone='ink'] .w-sub,
+  .w-card[data-tone='ink'] .w-stamp { color: rgba(148, 163, 184, 0.85); }
+  .w-card[data-tone='ink'] .w-insight {
+    background: rgba(255, 255, 255, 0.06);
+    color: #cbd5e1;
+  }
+  .w-card[data-tone='ink'] .bg-muted { background: rgba(255, 255, 255, 0.10); }
+
+  .w-card:hover {
+    box-shadow:
+      inset 0  1px 0 0     var(--w-glass-hl-top),
+      inset 0  2px 1px -1px var(--w-glass-hl-under),
+      inset 0 -1px 0 0     var(--w-glass-hl-bottom),
+      var(--w-shadow-hover);
+  }
+
+  .w-card[data-dragging='true'] {
+    box-shadow:
+      inset 0  1px 0 0     var(--w-glass-hl-top),
+      inset 0  2px 1px -1px var(--w-glass-hl-under),
+      inset 0 -1px 0 0     var(--w-glass-hl-bottom),
+      var(--w-shadow-drag);
+    cursor: grabbing;
+  }
+
+  /* --- Severity (glass-ambient.md B0–B2) ----------------------------------
+     The webcam-LED rules that matter:
+       · L0 ok shows NOTHING — health is communicated by absence. Twelve green
+         dots is twelve lights; the exception disappears.
+       · Shape is the redundant channel, never colour alone (peripheral vision
+         is rod-dominated: at the edge of gaze red and green are the same dot).
+       · The 1px glass rim that already sells the pane is the severity carrier
+         — zero extra elements, and it changes the tile's SILHOUETTE, the one
+         thing peripheral vision resolves.
+       · At most ONE element on the entire board loops (the lead tile, set by
+         the grid's arbiter via data-lead). Everything else is static. */
+
+  /* L1 info — solid dot, brand secondary. Entry pop ONCE, never loops. */
+  .w-led[data-sev='info'] {
+    background: rgb(var(--sev-info));
+    animation: w-sig-enter 220ms var(--sig-enter) 1;
+  }
+
+  /* L2 warn — larger dot + diffusion halo (Calm Tech: never a hard bright
+     point), and the rim itself takes the hue. Motion only on the lead tile. */
+  .w-led[data-sev='warn'] { width: 7px; height: 7px; background: rgb(var(--sev-warn)); }
+  .w-led[data-sev='warn']::after {
+    opacity: 0.18;
+    transform: scale(2.2);
+    background: rgb(var(--sev-warn));
+  }
+  .w-card[data-sev='warn'] { --w-glass-rim-top: rgba(var(--sev-warn), 0.55); --w-glass-hl-top: rgba(var(--sev-warn), 0.50); }
+  .w-card[data-sev='warn'][data-lead='true'] .w-led::after { animation: w-sig-attend 2600ms var(--sig-calm) infinite; }
+
+  /* L3 critical — dot + halo + full rim recolour + red-cast shadow. The rim
+     heartbeat is the ONLY loop on the board: 0.55Hz, short rise + long dwell —
+     a heartbeat, not a strobe (and far below the 3Hz photosensitivity line). */
+  .w-led[data-sev='critical'] { width: 8px; height: 8px; background: rgb(var(--sev-critical)); }
+  .w-led[data-sev='critical']::after {
+    opacity: 0.22;
+    transform: scale(2.4);
+    background: rgb(var(--sev-critical));
+  }
+  .w-card[data-sev='critical'] {
+    --w-glass-rim-top: rgba(var(--sev-critical), 0.60);
+    --w-glass-rim-bot: rgba(var(--sev-critical), 0.22);
+    --w-shadow: 0 0 0 1px rgba(0,0,0,0.08), 0px 1px 1px rgba(0,0,0,0.02), 0px 2px 2px rgba(0,0,0,0.04), 0 12px 30px -8px rgba(var(--sev-critical), 0.24);
+  }
+  .w-card[data-sev='critical'][data-lead='true']::before { animation: w-sig-critical 1800ms var(--sig-beat) infinite; }
+
+  .w-led::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 9999px;
+    opacity: 0;
+    transform: scale(1);
+    pointer-events: none;
+  }
+
+  /* Every looping keyframe rests at 0% ≡ 100%, so the global reduced-motion
+     blanket (which snaps animations to their 100% frame) lands on the correct
+     static state instead of a random one. */
+  @keyframes w-sig-enter { from { transform: scale(0.5); opacity: 0; } to { transform: none; opacity: 1; } }
+  @keyframes w-sig-attend {
+    0%, 100% { opacity: 0.16; transform: scale(2.0); }
+    50%      { opacity: 0.32; transform: scale(2.9); }
+  }
+  @keyframes w-sig-critical {
+    0%   { opacity: 0.55; }
+    8%   { opacity: 1; }
+    34%  { opacity: 0.55; }
+    100% { opacity: 0.55; }
+  }
+
+  /* Value tick — the "alive" channel for data. Fires ONCE when a metric
+     changes (the shell re-keys the node): a 4px rise + fade on the patient
+     curve. transform+opacity only, so it never forces a re-blur or repaint
+     storm beside backdrop-filter. Habituation research says anything looping
+     longer than ~2 minutes stops being seen — so data moves when it CHANGES,
+     which is the only motion that carries information. */
+  .w-tick { animation: w-tick 500ms var(--w-ease-patient) 1; }
+  @keyframes w-tick {
+    from { transform: translateY(4px); opacity: 0; }
+    to   { transform: none; opacity: 1; }
+  }
+
+  /* --- Widget internals --------------------------------------------------
+     Spacing rhythm per Vercel ("large gaps + tight interior, never the other
+     way around"): the grid gutter carries the separation, so the card's
+     interior compresses — head 10px/12px, body 12px, tight 2px stacks. */
+  .w-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px 6px;
+    flex: none;
+  }
+
+  /* L0 shows nothing (B0 property 5). The dot exists only when there is a
+     signal to carry; ok cards render no LED at all. */
+  .w-led {
+    position: relative;
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 9999px;
+    flex: none;
+  }
+  .w-led[data-sev='ok'] { display: none; }
+
+  /* Label discipline (design.md / monopo): chrome whispers at 10.5px with
+     wide tracking; it never competes with the numbers. */
+  .w-title {
+    font-family: var(--font-display), sans-serif;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .w-body { padding: 0 12px 10px; flex: 1 1 auto; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+
+  /* The headline number — Binance number-display: 700 (not 800), tight
+     line-height 1.1, -0.3px tracking, tabular figures so a ticking value
+     never reflows. Numbers get their own ramp because they compete with
+     dense data; labels never share their weights. */
+  .w-metric {
+    font-family: var(--font-display), sans-serif;
+    font-weight: 700;
+    line-height: 1.1;
+    letter-spacing: -0.3px;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .w-sub { font: var(--w-num-sm); font-size: 11px; color: var(--text-tertiary); }
+
+  /* The insight strip (HR-dashboard lesson: intelligence, not numbers).
+     Every metric answers "what"; this one line answers "so what". It is the
+     fixed place prose lives — tinted, icon-led, and never longer than two
+     lines, so the board reads as analysis rather than instrumentation. */
+  .w-insight {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin: 0 12px 8px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    background: rgba(112, 143, 150, 0.08);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.35;
+    color: var(--text-secondary);
+  }
+  .w-insight > svg { width: 12px; height: 12px; flex: none; margin-top: 1px; color: var(--primary); }
+
+  /* Delta chip — the comparison-to-previous-period device. */
+  .w-delta {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 6px;
+    border-radius: 8px;
+    font-size: 10px;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.4;
+  }
+
+  .w-delta[data-dir='up'] { color: var(--error); background: rgba(239, 68, 68, 0.10); }
+  .w-delta[data-dir='down'] { color: var(--success); background: rgba(16, 185, 129, 0.12); }
+  .w-delta[data-dir='flat'] { color: var(--text-tertiary); background: var(--muted); }
+  /* Some metrics invert: more revenue is good, more consumption is bad. */
+  .w-delta[data-dir='up'][data-good='true'] { color: var(--success); background: rgba(16, 185, 129, 0.12); }
+  .w-delta[data-dir='down'][data-good='false'] { color: var(--error); background: rgba(239, 68, 68, 0.10); }
+
+  /* Freshness. Reads as trust, not noise — muted until it is genuinely stale. */
+  .w-stamp { font-size: 10px; font-weight: 600; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+  .w-stamp[data-stale='true'] { color: var(--warning); }
+
+  /* Drag affordance: only appears on hover, so the resting board stays calm. */
+  .w-grip {
+    opacity: 0;
+    transition: opacity 160ms var(--w-ease);
+    cursor: grab;
+    touch-action: none;
+  }
+  .w-card:hover .w-grip,
+  .w-grip:focus-visible { opacity: 1; }
+
+  /* Resize handle, bottom-right. */
+  .w-resize {
+    position: absolute;
+    right: 3px;
+    bottom: 3px;
+    width: 18px;
+    height: 18px;
+    border-radius: 0 0 var(--w-radius) 0;
+    opacity: 0;
+    cursor: nwse-resize;
+    touch-action: none;
+    z-index: 3;
+    transition: opacity 160ms var(--w-ease);
+  }
+  .w-card:hover .w-resize,
+  .w-resize:focus-visible { opacity: 0.5; }
+  .w-resize:hover { opacity: 1 !important; }
+
+  /* Placeholder shown where a dragged card will land. */
+  .w-drop {
+    border-radius: var(--w-radius);
+    border: 1.5px dashed var(--border);
+    background: rgba(112, 143, 150, 0.05);
+  }
+
+  /* Canvas chroma — scoped to the ops grid ONLY (this redesign is super-admin
+     only; the app-wide --canvas-bg is untouched). Glass needs backdrop
+     structure at 60–300px feature scale or the tint has nothing to separate
+     from (glass-ambient.md A0–A1 Layer 0). Alphas ≤ 0.10 in the two brand
+     hues, so the field still reads as near-white. */
+  .ops-grid-canvas {
+    border-radius: 24px;
+    padding: 12px;
+    margin: -12px;
+    background:
+      radial-gradient(900px 620px at 12% -6%,  rgba(112, 143, 150, 0.10), transparent 62%),
+      radial-gradient(760px 520px at 92%  6%,  rgba(170, 137, 95, 0.075), transparent 60%),
+      radial-gradient(1100px 780px at 46% 112%, rgba(112, 143, 150, 0.055), transparent 66%);
+  }
+}
+
+/* Reduced motion: severity survives through static channels — halo scale and
+   the rim recolour carry the ladder when the heartbeat is taken away.
+   Severity must never be conveyed by animation alone. */
+@media (prefers-reduced-motion: reduce) {
+  .w-card::before,
+  .w-led,
+  .w-led::after,
+  .w-tick { animation: none !important; }
+  .w-led[data-sev='warn']::after { opacity: 0.26; transform: scale(2.5); }
+  .w-led[data-sev='critical']::after { opacity: 0.34; transform: scale(2.7); }
+  /* Motion removed ⇒ add a static channel so critical is still the loudest
+     thing on the board. */
+  .w-card[data-sev='critical'] { box-shadow:
+      inset 3px 0 0 0 rgb(var(--sev-critical)),
+      inset 0  1px 0 0     var(--w-glass-hl-top),
+      inset 0  2px 1px -1px var(--w-glass-hl-under),
+      inset 0 -1px 0 0     var(--w-glass-hl-bottom),
+      var(--w-shadow); }
+}
+
+/* Ink-card text inversion — UNLAYERED on purpose. Cascade layers beat
+   specificity, so these cannot live in @layer components: the Tailwind
+   utilities they counteract sit in the later utilities layer. */
+.w-card[data-tone='ink'] .text-text-tertiary { color: rgba(148, 163, 184, 0.9); }
+.w-card[data-tone='ink'] .text-text-secondary { color: rgba(203, 213, 225, 0.85); }
+.w-card[data-tone='ink'] .text-text-primary { color: #f1f5f9; }
+
+/* ============================================================================
+   COMMAND CENTER — the ops home screen.
+
+   A fixed editorial layout, NOT the uniform widget grid above: four bands with
+   different rhythms (hero / priority rail / intelligence grid / detail row).
+
+   Values are taken from the vendored design systems in docs/design-references,
+   not invented. Sources are cited inline. Nothing here redefines a brand or
+   font token declared earlier in this file.
+   ============================================================================ */
+
+:root {
+  /* --- Elevation: Vercel's stacked ladder ------------------------------------
+     vercel/DESIGN.md: "The brand uses STACKED shadows — multiple small offsets
+     layered to fake natural light — never a single 8-px-blur generic drop.
+     Inset hairline rings are always added so the card edge stays crisp."
+     The inset ring is present at EVERY level; that is what keeps a white card
+     legible on a near-white canvas without a heavy border. */
+  --cc-ring: 0 0 0 1px #00000014 inset;
+  --cc-elev-1: var(--cc-ring);
+  --cc-elev-2: var(--cc-ring), 0 1px 1px #00000005, 0 2px 2px #0000000a;
+  --cc-elev-3: var(--cc-ring), 0 2px 2px #0000000a, 0 8px 8px -8px #0000000a;
+  --cc-elev-4: var(--cc-ring), 0 2px 2px #0000000a, 0 8px 16px -4px #0000000a;
+
+  /* --- Geometry -------------------------------------------------------------
+     vercel/DESIGN.md: --geist-gap is 24px exactly; card interior 16px on the
+     denser template grid. binance/DESIGN.md: "most surfaces sit at 6–12px"
+     radius, 12px vertical row padding in dense lists. */
+  --cc-gap: 24px;
+  --cc-pad: 16px;
+  --cc-radius: 16px;
+  --cc-radius-sm: 8px;
+  --cc-row-pad: 12px;
+
+  /* --- Numeric type scale: binance/DESIGN.md --------------------------------
+     "Numbers always use BinancePlex; copy always uses BinanceNova. Mixing them
+     is a system violation." We only have one family, so the separation is
+     carried by WEIGHT and TRACKING instead of a second face — 700 weight and
+     negative tracking on figures, 500/600 on prose.
+     "Display sizes use weight 700 — heavier than most marketing systems…
+     numbers need to read at a glance." */
+  --cc-num-hero: 56px;   /* the health score */
+  --cc-num-xl: 40px;
+  --cc-num-lg: 28px;
+  --cc-num-md: 16px;
+  --cc-num-sm: 14px;
+  --cc-num-track: -0.3px;
+
+  /* --- Header band ---------------------------------------------------------- */
+  --cc-header-from: #5A737A;   /* --primary-dark  */
+  --cc-header-to:   #708F96;   /* --primary       */
+}
+
+@layer components {
+
+  /* --- Layout bands --------------------------------------------------------- */
+  .cc-page { padding: var(--cc-gap); display: flex; flex-direction: column; gap: var(--cc-gap); }
+
+  /* linear.app/DESIGN.md hard don't: "Don't pill-round CTAs" is about buttons,
+     but the same file's panel radius ladder tops out at 24px; 16px keeps the
+     cards calm against a 24px gutter. */
+  .cc-band { display: grid; gap: var(--cc-gap); }
+
+  /* Hero row ≈ 5 / 3.2 / 3.8 of 12. Collapses rather than squeezing: three
+     dense cards below ~1100px become unreadable before they become narrow. */
+  .cc-band-hero { grid-template-columns: 1fr; }
+  @media (min-width: 1100px) {
+    .cc-band-hero { grid-template-columns: 5fr 3.2fr 3.8fr; }
+  }
+
+  .cc-band-5 { grid-template-columns: repeat(1, minmax(0, 1fr)); }
+  @media (min-width: 700px)  { .cc-band-5 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (min-width: 1100px) { .cc-band-5 { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (min-width: 1500px) { .cc-band-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+
+  .cc-band-detail { grid-template-columns: 1fr; }
+  @media (min-width: 1100px) {
+    .cc-band-detail { grid-template-columns: 4.5fr 3fr 4.5fr; }
+  }
+
+  /* --- Card ----------------------------------------------------------------- */
+  .cc-card {
+    background: var(--surface);
+    border-radius: var(--cc-radius);
+    box-shadow: var(--cc-elev-3);
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    position: relative;
+  }
+  /* linear.app/DESIGN.md: "Subtle white edge highlight on the top edge of
+     lifted panels." On a white card this reads as a bevel, not a glow. */
+  .cc-card::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 1px;
+    border-radius: var(--cc-radius) var(--cc-radius) 0 0;
+    background: linear-gradient(90deg, transparent, #ffffffcc 18%, #ffffffcc 82%, transparent);
+    pointer-events: none;
+  }
+  .cc-card[data-elev='4'] { box-shadow: var(--cc-elev-4); }
+  .cc-card[data-elev='2'] { box-shadow: var(--cc-elev-2); }
+
+  /* The single gradient card in the layout (Operations Health Score). Kept to
+     one so it reads as emphasis rather than decoration. */
+  .cc-card[data-tone='gradient'] {
+    background:
+      radial-gradient(120% 140% at 88% 0%, rgba(245, 158, 11, 0.16) 0%, transparent 58%),
+      linear-gradient(160deg, #ffffff 0%, #fffdf7 100%);
+  }
+
+  /* vercel/DESIGN.md rhythm rule: "Inside a card, the headline/paragraph stack
+     is tight (8px gap), then a wider gap before the CTA cluster. Large gaps +
+     tight interior, never the other way around." Hence 16px card padding
+     against a 24px gutter, and 8px inside stacks. */
+  .cc-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: var(--cc-pad) var(--cc-pad) 10px;
+    flex: none;
+  }
+  .cc-body { padding: 0 var(--cc-pad) var(--cc-pad); flex: 1 1 auto; min-height: 0; }
+
+  /* Tinted icon square. Tint is the card's semantic colour at low alpha —
+     binance/DESIGN.md warns semantic colour belongs on text, not as a card
+     fill, so it is confined to this 24px chip. */
+  .cc-icon {
+    width: 24px; height: 24px; border-radius: 6px;
+    display: inline-flex; align-items: center; justify-content: center;
+    flex: none; color: var(--cc-accent, var(--primary));
+    background: color-mix(in srgb, var(--cc-accent, var(--primary)) 12%, transparent);
+  }
+  .cc-icon > svg { width: 14px; height: 14px; }
+
+  .cc-title {
+    font-family: var(--font-body);
+    font-size: 10px; font-weight: 800;
+    letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--text-tertiary);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  .cc-menu {
+    margin-left: auto; flex: none;
+    color: var(--text-tertiary);
+    opacity: 0; transition: opacity 150ms var(--transition-smooth);
+  }
+  .cc-card:hover .cc-menu, .cc-menu:focus-visible { opacity: 1; }
+}
+
+@layer components {
+
+  /* --- Numbers --------------------------------------------------------------
+     binance/DESIGN.md keeps figures on their own scale so they "read at a
+     glance" against dense surroundings. Every figure is tabular so columns of
+     digits do not jitter between refreshes. */
+  .cc-num {
+    font-family: var(--font-display);
+    font-weight: 700;
+    line-height: 1.1;
+    letter-spacing: var(--cc-num-track);
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1;
+  }
+  .cc-num-hero { font-size: var(--cc-num-hero); }
+  .cc-num-xl   { font-size: var(--cc-num-xl); }
+  .cc-num-lg   { font-size: var(--cc-num-lg); }
+  .cc-num-md   { font-size: var(--cc-num-md); font-weight: 500; line-height: 1.4; letter-spacing: 0; }
+  .cc-num-sm   { font-size: var(--cc-num-sm); font-weight: 500; line-height: 1.4; letter-spacing: 0; }
+
+  /* Prose stays on the body face at 500 — the weight gap against .cc-num is
+     what separates figures from labels without a second font family. */
+  .cc-label {
+    font-family: var(--font-body);
+    font-size: 9px; font-weight: 700;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--text-tertiary);
+    line-height: 1.3;
+  }
+  .cc-sub { font-size: 11px; font-weight: 500; color: var(--text-secondary); line-height: 1.35; }
+
+  /* --- Meta strip -----------------------------------------------------------
+     The label-over-value footer most cards end with. binance/DESIGN.md dense
+     row geometry: hairline dividers, 12px vertical padding, transparent rows. */
+  .cc-meta {
+    display: grid; gap: 10px;
+    padding-top: var(--cc-row-pad);
+    margin-top: var(--cc-row-pad);
+    border-top: 1px solid var(--border-subtle);
+  }
+  .cc-meta-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cc-meta-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .cc-meta-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .cc-meta-cell { min-width: 0; }
+  .cc-meta-cell > .cc-label { margin-bottom: 3px; }
+  .cc-meta-val {
+    font-size: 12px; font-weight: 700; color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  /* --- Delta ----------------------------------------------------------------
+     binance/DESIGN.md: up/down semantics are "applied as text color rather
+     than badge background… Don't use them as background fills on cards."
+     So a delta is coloured text with a caret, never a filled pill. */
+  .cc-delta {
+    display: inline-flex; align-items: center; gap: 3px;
+    font-size: 13px; font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: var(--cc-num-track);
+  }
+  .cc-delta[data-tone='bad']  { color: var(--error); }
+  .cc-delta[data-tone='good'] { color: var(--success); }
+  .cc-delta[data-tone='flat'] { color: var(--text-tertiary); }
+
+  /* --- Status badge --------------------------------------------------------- */
+  .cc-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; border-radius: 999px;
+    font-size: 10px; font-weight: 700; white-space: nowrap;
+    color: var(--cc-badge-c, var(--text-secondary));
+    background: color-mix(in srgb, var(--cc-badge-c, var(--muted)) 12%, transparent);
+  }
+  .cc-badge::before {
+    content: ''; width: 5px; height: 5px; border-radius: 999px;
+    background: currentColor; flex: none;
+  }
+  .cc-badge[data-tone='ok']    { --cc-badge-c: var(--success); }
+  .cc-badge[data-tone='info']  { --cc-badge-c: var(--info); }
+  .cc-badge[data-tone='warn']  { --cc-badge-c: var(--warning); }
+  .cc-badge[data-tone='bad']   { --cc-badge-c: var(--error); }
+  .cc-badge[data-flat]::before { display: none; }
+
+  /* --- Action button -------------------------------------------------------- */
+  .cc-action {
+    display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+    height: 30px; padding: 0 12px;
+    border-radius: var(--cc-radius-sm);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    font-size: 11px; font-weight: 700; color: var(--text-secondary);
+    white-space: nowrap;
+    transition: border-color 150ms var(--transition-smooth), color 150ms var(--transition-smooth);
+  }
+  .cc-action:hover { border-color: var(--primary); color: var(--primary); }
+  .cc-action[data-block] { width: 100%; }
+
+  /* --- Priority rail --------------------------------------------------------
+     Horizontal scroll lives INSIDE the rail; the page body must never scroll
+     sideways. Scrollbar hidden because the affordance is the arrow button. */
+  .cc-rail-wrap { position: relative; min-width: 0; }
+  .cc-rail {
+    display: grid; grid-auto-flow: column; grid-auto-columns: 232px;
+    gap: var(--cc-gap);
+    overflow-x: auto; overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    scroll-padding-left: 2px;
+    padding-bottom: 4px;
+    scrollbar-width: none;
+  }
+  .cc-rail::-webkit-scrollbar { display: none; }
+  .cc-rail > * { scroll-snap-align: start; }
+  .cc-rail-btn {
+    position: absolute; top: 50%; right: -14px; transform: translateY(-50%);
+    width: 32px; height: 32px; border-radius: 999px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--surface); box-shadow: var(--cc-elev-4);
+    color: var(--text-secondary); z-index: 2;
+  }
+  .cc-rail-btn:hover { color: var(--primary); }
+  .cc-rail-btn:disabled { opacity: 0; pointer-events: none; }
+
+  /* --- Section heading ------------------------------------------------------ */
+  .cc-section {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 11px; font-weight: 800; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--text-secondary);
+  }
+  .cc-section-count {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px;
+    background: var(--error); color: #fff;
+    font-size: 10px; font-weight: 800; font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+
+  /* --- Header band ----------------------------------------------------------
+     The teal masthead. Uses the existing primary ramp so it reads as the same
+     brand as the sidebar rather than a new colour. */
+  .cc-header {
+    border-radius: var(--cc-radius);
+    padding: 20px 24px;
+    background: linear-gradient(135deg, var(--cc-header-from) 0%, var(--cc-header-to) 100%);
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    box-shadow: var(--cc-elev-3);
+  }
+  .cc-greeting {
+    font-family: var(--font-display);
+    font-size: 24px; font-weight: 700; color: #fff; line-height: 1.2;
+    letter-spacing: -0.4px;
+  }
+  .cc-greeting-sub { font-size: 13px; font-weight: 500; color: #ffffffcc; margin-top: 3px; }
+
+  .cc-sync {
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 7px 12px; border-radius: var(--cc-radius-sm);
+    background: #ffffff1f;
+    font-size: 10px; font-weight: 600; color: #ffffffe0; white-space: nowrap;
+  }
+  .cc-sync span { display: inline-flex; align-items: center; gap: 5px; }
+  .cc-sync span::before {
+    content: ''; width: 5px; height: 5px; border-radius: 999px;
+    background: var(--success); flex: none;
+  }
+  .cc-sync span + span::before { background: #ffffff8a; }
+
+  .cc-hicon {
+    position: relative; width: 38px; height: 38px; border-radius: 999px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: #ffffff1f; color: #fff; flex: none;
+    transition: background 150ms var(--transition-smooth);
+  }
+  .cc-hicon:hover { background: #ffffff33; }
+  .cc-hicon-badge {
+    position: absolute; top: -2px; right: -2px;
+    min-width: 17px; height: 17px; padding: 0 4px; border-radius: 999px;
+    background: var(--error); color: #fff;
+    font-size: 9px; font-weight: 800; font-variant-numeric: tabular-nums;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 2px solid var(--cc-header-to);
+  }
+
+  .cc-add {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 42px; padding: 0 18px; border-radius: 999px;
+    background: #fff; color: var(--text-primary);
+    font-size: 13px; font-weight: 700; white-space: nowrap;
+    box-shadow: var(--cc-elev-2);
+    transition: transform 150ms var(--transition-smooth);
+  }
+  .cc-add:hover { transform: translateY(-1px); }
+
+  /* --- Sidebar -------------------------------------------------------------- */
+  .cc-nav-group {
+    font-size: 9px; font-weight: 800; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--text-tertiary);
+    padding: 0 12px; margin: 18px 0 6px;
+  }
+  .cc-nav-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 12px; border-radius: 10px;
+    font-size: 13px; font-weight: 600; color: var(--text-secondary);
+    transition: background 150ms var(--transition-smooth), color 150ms var(--transition-smooth);
+  }
+  .cc-nav-item:hover { background: var(--muted); color: var(--text-primary); }
+  .cc-nav-item[data-active='true'] {
+    background: var(--primary); color: #fff; font-weight: 700;
+  }
+  /* A nav entry with no destination yet. Visible so the map of the product is
+     honest, but not clickable — linking to a 404 is worse than showing a stub. */
+  .cc-nav-item[data-disabled='true'] {
+    opacity: 0.42; pointer-events: none;
+  }
+
+  /* --- Building / digest rows ----------------------------------------------- */
+  .cc-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: var(--cc-row-pad) 0;
+    border-top: 1px solid var(--border-subtle);
+    min-width: 0;
+  }
+  .cc-row:first-child { border-top: 0; }
+  .cc-row-name {
+    font-size: 12px; font-weight: 700; color: var(--text-primary);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .cc-row-meta { font-size: 10px; font-weight: 500; color: var(--text-tertiary); }
+  .cc-dot { width: 7px; height: 7px; border-radius: 999px; flex: none; }
+
+  /* --- Stat column (health-score inset panel) -------------------------------- */
+  .cc-stats {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+    background: var(--surface);
+    border-radius: 12px;
+    padding: 14px;
+    box-shadow: var(--cc-elev-1);
+  }
+  @media (min-width: 640px) { .cc-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+  .cc-stats > * + * { border-left: 1px solid var(--border-subtle); padding-left: 14px; }
+  @media (max-width: 639px) {
+    .cc-stats > * + * { border-left: 0; padding-left: 0; }
+  }
+
+  /* --- Skeleton ------------------------------------------------------------- */
+  .cc-skel {
+    border-radius: 8px;
+    background: linear-gradient(90deg, var(--muted) 25%, var(--border-subtle) 37%, var(--muted) 63%);
+    background-size: 400% 100%;
+    animation: cc-shimmer 1.4s ease-in-out infinite;
+  }
+  @keyframes cc-shimmer { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cc-skel { animation: none; }
+  .cc-add:hover { transform: none; }
+}
+
+/* ============================================================================
+   COMMAND CENTER v2 — Super Admin shell + card chrome (SPEC contract).
+   Additive block. All classes prefixed .cc-. Unlayered on purpose: this block
+   supersedes the orphaned v1 .cc- experiment above (which lives in
+   @layer components), so equal-specificity names here (.cc-card, .cc-title,
+   .cc-sub, .cc-badge) win without touching that legacy CSS.
+   Motion curve: cubic-bezier(0.19,1,0.22,1) (monopo — patient).
+   ============================================================================ */
+
+:root {
+  --cc-ease: cubic-bezier(0.19, 1, 0.22, 1);
+  --cc-dur: 300ms;
+
+  /* Card glass */
+  --cc-card-bg: rgba(255, 255, 255, 0.94);
+  --cc-card-blur: 14px;
+  --cc-card-radius: 18px;
+  --cc-card-border: rgba(255, 255, 255, 0.55);
+  --cc-card-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.65),
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 4px 8px -2px rgba(15, 23, 42, 0.05),
+    0 16px 32px -12px rgba(15, 23, 42, 0.18);
+
+  /* Ink on light glass */
+  --cc-ink: #1e2a30;
+  --cc-ink-2: #5b6b73;
+  --cc-ink-3: #8a99a1;
+  --cc-hairline: rgba(30, 42, 48, 0.08);
+
+  /* Severity palette — mapped to the app's brand tokens (app/globals.css :root) */
+  --cc-red: var(--error);       /* #EF4444 rgb(239, 68, 68)   */
+  --cc-amber: var(--warning);   /* #F59E0B rgb(245, 158, 11)  */
+  --cc-green: var(--success);   /* #10B981 rgb(16, 185, 129)  */
+  --cc-teal: var(--primary);    /* #708F96 rgb(112, 143, 150) */
+  --cc-blue: var(--info);       /* #3B82F6 rgb(59, 130, 246)  */
+  --cc-purple: var(--secondary);/* #AA895F rgb(170, 137, 95) — warm tan, used by the AI Brief chip */
+
+  /* Rail */
+  --cc-rail-w: 208px;
+  --cc-rail-bg: rgba(28, 36, 38, 0.45);
+  --cc-rail-text: rgba(255, 255, 255, 0.62);
+}
+
+/* --- Canvas ---------------------------------------------------------------- */
+.cc-canvas {
+  min-height: 100vh;
+  color: var(--cc-ink);
+  font-family: var(--font-body);
+  background:
+    radial-gradient(1200px 800px at 15% -10%, rgba(112, 143, 150, 0.38), transparent 60%),
+    radial-gradient(1000px 720px at 92% 108%, rgba(170, 137, 95, 0.22), transparent 55%),
+    linear-gradient(165deg, rgb(62, 79, 83) 0%, rgb(43, 54, 57) 45%, rgb(28, 36, 38) 100%);
+  background-attachment: fixed;
+  display: flex;
+}
+
+.council-page {
+  min-height: 100vh;
+  display: flex;
+  color: var(--council-ink-1);
+  font-family: var(--font-body);
+  background:
+    radial-gradient(1100px 720px at 12% -12%, color-mix(in srgb, var(--primary) 10%, transparent), transparent 62%),
+    radial-gradient(900px 640px at 94% 106%, color-mix(in srgb, var(--secondary) 7%, transparent), transparent 58%),
+    var(--background);
+  background-attachment: fixed;
+}
+
+
+/* --- Left rail: translucent dark glass over the gradient -------------------- */
+.cc-rail {
+  width: var(--cc-rail-w);
+  flex: none;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 14px 16px;
+  background: var(--cc-rail-bg);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  backdrop-filter: blur(18px) saturate(140%);
+  border-right: 1px solid rgba(255, 255, 255, 0.07);
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.cc-rail::-webkit-scrollbar { display: none; }
+
+.cc-rail-logo {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 2px 8px 18px;
+  color: #fff;
+}
+.cc-rail-logo svg { flex: none; }
+.cc-rail-logo img {
+  display: block;
+  height: 28px;
+  width: auto;
+  object-fit: contain;
+  filter: invert(1);
+  mix-blend-mode: screen;
+}
+.cc-rail-logo .cc-rail-logo-name {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  line-height: 1;
+}
+.cc-rail-logo .cc-rail-logo-caption {
+  display: block;
+  margin-top: 4px;
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  color: rgba(255, 255, 255, 0.42);
+}
+
+.cc-rail-section {
+  margin-top: 14px;
+}
+.cc-rail-section > .cc-rail-section-label {
+  display: block;
+  padding: 0 10px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.34);
+}
+
+.cc-rail-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  margin: 1px 0;
+  border-radius: 10px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--cc-rail-text);
+  text-decoration: none;
+  transition: background var(--cc-dur) var(--cc-ease), color var(--cc-dur) var(--cc-ease);
+}
+.cc-rail-item svg { width: 15px; height: 15px; flex: none; opacity: 0.8; }
+.cc-rail-item:hover { color: #fff; background: rgba(255, 255, 255, 0.06); }
+.cc-rail-item.is-active {
+  color: #fff;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+.cc-rail-item.is-active svg { opacity: 1; }
+
+.cc-user-card {
+  margin-top: auto;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.cc-user-card .cc-user-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 4px;
+}
+.cc-user-card .cc-user-avatar {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(140deg, #5b7d88, #33454d);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+.cc-user-card .cc-user-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cc-user-card .cc-user-email {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.45);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cc-user-card .cc-signout {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #ff8a7a;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+}
+.cc-user-card .cc-signout:hover { color: #ffa595; }
+.cc-user-card .cc-signout svg { width: 14px; height: 14px; }
+.cc-user-card .cc-customize {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color var(--cc-dur) var(--cc-ease), background var(--cc-dur) var(--cc-ease);
+}
+.cc-user-card .cc-customize:hover { border-color: rgba(255, 255, 255, 0.45); background: rgba(255, 255, 255, 0.06); }
+.cc-user-card .cc-customize svg { width: 12px; height: 12px; }
+
+/* --- Main column + header --------------------------------------------------- */
+.cc-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 22px 24px 28px;
+  gap: 18px;
+}
+
+.cc-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.cc-greeting {
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: #fff;
+  line-height: 1.15;
+  margin: 0;
+}
+.cc-header .cc-header-sub {
+  margin-top: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.6);
+}
+.cc-header .cc-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+}
+
+.cc-sync {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-right: 6px;
+}
+.cc-sync .cc-sync-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--cc-green);
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.18);
+}
+.cc-sync .cc-sync-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+.cc-sync .cc-sync-text b { font-size: 11px; font-weight: 600; color: rgba(255, 255, 255, 0.9); }
+.cc-sync .cc-sync-text span { font-size: 10px; color: rgba(255, 255, 255, 0.45); }
+
+.cc-iconbtn {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  color: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+  transition: background var(--cc-dur) var(--cc-ease);
+}
+.cc-iconbtn:hover { background: rgba(255, 255, 255, 0.16); }
+.cc-iconbtn svg { width: 16px; height: 16px; }
+.cc-iconbtn .cc-iconbtn-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--cc-red);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #35454c;
+}
+
+.cc-addbtn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 16px;
+  border-radius: 999px;
+  border: 0;
+  background: #16212a;
+  color: #fff;
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 12px -4px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  transition: transform var(--cc-dur) var(--cc-ease), box-shadow var(--cc-dur) var(--cc-ease);
+}
+.cc-addbtn:hover { transform: translateY(-1px); }
+.cc-addbtn svg { width: 14px; height: 14px; }
+
+/* --- Card chrome: crisp light glass ------------------------------------------ */
+.cc-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--cc-card-bg);
+  -webkit-backdrop-filter: blur(var(--cc-card-blur)) saturate(150%);
+  backdrop-filter: blur(var(--cc-card-blur)) saturate(150%);
+  border: 1px solid var(--cc-card-border);
+  border-radius: var(--cc-card-radius);
+  box-shadow: var(--cc-card-shadow);
+  padding: 16px 18px;
+  transition: transform var(--cc-dur) var(--cc-ease), box-shadow var(--cc-dur) var(--cc-ease);
+}
+.cc-card:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.65),
+    0 2px 4px rgba(15, 23, 42, 0.05),
+    0 8px 16px -4px rgba(15, 23, 42, 0.08),
+    0 24px 48px -16px rgba(15, 23, 42, 0.22);
+}
+
+.cc-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.cc-card-head .cc-head-meta {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--cc-ink-3);
+  white-space: nowrap;
+}
+.cc-card-head .cc-head-meta a { color: var(--cc-teal); font-weight: 600; text-decoration: none; }
+.cc-card-head .cc-head-meta a:hover { text-decoration: underline; }
+
+.cc-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--cc-ink-2);
+}
+
+/* --- Chip: 10%-alpha tint icon square ---------------------------------------- */
+.cc-chip {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: var(--cc-chip-c, var(--cc-teal));
+  background: color-mix(in srgb, var(--cc-chip-c, var(--cc-teal)) 10%, transparent);
+}
+.cc-chip svg { width: 14px; height: 14px; }
+.cc-chip--red    { --cc-chip-c: var(--cc-red); }
+.cc-chip--amber  { --cc-chip-c: var(--cc-amber); }
+.cc-chip--green  { --cc-chip-c: var(--cc-green); }
+.cc-chip--teal   { --cc-chip-c: var(--cc-teal); }
+.cc-chip--blue   { --cc-chip-c: var(--cc-blue); }
+.cc-chip--purple { --cc-chip-c: var(--cc-purple); }
+
+/* --- Metric + sub (Binance numeric discipline) -------------------------------- */
+.cc-metric {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 32px;
+  line-height: 1.1;
+  letter-spacing: -0.3px;
+  font-variant-numeric: tabular-nums;
+  color: var(--cc-ink);
+}
+.cc-metric--lg { font-size: 44px; }
+.cc-metric--sm { font-size: 20px; }
+.cc-metric small {
+  font-size: 0.45em;
+  font-weight: 500;
+  color: var(--cc-ink-3);
+  letter-spacing: 0;
+}
+.cc-sub {
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--cc-ink-2);
+}
+
+/* --- Severity pill ------------------------------------------------------------ */
+.cc-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.4;
+  color: var(--cc-pill-c, var(--cc-green));
+  background: color-mix(in srgb, var(--cc-pill-c, var(--cc-green)) 12%, transparent);
+}
+.cc-pill--high   { --cc-pill-c: var(--cc-red); }
+.cc-pill--medium { --cc-pill-c: var(--cc-amber); }
+.cc-pill--low    { --cc-pill-c: var(--cc-green); }
+.cc-pill--ok     { --cc-pill-c: var(--cc-teal); }
+
+/* --- Buttons ------------------------------------------------------------------ */
+.cc-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 0;
+  background: #16212a;
+  color: #fff;
+  font-family: var(--font-body);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+  box-shadow: 0 3px 8px -3px rgba(0, 0, 0, 0.35);
+  transition: transform var(--cc-dur) var(--cc-ease), box-shadow var(--cc-dur) var(--cc-ease);
+}
+.cc-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 14px -4px rgba(0, 0, 0, 0.4); }
+.cc-btn svg { width: 12px; height: 12px; }
+
+.cc-btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--cc-hairline);
+  background: transparent;
+  color: var(--cc-ink-2);
+  font-family: var(--font-body);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+  transition: border-color var(--cc-dur) var(--cc-ease), color var(--cc-dur) var(--cc-ease);
+}
+.cc-btn-ghost:hover { border-color: var(--cc-ink-3); color: var(--cc-ink); }
+.cc-btn-ghost svg { width: 12px; height: 12px; }
+
+/* --- Dots ---------------------------------------------------------------------- */
+.cc-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--cc-dot-c, var(--cc-green));
+}
+.cc-dot--red   { --cc-dot-c: var(--cc-red); box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.14); }
+.cc-dot--amber { --cc-dot-c: var(--cc-amber); box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.14); }
+.cc-dot--green { --cc-dot-c: var(--cc-green); box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.14); }
+
+/* --- Red count badge -------------------------------------------------------------- */
+.cc-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--cc-red);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Stat strip: N cells + hairline dividers -------------------------------------- */
+.cc-statstrip {
+  display: flex;
+  align-items: stretch;
+  border-top: 1px solid var(--cc-hairline);
+  margin-top: auto;
+  padding-top: 12px;
+}
+.cc-statstrip > .cc-stat {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cc-statstrip > .cc-stat:first-child { padding-left: 0; }
+.cc-statstrip > .cc-stat + .cc-stat { border-left: 1px solid var(--cc-hairline); }
+.cc-statstrip .cc-stat-val {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  font-variant-numeric: tabular-nums;
+  color: var(--cc-stat-c, var(--cc-ink));
+  line-height: 1.2;
+}
+.cc-statstrip .cc-stat-label {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--cc-ink-3);
+  line-height: 1.3;
+}
+.cc-stat--red    { --cc-stat-c: var(--cc-red); }
+.cc-stat--amber  { --cc-stat-c: var(--cc-amber); }
+.cc-stat--green  { --cc-stat-c: var(--cc-green); }
+.cc-stat--teal   { --cc-stat-c: var(--cc-teal); }
+
+/* --- List row: avatar / name+sub / right meta ------------------------------------- */
+.cc-listrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-top: 1px solid var(--cc-hairline);
+  min-width: 0;
+}
+.cc-listrow:first-child { border-top: 0; }
+.cc-listrow .cc-listrow-avatar {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(140deg, #6b8a95, #3a4f58);
+}
+.cc-listrow .cc-listrow-main { flex: 1 1 auto; min-width: 0; }
+.cc-listrow .cc-listrow-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--cc-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cc-listrow .cc-listrow-sub {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--cc-ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cc-listrow .cc-listrow-right {
+  flex: none;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--cc-ink-2);
+}
+
+/* --- Reduced motion ------------------------------------------------------------------ */
+@media (prefers-reduced-motion: reduce) {
+  .cc-card, .cc-card:hover, .cc-btn, .cc-addbtn, .cc-iconbtn { transition: none; transform: none; }
+}
+
+/* --- v2 resets: neutralize legacy v1 property leakage on shared class names ---
+   The v1 block above declares properties my v2 contract does not (gradient
+   masthead on .cc-header, scroll-grid on .cc-rail, tinted box + pseudo dots on
+   .cc-sync, top strip on .cc-card::before, pseudo dot on .cc-badge::before).
+   These reset them without editing the legacy rules. */
+.cc-header { background: none; border-radius: 0; box-shadow: none; padding: 0; flex-wrap: nowrap; }
+.cc-rail { scroll-snap-type: none; padding-bottom: 16px; }
+.cc-sync { flex-direction: row; padding: 0; background: none; border-radius: 0; }
+.cc-sync span::before { content: none; }
+.cc-card::before { content: none; }
+.cc-badge::before { content: none; }
+
+/* --- Rail density tune so the user card fits a 1010px viewport ---------------- */
+.cc-rail { padding-top: 18px; }
+.cc-rail-logo { padding-bottom: 14px; }
+.cc-rail-section { margin-top: 10px; }
+.cc-rail-item { padding: 6px 10px; }
+.cc-user-card { padding-top: 10px; gap: 8px; }
+
+/* --- Fidelity pass 2 ---------------------------------------------------------- */
+.cc-rail { background: rgba(30, 40, 44, 0.4); }
+.cc-user-card .cc-user-email { font-size: 9.5px; }
+
+/* ============================================================================
+   AGENT COUNCIL — additive design tokens + chrome.            [council:begin]
+   ----------------------------------------------------------------------------
+   Nothing here redefines an existing token. Every value is derived either from
+   a locked brand token (--primary/--secondary/--error/--warning/--success) or
+   from a named value in docs/design-references. Provenance is inline.
+
+   Sources read:
+     awesome-design-md/vercel      — stacked-shadow elevation ladder (L2..L5)
+                                     offsets + "inset hairline ring always".
+     awesome-design-md/linear.app  — 4-step surface ladder; 4-tier ink ladder
+                                     (ink / ink-muted / ink-subtle / ink-tertiary);
+                                     "subtle white edge highlight on the top edge
+                                     of lifted panels"; rounded.lg 12px cards.
+     awesome-design-md/mintlify    — reading ladder (ink/charcoal/slate/steel/
+                                     stone/muted, on-dark-muted #b3b3b3); body
+                                     line-height 1.50 floor; micro-uppercase
+                                     11px/600/+0.5px.
+     awesome-design-md/sentry      — two-polarity severity: the strongest state
+                                     is the FILLED surface, outlined and ghost
+                                     variants are downgraded; badges use
+                                     rounded.xs 4px, not the pill.
+     awesome-design-md/binance     — numeric type scale (number-md 16/500/1.4,
+                                     number-sm 14/500/1.4, caption 12/500/1.4);
+                                     "never use a severity hue as a card surface
+                                     fill — text colour or small badge fill only".
+     awesome-design-md/notion      — 5-level shadow ladder shape reference.
+     research/glass-ambient.md     — severity must be redundantly encoded by
+                                     SHAPE (hollow -> solid -> solid+halo ->
+                                     solid+halo+rim+glyph), never colour alone;
+                                     #F59E0B measures 2.07:1 and is NOT a text
+                                     colour on a light surface.
+   ============================================================================ */
+
+@layer components {
+  :root {
+    /* --- Ink ladder ---------------------------------------------------------
+       RETHEMED 2026-08-03, light. This block previously described a DARK
+       chamber (white-alpha ink over a near-black canvas) because COUNCIL_SPEC
+       asked for a "sci-fi" room. In the running app that read as inverted:
+       every other dashboard surface is the locked light canvas #FAFBFC, so the
+       council was the one dark island in a light product, which is exactly what
+       frontend-designer.md forbids ("Light mode is primary" is LOCKED).
+       The ladder structure is unchanged — linear.app's 4 tiers — but re-derived
+       against the light card surface instead, reusing the tiers the Command
+       Center already measured rather than inventing a parallel set:
+         1  var(--cc-ink)      #1e2a30  13.22:1  headings, agent names, numbers
+         2  var(--cc-ink-2)    #5b6b73   4.98:1  body + secondary copy   (AA)
+         3  --council-ink-cap  #5f6d75   4.81:1  metadata, eyebrows, email (AA)
+         4  var(--cc-ink-3)    #8a99a1   2.64:1  NON-TEXT ONLY: hairlines, dim */
+    --council-ink-1: var(--cc-ink);
+    --council-ink-2: var(--cc-ink-2);
+    --council-ink-3: #5f6d75;
+    --council-ink-4: var(--cc-ink-3);
+
+    /* Danger ink for light surfaces. Derived from the locked --error rather
+       than invented; same construction as --council-p0-fill so the two agree. */
+    --council-danger-ink: color-mix(in srgb, var(--error) 78%, var(--cc-ink));
+
+    /* --- Ink ladder, LIGHT glass (.cc-card) ---------------------------------
+       Measured against the composited card surface #f2f3f3:
+         var(--cc-ink)     #1e2a30  13.22:1  headings
+         var(--cc-ink-2)   #5b6b73   4.98:1  reading copy floor (AA)
+         --council-ink-cap #5f6d75   4.81:1  captions/metadata that must be read
+         var(--cc-ink-3)   #8a99a1   2.64:1  FAILS AA — non-text only from here
+       This mirrors mintlify's ladder, where `steel` #5a5a5c is the lowest tier
+       used for prose and `stone`/`muted` are captions/disabled only. */
+    --council-ink-cap: #5f6d75;
+
+    /* --- Severity inks, LIGHT glass ----------------------------------------
+       glass-ambient.md: #F59E0B measures 2.07:1 and is not a text colour.
+       Measured here at 1.78:1 on its own 12% tint — the worst contrast on the
+       page. Each ink is the locked hue driven toward --cc-ink until it clears
+       AA on both the card and its own tint. */
+    --council-p0-fill: color-mix(in srgb, var(--error) 78%, var(--cc-ink));   /* #c13e40, white on it 5.21:1 */
+    --council-p1-ink:  color-mix(in srgb, var(--warning) 44%, var(--cc-ink)); /* #7d5d20, 5.46:1 card / 4.96:1 tint */
+    --council-p2-ink:  color-mix(in srgb, var(--primary) 58%, var(--cc-ink)); /* #4e656b, 5.56:1 */
+
+    /* Per-agent hue driven to an AA-safe ink for use AS TEXT on light glass.
+       Components set --council-agent to the agent's colour. binance: a severity/
+       identity hue is a text colour or a small badge fill, never a card surface. */
+    --council-agent: var(--primary);
+    --council-agent-ink: color-mix(in srgb, var(--council-agent) 58%, var(--cc-ink));
+
+    /* --- Surface ladder, LIGHT ----------------------------------------------
+       linear.app: "four-step surface ladder carries hierarchy"; "avoid skipping
+       levels". posthog is the closest analogue in the library to our situation
+       (tinted canvas + white cards), so the ladder is canvas-tint -> white ->
+       white-with-brand-wash rather than alpha-over-black. */
+    --council-surface-1: #ffffff;                                          /* nav / convene bar     */
+    --council-surface-2: #ffffff;                                          /* agent tiles (resting) */
+    --council-surface-3: color-mix(in srgb, var(--primary) 5%, #ffffff);   /* agent tiles (lit)     */
+    --council-hairline:  rgba(30, 42, 48, 0.10);
+    --council-hairline-strong: rgba(30, 42, 48, 0.16);
+
+    /* --- Elevation ladder, LIGHT -------------------------------------------
+       vercel: STACKED shadows — multiple small offsets layered to fake natural
+       light — never a single 8-px-blur generic drop, plus an inset hairline
+       ring. Offsets are vercel Level 2/3/4/5 verbatim
+       (0 1px 1px · 0 2px 2px · 0 8px 8px -8px · 0 8px 16px -4px · 0 24px 32px -8px).
+
+       RETHEMED light: the offsets are unchanged and now so are vercel's ALPHAS
+       (2–6% black), which is what they were calibrated for — a #fafafa canvas.
+       The previous dark theme had to raise them to 18–34% to survive a black
+       background; carrying those over onto white produced the heavy, muddy
+       shadows that read as unprofessional. The inset ring is also flipped from
+       linear.app's white top-edge highlight to a dark hairline, for the same
+       reason: a white highlight is invisible on a white card. */
+    --council-ring: inset 0 0 0 1px var(--council-hairline);
+    --council-elev-2: var(--council-ring),
+                      0 1px 1px rgba(30, 42, 48, 0.04),
+                      0 2px 2px rgba(30, 42, 48, 0.03);
+    --council-elev-3: var(--council-ring),
+                      0 2px 2px rgba(30, 42, 48, 0.04),
+                      0 8px 8px -8px rgba(30, 42, 48, 0.10);
+    --council-elev-4: var(--council-ring),
+                      0 2px 2px rgba(30, 42, 48, 0.04),
+                      0 8px 16px -4px rgba(30, 42, 48, 0.10),
+                      0 24px 32px -8px rgba(30, 42, 48, 0.08);
+  }
+
+  /* ==========================================================================
+     Council page canvas. The council previously borrowed `.cc-canvas`, which is
+     the Command Center's DARK gradient and is shared with other pages — so it
+     could not simply be lightened without changing them. This is the council's
+     own surface: the locked --background with the faintest brand wash, so the
+     page reads as part of the light product rather than a dark island in it.
+     posthog: "tinted canvas, white cards" — the tint carries warmth, the cards
+     carry the content.
+     ========================================================================== */
+
+  /* ==========================================================================
+     Agent presence tile — the eight.
+     ONE chromatic gesture (the agent hue), everything else neutral.
+     ========================================================================== */
+  .council-tile {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    width: 100%;
+    padding: 15px 16px 14px;
+    text-align: left;
+    overflow: hidden;
+    border: 0;
+    border-radius: 12px;                       /* linear.app rounded.lg — its card radius */
+    background: var(--council-surface-2);
+    -webkit-backdrop-filter: blur(18px) saturate(140%);
+    backdrop-filter: blur(18px) saturate(140%);
+    box-shadow: var(--council-elev-3);
+    transition: box-shadow 900ms var(--cc-ease), background 900ms var(--cc-ease);
+  }
+  /* The colour rim. Ratio-fixed, not hue-fixed: every agent gets the same rim
+     alpha so #708F96 and #8B5CF6 register equally. Sits inside the neutral
+     stack so it reads as one gesture, not a second shadow. */
+  .council-tile[data-lit='true'] {
+    background: var(--council-surface-3);
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--council-agent) 46%, transparent),
+      inset 0 1px 0 rgba(255, 255, 255, 0.12),
+      inset 0 0 22px -10px color-mix(in srgb, var(--council-agent) 85%, transparent),
+      0 2px 2px rgba(0, 0, 0, 0.20),
+      0 8px 16px -4px rgba(0, 0, 0, 0.34);
+  }
+  /* Top edge light — the same device as the chairman screen and the transcript
+     card cap, so the agent hue is legible even where the rim is subtle. */
+  .council-tile::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 2px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      var(--council-agent) 22%,
+      var(--council-agent) 78%,
+      transparent
+    );
+    opacity: 0;
+    transition: opacity 900ms var(--cc-ease);
+  }
+  .council-tile[data-lit='true']::before { opacity: 0.9; }
+  .council-tile:hover { box-shadow: var(--council-elev-4); }
+  .council-tile[data-lit='true']:hover {
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--council-agent) 66%, transparent),
+      inset 0 1px 0 rgba(255, 255, 255, 0.14),
+      inset 0 0 26px -8px color-mix(in srgb, var(--council-agent) 90%, transparent),
+      0 2px 2px rgba(0, 0, 0, 0.20),
+      0 8px 16px -4px rgba(0, 0, 0, 0.34),
+      0 24px 32px -8px rgba(0, 0, 0, 0.28);
+  }
+
+  /* Monogram square. rounded.md 8px (linear.app: "8px — all buttons, form
+     inputs"); tint raised from 17% to 22% so the glyph clears AA on it. */
+  .council-mono {
+    width: 38px;
+    height: 38px;
+    flex: none;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-display);
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: var(--council-ink-1);
+    background: color-mix(in srgb, var(--council-agent) 34%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--council-agent) 60%, transparent);
+  }
+  .council-tile[data-lit='false'] .council-mono {
+    color: var(--council-ink-3);
+    background: rgba(255, 255, 255, 0.07);
+    box-shadow: inset 0 0 0 1px var(--council-hairline);
+  }
+
+  /* Email. Never truncated: the address splits at the @ onto its own line.
+     binance caption 12px/500/1.4 is the reference; held at 11px here because
+     this is an admin-density surface, and the mono face runs optically large. */
+  .council-email {
+    display: block;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.35;
+    color: var(--council-ink-3);
+    word-break: normal;
+    overflow-wrap: anywhere;
+  }
+  .council-email > span { display: block; }
+
+  /* ==========================================================================
+     Severity ladder — form first, colour second.
+     sentry: the strongest state is the FILLED surface; outlined and ghost
+     variants are downgraded. glass-ambient.md: encode redundantly by SHAPE so
+     the ladder survives colour-blindness and peripheral vision.
+       P0  filled + square (rounded.xs 4px) + triangle glyph
+       P1  tinted + 1px rim + pill
+       P2  ghost + hairline + pill
+     ========================================================================== */
+  .council-sev {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex: none;
+    padding: 2px 7px;
+    border-radius: 999px;
+    font-family: var(--font-body);
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.4;
+    letter-spacing: 0.06em;            /* sentry micro-cap: 10px/600/1.8/+0.25px */
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .council-sev svg { width: 10px; height: 10px; flex: none; }
+
+  .council-sev[data-sev='P0'] {
+    border-radius: 4px;                 /* sentry rounded.xs — badges, status pills */
+    padding: 3px 7px;
+    background: var(--council-p0-fill);
+    color: #ffffff;                     /* 5.21:1 on the fill */
+    box-shadow: 0 1px 1px rgba(0, 0, 0, 0.10), 0 2px 2px rgba(0, 0, 0, 0.06);
+  }
+  .council-sev[data-sev='P1'] {
+    background: color-mix(in srgb, var(--warning) 15%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warning) 55%, transparent);
+    color: var(--council-p1-ink);       /* 4.96:1 on its own tint */
+  }
+  .council-sev[data-sev='P2'] {
+    background: transparent;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 32%, transparent);
+    color: var(--council-p2-ink);       /* 5.56:1 */
+    font-weight: 600;
+  }
+
+  /* Same ladder on the dark chamber (the audit header counts). */
+  .council-sev[data-on='dark'][data-sev='P0'] {
+    background: var(--error);
+    color: var(--cc-ink);               /* dark ink on the full-strength red: 4.9:1 */
+  }
+  .council-sev[data-on='dark'][data-sev='P1'] {
+    background: color-mix(in srgb, var(--warning) 20%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warning) 62%, transparent);
+    color: color-mix(in srgb, var(--warning) 62%, #ffffff);
+  }
+  .council-sev[data-on='dark'][data-sev='P2'] {
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+    color: var(--council-ink-2);
+  }
+
+  /* A P0 row carries the rim as well as the chip — glass-ambient L4:
+     "solid dot + halo + full card rim + glyph". */
+  .council-row-p0 {
+    box-shadow: inset 2px 0 0 var(--council-p0-fill);
+    background: color-mix(in srgb, var(--error) 4%, transparent);
+  }
+
+  /* ==========================================================================
+     Dense-region reading defaults.
+     mintlify: "Don't reduce documentation line-height below 1.50 — long-form
+     readability suffers." Every dense block below is prose, so 1.5 is a floor.
+     ========================================================================== */
+  .council-read     { font-size: 12px; line-height: 1.55; color: var(--cc-ink-2); }
+  .council-read-cap { font-size: 11.5px; line-height: 1.5; color: var(--council-ink-cap); }
+  .council-read-strong { font-weight: 700; color: var(--cc-ink); }
+
+  /* Findings rows: hairline + a hover wash so a 24-row scan keeps its place.
+     ibm/binance table discipline — the row, not the card, is the unit. */
+  .council-frow {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    padding: 13px 10px 13px 12px;
+    margin: 0 -10px 0 -12px;
+    border-radius: 8px;
+    border-top: 1px solid var(--cc-hairline);
+    transition: background var(--cc-dur) var(--cc-ease);
+  }
+  .council-frow:hover { background: rgba(30, 42, 48, 0.045); }
+
+  /* Uppercase micro label — mintlify micro-uppercase 11px/600/1.40/+0.5px,
+     held at 10px on this admin surface. Tier 3 ink, so it still clears AA. */
+  .council-eyebrow {
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.4;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--council-ink-3);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .council-tile, .council-tile::before, .council-frow { transition: none; }
+  }
+}
+/* [council:end] ============================================================ */

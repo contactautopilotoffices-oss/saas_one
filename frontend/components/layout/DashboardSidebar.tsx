@@ -8,8 +8,11 @@ import {
     Menu, X, GitMerge, Calendar, ShoppingCart, UsersRound, BarChart3,
     FileUp, Bot, Building2, Send, CalendarDays, Droplets, Coffee,
     Sparkles, DollarSign, ClipboardList, Target, TrendingUp,
-    BellRing, HelpCircle, Megaphone, Radio, BookOpen, Smartphone, MessageSquarePlus, ShieldCheck
+    BellRing, HelpCircle, Megaphone, Radio, BookOpen, Smartphone, MessageSquarePlus,
+    ShieldCheck, Wallet, Zap
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import type { CapabilityDomain } from '@/frontend/types/rbac';
 import CapabilityWrapper from '../auth/CapabilityWrapper';
 import { useAuth } from '@/frontend/context/AuthContext';
 import FeedbackModal from '../ui/FeedbackModal';
@@ -38,12 +41,15 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
     const isBdSuperAdmin = checkBdSuperAdmin(user?.email, membership?.org_role);
     const isBDRole = userRole === 'bd_rep' || userRole === 'bd_admin' || isBdSuperAdmin;
 
+    // Finance (Petty Cash + Payment Tracker) now lives in its own Accounts
+    // workspace chrome — it is no longer injected into this shared sidebar.
+
     const NAV_ITEMS = React.useMemo(() => {
         const isAdmin = userRole === 'org_super_admin' || userRole === 'property_admin';
 
         if (isBDRole) return [];
 
-        const items = [
+        const items: { label: string; href: string; icon: LucideIcon; domain: CapabilityDomain }[] = [
             { label: 'Overview', href: `/${orgId}/dashboard`, icon: LayoutDashboard, domain: 'dashboards' as const },
             { label: 'Tickets', href: `/${orgId}/dashboard`, icon: Ticket, domain: 'tickets' as const },
             { label: 'Flow Map', href: `/${orgId}/flow-map`, icon: GitMerge, domain: 'tickets' as const },
@@ -62,8 +68,22 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
         items.push({ label: 'Cafeteria', href: `/${orgId}/dashboard?tab=cafeteria`, icon: Coffee, domain: 'dashboards' as const });
         items.push({ label: 'Water Level', href: `/${orgId}/dashboard?tab=water_logger`, icon: Droplets, domain: 'dashboards' as const });
 
+        // Petty Cash belongs to the general FMS for every non-tenant role — the API already
+        // grants them create access (backend/lib/pettyCash/access.ts) but there was no way
+        // in from this sidebar, only from the admin dashboards. Visibility is gated by the
+        // `petty_cash` capability, so tenant-like roles never see it.
+        // The Payment Tracker deliberately stays out: it is finance-only (item 7).
+        items.push({ label: 'Petty Cash', href: `/${orgId}/petty-cash`, icon: Wallet, domain: 'petty_cash' as const });
+
         if (userRole === 'org_super_admin') {
             items.push({ label: 'Water Analytics', href: `/${orgId}/dashboard?tab=water`, icon: Droplets, domain: 'dashboards' as const });
+        }
+
+        // Ops Super Admin — electricity checker workspace: validation queue, disputes, reports.
+        if (userRole === 'ops_super_admin') {
+            items.push({ label: 'Electricity Validation', href: `/${orgId}/procurement-management?tab=electricity&view=validation`, icon: Zap, domain: 'dashboards' as const });
+            items.push({ label: 'Disputes', href: `/${orgId}/procurement-management?tab=electricity&view=disputes`, icon: MessageSquarePlus, domain: 'tickets' as const });
+            items.push({ label: 'Reports', href: `/${orgId}/procurement-management?tab=electricity&view=reports`, icon: BarChart3, domain: 'reports' as const });
         }
 
         return items;
@@ -190,6 +210,8 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
                             </Link>
                         </CapabilityWrapper>
                     ))}
+
+                    {/* Finance moved to the dedicated Accounts workspace (own chrome). */}
 
                     {/* BD Super Admin (CEO) — grouped Overview / Tools sections */}
                     {isBdSuperAdmin && (

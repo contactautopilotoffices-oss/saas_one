@@ -26,6 +26,7 @@ import NavbarShiftStatus from '@/frontend/components/mst/NavbarShiftStatus';
 import TicketFlowMap from '@/frontend/components/ops/TicketFlowMap';
 import TicketCard from '@/frontend/components/shared/TicketCard';
 import NotificationBell from './NotificationBell';
+import PendingActionsBell from './PendingActionsBell';
 import AdminRoomManager from '@/frontend/components/meeting-rooms/AdminRoomManager';
 import StockDashboard from '@/frontend/components/stock/StockDashboard';
 import StockMovementModal from '@/frontend/components/stock/StockMovementModal';
@@ -669,6 +670,7 @@ const StaffDashboard = () => {
                     </div>
                     <div className="flex items-center gap-3">
                         {/* Notification Bell (Placeholder or Real if available) */}
+                        <PendingActionsBell />
                         <NotificationBell />
 
                         {/* Shift Status */}

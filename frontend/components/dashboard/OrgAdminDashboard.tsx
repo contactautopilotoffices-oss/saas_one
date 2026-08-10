@@ -4,13 +4,15 @@ import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from '
 import {
     LayoutDashboard, Building2, Users, UserPlus, Ticket, Settings, UserCircle, Activity,
     Search, Plus, Filter, LogOut, ChevronRight, MapPin, Edit, Trash2, X, Check, UsersRound,
-    Coffee, IndianRupee, FileDown, ChevronDown, Fuel, Menu, Upload, FileBarChart, Zap, Package, ClipboardCheck, Scan, Key,
-    AlertCircle, CheckCircle2, Clock, GitBranch, DoorOpen, MessageCircle, Send, Loader2, CalendarDays, Calendar, Wrench, ShoppingCart, Sun, Moon, Droplets, TrendingUp, Smartphone,
+    Coffee, IndianRupee, FileDown, ChevronDown, Fuel, Menu, Upload, FileBarChart, Zap, Package, ClipboardCheck, Scan, Key, Wallet,
+    AlertCircle, CheckCircle2, Clock, GitBranch, DoorOpen, MessageCircle, Send, Loader2, CalendarDays, Calendar, Wrench, ShoppingCart, Sun, Moon, Droplets, TrendingUp, Smartphone
+,
   MessageSquarePlus
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
 import { useAuth } from '@/frontend/context/AuthContext';
+import { accountsCaps } from '@/frontend/lib/accounts/roles';
 import { useDataCache } from '@/frontend/context/DataCacheContext';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { HapticCard } from '@/frontend/components/ui/HapticCard';
@@ -27,6 +29,7 @@ import ElectricityAnalyticsDashboard from '../electricity/ElectricityAnalyticsDa
 import ElectricityStaffDashboard from '../electricity/ElectricityStaffDashboard';
 import InviteMemberModal from './InviteMemberModal';
 import NotificationBell from './NotificationBell';
+import PendingActionsBell from './PendingActionsBell';
 import Image from 'next/image';
 import { ImportReportsView } from '@/frontend/components/snags';
 import TicketCreateModal from '@/frontend/components/tickets/TicketCreateModal';
@@ -47,8 +50,10 @@ import WaterAnalyticsDashboard from '@/frontend/components/water/WaterAnalyticsD
 import VendorManagementModal from '@/frontend/components/vendor/VendorManagementModal';
 import GuestExperienceDashboard from '@/frontend/components/guest-experience/GuestExperienceDashboard';
 
-import { BDQuickStats } from './UnifiedDashboard';
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
+import MailboxIntelligenceTile from '@/frontend/components/procurement/MailboxIntelligenceTile';
+import OpsBoard from '@/frontend/components/dashboard/widgets/OpsBoard';
+import CommandCenter from '@/frontend/components/dashboard/command-center/CommandCenter';
 
 // Types
 type Tab = 'overview' | 'properties' | 'requests' | 'reports' | 'visitors' | 'settings' | 'profile' | 'revenue' | 'users' | 'diesel_logger' | 'diesel' | 'electricity_logger' | 'electricity' | 'stock_reports' | 'checklist' | 'super_tenants' | 'escalation' | 'rooms' | 'ppm' | 'vendors' | 'procurement' | 'roster' | 'water_logger' | 'water' | 'guest_experience';
@@ -89,6 +94,15 @@ const OrgAdminDashboard = () => {
     const { user, signOut, membership } = useAuth();
     const params = useParams();
     const router = useRouter();
+
+    // Finance module visibility — this dashboard renders its OWN nav (the shared
+    // DashboardSidebar is skipped on /dashboard), so gate the Finance links here,
+    // mirroring the sidebar's rules.
+    const _financeTenantLike = new Set(['tenant', 'tenant_user', 'super_tenant', 'vendor']);
+    const _financeRoles = [membership?.org_role, ...(membership?.properties?.map(p => p.role) || [])].filter(Boolean) as string[];
+    const canSeePettyCash = !!membership?.is_master_admin || _financeRoles.some(r => !_financeTenantLike.has(r));
+    const canSeeAccounts = accountsCaps(membership).canSee;
+    const showFinance = canSeePettyCash || canSeeAccounts;
     const orgSlugOrId = params?.orgId as string;
 
     // State
@@ -859,6 +873,23 @@ const OrgAdminDashboard = () => {
         router.replace(`${window.location.pathname}?${params.toString()}`, { scroll: false });
     };
 
+    // COMMAND CENTER REVAMP — early return. This dashboard only ever serves
+    // org_super_admin / org_admin (verified), so scoping is already correct.
+    // The legacy layout below stays dormant until cleanup is signed off.
+    // NB: typed `boolean` (not a literal) so TS does not mark the legacy code
+    // below as unreachable — that would reset control-flow narrowing and turn
+    // hundreds of dormant lines into spurious "possibly null" errors.
+    const showCommandCenter: boolean = true;
+    if (showCommandCenter) {
+        return (
+            <CommandCenter
+                userName={user?.user_metadata?.full_name || 'Super Admin'}
+                userEmail={user?.email || ''}
+                orgId={org?.id ?? ''}
+            />
+        );
+    }
+
     if (!org && !isLoading) return (
         <div className="p-10 text-center">
             <h2 className="text-xl font-bold text-red-600">Error Loading Dashboard</h2>
@@ -997,6 +1028,36 @@ const OrgAdminDashboard = () => {
                             </button>
                         </div>
                     </div>
+
+                    {/* Finance — Petty Cash + Payment Tracker (separate routes, not tabs) */}
+                    {showFinance && (
+                        <div className="mb-6">
+                            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-4 mb-3 flex items-center gap-2">
+                                <span className="w-0.5 h-3 bg-primary rounded-full"></span>
+                                Finance
+                            </p>
+                            <div className="space-y-1">
+                                {canSeePettyCash && (
+                                    <button
+                                        onClick={() => router.push(`/${org?.id}/petty-cash`)}
+                                        className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
+                                    >
+                                        <Wallet className="w-4 h-4" />
+                                        Petty Cash
+                                    </button>
+                                )}
+                                {canSeeAccounts && (
+                                    <button
+                                        onClick={() => router.push(`/${org?.id}/accounts`)}
+                                        className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
+                                    >
+                                        <IndianRupee className="w-4 h-4" />
+                                        Payment Tracker
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    )}
 
                     {/* Management Hub */}
                     <div className="mb-6">
@@ -1613,7 +1674,7 @@ const OrgAdminDashboard = () => {
                                 <SOPDashboard
                                     propertyId={checklistPropertyId === 'all' ? undefined : checklistPropertyId}
                                     propertyIds={checklistPropertyId === 'all' ? allPropertyIds : undefined}
-                                    headerRight={<NotificationBell />}
+                                    headerRight={<div className="flex items-center"><PendingActionsBell /><NotificationBell /></div>}
                                     propertySelector={
                                         <PropertySelectorPill
                                             properties={properties}
@@ -2473,12 +2534,17 @@ const OverviewTab = memo(function OverviewTab({
             </div>
 
             {/* Main Content Grid - with padding */}
-            <motion.div 
+            <motion.div
                 className="px-8 lg:px-12 py-5 space-y-5"
                 variants={containerVariants}
                 initial="hidden"
                 animate="visible"
             >
+                {/* Customisable operations board. Each card fetches its own data, reports its
+                    own urgency to the LED in its header, and re-composes at four sizes. Renders
+                    nothing for roles with no widgets, so it is safe above the legacy grid. */}
+                <OpsBoard orgId={orgId} />
+
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
                     {/* Left Column */}
                     <div className="lg:col-span-3 space-y-5">
@@ -2615,16 +2681,14 @@ const OverviewTab = memo(function OverviewTab({
                                 )}
                             </div>
 
-                            <div className="space-y-4">
-                                <div>
-                                    <div className="text-slate-700 text-xs font-bold">Visitors {timePeriod === 'today' ? 'Today' : timePeriod === 'month' ? 'Month' : 'All Time'}</div>
-                                    <div className="text-2xl font-black text-slate-900">{displayVmsStats.total_visitors}</div>
-                                </div>
-                                <div>
-                                    <div className="text-slate-700 text-xs font-bold">Checked In / Out</div>
-                                    <div className="text-2xl font-black text-slate-900">{displayVmsStats.checked_in} / {displayVmsStats.checked_out}</div>
-                                </div>
-                            </div>
+                            {/* Visitor counts removed: an ops super admin does not run this
+                                business off a turnstile count, and they were crowding out the
+                                mailbox digest, which is real work waiting on real people. The
+                                full visitor log is still one click away under its own tab.
+
+                                Renders itself away for anyone who is not procurement/super
+                                admin, so this shared card stays safe to show to other roles. */}
+                            <MailboxIntelligenceTile orgId={orgId} tone="onYellow" />
                         </div>
                     </motion.div>
 
@@ -2633,8 +2697,10 @@ const OverviewTab = memo(function OverviewTab({
                         className="lg:col-span-5 space-y-3"
                         variants={cardVariants}
                     >
-                        {/* BD Pipeline — compact, source tiles + leads by status */}
-                        <BDQuickStats orgId={orgId} />
+                        {/* BD Pipeline / CRM removed from this dashboard by decision: an
+                            operations super admin has no use for lead-stage counts, and it was
+                            occupying the most valuable column on the page. BD roles get the
+                            full CRM at /{orgId}/crm, which is where that data belongs. */}
 
                         {/* Checklist Progress */}
                         <div

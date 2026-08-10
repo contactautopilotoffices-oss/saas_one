@@ -16,6 +16,33 @@ const transporter = nodemailer.createTransport({
 });
 
 export const EmailService = {
+    // Generic sender — used by petty cash / payment intimation and any new flow.
+    // Silently skips (returns false) when SMTP creds are not configured.
+    async sendEmail({ to, subject, html, attachments }: {
+        to: string | string[];
+        subject: string;
+        html: string;
+        attachments?: { filename: string; content: Buffer; contentType?: string }[];
+    }) {
+        if (!process.env.SMTP_USER) {
+            console.warn('[EmailService] SMTP credentials not found, skipping email send.');
+            return false;
+        }
+        try {
+            await transporter.sendMail({
+                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                to: Array.isArray(to) ? to.join(',') : to,
+                subject,
+                html,
+                attachments,
+            });
+            return true;
+        } catch (error) {
+            console.error('[EmailService] Failed to send email:', error);
+            return false;
+        }
+    },
+
     async sendNewLeadEmail({ emailTo, subject, html }: { emailTo: string; subject: string; html: string }) {
         if (!process.env.SMTP_USER) {
             console.warn('[EmailService] SMTP credentials not found, skipping email send.');

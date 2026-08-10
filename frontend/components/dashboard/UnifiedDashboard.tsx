@@ -11,7 +11,7 @@ import VendorDashboard from '@/frontend/components/vendors/VendorDashboard';
 import ProcurementDashboard from './ProcurementDashboard';
 import Loader from '@/frontend/components/ui/Loader';
 import { useAppSession } from '@/frontend/hooks/useAppSession';
-import { AlertCircle, TrendingUp, ArrowRight } from 'lucide-react';
+import { AlertCircle, TrendingUp, ArrowRight, IndianRupee } from 'lucide-react';
 import Link from 'next/link';
 import { TextShimmer } from '@/frontend/components/ui/text-shimmer';
 import BorderGlow from '@/frontend/components/ui/BorderGlow';
@@ -20,6 +20,27 @@ interface BDQuickStatsData {
     total_leads: number;
     lead_source_analytics?: { source_name: string; count: number }[];
     status_breakdown?: { status_id: string; status_name: string; color: string; count: number }[];
+}
+
+// Accounts users are siloed into the Finance workspace and have no FMS dashboard.
+// Mirrors the CRM redirect shimmer below so the transition reads the same.
+function AccountsWorkspaceRedirect({ orgId }: { orgId?: string | null }) {
+    const router = useRouter();
+    useEffect(() => {
+        if (orgId) router.replace(`/${orgId}/accounts`);
+    }, [orgId, router]);
+
+    return (
+        <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-50">
+            <div className="w-16 h-16 bg-primary/10 text-primary rounded-2xl flex items-center justify-center mb-4 animate-pulse">
+                <IndianRupee className="w-8 h-8" />
+            </div>
+            <TextShimmer duration={1} className="text-xl font-black" baseColor="#1e293b" gradientColor="#94a3b8">
+                Opening Finance…
+            </TextShimmer>
+            <p className="text-slate-500 mt-2 text-sm">Taking you to your workspace</p>
+        </div>
+    );
 }
 
 function BDQuickStats({ orgId }: { orgId: string }) {
@@ -159,9 +180,22 @@ const UnifiedDashboard = () => {
         return <OrgAdminDashboard />;
     }
 
+    // Ops Super Admin — electricity checker. Lands on the org admin dashboard variant
+    // (ops widgets via registry); the sidebar routes them into the electricity
+    // validation queue / disputes / reports views.
+    if (role === 'ops_super_admin') {
+        return <OrgAdminDashboard />;
+    }
+
     // Procurement role - global dashboard
     if (role === 'procurement') {
         return <ProcurementDashboard />;
+    }
+
+    // Accounts is a silo (see frontend/lib/auth/silos.ts) — it has no FMS dashboard of its
+    // own, so send it to the Finance workspace rather than the Access Restricted fallback.
+    if (role === 'accounts') {
+        return <AccountsWorkspaceRedirect orgId={session?.org_id} />;
     }
 
     // Super Tenant — multi-property analytics dashboard

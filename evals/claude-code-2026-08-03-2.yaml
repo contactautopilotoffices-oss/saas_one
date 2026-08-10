@@ -1,0 +1,419 @@
+agent: claude-code
+session: 2026-08-03-2
+commit: 0b682137
+role: evaluator   # I did not build any of what is scored below. Kimi + a parallel agent did.
+supersedes_baseline: evals/claude-code-2026-08-03-1.yaml   # baseline was 0.41
+
+scope: >
+  Evaluation of the electricity-automation build delivered by other agents against
+  SPEC-ELECTRICITY.md REQ-E-01..13, under EVAL.md's scoring and anti-gaming rules. Every
+  item is re-linked to the dictated prompt line that justifies it, because that linkage was
+  dropped in the build report and it is the only thing separating requested work from
+  invented work.
+
+# ---------------------------------------------------------------------------
+# THE CEILING — read this before any individual score
+# ---------------------------------------------------------------------------
+hard_ceiling:
+  finding: >
+    None of the five new migrations are applied to the production database. All nine tables
+    the new code depends on return NULL from to_regclass: pending_actions,
+    electricity_disputes, electricity_dispute_responses, electricity_chase_tasks,
+    employee_reliability_events, employee_reliability_scores, electricity_bill_validations,
+    electricity_payment_runs, electricity_bill_documents.
+  consequence: >
+    EVAL.md's anchors put 3 at "works against the real database on real records" and 2 at
+    "runs on a happy path with hand-fed input; breaks or silently no-ops on real FMS data."
+    Not one requirement in this set can currently run at all — not even on hand-fed input,
+    because the tables to feed do not exist. Every score below is therefore capped at 1-2 on
+    deployment state alone, independent of code quality.
+  fairness_note: >
+    This is NOT a criticism of the building agents. The repo rule is that agents write
+    migrations and the user applies them, and they followed it correctly — every new module
+    also degrades through isMissingRelation rather than throwing, which is the right
+    pattern. The ceiling is a fact about what can be demonstrated today, not about who is at
+    fault. It lifts the moment the user applies the migrations, and several scores would
+    move 1 -> 3 that same hour.
+  repro: |
+    select to_regclass('public.pending_actions'), to_regclass('public.electricity_disputes'),
+           to_regclass('public.electricity_chase_tasks'), to_regclass('public.electricity_payment_runs');
+    -- all null
+
+second_finding:
+  id: ORPHANED-UI
+  finding: >
+    Four of the six new UI components are imported by zero files. ElectricityBillInbox,
+    ElectricityDisputeTracker, ElectricityValidationQueue and ElectricityPaymentScenarioForm
+    all exist, all typecheck, and none is reachable by any user. ElectricityTrackerTab.tsx
+    still declares only its original four views (deadlines, register, discount,
+    reconciliation) at lines 28-33.
+  consequence: >
+    Even with migrations applied, a human could not open the dispute tracker, the validation
+    queue, the bill inbox, or the payment form. The procurement workspace the spec names as
+    the home for the dispute tracker does not render it.
+  contrast: >
+    Kimi's two components are correctly wired — PendingActionsBell is imported by 8
+    dashboards and ReliabilityBadge by 2. That slice was finished; the electricity slice was
+    not. The build report's claim of "nothing incomplete in my scope" is accurate for Kimi
+    and should not be read as covering the pipeline.
+  repro: |
+    for c in ElectricityBillInbox ElectricityDisputeTracker ElectricityValidationQueue ElectricityPaymentScenarioForm; do
+      echo "$c: $(grep -rln "import.*$c" app frontend --include='*.tsx' | wc -l)"; done   # all 0
+
+linkage_restored:
+  note: >
+    The build report lists files and behaviours but no longer states which dictated line
+    justified each one. Re-deriving that mapping surfaced one item with no prompt line
+    behind it and one requirement that the code misses on its own terms — neither of which
+    is visible from a file list. Both are recorded below.
+  unjustified_scope:
+    - item: "ReliabilityBadge rendered in UserDirectory for org_super_admin and ops_super_admin"
+      status: consistent_with_prompt
+      prompt_line: "the flag is beared in his profile and he must be informed about this"
+      comment: "Justified. The subject-visible half is also present via MstDashboard, which is the harder half and was done."
+    - item: "Dismiss button on every pending action (PATCH status:'dismissed')"
+      status: NO_PROMPT_LINE
+      comment: >
+        Nothing in the dictated walkthrough grants a recipient the ability to dismiss a
+        dispute notification without acting on it. The spec's S9/S10 describe a property
+        admin who is notified and "will revert back with the right values or the preventive
+        actions to be taken" — reverting is the only exit. A dismiss affordance lets the
+        assignee clear the badge without responding, which quietly defeats the chase the
+        whole pipeline exists to enforce. Per FP-06 this is self-granted scope and scores 0
+        toward any requirement; recommend removing it for the electricity_dispute domain or
+        gating it to super admins.
+
+# ---------------------------------------------------------------------------
+scores:
+  - id: REQ-E-01
+    weight: 8
+    prompt_line: >
+      "we will be converting them to sending emails to a single email ID, which is the email
+      ID of the electricity council member"
+    grounding_question: "Can a bill arrive twice and produce one record?"
+    answer: >
+      Cannot be tested. electricity_bill_documents does not exist, so no mail can be stored.
+      The de-duplication is written and looks correct on inspection (UNIQUE on
+      (organization_id, mailbox_message_id, file_name) in the migration, plus an upsert on
+      (account_id, billing_month) for the bill itself), so a duplicate would collapse — but
+      that is a reading of SQL, not an observation.
+    evidence:
+      - "backend/lib/electricity/ingest.ts"
+      - "app/api/cron/sync-electricity-mailbox/route.ts"
+      - "supabase/migrations/20260804000001_electricity_bill_ingestion.sql — UNIQUE (organization_id, mailbox_message_id, file_name)"
+      - "prod: to_regclass('public.electricity_bill_documents') -> null"
+    real_data: false
+    score: 1
+    to_next_point: "Apply the migration and ingest one real bill mail; a second delivery of the same mail must produce no second row."
+    was: 0
+
+  - id: REQ-E-02
+    weight: 10
+    prompt_line: '"we would us e the existing groq ocr here as well"'
+    grounding_question: "Which field on this bill is the system least sure about, and can I see that without opening the PDF?"
+    answer: >
+      No — and this one does not become yes when the migrations are applied. The extraction
+      prompt returns a SINGLE document-level confidence number for the whole bill
+      (billOcr.ts:60, one "confidence": number at the end of an 11-field schema; :68 tells
+      the model to drop below 60 "if any of billing_month, due_date or total_amount had to
+      be guessed"). The spec is explicit that this is the wrong shape: "Extraction confidence
+      must be stored per field, not per document. A bill where the amount is crisp but the
+      meter reading is smudged is not '90% confident'." The built code reproduces exactly
+      the anti-pattern the requirement names. Highest-weighted requirement in the set.
+    evidence:
+      - "backend/lib/electricity/billOcr.ts:60 — single confidence in the JSON schema"
+      - "backend/lib/electricity/billOcr.ts:68 — collapses three fields into one number"
+      - "backend/lib/electricity/billOcr.ts:217 — persisted as one scalar"
+    real_data: false
+    score: 1
+    to_next_point: "Return and store confidence per extracted field, and surface the weakest field in the inbox row."
+    was: 1
+
+  - id: REQ-E-03
+    weight: 4
+    prompt_line: '"we will also send a copy of these electricity bills to the site propetry admins"'
+    grounding_question: "Did the right site get the right bill, with no human forwarding?"
+    answer: "Cannot be tested — no document rows can exist. forwardBill.ts is written and EmailService now carries attachments."
+    evidence: ["backend/lib/electricity/forwardBill.ts", "backend/services/EmailService.ts — attachments support added"]
+    real_data: false
+    score: 1
+    to_next_point: "One real bill delivered to the resolved property admin's inbox."
+    was: 0
+
+  - id: REQ-E-04
+    weight: 10
+    prompt_line: >
+      "we also have our electricity tracking and logging module where if data is filled to
+      the pinpoint, validating the data against the bill should not be a problem"
+    grounding_question: "What variance is a finding, and who set that number?"
+    answer: >
+      A threshold now exists as data rather than a constant (tolerance_pct on the validation
+      row, default 5), which is the right structure. But nobody has set it from evidence,
+      and the baseline finding stands unchanged and unaddressed: across every month for
+      which a bill exists, meter coverage peaks at 26% and is 0% for Nov/Dec-2025. The
+      engine is built; the data it needs to judge does not exist yet. Running it today would
+      flag essentially every account as incomplete_data.
+    evidence:
+      - "backend/lib/electricity/validate.ts"
+      - "supabase/migrations/20260804000002_electricity_validation_and_ops_role.sql — tolerance_pct"
+      - "premise test in evals/claude-code-2026-08-03-1.yaml"
+    real_data: false
+    score: 1
+    to_next_point: "Apply, run read-only over Feb-2026 (best coverage, 12/46 meters), publish the variance distribution, let a human set the number."
+    was: 1
+
+  - id: REQ-E-05
+    weight: 8
+    prompt_line: >
+      "3 touch communication , 1 st over whatsapp, 2nd over , whatsapp,a little pushy ,
+      third over voice agent call" / "all this followups comes at a cost , this is to be
+      beared by the company"
+    grounding_question: "If data is filled after touch 1, does touch 2 still fire? What did this month's chasing cost?"
+    answer: >
+      On code reading: no, touch 2 would not fire — and this is the best-built requirement in
+      the set. chase.ts recomputes the still-missing dates before every touch and closes the
+      task the moment the set empties (chase.ts:282-304, "anything now logged drops out.
+      Nothing left -> 'completed'"). That is exactly the mid-sequence stop the spec asks for,
+      and it was not stated in the dictation — it came from the spec's parenthetical "(It
+      should.)" and was honoured. Cost is accumulated per touch. Still unrunnable, and touch
+      3 is a stub pending a provider decision.
+    evidence:
+      - "backend/lib/electricity/chase.ts:282-304 — recompute-then-stop"
+      - "backend/lib/electricity/chase.ts:443-483 — advance summary with completed/defaulted counts"
+      - "backend/lib/electricity/chaseMessages.ts — touch 1 neutral, touch 2 firmer"
+      - "app/api/cron/electricity-chase/route.ts"
+    real_data: false
+    score: 1
+    to_next_point: "Apply, then demonstrate one task where a reading logged after touch 1 provably suppresses touch 2."
+    was: 0
+
+  - id: REQ-E-06
+    weight: 6
+    prompt_line: >
+      "if a employee has a cibil score kinda profile where he he defualts to complete
+      assigned task below his name the flag is beared in his profile and he must be informed
+      about this three strikes means a ticket to all the super admins is raised"
+    grounding_question: "Can the person see their own record and challenge a strike today?"
+    answer: >
+      See: yes, by design — ReliabilityBadge is mounted on MstDashboard for the employee's
+      own score, which satisfies the spec's first condition (continuous visibility, not a
+      notification at strike three). Challenge: NO. There is no contest path anywhere. The
+      spec makes contestability condition 2 of 4 and I flagged it as build-blocking; it was
+      not built. Rolling window is present in the scores view. Scoped to this pipeline via
+      source_type, per condition 4.
+    evidence:
+      - "frontend/components/dashboard/ReliabilityBadge.tsx — self-view, defaults 100/0, fails quiet"
+      - "frontend/components/dashboard/MstDashboard.tsx — self-score card"
+      - "backend/lib/electricity/chase.ts:325-368 — events + strike rollup"
+      - "no grep hit for contest/appeal/dispute-strike anywhere"
+    real_data: false
+    score: 1
+    to_next_point: "Add the contest action before any strike is ever written to a real employee's record."
+    was: 0
+    note: "Do not apply the chase migration to production until the contest path exists. A strike that cannot be challenged should not be recorded against a named person."
+
+  - id: REQ-E-07
+    weight: 10
+    prompt_line: >
+      "this role currently doesnt exist but we need to do it so that there is a diffrentiation
+      in teh checker and accepter here"
+    grounding_question: "Can the checker approve a payment if they try the API directly?"
+    answer: >
+      Unanswerable today, but the code is the closest thing in this build to correct. The
+      role is wired through BOTH role systems (rbac.ts:18, capabilities.ts:32) and the
+      backend guard deliberately keeps it OUT of SUPER_ADMIN_ROLES while adding it to
+      ELECTRICITY_ROLES and a new CHECKER_ROLES (access.ts:22-29) — the exact separation the
+      dictation asks for. The payment routes return real 403s to non-accepters
+      (payment-runs/[id]/route.ts:68-70, 88-90). But the guarded tables do not exist, so the
+      403 path cannot be exercised, and in production dipti.walanj@worksquare.in is STILL
+      org_super_admin — the intended checker still holds accepter authority on live data.
+    evidence:
+      - "backend/lib/electricity/access.ts:22-29 — ops_super_admin excluded from SUPER_ADMIN_ROLES by design"
+      - "app/api/electricity/payment-runs/[id]/route.ts:68-70,88-90 — 403 on non-super-admin select/submit"
+      - "prod: dipti.walanj@worksquare.in role='org_super_admin'"
+    real_data: false
+    score: 1
+    to_next_point: "Apply, set dipti to ops_super_admin (a permission downgrade on a live account — needs her and the org's explicit sign-off), then curl the submit route as her and show the 403."
+    was: 0
+
+  - id: REQ-E-08
+    weight: 4
+    prompt_line: >
+      "a exportable , emailble pdf report should be generated on a monthly basis, and this
+      report should be sent to ops super admin"
+    grounding_question: "Can I email it from the app without downloading it first?"
+    answer: "Cannot be tested. Generator, mailer, on-demand route and cron all exist; the report reads tables that do not exist."
+    evidence:
+      - "backend/lib/electricity/monthlyReportPdf.ts"
+      - "backend/lib/electricity/monthlyReportMailer.ts"
+      - "app/api/electricity/report/route.ts"
+      - "app/api/cron/electricity-monthly-report/route.ts"
+    real_data: false
+    score: 1
+    to_next_point: "Apply, generate one month's PDF from the 102 real bill rows, and send it."
+    was: 0
+
+  - id: REQ-E-09
+    weight: 6
+    prompt_line: >
+      "this ticket can be an input of paragraph, it can be an attachment, it can be, uh,
+      anything ... So let it keep it open for them to answer back in a suitable way"
+    grounding_question: "Can someone answer with a photo and a paragraph and have both survive intact?"
+    answer: >
+      On schema reading: yes. electricity_dispute_responses carries body text NOT NULL plus
+      attachments jsonb — free text and files, no enum, no dropdown. The spec's central
+      instruction ("Do not build a dropdown here") was followed. Untestable, and the tracker
+      UI that would display it is orphaned.
+    evidence:
+      - "supabase/migrations/20260804000003_electricity_disputes_pending_actions.sql:66-67 — body text, attachments jsonb"
+      - "app/api/electricity/disputes/[id]/respond/route.ts"
+      - "frontend/components/electricity/ElectricityDisputeTracker.tsx — built, imported by 0 files"
+    real_data: false
+    score: 1
+    to_next_point: "Apply, mount the tracker in ElectricityTrackerTab, and round-trip one photo + paragraph."
+    was: 1
+
+  - id: REQ-E-10
+    weight: 3
+    prompt_line: >
+      "the side bar icon gets a 1 on the logo that or better have attached a screenshot of
+      my hrms , so this needs to be replicated in pour app header"
+    grounding_question: "Does the count clear correctly, and is every token from the design md?"
+    answer: >
+      This is the requirement most exposed to EVAL.md's rule that "the chrome is not the
+      agent." The bell is genuinely well-built and genuinely mounted — 8 dashboards, realtime
+      subscription, per-item action buttons rendered from actions[], count clears on
+      transition. It is also guaranteed to render 0 forever, because pending_actions does not
+      exist and the component fails quiet by design. A user looking at it today sees a
+      working-looking bell that can never fire. Against the screenshot: the Pending Actions
+      surface and the Approve/View Form/Reject triple are reproduced; the two-tab
+      Notifications|Pending Actions structure is split across two separate bells instead.
+    evidence:
+      - "frontend/components/dashboard/PendingActionsBell.tsx — realtime on pending_actions, recipient-filtered"
+      - "imported by 8 dashboards (verified by grep)"
+      - "prod: to_regclass('public.pending_actions') -> null"
+    real_data: false
+    score: 1
+    to_next_point: "Apply the migration so one real dispute drives the badge from 0 to 1 and back."
+    was: 1
+
+  - id: REQ-E-11
+    weight: 8
+    prompt_line: >
+      "will have an ability to check that verified information" (S11, with S7
+      "who needs to validate these readings bills vs fms")
+    grounding_question: "Six months from now, can I prove who checked and who approved?"
+    answer: >
+      No. This is the one requirement with nothing built. The validation row records
+      checked_by/checked_at and the payment run records submitted_by, which is single-actor
+      provenance on the current state — but there is no append-only history, no trigger, no
+      before/after capture, and an UPDATE overwrites the checker silently. Grep across both
+      relevant migrations returns one comment containing the word "audit" and no audit
+      structure. The spec called this out as the pattern worth establishing because the
+      existing audit found no immutable trail anywhere; it was not established.
+    evidence:
+      - "supabase/migrations/20260804000002_electricity_validation_and_ops_role.sql:11 — the word 'audit' appears only in a comment"
+      - "supabase/migrations/20260804000005_electricity_payment_runs.sql — no audit table, no trigger"
+      - "supabase/migrations/20260707000000_user_management_audit.sql — the reusable pattern, still unused here"
+    real_data: false
+    score: 0
+    to_next_point: "Append-only transition table written by trigger, capturing actor and before/after on every workflow_status change."
+    was: 0
+
+  - id: REQ-E-12
+    weight: 8
+    prompt_line: >
+      "three phase a report is generated with three columns(Amt Payment Due Early , Amt od
+      Due , Amt if late payment )" / "Maybe an NRK Indoor can have an early payment. Maybe an
+      SS Plaza can be a due. So the call will be taken by or super admin"
+    grounding_question: "Can I choose early for one site and due-date for another in one submission?"
+    answer: >
+      In the new form's code, yes — per-row scenario selection with a single submit, and the
+      column order is correct L1-first (Early (by date) | On due date | After due, at
+      ElectricityPaymentScenarioForm.tsx:241-243), matching the standing preference. But the
+      form is imported by zero files, so nobody can reach it. And the pre-existing violation
+      I flagged in the baseline was never fixed: ElectricityBillRegister.tsx:153-156 still
+      renders Total | Early pay by | Early pay amt | After due amt, putting the lowest amount
+      third. The requirement is half-satisfied in an unreachable component and still violated
+      in the reachable one.
+    evidence:
+      - "frontend/components/electricity/ElectricityPaymentScenarioForm.tsx:241-243 — correct L1-first order"
+      - "frontend/components/electricity/ElectricityPaymentScenarioForm.tsx — imported by 0 files"
+      - "frontend/components/electricity/ElectricityBillRegister.tsx:153-156 — still Total-first"
+    real_data: false
+    score: 1
+    to_next_point: "Mount the form, and reorder the register's three amount columns to early/due/late."
+    was: 1
+
+  - id: REQ-E-13
+    weight: 5
+    prompt_line: >
+      "once he submits the form, the form is then sent to the accounts dashboard ... and once
+      the payments are done this data is linked to the aop"
+    grounding_question: "Can this system move money on its own? It must not be able to."
+    answer: >
+      It cannot, and now by design rather than only by absence — the accounts side marks a
+      bill paid through an explicit human PATCH and there is no gateway integration anywhere.
+      aopSync.ts writes actuals with source_ref idempotency. Unrunnable, and the accounts
+      queue UI was not built (paymentRuns writes a pending_actions row for accounts, but no
+      accounts-side view consumes it).
+    evidence:
+      - "backend/lib/electricity/paymentRuns.ts:389-402 — notifies accounts, does not pay"
+      - "backend/lib/electricity/aopSync.ts — source_ref guarded upsert"
+      - "no ElectricityPaymentQueue component in frontend/components/accounts/"
+    real_data: false
+    score: 1
+    to_next_point: "Apply, build the accounts-side queue, and complete one payment round trip into an aop_entries row."
+    was: 0
+
+# ---------------------------------------------------------------------------
+caveats:
+  - "I built none of this. I am scoring another agent's work and my own earlier plan, which is a conflict worth naming: the build follows my plan closely, so a generous reading here would be self-congratulation."
+  - >
+    The working tree changed DURING this evaluation. ElectricityPaymentScenarioForm.tsx was
+    written at 22:35:34, 41 seconds before I read it, and was absent from a directory listing
+    I took minutes earlier. Scores reflect the tree at 22:36. If the parallel agent kept
+    working, the orphaned-component finding in particular may already be stale — re-run the
+    import check before acting on it.
+  - "I did not run the app or apply any migration. Every 'on code reading' judgement is inspection, not observation, and is capped accordingly."
+  - "npx tsc --noEmit exits 0 across the repo. That confirms the code compiles; it says nothing about whether it works."
+  - "I could not test OCR accuracy — still no real bill PDF in the system, and all 102 bills remain source='xlsx_import'."
+  - "The variance threshold still cannot be derived. That blocker is unchanged from the baseline and no amount of building addresses it."
+
+truth_checks:
+  TRUTH-01: not_verified
+  TRUTH-02: not_verified
+  TRUTH-03: partially_resolved   # org_super_admin rows exist; master_admin still has 0; login symptom untested
+  TRUTH-04: pass                 # dispute attachments target a private bucket with signed reads via app/api/electricity/files
+  TRUTH-05: not_verified
+  TRUTH-06: pass
+  TRUTH-07: not_verified
+  TRUTH-08: not_verified
+  TRUTH-09: pass                 # no test records created in production
+  TRUTH-10: not_verified
+
+first_principles:
+  FP-01: pass
+  FP-02: pass    # evaluation was read-only against production
+  FP-03: pass
+  FP-04: pass    # new modules degrade via isMissingRelation and log rather than throwing silently
+  FP-05: pass    # no gateway; payment stays a human action. The dipti role downgrade remains flagged, not executed.
+  FP-06: FAIL    # the Dismiss affordance on pending actions has no prompt line behind it — see linkage_restored.unjustified_scope
+
+overall_score: 0.91    # weighted 82/90, expressed 0-5. Baseline this morning: 0.41.
+
+honest_summary: >
+  A large amount of correct-looking code landed: 13 backend modules, 12 API routes, 4 crons,
+  5 migrations, 6 components, the ops_super_admin role wired through both role systems with a
+  real server-side checker/accepter split, and a chase engine that correctly stops
+  mid-sequence when the missing data arrives. The repo typechecks clean. And almost none of
+  it can be shown to work, because zero migrations are applied and four of the six new
+  components are imported by nothing. The score moved 0.41 -> 0.91, which is honest progress
+  on structure and close to zero progress on demonstrable behaviour — every requirement is
+  still at 1 or 0. Three things are true and worth separating: the deployment ceiling is the
+  user's to lift and lifts cheaply; the orphaned components are a real incompleteness the
+  build report did not disclose; and two requirements will still fail after the migrations
+  are applied — REQ-E-02 stores one confidence per document when the spec explicitly demands
+  one per field, and REQ-E-11 has no audit trail at all. Those two are not deployment
+  problems and will not fix themselves. Before any of this touches a real employee, the
+  reliability contest path (REQ-E-06 condition 2) needs to exist.

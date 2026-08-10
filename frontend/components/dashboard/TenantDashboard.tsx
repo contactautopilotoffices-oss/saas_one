@@ -17,6 +17,7 @@ import { useDataCache } from '@/frontend/context/DataCacheContext';
 import Skeleton from '@/frontend/components/ui/Skeleton';
 import SignOutModal from '@/frontend/components/ui/SignOutModal';
 import NotificationBell from './NotificationBell';
+import PendingActionsBell from './PendingActionsBell';
 import DieselStaffDashboard from '@/frontend/components/diesel/DieselStaffDashboard';
 import VMSAdminDashboard from '@/frontend/components/vms/VMSAdminDashboard';
 import TenantTicketingDashboard from '@/frontend/components/tickets/TenantTicketingDashboard';
@@ -600,6 +601,7 @@ const TenantDashboard = () => {
                     </div>
 
                     <div className="flex items-center gap-2 pr-2 flex-shrink-0">
+                        <PendingActionsBell />
                         <NotificationBell />
                     </div>
                 </header>

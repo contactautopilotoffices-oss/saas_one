@@ -1,17 +1,28 @@
 import { InvoiceData } from "./aiProcessor";
 
 export class ZohoService {
-    private static async getAccessToken(): Promise<{ token: string; apiDomain: string }> {
-        const clientId = process.env.ZOHO_CLIENT_ID;
-        const clientSecret = process.env.ZOHO_CLIENT_SECRET;
-        const refreshToken = process.env.ZOHO_REFRESH_TOKEN;
+    /**
+     * The ONE Zoho Books OAuth path in this codebase. Public so other Books callers
+     * (backend/services/zohoVendorSync.ts) reuse it instead of growing a second refresh
+     * implementation — two of those means two sets of DC-pinning bugs and two places to
+     * fix when a refresh token is rotated.
+     */
+    static async getAccessToken(): Promise<{ token: string; apiDomain: string }> {
+        // Books sync uses its own client (a Self Client with ZohoBooks.* scopes) so it
+        // stays independent of the SSO login client in ZOHO_CLIENT_ID. Falls back to the
+        // shared vars when the Books-specific ones aren't set.
+        const clientId = process.env.ZOHO_BOOKS_CLIENT_ID || process.env.ZOHO_CLIENT_ID;
+        const clientSecret = process.env.ZOHO_BOOKS_CLIENT_SECRET || process.env.ZOHO_CLIENT_SECRET;
+        const refreshToken = process.env.ZOHO_BOOKS_REFRESH_TOKEN || process.env.ZOHO_REFRESH_TOKEN;
 
         if (!clientId || !clientSecret || !refreshToken) {
             throw new Error("Zoho credentials missing in .env");
         }
 
-        // Try .com first, then fallback to .in if token fails or if user is in India
-        const domains = ['com', 'in'];
+        // Refresh tokens are data-centre locked. ZOHO_BOOKS_DC pins the right one
+        // (com/in/eu/…); the others are tried as a fallback for unset/misconfigured envs.
+        const preferred = (process.env.ZOHO_BOOKS_DC || 'com').replace(/^\.+/, '').trim();
+        const domains = [preferred, ...['com', 'in'].filter(d => d !== preferred)];
         let lastError = null;
 
         for (const tld of domains) {
@@ -29,9 +40,9 @@ export class ZohoService {
 
                 const data = await res.json();
                 if (res.ok && data.access_token) {
-                    return { 
-                        token: data.access_token, 
-                        apiDomain: data.api_domain || (tld === 'in' ? 'https://www.zohoapis.in' : 'https://www.zohoapis.com') 
+                    return {
+                        token: data.access_token,
+                        apiDomain: data.api_domain || `https://www.zohoapis.${tld}`
                     };
                 }
                 lastError = data;
@@ -81,6 +92,31 @@ export class ZohoService {
         }
 
         return data.purchaseorder;
+    }
+
+    /**
+     * List all purchase orders from Zoho Books for an org (paginated).
+     * Used by the Payment Tracker sync. Throws if creds are missing/invalid.
+     */
+    static async listPurchaseOrders(zohoOrgId: string): Promise<any[]> {
+        const { token, apiDomain } = await this.getAccessToken();
+        const all: any[] = [];
+        let page = 1;
+        for (let i = 0; i < 50; i++) { // hard cap: 50 pages × 200 = 10k POs
+            const res = await fetch(
+                `${apiDomain}/books/v3/purchaseorders?organization_id=${zohoOrgId}&page=${page}&per_page=200`,
+                { headers: { 'Authorization': `Zoho-oauthtoken ${token}` } },
+            );
+            const data = await res.json();
+            if (!res.ok) {
+                console.error('Zoho List PO Error:', data);
+                throw new Error(data.message || 'Failed to list purchase orders from Zoho Books');
+            }
+            all.push(...(data.purchaseorders || []));
+            if (!data.page_context?.has_more_page) break;
+            page++;
+        }
+        return all;
     }
 
     private static async findOrCreateVendor(orgId: string, vendorName: string, accessToken: string, apiDomain: string): Promise<string> {

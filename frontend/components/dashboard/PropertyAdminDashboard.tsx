@@ -5,11 +5,12 @@ import {
     LayoutDashboard, Users, Ticket, Settings, UserCircle, UsersRound,
     Search, Plus, Filter, LogOut, ChevronRight, MapPin, Building2,
     Calendar, CheckCircle2, AlertCircle, Clock, Coffee, IndianRupee, FileDown, Fuel, Store, Activity, Upload, FileBarChart, Menu, X, Zap, RefreshCw,
-    Package, ClipboardCheck, Scan, ChevronDown, Check, GitBranch, CalendarDays, ShoppingCart, Droplets, TrendingUp, QrCode, Smartphone, MessageSquarePlus, Bot
+    Package, ClipboardCheck, Scan, ChevronDown, Check, GitBranch, CalendarDays, ShoppingCart, Droplets, TrendingUp, QrCode, Smartphone, MessageSquarePlus, Bot, Wallet
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
 import { useAuth } from '@/frontend/context/AuthContext';
+import { accountsCaps } from '@/frontend/lib/accounts/roles';
 import { useDataCache } from '@/frontend/context/DataCacheContext';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import UserDirectory from './UserDirectory';
@@ -19,6 +20,7 @@ import DieselStaffDashboard from '@/frontend/components/diesel/DieselStaffDashbo
 import ElectricityStaffDashboard from '@/frontend/components/electricity/ElectricityStaffDashboard';
 import ElectricityAnalyticsDashboard from '@/frontend/components/electricity/ElectricityAnalyticsDashboard';
 import NotificationBell from './NotificationBell';
+import PendingActionsBell from './PendingActionsBell';
 import Image from 'next/image';
 import Skeleton from '@/frontend/components/ui/Skeleton';
 import VendorExportModal from '@/frontend/components/vendor/VendorExportModal';
@@ -69,6 +71,11 @@ interface TicketData {
     created_at: string;
 }
 
+// Indian-grouped currency. Bare toLocaleString() renders 495,777 (US grouping) while the
+// rest of the app uses 4,95,777 — see frontend/lib/accounts/roles.ts.
+const inrFull = (n: number | null | undefined) =>
+    `₹${Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+
 function useCountUp(target: number, duration = 1400): number {
     const [display, setDisplay] = useState(0);
     const raf = useRef<number | null>(null);
@@ -101,6 +108,14 @@ const PropertyAdminDashboard = () => {
     const { theme, toggleTheme } = useTheme();
     const params = useParams();
     const router = useRouter();
+
+    // Finance links — this dashboard renders its own nav (shared sidebar is
+    // skipped on the dashboard route), so gate the Finance entries here.
+    const _financeTenantLike = new Set(['tenant', 'tenant_user', 'super_tenant', 'vendor']);
+    const _financeRoles = [membership?.org_role, ...(membership?.properties?.map(p => p.role) || [])].filter(Boolean) as string[];
+    const canSeePettyCash = !!membership?.is_master_admin || _financeRoles.some(r => !_financeTenantLike.has(r));
+    const canSeeAccounts = accountsCaps(membership).canSee;
+    const showFinance = canSeePettyCash || canSeeAccounts;
     const orgSlug = params?.orgId as string;
     const propertyId = params?.propertyId as string;
 
@@ -579,6 +594,36 @@ const PropertyAdminDashboard = () => {
                         </div>
                     </div>
 
+                    {/* Finance — Petty Cash + Payment Tracker (separate routes, not tabs) */}
+                    {showFinance && (
+                        <div className="mb-6">
+                            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-4 mb-3 flex items-center gap-2">
+                                <span className="w-0.5 h-3 bg-primary rounded-full"></span>
+                                Finance
+                            </p>
+                            <div className="space-y-1">
+                                {canSeePettyCash && (
+                                    <button
+                                        onClick={() => router.push(`/${property?.organization_id}/petty-cash`)}
+                                        className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
+                                    >
+                                        <Wallet className="w-4 h-4" />
+                                        Petty Cash
+                                    </button>
+                                )}
+                                {canSeeAccounts && (
+                                    <button
+                                        onClick={() => router.push(`/${property?.organization_id}/accounts`)}
+                                        className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
+                                    >
+                                        <IndianRupee className="w-4 h-4" />
+                                        Payment Tracker
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
                     {/* System & Personal */}
                     <div className="mb-6">
                         <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-4 mb-3 flex items-center gap-2">
@@ -736,6 +781,7 @@ const PropertyAdminDashboard = () => {
                             </div>
 
                             {/* Notification Bell */}
+                            <PendingActionsBell />
                             <NotificationBell />
 
                             {/* User Account Info */}
@@ -1701,8 +1747,10 @@ const OverviewTab = memo(function OverviewTab({
                         <div className="bg-white rounded-3xl p-5 border border-slate-100 shadow-sm">
                             <h3 className="text-sm font-black text-slate-900 mb-2">Vendor Revenue</h3>
                             <div className="text-slate-400 text-xs font-bold mb-2">{timePeriod === 'today' ? 'Today' : timePeriod === 'month' ? 'This Month' : 'All Time'}</div>
-                            <div className="text-3xl font-black text-slate-900">₹ {vendorStats.total_revenue.toLocaleString()}</div>
-                            <div className="text-xs text-slate-500 mt-2">Commission: ₹ {vendorStats.total_commission.toLocaleString()} from {vendorStats.total_vendors} vendors</div>
+                            <div className="text-3xl font-black text-slate-900 tabular-nums break-words leading-tight" title={inrFull(vendorStats.total_revenue)}>
+                                {inrFull(vendorStats.total_revenue)}
+                            </div>
+                            <div className="text-xs text-slate-500 mt-2 break-words">Commission: {inrFull(vendorStats.total_commission)} from {vendorStats.total_vendors} vendors</div>
                         </div>
                     </div>
 
@@ -1829,7 +1877,9 @@ const OverviewTab = memo(function OverviewTab({
                                 <div className="p-4 bg-yellow-50 rounded-xl"><div className="text-xs font-bold text-yellow-600 mb-1">Electricity ({timePeriod === 'today' ? 'Today' : timePeriod === 'month' ? 'Month' : 'All'})</div><div className="text-2xl font-black text-slate-900">{(timePeriod === 'today' ? electricityStats.total_units_today : timePeriod === 'month' ? electricityStats.total_units_month : electricityStats.total_units).toLocaleString()}</div></div>
                                 <div className="p-4 bg-purple-50 rounded-xl">
                                     <div className="text-xs font-bold text-purple-600 mb-1">Vendor Revenue ({timePeriod === 'today' ? 'Today' : timePeriod === 'month' ? 'Month' : 'All'})</div>
-                                    <div className="text-2xl font-black text-purple-900">₹{vendorStats.total_revenue.toLocaleString()}</div>
+                                    <div className="text-2xl font-black text-purple-900 tabular-nums break-words leading-tight" title={inrFull(vendorStats.total_revenue)}>
+                                        {inrFull(vendorStats.total_revenue)}
+                                    </div>
                                 </div>
                             </div>
                         </div>

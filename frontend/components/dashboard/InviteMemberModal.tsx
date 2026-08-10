@@ -77,7 +77,7 @@ const AddMemberModal = ({ isOpen, onClose, orgId, orgName, properties, fixedProp
                     full_name: fullName,
                     organization_id: orgId,
                     role,
-                    property_id: (role === 'org_super_admin' || role === 'super_tenant') ? null : selectedPropertyId,
+                    property_id: (role === 'org_super_admin' || role === 'ops_super_admin' || role === 'super_tenant') ? null : selectedPropertyId,
                     specialization: role === 'staff' ? specialization : undefined,
                     skills: (role === 'staff' || role === 'mst' || role === 'soft_service_staff' || role === 'soft_service_supervisor' || role === 'soft_service_manager') ? selectedSkills : undefined
                 }),
@@ -243,6 +243,7 @@ const AddMemberModal = ({ isOpen, onClose, orgId, orgName, properties, fixedProp
                                     >
                                         <optgroup label="Administrative">
                                             {!fixedPropertyId && <option value="org_super_admin">Org Super Admin</option>}
+                                            {!fixedPropertyId && <option value="ops_super_admin">Ops Super Admin</option>}
                                             <option value="property_admin">Property Admin</option>
                                         </optgroup>
 
@@ -265,7 +266,7 @@ const AddMemberModal = ({ isOpen, onClose, orgId, orgName, properties, fixedProp
                                 </div>
                             </div>
 
-                            {role !== 'org_super_admin' && role !== 'super_tenant' && (
+                            {role !== 'org_super_admin' && role !== 'ops_super_admin' && role !== 'super_tenant' && (
                                 <div className="space-y-2">
                                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Target Property</label>
                                     <div className="relative">
@@ -273,7 +274,7 @@ const AddMemberModal = ({ isOpen, onClose, orgId, orgName, properties, fixedProp
                                         <select
                                             value={selectedPropertyId}
                                             onChange={(e) => setSelectedPropertyId(e.target.value)}
-                                            required={role !== 'org_super_admin' && role !== 'super_tenant'}
+                                            required={role !== 'org_super_admin' && role !== 'ops_super_admin' && role !== 'super_tenant'}
                                             disabled={!!fixedPropertyId}
                                             className="w-full pl-11 pr-4 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold text-slate-900 focus:ring-2 focus:ring-slate-100 outline-none appearance-none disabled:opacity-75 disabled:cursor-not-allowed"
                                         >

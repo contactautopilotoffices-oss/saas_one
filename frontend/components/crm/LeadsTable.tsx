@@ -22,6 +22,8 @@ interface LeadsTableProps {
     // Reports the table's live filter state up so the parent can offer
     // "save current filters as a view" / detect drift from the active view.
     onStateChange?: (state: ResolvedView) => void;
+    // Back-compat: the leads page may pass an initial status filter from the URL.
+    filters?: { status?: string[]; assigned_to?: string[]; property_interest?: string[] };
 }
 
 // Resolve seat count from the real `seats` column, or fall back to the
