@@ -31,7 +31,7 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
     const [showSignOutModal, setShowSignOutModal] = React.useState(false);
     const [showFeedbackModal, setShowFeedbackModal] = React.useState(false);
 
-    const userRole = user?.user_metadata?.role;
+    const userRole = user?.user_metadata?.role || membership?.role;
     // Gate the BD Super Admin nav off the SAME source as page.tsx / layout.tsx /
     // CrmOnboardingGate (email allowlist + membership.org_role) so all four
     // call sites agree. user_metadata.role is not reliably populated.
@@ -39,7 +39,7 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
     const isBDRole = userRole === 'bd_rep' || userRole === 'bd_admin' || isBdSuperAdmin;
 
     const NAV_ITEMS = React.useMemo(() => {
-        const isAdmin = userRole === 'org_super_admin' || userRole === 'property_admin';
+        const isAdmin = userRole === 'org_super_admin' || userRole === 'property_admin' || membership?.role === 'org_super_admin';
 
         if (isBDRole) return [];
 
@@ -53,7 +53,7 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
             { label: 'Staff', href: `/${orgId}/users`, icon: Users, domain: 'users' as const },
         ];
 
-        if (isAdmin) {
+        if (isAdmin || userRole === 'org_super_admin') {
             items.push({ label: 'AI Automation', href: `/${orgId}/ai-tickets`, icon: Bot, domain: 'dashboards' as const });
             items.push({ label: 'Roster Management', href: `/${orgId}/dashboard?tab=roster`, icon: CalendarDays, domain: 'dashboards' as const });
             items.push({ label: 'Client Support', href: `/${orgId}/dashboard?tab=guest_experience`, icon: Smartphone, domain: 'dashboards' as const });

@@ -149,9 +149,23 @@ export default function ProcurementDashboard() {
 
     const fetchProperties = useCallback(async () => {
         try {
+            const orgId = user?.user_metadata?.organization_id;
+            let url = '/api/properties';
+            if (orgId) url += `?organizationId=${orgId}`;
+            
+            const res = await fetch(url);
+            if (res.ok) {
+                const data = await res.json();
+                if (Array.isArray(data) && data.length > 0) {
+                    setAllProperties(data.map((p: any) => ({ id: p.id, name: p.name })));
+                    return;
+                }
+            }
+            // Fallback to Supabase direct query
             const { data } = await supabase
                 .from('properties')
                 .select('id, name')
+                .is('deleted_at', null)
                 .order('name');
             if (data) {
                 setAllProperties(data);
@@ -159,7 +173,7 @@ export default function ProcurementDashboard() {
         } catch (err) {
             console.error('Properties fetch error:', err);
         }
-    }, [supabase]);
+    }, [supabase, user]);
 
     useEffect(() => {
         fetchRequests();
