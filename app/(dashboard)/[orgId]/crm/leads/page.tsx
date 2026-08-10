@@ -137,6 +137,8 @@ export default function LeadsPage() {
         setIsDetailOpen(false);
     };
 
+    const [refreshTrigger, setRefreshTrigger] = useState(0);
+
     const handleSubmitLead = async (data: CreateLeadInput) => {
         const isCreate = !editingLead;
         const url = editingLead ? `/api/crm/leads/${editingLead.id}` : '/api/crm/leads';
@@ -153,6 +155,12 @@ export default function LeadsPage() {
             setToast({ message: error.error || 'Failed to save lead', type: 'error', visible: true });
             throw new Error(error.error || 'Failed to save lead');
         }
+
+        const resData = await res.json().catch(() => null);
+        if (resData?.lead) {
+            setSelectedLead(resData.lead);
+        }
+        setRefreshTrigger(prev => prev + 1);
 
         setToast({
             message: isCreate ? 'Lead created successfully' : 'Lead updated successfully',
@@ -181,6 +189,8 @@ export default function LeadsPage() {
             <LeadsTable
                 onLeadSelect={handleLeadSelect}
                 onCreateLead={handleCreateLead}
+                updatedLead={selectedLead}
+                refreshTrigger={refreshTrigger}
                 filters={statusFilter.length ? { status: statusFilter } : undefined}
             />
 

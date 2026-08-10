@@ -12,6 +12,8 @@ import SourceBadge from '@/frontend/components/crm/SourceBadge';
 interface LeadsTableProps {
     onLeadSelect?: (lead: CRMLead) => void;
     onCreateLead?: () => void;
+    updatedLead?: CRMLead | null;
+    refreshTrigger?: number;
     filters?: {
         status?: string[];
         assigned_to?: string[];
@@ -33,11 +35,18 @@ function seatInfo(lead: any): { count: number | null; bucket: string | null; cle
     return { count, bucket, cleanReq };
 }
 
-export default function LeadsTable({ onLeadSelect, onCreateLead, filters }: LeadsTableProps) {
+export default function LeadsTable({ onLeadSelect, onCreateLead, updatedLead, refreshTrigger, filters }: LeadsTableProps) {
     const { user, membership } = useAuth();
     const isBdRep = membership?.org_role === 'bd_rep';
     const [leads, setLeads] = useState<CRMLead[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+
+    // Sync updated lead from detail drawer in real-time without full table refresh
+    useEffect(() => {
+        if (!updatedLead) return;
+        setLeads(prev => prev.map(l => l.id === updatedLead.id ? { ...l, ...updatedLead } : l));
+    }, [updatedLead]);
+
     const [search, setSearch] = useState('');
     const [page, setPage] = useState(1);
     const [totalPages, setTotalPages] = useState(1);
@@ -56,6 +65,7 @@ export default function LeadsTable({ onLeadSelect, onCreateLead, filters }: Lead
         date_from?: string;
         date_to?: string;
         week?: 'this_week' | 'last_week';
+        month?: string;
         seats_range?: string;
     }>({});
     // Applied filters (actually sent to API)
@@ -74,7 +84,7 @@ export default function LeadsTable({ onLeadSelect, onCreateLead, filters }: Lead
 
     useEffect(() => {
         fetchLeads();
-    }, [page, search, appliedFilters, sortBy, sortOrder, scope]);
+    }, [page, search, appliedFilters, sortBy, sortOrder, scope, refreshTrigger]);
 
     useEffect(() => {
         fetchConfigs();
@@ -109,6 +119,18 @@ export default function LeadsTable({ onLeadSelect, onCreateLead, filters }: Lead
             if (appliedFilters.date_from) params.set('date_from', appliedFilters.date_from);
             if (appliedFilters.date_to) params.set('date_to', appliedFilters.date_to);
             if (appliedFilters.seats_range) params.set('seats_range', appliedFilters.seats_range);
+
+            // Month filter
+            if (appliedFilters.month) {
+                const [y, m] = appliedFilters.month.split('-').map(Number);
+                const firstDay = new Date(y, m - 1, 1);
+                const lastDay = new Date(y, m, 0);
+                const yyyy = firstDay.getFullYear();
+                const mm = String(firstDay.getMonth() + 1).padStart(2, '0');
+                const ddLast = String(lastDay.getDate()).padStart(2, '0');
+                params.set('date_from', `${yyyy}-${mm}-01`);
+                params.set('date_to', `${yyyy}-${mm}-${ddLast}`);
+            }
 
             // Week quick filter
             if (appliedFilters.week) {
@@ -329,216 +351,171 @@ export default function LeadsTable({ onLeadSelect, onCreateLead, filters }: Lead
                         className="overflow-hidden"
                     >
                         <div className="bg-surface-elevated rounded-xl p-4 border border-border space-y-4">
-                            <div className="space-y-4">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                                {/* Status Dropdown */}
                                 <div>
-                                    <label className="block text-xs font-bold text-text-secondary uppercase tracking-wide mb-2">Status</label>
-                                    <div className="flex flex-wrap gap-2">
-                                        {statuses.map(s => {
-                                            const active = stagedFilters.status?.includes(s.id);
-                                            return (
-                                                <button
-                                                    key={s.id}
-                                                    onClick={() => {
-                                                        const current = stagedFilters.status || [];
-                                                        const next = active ? current.filter(v => v !== s.id) : [...current, s.id];
-                                                        setStagedFilters({ ...stagedFilters, status: next });
-                                                    }}
-                                                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors ${
-                                                        active
-                                                            ? 'bg-primary text-white border-primary'
-                                                            : 'bg-surface text-text-secondary border-border hover:border-primary/40'
-                                                    }`}
-                                                    style={active ? {} : { borderColor: s.color ? `${s.color}44` : undefined }}
-                                                >
-                                                    {active && <span className="mr-1">✓</span>}{s.name}
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
+                                    <label className="block text-xs font-bold text-text-secondary uppercase tracking-wide mb-1.5">Status</label>
+                                    <select
+                                        value={stagedFilters.status?.[0] || ''}
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            setStagedFilters({ ...stagedFilters, status: val ? [val] : undefined });
+                                        }}
+                                        className="w-full px-3 py-2 text-xs font-medium rounded-xl border border-border bg-surface text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                                    >
+                                        <option value="">All Statuses</option>
+                                        {statuses.map(s => (
+                                            <option key={s.id} value={s.id}>{s.name}</option>
+                                        ))}
+                                    </select>
                                 </div>
 
-                                {/* Source Filter */}
-                                {sources.length > 0 && (
+                                {/* Source Dropdown */}
                                 <div>
-                                    <label className="block text-xs font-bold text-text-secondary uppercase tracking-wide mb-2">Source</label>
-                                    <div className="flex flex-wrap gap-2">
-                                        {sources.map(s => {
-                                            const active = stagedFilters.lead_source?.includes(s.id);
-                                            const sv = getSourceVisual(s.name);
-                                            const SourceIcon = sv.icon;
-                                            return (
-                                                <button
-                                                    key={s.id}
-                                                    onClick={() => {
-                                                        const current = stagedFilters.lead_source || [];
-                                                        const next = active ? current.filter(v => v !== s.id) : [...current, s.id];
-                                                        setStagedFilters({ ...stagedFilters, lead_source: next });
-                                                    }}
-                                                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors ${
-                                                        active
-                                                            ? 'bg-primary text-white border-primary'
-                                                            : 'bg-surface text-text-secondary border-border hover:border-primary/40'
-                                                    }`}
-                                                >
-                                                    <SourceIcon className="w-3.5 h-3.5" style={active ? {} : { color: sv.color }} />
-                                                    {active && <span>✓</span>}{s.name}
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                                )}
-
-                                {/* Week Quick Filter */}
-                                <div>
-                                    <label className="block text-xs font-bold text-text-secondary uppercase tracking-wide mb-2">Week</label>
-                                    <div className="flex flex-wrap gap-2">
-                                        {([{ key: 'this_week', label: 'This Week' }, { key: 'last_week', label: 'Last Week' }] as const).map(w => {
-                                            const active = stagedFilters.week === w.key;
-                                            return (
-                                                <button
-                                                    key={w.key}
-                                                    onClick={() => {
-                                                        setStagedFilters({
-                                                            ...stagedFilters,
-                                                            week: active ? undefined : w.key,
-                                                            date_from: undefined,
-                                                            date_to: undefined,
-                                                        });
-                                                    }}
-                                                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors ${
-                                                        active
-                                                            ? 'bg-primary text-white border-primary'
-                                                            : 'bg-surface text-text-secondary border-border hover:border-primary/40'
-                                                    }`}
-                                                >
-                                                    {active && <span className="mr-1">✓</span>}{w.label}
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
+                                    <label className="block text-xs font-bold text-text-secondary uppercase tracking-wide mb-1.5">Source</label>
+                                    <select
+                                        value={stagedFilters.lead_source?.[0] || ''}
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            setStagedFilters({ ...stagedFilters, lead_source: val ? [val] : undefined });
+                                        }}
+                                        className="w-full px-3 py-2 text-xs font-medium rounded-xl border border-border bg-surface text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                                    >
+                                        <option value="">All Sources</option>
+                                        {sources.map(s => (
+                                            <option key={s.id} value={s.id}>{s.name}</option>
+                                        ))}
+                                    </select>
                                 </div>
 
-                                <div>
-                                    <label className="block text-xs font-bold text-text-secondary uppercase tracking-wide mb-2">Date Range</label>
-                                    <div className="flex items-center gap-2">
-                                        <input
-                                            type="date"
-                                            value={stagedFilters.date_from || ''}
-                                            onChange={(e) => { setStagedFilters({ ...stagedFilters, date_from: e.target.value || undefined, week: undefined }); }}
-                                            className="px-3 py-1.5 rounded-xl text-xs font-bold border border-border bg-surface text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
-                                        />
-                                        <span className="text-xs text-text-tertiary">to</span>
-                                        <input
-                                            type="date"
-                                            value={stagedFilters.date_to || ''}
-                                            onChange={(e) => { setStagedFilters({ ...stagedFilters, date_to: e.target.value || undefined, week: undefined }); }}
-                                            className="px-3 py-1.5 rounded-xl text-xs font-bold border border-border bg-surface text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
-                                        />
-                                    </div>
-                                </div>
+                                {/* Campaign Dropdown */}
                                 {campaigns.length > 0 && (
                                 <div>
-                                    <label className="block text-xs font-bold text-text-secondary uppercase tracking-wide mb-2">Campaign</label>
-                                    <div className="flex flex-wrap gap-2">
-                                        {campaigns.map(c => {
-                                            const active = stagedFilters.campaign?.includes(c);
-                                            return (
-                                                <button
-                                                    key={c}
-                                                    onClick={() => {
-                                                        const current = stagedFilters.campaign || [];
-                                                        const next = active ? current.filter(v => v !== c) : [...current, c];
-                                                        setStagedFilters({ ...stagedFilters, campaign: next });
-                                                    }}
-                                                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors ${
-                                                        active
-                                                            ? 'bg-primary text-white border-primary'
-                                                            : 'bg-surface text-text-secondary border-border hover:border-primary/40'
-                                                    }`}
-                                                >
-                                                    {active && <span className="mr-1">✓</span>}{c}
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
+                                    <label className="block text-xs font-bold text-text-secondary uppercase tracking-wide mb-1.5">Campaign</label>
+                                    <select
+                                        value={stagedFilters.campaign?.[0] || ''}
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            setStagedFilters({ ...stagedFilters, campaign: val ? [val] : undefined });
+                                        }}
+                                        className="w-full px-3 py-2 text-xs font-medium rounded-xl border border-border bg-surface text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                                    >
+                                        <option value="">All Campaigns</option>
+                                        {campaigns.map(c => (
+                                            <option key={c} value={c}>{c}</option>
+                                        ))}
+                                    </select>
                                 </div>
                                 )}
+
+                                {/* City Dropdown */}
                                 {!isBdRep && (
                                 <div>
-                                    <label className="block text-xs font-bold text-text-secondary uppercase tracking-wide mb-2">City</label>
-                                    <div className="flex flex-wrap gap-2">
-                                        {['Mumbai', 'Bangalore', 'Noida'].map(c => {
-                                            const active = stagedFilters.city?.includes(c);
-                                            return (
-                                                <button
-                                                    key={c}
-                                                    onClick={() => {
-                                                        const current = stagedFilters.city || [];
-                                                        const next = active ? current.filter(v => v !== c) : [...current, c];
-                                                        setStagedFilters({ ...stagedFilters, city: next });
-                                                    }}
-                                                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors ${
-                                                        active
-                                                            ? 'bg-primary text-white border-primary'
-                                                            : 'bg-surface text-text-secondary border-border hover:border-primary/40'
-                                                    }`}
-                                                >
-                                                    {active && <span className="mr-1">✓</span>}{c}
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
+                                    <label className="block text-xs font-bold text-text-secondary uppercase tracking-wide mb-1.5">City</label>
+                                    <select
+                                        value={stagedFilters.city?.[0] || ''}
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            setStagedFilters({ ...stagedFilters, city: val ? [val] : undefined });
+                                        }}
+                                        className="w-full px-3 py-2 text-xs font-medium rounded-xl border border-border bg-surface text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                                    >
+                                        <option value="">All Cities</option>
+                                        {['Mumbai', 'Bangalore', 'Noida'].map(c => (
+                                            <option key={c} value={c}>{c}</option>
+                                        ))}
+                                    </select>
                                 </div>
                                 )}
+
+                                {/* Seat Count Dropdown */}
                                 <div>
-                                    <label className="block text-xs font-bold text-text-secondary uppercase tracking-wide mb-2">Seat Count</label>
-                                    <div className="flex flex-wrap gap-2">
-                                        {[
-                                            { label: '< 25', value: 'lt25' },
-                                            { label: '25–50', value: '25to50' },
-                                            { label: '50–100', value: '50to100' },
-                                            { label: '100+', value: 'gt100' },
-                                        ].map(r => (
-                                            <button
-                                                key={r.value}
-                                                onClick={() => setStagedFilters({ ...stagedFilters, seats_range: stagedFilters.seats_range === r.value ? undefined : r.value })}
-                                                className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors ${
-                                                    stagedFilters.seats_range === r.value
-                                                        ? 'bg-primary text-white border-primary'
-                                                        : 'bg-surface text-text-secondary border-border hover:border-primary/40'
-                                                }`}
-                                            >{r.label}</button>
-                                        ))}
-                                    </div>
+                                    <label className="block text-xs font-bold text-text-secondary uppercase tracking-wide mb-1.5">Seat Count</label>
+                                    <select
+                                        value={stagedFilters.seats_range || ''}
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            setStagedFilters({ ...stagedFilters, seats_range: val || undefined });
+                                        }}
+                                        className="w-full px-3 py-2 text-xs font-medium rounded-xl border border-border bg-surface text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                                    >
+                                        <option value="">All Seat Ranges</option>
+                                        <option value="lt25">&lt; 25</option>
+                                        <option value="25to50">25–50</option>
+                                        <option value="50to100">50–100</option>
+                                        <option value="gt100">100+</option>
+                                    </select>
                                 </div>
+
+                                {/* Active (Ring) Dropdown */}
                                 <div>
-                                    <label className="block text-xs font-bold text-text-secondary uppercase tracking-wide mb-2">Active (Ring)</label>
-                                    <div className="flex flex-wrap gap-2">
-                                        {Array.from({ length: 10 }, (_, i) => i + 1).map(r => {
+                                    <label className="block text-xs font-bold text-text-secondary uppercase tracking-wide mb-1.5">Active (Ring)</label>
+                                    <select
+                                        value={(() => {
+                                            for (let r = 1; r <= 10; r++) {
+                                                const ringStatusIds = statuses.filter(s => s.name.toLowerCase() === `ring ${r}`).map(s => s.id);
+                                                if (ringStatusIds.some(id => stagedFilters.status?.includes(id))) return String(r);
+                                            }
+                                            return '';
+                                        })()}
+                                        onChange={(e) => {
+                                            const r = e.target.value;
+                                            if (!r) {
+                                                setStagedFilters({ ...stagedFilters, status: undefined });
+                                                return;
+                                            }
                                             const ringStatusIds = statuses.filter(s => s.name.toLowerCase() === `ring ${r}`).map(s => s.id);
-                                            const active = ringStatusIds.some(id => stagedFilters.status?.includes(id));
-                                            return (
-                                                <button
-                                                    key={r}
-                                                    onClick={() => {
-                                                        const current = stagedFilters.status || [];
-                                                        const next = active
-                                                            ? current.filter(v => !ringStatusIds.includes(v))
-                                                            : [...current, ...ringStatusIds];
-                                                        setStagedFilters({ ...stagedFilters, status: next });
-                                                    }}
-                                                    className={`w-9 h-9 rounded-xl text-xs font-bold border transition-colors ${
-                                                        active
-                                                            ? 'bg-orange-500 text-white border-orange-500'
-                                                            : 'bg-surface text-text-secondary border-border hover:border-orange-400'
-                                                    }`}
-                                                >
-                                                    {r}
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
+                                            setStagedFilters({ ...stagedFilters, status: ringStatusIds });
+                                        }}
+                                        className="w-full px-3 py-2 text-xs font-medium rounded-xl border border-border bg-surface text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                                    >
+                                        <option value="">All Rings</option>
+                                        {Array.from({ length: 10 }, (_, i) => i + 1).map(r => (
+                                            <option key={r} value={r}>Ring {r}</option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                {/* Week Quick Filter Dropdown */}
+                                <div>
+                                    <label className="block text-xs font-bold text-text-secondary uppercase tracking-wide mb-1.5">Timeframe</label>
+                                    <select
+                                        value={stagedFilters.week || ''}
+                                        onChange={(e) => {
+                                            const val = e.target.value as 'this_week' | 'last_week' | '';
+                                            setStagedFilters({
+                                                ...stagedFilters,
+                                                week: val || undefined,
+                                                date_from: undefined,
+                                                date_to: undefined,
+                                            });
+                                        }}
+                                        className="w-full px-3 py-2 text-xs font-medium rounded-xl border border-border bg-surface text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                                    >
+                                        <option value="">All Time</option>
+                                        <option value="this_week">This Week</option>
+                                        <option value="last_week">Last Week</option>
+                                    </select>
+                                </div>
+
+                                {/* Proper Month & Year Selector */}
+                                <div>
+                                    <label className="block text-xs font-bold text-text-secondary uppercase tracking-wide mb-1.5">Month & Year</label>
+                                    <input
+                                        type="month"
+                                        value={stagedFilters.month || ''}
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            setStagedFilters({
+                                                ...stagedFilters,
+                                                month: val || undefined,
+                                                week: undefined,
+                                                date_from: undefined,
+                                                date_to: undefined,
+                                            });
+                                        }}
+                                        className="w-full px-3 py-2 text-xs font-medium rounded-xl border border-border bg-surface text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                                    />
                                 </div>
                                 {/* Apply / Clear buttons */}
                                 <div className="flex justify-end gap-3 pt-2 border-t border-border">
@@ -681,11 +658,13 @@ export default function LeadsTable({ onLeadSelect, onCreateLead, filters }: Lead
                                             </div>
                                         </td>
                                         <td className="px-4 py-3">
-                                            {lead.location && (
+                                            {(lead.location || lead.city) ? (
                                                 <p className="text-sm text-text-primary flex items-center gap-1.5">
-                                                    <MapPin className="w-3 h-3 text-text-tertiary" />
-                                                    {lead.location}
+                                                    <MapPin className="w-3 h-3 text-text-tertiary shrink-0" />
+                                                    <span className="truncate">{lead.location || lead.city}</span>
                                                 </p>
+                                            ) : (
+                                                <span className="text-xs text-text-tertiary">-</span>
                                             )}
                                         </td>
                                         <td className="px-4 py-3">
