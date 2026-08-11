@@ -110,6 +110,7 @@ interface Activity {
   user?: { full_name: string };
   old_value?: string;
   new_value?: string;
+  notes?: string;
 }
 
 interface EscalationLog {
@@ -177,6 +178,78 @@ export default function TicketDetailPage() {
   const [selectedProcurementId, setSelectedProcurementId] = useState("");
   const [mentionSearch, setMentionSearch] = useState<string | null>(null);
   const [submittingMaterial, setSubmittingMaterial] = useState(false);
+
+  // Tag Vendor Procurement State
+  const [showTagVendorModal, setShowTagVendorModal] = useState(false);
+  const [vendorNoteInput, setVendorNoteInput] = useState("");
+  const [selectedProcurementUser, setSelectedProcurementUser] = useState("");
+  const [isSubmittingVendorTag, setIsSubmittingVendorTag] = useState(false);
+
+  const fetchProcurementUsersList = async () => {
+    try {
+      const res = await fetch('/api/procurement/users');
+      if (res.ok) {
+        const data = await res.json();
+        setProcurementUsers(data || []);
+      }
+    } catch (err) {
+      console.error('Error fetching procurement users:', err);
+    }
+  };
+
+  const handleTagVendorProcurement = async () => {
+    if (!vendorNoteInput.trim() || !ticketId) return;
+    setIsSubmittingVendorTag(true);
+    try {
+      const res = await fetch(`/api/tickets/${ticketId}/tag-vendor`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          note: vendorNoteInput.trim(),
+          assignedProcurementUserId: selectedProcurementUser || null
+        })
+      });
+      if (res.ok) {
+        setShowTagVendorModal(false);
+        setVendorNoteInput('');
+        setSelectedProcurementUser('');
+        fetchTicketDetails(userId || '');
+        setNotification({ message: 'Tagged Procurement for vendor successfully!', type: 'success' });
+      } else {
+        const data = await res.json();
+        setNotification({ message: data.error || 'Failed to tag procurement for vendor', type: 'error' });
+      }
+    } catch (err) {
+      console.error('Error tagging vendor procurement:', err);
+      setNotification({ message: 'A network error occurred.', type: 'error' });
+    } finally {
+      setIsSubmittingVendorTag(false);
+    }
+  };
+
+  const handleRemoveVendorProcurement = async () => {
+    if (!confirm('Are you sure you want to cancel and remove this vendor procurement request?')) return;
+    setIsSubmittingVendorTag(true);
+    try {
+      const res = await fetch(`/api/tickets/${ticketId}/tag-vendor`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        setShowTagVendorModal(false);
+        setVendorNoteInput('');
+        fetchTicketDetails(userId || '');
+        setNotification({ message: 'Vendor procurement request removed.', type: 'success' });
+      } else {
+        const data = await res.json();
+        setNotification({ message: data.error || 'Failed to remove vendor request', type: 'error' });
+      }
+    } catch (err) {
+      console.error('Error removing vendor procurement:', err);
+      setNotification({ message: 'A network error occurred.', type: 'error' });
+    } finally {
+      setIsSubmittingVendorTag(false);
+    }
+  };
 
   // Creator Role State
   const [creatorRole, setCreatorRole] = useState<string>("Client");
@@ -433,7 +506,7 @@ export default function TicketDetailPage() {
         fetchResolvers(t.property_id);
       }
 
-      fetchProcurementUsers();
+      fetchProcurementUsersList();
       await Promise.all([
         fetchActivities(),
         fetchComments(),
@@ -1720,14 +1793,27 @@ export default function TicketDetailPage() {
               </>
             )}
 
-            {/* Material Request Button — available for all accounts except tenants */}
+            {/* Material Request & Tag Procurement Buttons — available for all accounts except tenants */}
             {userRole !== "tenant" && (
-              <button
-                onClick={() => setShowMaterialModal(true)}
-                className={`flex items-center justify-center gap-2 px-3 py-3 ${isDark ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-500 hover:bg-emerald-500/20" : "bg-emerald-50 border-emerald-200 text-emerald-600 hover:bg-emerald-100"} border rounded-xl text-[10px] font-black uppercase tracking-widest transition-all`}
-              >
-                <PackagePlus className="w-4 h-4" /> Material Request
-              </button>
+              <>
+                <button
+                  onClick={() => setShowMaterialModal(true)}
+                  className={`flex items-center justify-center gap-2 px-3 py-3 ${isDark ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-500 hover:bg-emerald-500/20" : "bg-emerald-50 border-emerald-200 text-emerald-600 hover:bg-emerald-100"} border rounded-xl text-[10px] font-black uppercase tracking-widest transition-all`}
+                >
+                  <PackagePlus className="w-4 h-4" /> Material Request
+                </button>
+
+                <button
+                  onClick={() => {
+                    setVendorNoteInput((ticket as any)?.vendor_procurement_note || "");
+                    setShowTagVendorModal(true);
+                  }}
+                  className={`flex items-center justify-center gap-2 px-3 py-3 ${(ticket as any)?.needs_vendor_procurement ? (isDark ? "bg-amber-500/20 border-amber-500/30 text-amber-400" : "bg-amber-100 border-amber-300 text-amber-800") : (isDark ? "bg-amber-500/10 border-amber-500/20 text-amber-400 hover:bg-amber-500/20" : "bg-amber-50 border-amber-200 text-amber-600 hover:bg-amber-100")} border rounded-xl text-[10px] font-black uppercase tracking-widest transition-all`}
+                >
+                  <ShoppingBag className="w-4 h-4" />
+                  {(ticket as any)?.needs_vendor_procurement ? "Edit Vendor Request" : "Tag Procurement (Vendor Needed)"}
+                </button>
+              </>
             )}
       </div>
 
@@ -1783,6 +1869,56 @@ export default function TicketDetailPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* LEFT COLUMN: Context & Details */}
           <div className="lg:col-span-2 space-y-8">
+            {/* Vendor Procurement Status Banner */}
+            {Boolean((ticket as any)?.needs_vendor_procurement) && (
+              <div
+                className={`p-6 rounded-3xl border shadow-sm transition-all ${
+                  (ticket as any)?.vendor_procurement_status === "vendor_arranged"
+                    ? isDark
+                      ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
+                      : "bg-emerald-50 border-emerald-200 text-emerald-900"
+                    : isDark
+                    ? "bg-amber-500/10 border-amber-500/30 text-amber-300"
+                    : "bg-amber-50 border-amber-200 text-amber-900"
+                }`}
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start gap-3">
+                    <div
+                      className={`p-2.5 rounded-2xl ${
+                        (ticket as any)?.vendor_procurement_status === "vendor_arranged"
+                          ? "bg-emerald-500 text-white"
+                          : "bg-amber-500 text-white"
+                      } shadow-md`}
+                    >
+                      <ShoppingBag className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-extrabold text-sm uppercase tracking-wider">
+                          {(ticket as any)?.vendor_procurement_status === "vendor_arranged"
+                            ? "✓ Vendor Arranged by Procurement"
+                            : "⏳ Vendor Arrangement Requested"}
+                        </h4>
+                      </div>
+                      <p className="text-xs mt-1.5 opacity-90 leading-relaxed font-medium">
+                        {(ticket as any)?.vendor_procurement_status === "vendor_arranged"
+                          ? (ticket as any)?.vendor_arranged_details || "Procurement team has arranged an external vendor for this ticket."
+                          : (ticket as any)?.vendor_procurement_note || "Tagged for Procurement to arrange an external service vendor."}
+                      </p>
+                    </div>
+                  </div>
+                  <span className={`px-2.5 py-1 text-[10px] font-black uppercase tracking-widest rounded-lg border ${
+                    (ticket as any)?.vendor_procurement_status === "vendor_arranged"
+                      ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-600 dark:text-emerald-300"
+                      : "bg-amber-500/20 border-amber-500/40 text-amber-600 dark:text-amber-300"
+                  }`}>
+                    {(ticket as any)?.vendor_procurement_status === "vendor_arranged" ? "Arranged" : "Pending Vendor"}
+                  </span>
+                </div>
+              </div>
+            )}
+
             {/* Request Description */}
             <div
               id="section-details"
@@ -3014,7 +3150,8 @@ export default function TicketDetailPage() {
                     (a) => 
                       a.action === "reassigned" || 
                       a.action === "assigned" || 
-                      a.action.startsWith("procurement_"),
+                      a.action.startsWith("procurement_") ||
+                      a.action.startsWith("vendor_procurement_"),
                   )
                   .sort(
                     (a, b) =>
@@ -3022,11 +3159,11 @@ export default function TicketDetailPage() {
                       (parseDate(b.created_at)?.getTime() || 0),
                   )
                   .map((act) => {
-                    const isProcurement = act.action.startsWith("procurement_");
+                    const isProcurement = act.action.startsWith("procurement_") || act.action.startsWith("vendor_procurement_");
                     return (
                       <div key={act.id} className="relative pl-12">
                         <div
-                          className={`absolute left-0 top-0 mt-0.5 z-10 w-8 h-8 rounded-full ${isProcurement ? "bg-emerald-500" : "bg-primary"} flex items-center justify-center text-white ring-4 ${isDark ? "ring-[#161b22]" : "ring-white"} shadow-lg`}
+                          className={`absolute left-0 top-0 mt-0.5 z-10 w-8 h-8 rounded-full ${isProcurement ? "bg-amber-500" : "bg-primary"} flex items-center justify-center text-white ring-4 ${isDark ? "ring-[#161b22]" : "ring-white"} shadow-lg`}
                         >
                           {isProcurement ? <ShoppingBag className="w-4 h-4" /> : <User className="w-4 h-4" />}
                         </div>
@@ -3039,7 +3176,17 @@ export default function TicketDetailPage() {
                           className={`text-sm font-bold ${isDark ? "text-white" : "text-slate-900"}`}
                         >
                           {isProcurement 
-                            ? (act.action === "procurement_requested" ? "Material Requested" : "Procurement Update") 
+                            ? (act.action === "procurement_requested" 
+                                ? "Material Requested" 
+                                : act.action === "vendor_procurement_tagged"
+                                ? "Vendor Tagged"
+                                : act.action === "vendor_procurement_updated"
+                                ? "Vendor Request Updated"
+                                : act.action === "vendor_procurement_removed"
+                                ? "Vendor Request Removed"
+                                : act.action === "vendor_procurement_arranged" || act.action === "vendor_procurement_arranged_updated"
+                                ? "Vendor Arranged"
+                                : "Procurement Update") 
                             : "Assignment Update"}
                         </p>
                         <p
@@ -3048,7 +3195,20 @@ export default function TicketDetailPage() {
                           {isProcurement ? (
                             <>
                               <span className="font-bold">{act.user?.full_name || "System"}</span>{" "}
-                              {act.action === "procurement_requested" ? "created a material request" : act.action.replace("procurement_", "").replace(/_/g, " ") + " the request"}
+                              {act.action === "vendor_procurement_tagged" 
+                                ? "tagged Procurement for vendor arrangement"
+                                : act.action === "vendor_procurement_updated"
+                                ? "updated vendor procurement requirements"
+                                : act.action === "vendor_procurement_removed"
+                                ? "cancelled vendor procurement request"
+                                : act.action === "vendor_procurement_arranged" || act.action === "vendor_procurement_arranged_updated"
+                                ? "arranged an external vendor for this ticket"
+                                : act.action === "procurement_requested" 
+                                ? "created a material request" 
+                                : act.action.replace("procurement_", "").replace(/_/g, " ") + " the request"}
+                              {act.notes && (
+                                <span className="ml-1 text-amber-500 font-bold">: "{act.notes}"</span>
+                              )}
                               {act.new_value && !act.new_value.startsWith("http") && (
                                 <span className="ml-1 text-emerald-500 font-bold">: {act.new_value.replace(/\.?\s*Quoted Price:\s*[\d.]+/gi, '').replace(/\.?\s*Vendor:\s*N\/A/gi, '')}</span>
                               )}
@@ -3066,6 +3226,54 @@ export default function TicketDetailPage() {
                       </div>
                     );
                   })}
+
+                {/* Vendor Procurement Status Step Node */}
+                {Boolean((ticket as any)?.needs_vendor_procurement) && (
+                  <div className="relative pl-12">
+                    <div
+                      className={`absolute left-0 top-0 mt-0.5 z-10 w-8 h-8 rounded-full flex items-center justify-center ring-4 ${
+                        isDark ? "ring-[#161b22]" : "ring-white"
+                      } shadow-lg ${
+                        (ticket as any)?.vendor_procurement_status === "vendor_arranged"
+                          ? "bg-emerald-500 text-white shadow-emerald-500/20"
+                          : "bg-amber-500 text-white shadow-amber-500/20 animate-pulse"
+                      }`}
+                    >
+                      <ShoppingBag className="w-4 h-4" />
+                    </div>
+                    <p
+                      className={`text-[10px] font-black uppercase tracking-widest ${
+                        (ticket as any)?.vendor_procurement_status === "vendor_arranged"
+                          ? "text-emerald-500"
+                          : "text-amber-500"
+                      } mb-1`}
+                    >
+                      {(ticket as any)?.vendor_procurement_status === "vendor_arranged"
+                        ? parseDate((ticket as any)?.vendor_arranged_at)?.toLocaleString() || "VENDOR ARRANGED"
+                        : parseDate((ticket as any)?.vendor_tagged_at)?.toLocaleString() || "VENDOR REQUESTED"}
+                    </p>
+                    <p
+                      className={`text-sm font-bold ${
+                        isDark ? "text-white" : "text-slate-900"
+                      }`}
+                    >
+                      {(ticket as any)?.vendor_procurement_status === "vendor_arranged"
+                        ? "Vendor Arranged by Procurement"
+                        : "Vendor Arrangement Requested"}
+                    </p>
+                    <p
+                      className={`text-xs ${
+                        (ticket as any)?.vendor_procurement_status === "vendor_arranged"
+                          ? isDark ? "text-emerald-400" : "text-emerald-600"
+                          : isDark ? "text-amber-400" : "text-amber-600"
+                      } font-medium mt-0.5`}
+                    >
+                      {(ticket as any)?.vendor_procurement_status === "vendor_arranged"
+                        ? (ticket as any)?.vendor_arranged_details || "External vendor assigned to visit site."
+                        : (ticket as any)?.vendor_procurement_note || "Procurement team notified to arrange vendor."}
+                    </p>
+                  </div>
+                )}
 
                 {/* 3. Work Started */}
                 <div className="relative pl-12">
@@ -3396,14 +3604,29 @@ export default function TicketDetailPage() {
                                   {userNameMap[act.new_value!] || act.new_value}
                                 </span>
                               </>
-                             ) : act.action.startsWith("procurement_") ? (
+                             ) : (act.action.startsWith("procurement_") || act.action.startsWith("vendor_procurement_")) ? (
                                 <>
                                   <span className={`font-bold ${isDark ? "text-white" : "text-slate-900"}`}>
                                     {act.user?.full_name || "System"}:
                                   </span>{" "}
-                                  <span className="text-emerald-500 font-bold">
-                                    {act.action === "procurement_requested" ? "material request created" : act.action.replace("procurement_", "").replace(/_/g, " ")}
+                                  <span className="text-amber-500 font-bold">
+                                    {act.action === "vendor_procurement_tagged"
+                                      ? "tagged Procurement for vendor arrangement"
+                                      : act.action === "vendor_procurement_updated"
+                                      ? "updated vendor procurement requirements"
+                                      : act.action === "vendor_procurement_removed"
+                                      ? "cancelled vendor procurement request"
+                                      : act.action === "vendor_procurement_arranged" || act.action === "vendor_procurement_arranged_updated"
+                                      ? "arranged external vendor"
+                                      : act.action === "procurement_requested"
+                                      ? "material request created"
+                                      : act.action.replace("procurement_", "").replace(/_/g, " ")}
                                   </span>
+                                  {act.notes && (
+                                    <span className={`ml-1 italic ${isDark ? "text-slate-400" : "text-slate-600"}`}>
+                                      — "{act.notes}"
+                                    </span>
+                                  )}
                                   {act.new_value && (
                                     <span className={`ml-1 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
                                       {act.new_value.startsWith("http") ? (
@@ -3689,6 +3912,109 @@ export default function TicketDetailPage() {
               organizationId={(ticket.property as any)?.organization_id || ""}
               isProcurementUser={userRole === 'procurement' || userRole === 'admin'}
             />
+          )}
+
+          {showTagVendorModal && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setShowTagVendorModal(false)}
+                className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+              />
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className={`${isDark ? "bg-[#161b22] border-[#30363d] text-white" : "bg-white border-slate-200 text-slate-900"} border rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl p-6 relative z-10`}
+              >
+                <div className={`flex justify-between items-center pb-4 border-b ${isDark ? "border-[#30363d]" : "border-slate-200"} mb-4`}>
+                  <div>
+                    <h3 className={`text-lg font-bold flex items-center gap-2 ${isDark ? "text-white" : "text-slate-900"}`}>
+                      <ShoppingBag className="w-5 h-5 text-amber-500" />
+                      Tag Procurement for Vendor
+                    </h3>
+                    <p className={`text-xs ${isDark ? "text-gray-400" : "text-slate-500"} mt-1`}>
+                      Notify Procurement team to arrange an external service/vendor for this ticket
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setShowTagVendorModal(false)}
+                    className={`p-1 rounded-lg ${isDark ? "text-gray-400 hover:text-white hover:bg-white/10" : "text-slate-400 hover:text-slate-700 hover:bg-slate-100"}`}
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="space-y-4 mb-6">
+                  <div>
+                    <label className={`block text-xs font-semibold uppercase tracking-wider mb-2 ${isDark ? "text-gray-300" : "text-slate-600"}`}>
+                      Assign Procurement Specialist (Optional)
+                    </label>
+                    <select
+                      value={selectedProcurementUser}
+                      onChange={(e) => setSelectedProcurementUser(e.target.value)}
+                      className={`w-full ${isDark ? "bg-[#0d1117] border-[#30363d] text-white" : "bg-slate-50 border-slate-200 text-slate-900"} border rounded-xl p-3 text-sm focus:outline-none focus:border-amber-500`}
+                    >
+                      <option value="">All Procurement Users (General Broadcast)</option>
+                      {procurementUsers.map((u: any) => (
+                        <option key={u.id} value={u.id}>
+                          {u.full_name || u.email} ({u.email})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className={`block text-xs font-semibold uppercase tracking-wider mb-2 ${isDark ? "text-gray-300" : "text-slate-600"}`}>
+                      Vendor Requirements & Notes <span className="text-red-500">*</span>
+                    </label>
+                    <textarea
+                      value={vendorNoteInput}
+                      onChange={(e) => setVendorNoteInput(e.target.value)}
+                      placeholder="Explain what work/service needs a vendor (e.g., HVAC compressor repair, specialized glass work)..."
+                      rows={4}
+                      className={`w-full ${isDark ? "bg-[#0d1117] border-[#30363d] text-white placeholder-gray-500" : "bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400"} border rounded-xl p-3 text-sm focus:outline-none focus:border-amber-500`}
+                    />
+                  </div>
+
+                  <div className={`${isDark ? "bg-amber-500/10 border-amber-500/20 text-amber-300" : "bg-amber-50 border-amber-200 text-amber-800"} border rounded-xl p-3 text-xs`}>
+                    💡 Tagging Procurement will alert the Procurement team via email and surface this ticket in their Procurement Dashboard until a vendor is arranged.
+                  </div>
+                </div>
+
+                <div className="flex gap-3 items-center justify-between">
+                  {(ticket as any)?.needs_vendor_procurement ? (
+                    <button
+                      onClick={handleRemoveVendorProcurement}
+                      disabled={isSubmittingVendorTag}
+                      className="px-4 py-2.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/30 rounded-xl text-sm font-semibold transition-colors disabled:opacity-50"
+                    >
+                      Remove Request
+                    </button>
+                  ) : (
+                    <div />
+                  )}
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => setShowTagVendorModal(false)}
+                      className={`px-4 py-2.5 ${isDark ? "bg-slate-800 hover:bg-slate-700 text-white" : "bg-slate-100 hover:bg-slate-200 text-slate-700"} rounded-xl text-sm font-semibold transition-colors`}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleTagVendorProcurement}
+                      disabled={isSubmittingVendorTag || !vendorNoteInput.trim()}
+                      className="px-5 py-2.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-sm font-semibold transition-colors shadow-sm disabled:opacity-50 flex items-center gap-2"
+                    >
+                      {isSubmittingVendorTag && <Loader2 className="w-4 h-4 animate-spin" />}
+                      {(ticket as any)?.needs_vendor_procurement ? "Update Request" : "Tag Procurement"}
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            </div>
           )}
 
           {showAssignModal && (

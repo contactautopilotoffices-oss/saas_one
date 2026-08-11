@@ -102,12 +102,26 @@ export async function GET(request: NextRequest) {
             return NextResponse.json([]);
         }
 
-        const { data: properties, error } = await supabaseAdmin
+        let { data: properties, error } = await supabaseAdmin
             .from('properties')
             .select('*')
             .eq('organization_id', organizationId)
             .is('deleted_at', null)
             .order('name');
+
+        if (error) {
+            // Defensive fallback if deleted_at column does not exist in DB schema yet (Postgres code 42703)
+            if (error.code === '42703' || error.message?.includes('deleted_at')) {
+                console.warn('[PropertyAPI] properties.deleted_at column missing, falling back to basic query.');
+                const fallback = await supabaseAdmin
+                    .from('properties')
+                    .select('*')
+                    .eq('organization_id', organizationId)
+                    .order('name');
+                properties = fallback.data;
+                error = fallback.error;
+            }
+        }
 
         if (error) {
             console.error('Error fetching properties:', error);
@@ -133,13 +147,27 @@ export async function DELETE(request: NextRequest) {
             return NextResponse.json({ error: 'Property ID is required' }, { status: 400 });
         }
 
-        const { error } = await supabaseAdmin
+        const now = new Date().toISOString();
+        let { error } = await supabaseAdmin
             .from('properties')
             .update({
                 is_active: false,
-                status: 'inactive'
+                status: 'inactive',
+                deleted_at: now
             })
             .eq('id', propertyId);
+
+        if (error && (error.code === '42703' || error.message?.includes('deleted_at'))) {
+            // Fallback if deleted_at column does not exist yet
+            const fallback = await supabaseAdmin
+                .from('properties')
+                .update({
+                    is_active: false,
+                    status: 'inactive'
+                })
+                .eq('id', propertyId);
+            error = fallback.error;
+        }
 
         if (error) {
             console.error('Error soft deleting property:', error);

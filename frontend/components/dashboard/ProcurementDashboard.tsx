@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { createClient } from '@utils/supabase/client';
 import { 
-    LayoutDashboard, Package, ShoppingCart, CheckCircle2, 
+    LayoutDashboard, Package, ShoppingCart, ShoppingBag, CheckCircle2, 
     Settings, UserCircle, LogOut, Search, Filter, 
     ChevronDown, ChevronRight, Building2, Calendar, Menu, X,
     ArrowUpRight, Scan, Truck, RefreshCw, Box, Clock,
@@ -18,6 +18,7 @@ import ProcurementComparativeFlow from './ProcurementComparativeFlow';
 import ProcurementCatalogModal from '../procurement/ProcurementCatalogModal';
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
 import MonthlyRequisitionsTab from '../procurement/MonthlyRequisitionsTab';
+import ProcurementVendorTicketsTab from '../procurement/ProcurementVendorTicketsTab';
 
 // --- Types ---
 interface MaterialRequest {
@@ -52,7 +53,7 @@ interface MaterialRequest {
     };
 }
 
-type Tab = 'overview' | 'requests' | 'history' | 'manage-items' | 'po-generator' | 'monthly-requisitions' | 'settings' | 'profile';
+type Tab = 'overview' | 'requests' | 'vendor_tickets' | 'history' | 'manage-items' | 'po-generator' | 'monthly-requisitions' | 'settings' | 'profile';
 
 export default function ProcurementDashboard() {
     const supabase = createClient();
@@ -67,7 +68,7 @@ export default function ProcurementDashboard() {
 
     useEffect(() => {
         const tabParam = searchParams?.get('tab') as Tab | null;
-        if (tabParam && ['overview', 'requests', 'history', 'manage-items', 'po-generator', 'monthly-requisitions', 'settings', 'profile'].includes(tabParam)) {
+        if (tabParam && ['overview', 'requests', 'vendor_tickets', 'history', 'manage-items', 'po-generator', 'monthly-requisitions', 'settings', 'profile'].includes(tabParam)) {
             setActiveTab(tabParam);
         }
     }, [searchParams]);
@@ -476,6 +477,7 @@ export default function ProcurementDashboard() {
                                 {[
                                     { id: 'overview', icon: LayoutDashboard, label: 'Dashboard' },
                                     { id: 'requests', icon: Package, label: 'Active Orders' },
+                                    { id: 'vendor_tickets', icon: ShoppingBag, label: 'Vendor Requests' },
                                     { id: 'monthly-requisitions', icon: FileSpreadsheet, label: 'Monthly Requisitions' },
                                     { id: 'history', icon: CheckCircle2, label: 'Order History' },
                                     { id: 'manage-items', icon: ShoppingCart, label: 'Manage Items' },
@@ -651,6 +653,7 @@ export default function ProcurementDashboard() {
                             />
                         )}
                         {activeTab === 'history' && <HistoryTab requests={requests} user={user} />}
+                        {activeTab === 'vendor_tickets' && <ProcurementVendorTicketsTab />}
                         {activeTab === 'monthly-requisitions' && (
                             <MonthlyRequisitionsTab
                                 user={user}

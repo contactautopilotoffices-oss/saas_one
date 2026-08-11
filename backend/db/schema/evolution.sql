@@ -40,6 +40,8 @@ ALTER TABLE organizations ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAUL
 
 -- Properties
 ALTER TABLE properties ADD COLUMN IF NOT EXISTS status text DEFAULT 'active';
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS is_active boolean DEFAULT true;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS deleted_at timestamptz DEFAULT NULL;
 
 -- Users
 ALTER TABLE users ADD COLUMN IF NOT EXISTS phone text;

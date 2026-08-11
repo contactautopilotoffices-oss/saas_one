@@ -14,6 +14,10 @@ export const EventProcessor = {
             await this.handleProcurementWorkflowEvent(event_type, payload);
         } else if (event_type === 'REQUISITION_UPLOADED') {
             await this.handleRequisitionUploadedEvent(payload);
+        } else if (event_type === 'VENDOR_PROCUREMENT_REQUESTED') {
+            await this.handleVendorProcurementRequestedEvent(payload);
+        } else if (event_type === 'VENDOR_PROCUREMENT_ARRANGED') {
+            await this.handleVendorProcurementArrangedEvent(payload);
         } else {
             console.warn(`[EventProcessor] Unknown event type: ${event_type}`);
         }
@@ -442,6 +446,122 @@ export const EventProcessor = {
             year: requisition_year,
             fileName: file_name,
             uploaderName: uploader?.full_name || uploader?.email || 'Property Admin'
+        });
+    },
+
+    async handleVendorProcurementRequestedEvent(payload: any) {
+        const { ticket_id, property_id, organization_id, note, tagged_by, assigned_procurement_user_id } = payload;
+
+        const { data: ticket } = await supabaseAdmin
+            .from('tickets')
+            .select('*, property:properties(id, name, organization_id)')
+            .eq('id', ticket_id)
+            .maybeSingle();
+
+        if (!ticket) {
+            console.error(`[EventProcessor] Ticket ${ticket_id} not found for vendor request`);
+            return;
+        }
+
+        const { data: taggedByUser } = await supabaseAdmin
+            .from('users')
+            .select('full_name, email')
+            .eq('id', tagged_by)
+            .maybeSingle();
+
+        let assignedProcurementUser: any = null;
+        if (assigned_procurement_user_id) {
+            const { data: pUser } = await supabaseAdmin
+                .from('users')
+                .select('id, full_name, email')
+                .eq('id', assigned_procurement_user_id)
+                .maybeSingle();
+            assignedProcurementUser = pUser;
+        }
+
+        const orgId = organization_id || ticket.property?.organization_id;
+
+        const { enabled, emails } = await EmailRecipientResolver.resolveRecipients({
+            organizationId: orgId,
+            propertyId: property_id || ticket.property_id,
+            featureKey: 'procurement_vendor_tag'
+        });
+
+        const finalEmails = new Set<string>(emails);
+        if (assignedProcurementUser?.email) {
+            finalEmails.add(assignedProcurementUser.email);
+        }
+
+        if (!enabled || finalEmails.size === 0) {
+            console.warn(`[EventProcessor] No recipients resolved for vendor request in org ${orgId}`);
+            return;
+        }
+
+        console.log(`[EventProcessor] Processing VENDOR_PROCUREMENT_REQUESTED outbox event for ticket #${ticket.ticket_number}`);
+
+        await EmailService.sendProcurementVendorTagEmail({
+            emailTo: Array.from(finalEmails),
+            ticket,
+            property: ticket.property,
+            taggedBy: taggedByUser || { full_name: 'Property Staff' },
+            vendorNote: note,
+            assignedProcurementUser
+        });
+    },
+
+    async handleVendorProcurementArrangedEvent(payload: any) {
+        const { ticket_id, details, arranged_by, raised_by, assigned_to, tagged_by } = payload;
+
+        const { data: ticket } = await supabaseAdmin
+            .from('tickets')
+            .select('*, property:properties(id, name, organization_id)')
+            .eq('id', ticket_id)
+            .maybeSingle();
+
+        if (!ticket) {
+            console.error(`[EventProcessor] Ticket ${ticket_id} not found for vendor arranged`);
+            return;
+        }
+
+        const { data: arrangedByUser } = await supabaseAdmin
+            .from('users')
+            .select('full_name, email')
+            .eq('id', arranged_by)
+            .maybeSingle();
+
+        const orgId = ticket.property?.organization_id;
+
+        const { enabled, emails: resolvedEmails } = await EmailRecipientResolver.resolveRecipients({
+            organizationId: orgId,
+            propertyId: ticket.property_id,
+            featureKey: 'procurement_vendor_aligned'
+        });
+
+        const finalEmails = new Set<string>(resolvedEmails);
+
+        // Notify ticket requester (raised_by) & tagger staff (tagged_by)
+        const recipientUids = Array.from(new Set([raised_by, tagged_by].filter(Boolean)));
+        if (recipientUids.length > 0) {
+            const { data: users } = await supabaseAdmin
+                .from('users')
+                .select('email')
+                .in('id', recipientUids);
+            users?.forEach(u => { if (u.email) finalEmails.add(u.email); });
+        }
+
+        if (!enabled || finalEmails.size === 0) {
+            console.warn(`[EventProcessor] No recipient emails found for vendor arranged event on ticket #${ticket.ticket_number}`);
+            return;
+        }
+
+        console.log(`[EventProcessor] Processing VENDOR_PROCUREMENT_ARRANGED outbox event for ticket #${ticket.ticket_number}`);
+
+        await EmailService.sendVendorArrangedEmail({
+            emailTo: Array.from(finalEmails),
+            ticket,
+            property: ticket.property,
+            arrangedBy: arrangedByUser || { full_name: 'Procurement Team' },
+            arrangedDetails: details
         });
     }
 };

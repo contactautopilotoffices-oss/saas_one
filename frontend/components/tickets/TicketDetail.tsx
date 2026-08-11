@@ -135,11 +135,72 @@ export default function TicketDetail({ ticketId, onBack, isAdmin = false }: Tick
     const [activities, setActivities] = useState<Activity[]>([]);
     const [escalationLogs, setEscalationLogs] = useState<EscalationLog[]>([]);
     const [procurementRequests, setProcurementRequests] = useState<any[]>([]);
+    const [procurementUsers, setProcurementUsers] = useState<any[]>([]);
+    const [selectedProcurementUser, setSelectedProcurementUser] = useState('');
     const [showProcurementModal, setShowProcurementModal] = useState(false);
+    const [showTagVendorModal, setShowTagVendorModal] = useState(false);
+    const [vendorNoteInput, setVendorNoteInput] = useState('');
+    const [isSubmittingVendorTag, setIsSubmittingVendorTag] = useState(false);
+
+    const handleTagVendorProcurement = async () => {
+        if (!vendorNoteInput.trim()) return;
+        setIsSubmittingVendorTag(true);
+        try {
+            const res = await fetch(`/api/tickets/${ticketId}/tag-vendor`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    note: vendorNoteInput.trim(),
+                    assignedProcurementUserId: selectedProcurementUser || null
+                })
+            });
+            if (res.ok) {
+                setShowTagVendorModal(false);
+                setVendorNoteInput('');
+                setSelectedProcurementUser('');
+                fetchTicketDetail();
+            } else {
+                const data = await res.json();
+                alert(data.error || 'Failed to tag procurement for vendor');
+            }
+        } catch (err) {
+            console.error('Error tagging vendor procurement:', err);
+            alert('A network error occurred.');
+        } finally {
+            setIsSubmittingVendorTag(false);
+        }
+    };
+
+    const handleRemoveVendorProcurement = async () => {
+        if (!confirm('Are you sure you want to cancel and remove this vendor procurement request?')) return;
+        setIsSubmittingVendorTag(true);
+        try {
+            const res = await fetch(`/api/tickets/${ticketId}/tag-vendor`, {
+                method: 'DELETE'
+            });
+            if (res.ok) {
+                setShowTagVendorModal(false);
+                setVendorNoteInput('');
+                fetchTicketDetail();
+            } else {
+                const data = await res.json();
+                alert(data.error || 'Failed to remove vendor request');
+            }
+        } catch (err) {
+            console.error('Error removing vendor procurement:', err);
+            alert('A network error occurred.');
+        } finally {
+            setIsSubmittingVendorTag(false);
+        }
+    };
 
 
     useEffect(() => {
         fetchTicketDetail();
+        fetch('/api/procurement/users')
+            .then(res => res.json())
+            .then(data => setProcurementUsers(data || []))
+            .catch(err => console.error('Error fetching procurement users:', err));
     }, [ticketId]);
 
     const fetchTicketDetail = async () => {
@@ -379,6 +440,40 @@ export default function TicketDetail({ ticketId, onBack, isAdmin = false }: Tick
                         </span>
                     </div>
                 </div>
+
+                {/* Vendor Procurement Status Banner */}
+                {Boolean(ticket.needs_vendor_procurement) && (
+                    <div className={`border rounded-xl p-4 flex items-start justify-between gap-4 ${
+                        ticket.vendor_procurement_status === 'vendor_arranged'
+                            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                            : 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+                    }`}>
+                        <div className="flex items-start gap-3">
+                            <div className={`p-2 rounded-lg ${
+                                ticket.vendor_procurement_status === 'vendor_arranged' ? 'bg-emerald-500/20' : 'bg-amber-500/20'
+                            }`}>
+                                <ShoppingBag className="w-5 h-5" />
+                            </div>
+                            <div>
+                                <div className="flex items-center gap-2">
+                                    <span className="font-bold text-sm">
+                                        {ticket.vendor_procurement_status === 'vendor_arranged'
+                                            ? '✓ Vendor Arranged by Procurement'
+                                            : '⏳ Vendor Arrangement Requested'}
+                                    </span>
+                                </div>
+                                <p className="text-xs mt-1 text-gray-300">
+                                    {ticket.vendor_procurement_status === 'vendor_arranged'
+                                        ? (ticket.vendor_arranged_details as string) || 'Procurement team has arranged an external vendor.'
+                                        : (ticket.vendor_procurement_note as string) || 'Tagged for Procurement to arrange an external service vendor.'}
+                                </p>
+                            </div>
+                        </div>
+                        <span className="text-[10px] uppercase font-bold tracking-wider opacity-75 whitespace-nowrap">
+                            {ticket.vendor_procurement_status === 'vendor_arranged' ? 'Arranged' : 'Pending Vendor'}
+                        </span>
+                    </div>
+                )}
 
                 {/* Issue Description */}
                 <div className="bg-[#161b22] border border-[#30363d] rounded-xl p-6">
@@ -879,13 +974,27 @@ export default function TicketDetail({ ticketId, onBack, isAdmin = false }: Tick
                         </div>
                         
                         {!isTenant && (
-                            <div className="flex justify-end">
+                            <div className="flex flex-col sm:flex-row gap-2 justify-end">
                                 <button 
                                     onClick={() => setShowProcurementModal(true)}
-                                    className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition-all font-medium"
+                                    className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition-all font-medium"
                                 >
                                     <Package className="w-4 h-4" />
                                     Material Request
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        setVendorNoteInput((ticket?.vendor_procurement_note as string) || '');
+                                        setShowTagVendorModal(true);
+                                    }}
+                                    className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl transition-all font-medium ${
+                                        ticket?.needs_vendor_procurement
+                                            ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30'
+                                            : 'bg-amber-600 hover:bg-amber-500 text-white shadow-sm'
+                                    }`}
+                                >
+                                    <ShoppingBag className="w-4 h-4" />
+                                    {ticket?.needs_vendor_procurement ? 'Edit Vendor Request' : 'Tag Procurement (Vendor Needed)'}
                                 </button>
                             </div>
                         )}
@@ -933,6 +1042,104 @@ export default function TicketDetail({ ticketId, onBack, isAdmin = false }: Tick
                     organizationId={ticket.organization_id as string}
                     isProcurementUser={user?.user_metadata?.role?.toLowerCase().includes('procurement')}
                 />
+            )}
+
+            {/* Tag Procurement Vendor Modal */}
+            {showTagVendorModal && (
+                <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-[#161b22] border border-[#30363d] rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl p-6">
+                        <div className="flex justify-between items-center pb-4 border-b border-[#30363d] mb-4">
+                            <div>
+                                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                                    <ShoppingBag className="w-5 h-5 text-amber-400" />
+                                    Tag Procurement for Vendor
+                                </h3>
+                                <p className="text-xs text-gray-400 mt-1">
+                                    Notify Procurement team to arrange an external service/vendor for this ticket
+                                </p>
+                            </div>
+                            <button
+                                onClick={() => setShowTagVendorModal(false)}
+                                className="text-gray-400 hover:text-white p-1"
+                            >
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+
+                        <div className="space-y-4 mb-6">
+                            <div>
+                                <label className="block text-xs font-semibold text-gray-300 uppercase tracking-wider mb-2">
+                                    Assign Procurement Specialist (Optional)
+                                </label>
+                                <select
+                                    value={selectedProcurementUser}
+                                    onChange={(e) => setSelectedProcurementUser(e.target.value)}
+                                    className="w-full bg-[#0d1117] border border-[#30363d] rounded-xl p-3 text-sm text-white focus:outline-none focus:border-amber-500"
+                                >
+                                    <option value="">All Procurement Users (General Broadcast)</option>
+                                    {procurementUsers.map((u: any) => (
+                                        <option key={u.id} value={u.id}>
+                                            {u.full_name || u.email} ({u.email})
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-semibold text-gray-300 uppercase tracking-wider mb-2">
+                                    Vendor Requirements & Notes <span className="text-red-400">*</span>
+                                </label>
+                                <textarea
+                                    value={vendorNoteInput}
+                                    onChange={(e) => setVendorNoteInput(e.target.value)}
+                                    placeholder="Explain what work/service needs a vendor (e.g., HVAC compressor repair, specialized glass work)..."
+                                    rows={4}
+                                    className="w-full bg-[#0d1117] border border-[#30363d] rounded-xl p-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-amber-500"
+                                />
+                            </div>
+
+                            <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 text-xs text-amber-300">
+                                💡 Tagging Procurement will alert the Procurement team via email and surface this ticket in their Procurement Dashboard until a vendor is arranged.
+                            </div>
+                        </div>
+
+                        <div className="flex gap-3 items-center justify-between">
+                            {ticket?.needs_vendor_procurement ? (
+                                <button
+                                    onClick={handleRemoveVendorProcurement}
+                                    disabled={isSubmittingVendorTag}
+                                    className="px-4 py-2.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded-xl text-sm font-semibold transition-colors"
+                                >
+                                    Remove Request
+                                </button>
+                            ) : (
+                                <div />
+                            )}
+                            <div className="flex gap-3">
+                                <button
+                                    onClick={() => setShowTagVendorModal(false)}
+                                    className="px-4 py-2.5 bg-[#21262d] hover:bg-[#30363d] text-gray-300 rounded-xl text-sm font-semibold transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={handleTagVendorProcurement}
+                                    disabled={isSubmittingVendorTag || !vendorNoteInput.trim()}
+                                    className="px-5 py-2.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-xl text-sm font-bold flex items-center gap-2 transition-all shadow-md"
+                                >
+                                    {isSubmittingVendorTag ? (
+                                        <>
+                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                            Submitting...
+                                        </>
+                                    ) : (
+                                        <>{ticket?.needs_vendor_procurement ? 'Save Changes' : 'Tag Procurement & Notify'}</>
+                                    )}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             )}
         </div>
     );

@@ -57,6 +57,19 @@ export const DEFAULT_EMAIL_SERVICE_CONFIG: Record<string, FeatureEmailConfig> = 
         user_ids: [],
         custom_emails: ['saniel@worksquare.in', 'rushab@worksquare.in', 'nirupam.lahiri@worksquare.in', 'lohitexplores@gmail.com'],
         notify_assignee: true
+    },
+    procurement: {
+        enabled: true,
+        roles: ['procurement'],
+        user_ids: [],
+        custom_emails: []
+    },
+    procurement_vendor_aligned: {
+        enabled: true,
+        roles: [],
+        user_ids: [],
+        custom_emails: [],
+        notify_requester: true
     }
 };
 

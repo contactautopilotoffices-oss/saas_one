@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
     Mail, Shield, Users, Check, Plus, Trash2, Save, Loader2,
     CheckCircle2, AlertCircle, ShoppingCart, FileText, Truck,
-    Calendar, UserCheck, Layers, HelpCircle, X, Building, Search, UserPlus, ChevronDown, User
+    Calendar, UserCheck, Layers, HelpCircle, X, Building, Search, UserPlus, ChevronDown, User, ShoppingBag
 } from 'lucide-react';
 import { createClient } from '@/frontend/utils/supabase/client';
 
@@ -222,6 +222,20 @@ const FEATURES_META = [
         description: 'Alerts sent when new sales leads are created or assigned to sales members.',
         icon: UserCheck,
         color: 'text-violet-500 bg-violet-50'
+    },
+    {
+        id: 'procurement_vendor_tag',
+        name: 'Vendor Procurement Tagging',
+        description: 'Emails sent when site staff tag procurement team to arrange external vendors or services.',
+        icon: ShoppingBag,
+        color: 'text-amber-500 bg-amber-50'
+    },
+    {
+        id: 'procurement_vendor_aligned',
+        name: 'Vendor Aligned / Arranged Updates',
+        description: 'Emails sent when procurement arranges an external vendor or updates vendor details on a ticket.',
+        icon: CheckCircle2,
+        color: 'text-emerald-500 bg-emerald-50'
     }
 ];
 
@@ -266,6 +280,19 @@ const DEFAULT_CONFIGS: Record<string, FeatureEmailConfig> = {
         user_ids: [],
         custom_emails: ['saniel@worksquare.in', 'rushab@worksquare.in', 'nirupam.lahiri@worksquare.in', 'lohitexplores@gmail.com'],
         notify_assignee: true
+    },
+    procurement_vendor_tag: {
+        enabled: true,
+        roles: ['procurement'],
+        user_ids: [],
+        custom_emails: []
+    },
+    procurement_vendor_aligned: {
+        enabled: true,
+        roles: [],
+        user_ids: [],
+        custom_emails: [],
+        notify_requester: true
     }
 };
 

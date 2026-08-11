@@ -401,5 +401,133 @@ export const EmailService = {
             console.error('[EmailService] Failed to send requisition uploaded email:', error);
             return false;
         }
+    },
+
+    async sendProcurementVendorTagEmail({
+        emailTo,
+        ticket,
+        property,
+        taggedBy,
+        vendorNote,
+        assignedProcurementUser
+    }: {
+        emailTo: string | string[];
+        ticket: any;
+        property: any;
+        taggedBy: any;
+        vendorNote: string;
+        assignedProcurementUser?: any;
+    }) {
+        if (!smtpUser || !emailTo) return false;
+        try {
+            const recipients = Array.isArray(emailTo) ? emailTo.join(', ') : emailTo;
+            const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fms.autopilotoffices.com';
+            const subject = `[Action Needed] Vendor Required for Ticket #${ticket.ticket_number} - ${property?.name || ''}`;
+
+            const html = `
+                <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; background-color: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
+                    <div style="text-align: center; margin-bottom: 24px;">
+                        <h2 style="color: #ea580c; margin: 0; font-size: 20px;">Vendor Arrangement Required</h2>
+                        <p style="color: #64748b; font-size: 14px; margin-top: 4px;">A ticket has been tagged for Procurement team to arrange an external vendor</p>
+                    </div>
+
+                    <div style="background-color: #fff7ed; border-left: 4px solid #ea580c; padding: 16px; border-radius: 6px; margin: 18px 0;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                            <tr><td style="padding: 4px 0; color: #64748b; width: 160px;"><b>Ticket #:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: 600;">#${ticket.ticket_number || ticket.ticket_code || ticket.id}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Ticket Title:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: 600;">${ticket.title || ticket.issue_summary || 'Untitled Ticket'}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Property Name:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: 600;">${property?.name || 'N/A'}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Location / Floor:</b></td><td style="padding: 4px 0; color: #0f172a;">${ticket.location || ticket.location_details || 'N/A'} ${ticket.floor_number ? `(Floor ${ticket.floor_number})` : ''}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Tagged By:</b></td><td style="padding: 4px 0; color: #0f172a;">${taggedBy?.full_name || taggedBy?.email || 'Property Staff'}</td></tr>
+                            ${assignedProcurementUser ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Assigned Specialist:</b></td><td style="padding: 4px 0; color: #ea580c; font-weight: bold;">${assignedProcurementUser.full_name || assignedProcurementUser.email}</td></tr>` : ''}
+                        </table>
+                    </div>
+
+                    <h3 style="font-size: 15px; color: #0f172a; margin-top: 20px; margin-bottom: 8px;">Ticket Description:</h3>
+                    <div style="background-color: #f8fafc; padding: 14px; border-radius: 8px; font-size: 14px; color: #334155; border: 1px solid #e2e8f0; white-space: pre-wrap; margin-bottom: 16px;">
+                        ${ticket.description || ticket.details || ticket.issue_description || 'No description provided.'}
+                    </div>
+
+                    <h3 style="font-size: 15px; color: #0f172a; margin-top: 16px; margin-bottom: 8px;">Vendor Requirements & Notes:</h3>
+                    <div style="background-color: #fff7ed; padding: 14px; border-radius: 8px; font-size: 14px; color: #ea580c; border: 1px solid #ffedd5; font-weight: 500; white-space: pre-wrap;">
+                        ${vendorNote || 'No specific notes provided.'}
+                    </div>
+
+                    <div style="text-align: center; margin-top: 28px;">
+                        <a href="${appUrl}/procurement?tab=vendor_tickets" style="display: inline-block; background-color: #ea580c; color: #ffffff; text-decoration: none; font-weight: bold; padding: 12px 28px; border-radius: 8px; font-size: 14px;">View in Procurement Dashboard</a>
+                    </div>
+                </div>
+            `;
+
+            await transporter.sendMail({
+                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                to: recipients,
+                subject,
+                html,
+            });
+            console.log(`[EmailService] Vendor Tagged email sent to ${recipients}`);
+            return true;
+        } catch (error) {
+            console.error('[EmailService] Failed to send vendor tagged email:', error);
+            return false;
+        }
+    },
+
+    async sendVendorArrangedEmail({
+        emailTo,
+        ticket,
+        property,
+        arrangedBy,
+        arrangedDetails
+    }: {
+        emailTo: string | string[];
+        ticket: any;
+        property: any;
+        arrangedBy: any;
+        arrangedDetails: string;
+    }) {
+        if (!smtpUser || !emailTo) return false;
+        try {
+            const recipients = Array.isArray(emailTo) ? emailTo.join(', ') : emailTo;
+            const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fms.autopilotoffices.com';
+            const subject = `[Vendor Arranged] Update for Ticket #${ticket.ticket_number} - ${property?.name || ''}`;
+
+            const html = `
+                <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; background-color: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
+                    <div style="text-align: center; margin-bottom: 24px;">
+                        <h2 style="color: #16a34a; margin: 0; font-size: 20px;">Vendor Arranged</h2>
+                        <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Procurement has successfully arranged a vendor for your ticket</p>
+                    </div>
+
+                    <div style="background-color: #f0fdf4; border-left: 4px solid #16a34a; padding: 16px; border-radius: 6px; margin: 18px 0;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                            <tr><td style="padding: 4px 0; color: #64748b; width: 140px;"><b>Ticket #:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: 600;">#${ticket.ticket_number} - ${ticket.title}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Property:</b></td><td style="padding: 4px 0; color: #0f172a;">${property?.name || 'N/A'}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Arranged By:</b></td><td style="padding: 4px 0; color: #0f172a;">${arrangedBy?.full_name || arrangedBy?.email || 'Procurement Team'}</td></tr>
+                        </table>
+                    </div>
+
+                    <h3 style="font-size: 15px; color: #0f172a; margin-top: 20px;">Vendor Details / Visit Schedule:</h3>
+                    <div style="background-color: #f8fafc; padding: 14px; border-radius: 8px; font-size: 14px; color: #334155; border: 1px solid #e2e8f0; white-space: pre-wrap;">
+                        ${arrangedDetails || 'Vendor has been assigned to visit.'}
+                    </div>
+
+                    <div style="text-align: center; margin-top: 28px;">
+                        <a href="${appUrl}/tickets/${ticket.id}" style="display: inline-block; background-color: #16a34a; color: #ffffff; text-decoration: none; font-weight: bold; padding: 12px 28px; border-radius: 8px; font-size: 14px;">View Ticket Details</a>
+                    </div>
+                </div>
+            `;
+
+            await transporter.sendMail({
+                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                to: recipients,
+                subject,
+                html,
+            });
+            console.log(`[EmailService] Vendor Arranged email sent to ${recipients}`);
+            return true;
+        } catch (error) {
+            console.error('[EmailService] Failed to send vendor arranged email:', error);
+            return false;
+        }
     }
 };
