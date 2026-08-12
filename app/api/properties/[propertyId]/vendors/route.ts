@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/frontend/utils/supabase/server';
+import { createAdminClient } from '@/frontend/utils/supabase/admin';
 
 // GET: Fetch all vendors for a property
 export async function GET(
@@ -7,7 +7,7 @@ export async function GET(
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
-    const supabase = await createClient();
+    const supabase = createAdminClient();
 
     const { data, error } = await supabase
         .from('vendors')
@@ -16,13 +16,15 @@ export async function GET(
             vendor_daily_revenue (
                 id,
                 revenue_amount,
-                revenue_date
+                revenue_date,
+                entry_date
             )
         `)
         .eq('property_id', propertyId)
         .order('shop_name', { ascending: true });
 
     if (error) {
+        console.error('[Vendors GET API Error]:', error.message);
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
@@ -35,7 +37,7 @@ export async function POST(
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
-    const supabase = await createClient();
+    const supabase = createAdminClient();
     const body = await request.json();
 
     // Fetch organization_id from the property
@@ -94,7 +96,7 @@ export async function PATCH(
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
-    const supabase = await createClient();
+    const supabase = createAdminClient();
     const body = await request.json();
 
     if (!body.id) {
@@ -129,7 +131,7 @@ export async function DELETE(
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
-    const supabase = await createClient();
+    const supabase = createAdminClient();
     const { searchParams } = new URL(request.url);
     const vendorId = searchParams.get('id');
 
@@ -137,15 +139,38 @@ export async function DELETE(
         return NextResponse.json({ error: 'Vendor ID required' }, { status: 400 });
     }
 
-    const { error } = await supabase
-        .from('vendors')
-        .delete()
-        .eq('id', vendorId)
-        .eq('property_id', propertyId);
+    try {
+        // Delete dependent records first to satisfy foreign key constraints
+        await supabase
+            .from('vendor_daily_revenue')
+            .delete()
+            .eq('vendor_id', vendorId);
 
-    if (error) {
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        await supabase
+            .from('commission_cycles')
+            .delete()
+            .eq('vendor_id', vendorId);
+
+        await supabase
+            .from('vendor_payments')
+            .delete()
+            .eq('vendor_id', vendorId);
+
+        // Delete the vendor record
+        const { error } = await supabase
+            .from('vendors')
+            .delete()
+            .eq('id', vendorId)
+            .eq('property_id', propertyId);
+
+        if (error) {
+            console.error('[Delete Vendor Error]:', error.message);
+            return NextResponse.json({ error: error.message }, { status: 500 });
+        }
+
+        return NextResponse.json({ success: true });
+    } catch (err: any) {
+        console.error('[Delete Vendor Exception]:', err.message || err);
+        return NextResponse.json({ error: err.message || 'Failed to delete vendor' }, { status: 500 });
     }
-
-    return NextResponse.json({ success: true });
 }

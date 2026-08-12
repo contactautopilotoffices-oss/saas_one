@@ -21,23 +21,45 @@ export async function GET(request: NextRequest) {
         const tenantId = searchParams.get('tenantId');
         const status = searchParams.get('status');
 
-        let query = supabase
+        let query = supabaseAdmin
             .from('meeting_room_bookings')
-            .select('*, meeting_room:meeting_rooms(name, photo_url, location), tenant:users!user_id(full_name, email)')
+            .select('*, meeting_room:meeting_rooms(name, photo_url, location)')
             .order('created_at', { ascending: false });
 
         if (propertyId) query = query.eq('property_id', propertyId);
         if (tenantId) query = query.eq('user_id', tenantId);
         if (status) query = query.eq('status', status);
 
-        const { data: bookings, error: fetchError } = await query;
+        const { data: rawBookings, error: fetchError } = await query;
 
         if (fetchError) {
             console.error('Error fetching bookings:', fetchError);
             return NextResponse.json({ error: 'Failed to fetch bookings' }, { status: 500 });
         }
 
-        return NextResponse.json({ bookings: bookings || [] });
+        // Collect user_ids and fetch tenant user details
+        const userIds = Array.from(new Set((rawBookings || []).map(b => b.user_id).filter(Boolean)));
+        let userMap: Record<string, { full_name?: string; email?: string }> = {};
+
+        if (userIds.length > 0) {
+            const { data: usersData } = await supabaseAdmin
+                .from('users')
+                .select('id, full_name, email')
+                .in('id', userIds);
+
+            if (usersData) {
+                usersData.forEach(u => {
+                    userMap[u.id] = { full_name: u.full_name, email: u.email };
+                });
+            }
+        }
+
+        const bookings = (rawBookings || []).map(b => ({
+            ...b,
+            tenant: b.tenant || userMap[b.user_id] || { full_name: 'User', email: '' }
+        }));
+
+        return NextResponse.json({ bookings });
     } catch (error) {
         console.error('Bookings GET error:', error);
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

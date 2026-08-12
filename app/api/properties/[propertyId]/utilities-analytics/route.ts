@@ -69,13 +69,25 @@ export async function GET(
                     : (data?.filter(r => (r.meter as any)?.meter_type === 'main') || []);
 
                 // Aggregate data
-                const totalUnits = filteredData?.reduce((sum, r) => sum + (r.final_units || r.computed_units || 0), 0) || 0;
-                const totalCost = filteredData?.reduce((sum, r) => sum + (r.computed_cost || 0), 0) || 0;
+                const totalUnits = filteredData?.reduce((sum, r) => {
+                    const u = r.final_units || r.computed_units || 0;
+                    return sum + (u > 0 ? u : 0);
+                }, 0) || 0;
+                const totalCost = filteredData?.reduce((sum, r) => {
+                    const c = r.computed_cost || 0;
+                    return sum + (c > 0 ? c : 0);
+                }, 0) || 0;
 
                 // Today's data
                 const todayReadings = filteredData?.filter(r => r.reading_date === today) || [];
-                const todayUnits = todayReadings.reduce((sum, r) => sum + (r.final_units || r.computed_units || 0), 0);
-                const todayCost = todayReadings.reduce((sum, r) => sum + (r.computed_cost || 0), 0);
+                const todayUnits = todayReadings.reduce((sum, r) => {
+                    const u = r.final_units || r.computed_units || 0;
+                    return sum + (u > 0 ? u : 0);
+                }, 0);
+                const todayCost = todayReadings.reduce((sum, r) => {
+                    const c = r.computed_cost || 0;
+                    return sum + (c > 0 ? c : 0);
+                }, 0);
 
                 // Group by date for trends
                 const dailyTrends = filteredData?.reduce((acc: any, r) => {

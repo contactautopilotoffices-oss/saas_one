@@ -131,7 +131,7 @@ export async function POST(
         };
     };
 
-    // Handle batch submission (multiple generators)
+    // Handle batch submission (multiple generators / dates)
     if (Array.isArray(body.readings)) {
         console.log('[DieselReadings] Batch submission with', body.readings.length, 'readings');
 
@@ -139,14 +139,46 @@ export async function POST(
             body.readings.map((r: any) => computeReadingWithCost(r))
         );
 
+        // Attempt upsert first
         const { data, error } = await supabase
             .from('diesel_readings')
-            .insert(processedReadings)
+            .upsert(processedReadings, {
+                onConflict: 'generator_id,reading_date',
+                ignoreDuplicates: false
+            })
             .select();
 
         if (error) {
-            console.error('[DieselReadings] Error submitting batch readings:', error.message);
-            return NextResponse.json({ error: error.message }, { status: 500 });
+            console.warn('[DieselReadings] Batch upsert fallback:', error.message);
+            // Fallback: Check existing readings per item and update or insert
+            const results = [];
+            for (const r of processedReadings) {
+                const { data: existing } = await supabase
+                    .from('diesel_readings')
+                    .select('id')
+                    .eq('generator_id', r.generator_id)
+                    .eq('reading_date', r.reading_date)
+                    .maybeSingle();
+
+                if (existing) {
+                    const { data: updated, error: updateErr } = await supabase
+                        .from('diesel_readings')
+                        .update(r)
+                        .eq('id', existing.id)
+                        .select()
+                        .maybeSingle();
+                    if (!updateErr && updated) results.push(updated);
+                } else {
+                    const { data: inserted, error: insertErr } = await supabase
+                        .from('diesel_readings')
+                        .insert(r)
+                        .select()
+                        .maybeSingle();
+                    if (!insertErr && inserted) results.push(inserted);
+                }
+            }
+            console.log('[DieselReadings] Batch fallback completed:', results.length, 'readings processed');
+            return NextResponse.json(results, { status: 201 });
         }
 
         console.log('[DieselReadings] Batch submission successful:', data?.length || 0, 'readings saved');
@@ -158,11 +190,34 @@ export async function POST(
 
     const processedReading = await computeReadingWithCost(body);
 
-    const { data, error } = await supabase
+    const { data: existing } = await supabase
         .from('diesel_readings')
-        .insert(processedReading)
-        .select()
+        .select('id')
+        .eq('generator_id', processedReading.generator_id)
+        .eq('reading_date', processedReading.reading_date)
         .maybeSingle();
+
+    let data;
+    let error;
+
+    if (existing) {
+        const res = await supabase
+            .from('diesel_readings')
+            .update(processedReading)
+            .eq('id', existing.id)
+            .select()
+            .maybeSingle();
+        data = res.data;
+        error = res.error;
+    } else {
+        const res = await supabase
+            .from('diesel_readings')
+            .insert(processedReading)
+            .select()
+            .maybeSingle();
+        data = res.data;
+        error = res.error;
+    }
 
     if (error) {
         console.error('[DieselReadings] Error submitting reading:', error.message);

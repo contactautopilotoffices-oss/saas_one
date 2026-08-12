@@ -5,7 +5,7 @@ import {
     LayoutDashboard, Users, Ticket, Settings, UserCircle, UsersRound,
     Search, Plus, Filter, LogOut, ChevronRight, MapPin, Building2,
     Calendar, CheckCircle2, AlertCircle, Clock, Coffee, IndianRupee, FileDown, Fuel, Store, Activity, Upload, FileBarChart, Menu, X, Zap, RefreshCw,
-    Package, ClipboardCheck, Scan, ChevronDown, Check, GitBranch, CalendarDays, ShoppingCart, Droplets, TrendingUp, QrCode, Smartphone, MessageSquarePlus, Bot
+    Package, ClipboardCheck, Scan, ChevronDown, ChevronUp, Check, GitBranch, CalendarDays, ShoppingCart, Droplets, TrendingUp, QrCode, Smartphone, MessageSquarePlus, Bot
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
@@ -22,6 +22,7 @@ import NotificationBell from './NotificationBell';
 import Image from 'next/image';
 import Skeleton from '@/frontend/components/ui/Skeleton';
 import VendorExportModal from '@/frontend/components/vendor/VendorExportModal';
+import { Toast } from '@/frontend/components/ui/Toast';
 import VMSAdminDashboard from '@/frontend/components/vms/VMSAdminDashboard';
 import TenantTicketingDashboard from '@/frontend/components/tickets/TenantTicketingDashboard';
 import TicketCreateModal from '@/frontend/components/tickets/TicketCreateModal';
@@ -1251,8 +1252,14 @@ const OverviewTab = memo(function OverviewTab({
                 };
 
                 // Process electricity
-                const periodUnits = electricityRes.data?.reduce((acc: number, r: any) => acc + (r.final_units ?? r.computed_units ?? 0), 0) || 0;
-                const periodCost = electricityRes.data?.reduce((acc: number, r: any) => acc + (r.computed_cost ?? 0), 0) || 0;
+                const periodUnits = electricityRes.data?.reduce((acc: number, r: any) => {
+                    const val = r.final_units ?? r.computed_units ?? 0;
+                    return acc + (val > 0 ? val : 0);
+                }, 0) || 0;
+                const periodCost = electricityRes.data?.reduce((acc: number, r: any) => {
+                    const val = r.computed_cost ?? 0;
+                    return acc + (val > 0 ? val : 0);
+                }, 0) || 0;
                 const latestReading = electricityRes.data?.[0]?.closing_reading || 0;
                 
                 // Process diesel
@@ -1904,8 +1911,23 @@ const VendorRevenueTab = memo(function VendorRevenueTab({ propertyId }: { proper
     const [isLoading, setIsLoading] = useState(true);
     const [showExportModal, setShowExportModal] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
-    const [selectedRevenueDate, setSelectedRevenueDate] = useState<string>(new Date().toISOString().split('T')[0]);
     
+    // Range Filters State
+    const [rangeMode, setRangeMode] = useState<'today' | 'yesterday' | 'week' | 'month' | 'custom'>('month');
+    const [startDate, setStartDate] = useState<string>(() => {
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+    });
+    const [endDate, setEndDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+    const [expandedVendorId, setExpandedVendorId] = useState<string | null>(null);
+
+    // Toast state
+    const [toast, setToast] = useState<{ message: string; type: 'success' | 'error'; visible: boolean }>({
+        message: '',
+        type: 'success',
+        visible: false,
+    });
+
     // CRUD State
     const [isManageModalOpen, setIsManageModalOpen] = useState(false);
     const [vendorToEdit, setVendorToEdit] = useState<any | null>(null);
@@ -1923,24 +1945,44 @@ const VendorRevenueTab = memo(function VendorRevenueTab({ propertyId }: { proper
     const fetchVendors = async () => {
         setIsLoading(true);
         try {
-            // Fetch food vendors and their latest revenue entries
-            const { data, error } = await supabase
-                .from('vendors')
-                .select(`
-            *,
-            vendor_daily_revenue (
-            revenue_amount,
-            revenue_date
-            )
-            `)
-                .eq('property_id', propertyId);
-
-            if (error) throw error;
+            // Fetch food vendors and all their daily revenue entries via API route
+            const res = await fetch(`/api/properties/${propertyId}/vendors`);
+            if (!res.ok) {
+                const errData = await res.json().catch(() => ({}));
+                throw new Error(errData.error || 'Failed to fetch vendors');
+            }
+            const data = await res.json();
             setVendors(data || []);
-        } catch (err) {
-            console.error('Error fetching vendors:', err);
+        } catch (err: any) {
+            console.error('Error fetching vendors:', err.message || err);
         } finally {
             setIsLoading(false);
+        }
+    };
+
+    const handlePresetChange = (mode: 'today' | 'yesterday' | 'week' | 'month' | 'custom') => {
+        setRangeMode(mode);
+        const today = new Date();
+        const todayStr = today.toISOString().split('T')[0];
+
+        if (mode === 'today') {
+            setStartDate(todayStr);
+            setEndDate(todayStr);
+        } else if (mode === 'yesterday') {
+            const y = new Date(today);
+            y.setDate(y.getDate() - 1);
+            const yStr = y.toISOString().split('T')[0];
+            setStartDate(yStr);
+            setEndDate(yStr);
+        } else if (mode === 'week') {
+            const w = new Date(today);
+            w.setDate(w.getDate() - 6);
+            setStartDate(w.toISOString().split('T')[0]);
+            setEndDate(todayStr);
+        } else if (mode === 'month') {
+            const mStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-01`;
+            setStartDate(mStr);
+            setEndDate(todayStr);
         }
     };
 
@@ -1965,6 +2007,9 @@ const VendorRevenueTab = memo(function VendorRevenueTab({ propertyId }: { proper
             } else if (options.startDate && options.endDate) {
                 params.append('startDate', options.startDate);
                 params.append('endDate', options.endDate);
+            } else {
+                params.append('startDate', startDate);
+                params.append('endDate', endDate);
             }
 
             const response = await fetch(`/api/properties/${propertyId}/vendor-export?${params}`);
@@ -1990,29 +2035,44 @@ const VendorRevenueTab = memo(function VendorRevenueTab({ propertyId }: { proper
         }
     };
 
-    // Calculate pending payments (vendors who haven't submitted for selected date)
-    const pendingCount = vendors.filter(v =>
-        !v.vendor_daily_revenue?.some((r: any) => r.revenue_date === selectedRevenueDate)
-    ).length;
+    // Helper: filter entries within selected range
+    const getVendorEntriesInRange = (vendor: any) => {
+        return (vendor.vendor_daily_revenue || []).filter((r: any) => {
+            const dateVal = r.revenue_date || r.entry_date;
+            return dateVal >= startDate && dateVal <= endDate;
+        }).sort((a: any, b: any) => {
+            const dA = a.revenue_date || a.entry_date || '';
+            const dB = b.revenue_date || b.entry_date || '';
+            return dB.localeCompare(dA);
+        });
+    };
 
     const totalRevenue = vendors.reduce((acc, v) => {
-        const entry = v.vendor_daily_revenue?.find((r: any) => r.revenue_date === selectedRevenueDate);
-        return acc + (entry?.revenue_amount || 0);
+        const entries = getVendorEntriesInRange(v);
+        const vSum = entries.reduce((sum: number, r: any) => sum + (Number(r.revenue_amount) || 0), 0);
+        return acc + vSum;
     }, 0);
 
     const totalCommission = vendors.reduce((acc, v) => {
-        const entry = v.vendor_daily_revenue?.find((r: any) => r.revenue_date === selectedRevenueDate);
-        const rev = entry?.revenue_amount || 0;
-        return acc + (rev * ((v.commission_rate || 0) / 100));
+        const entries = getVendorEntriesInRange(v);
+        const vSum = entries.reduce((sum: number, r: any) => sum + (Number(r.revenue_amount) || 0), 0);
+        return acc + (vSum * ((v.commission_rate || 0) / 100));
     }, 0);
+
+    const totalEntriesLogged = vendors.reduce((acc, v) => {
+        return acc + getVendorEntriesInRange(v).length;
+    }, 0);
+
+    const isSingleDay = startDate === endDate;
 
     if (isLoading) return <div className="p-12 text-center text-slate-400 font-bold">Loading Revenue Data...</div>;
 
     return (
         <div className="space-y-8">
+            {/* Stat Cards */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                 <StatCard
-                    title={`Total Revenue (${new Date(selectedRevenueDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })})`}
+                    title={`Total Revenue (${isSingleDay ? startDate : `${startDate} to ${endDate}`})`}
                     value={`₹${totalRevenue.toLocaleString('en-IN')}`}
                     icon={IndianRupee}
                     color="text-blue-600"
@@ -2020,14 +2080,14 @@ const VendorRevenueTab = memo(function VendorRevenueTab({ propertyId }: { proper
                 />
                 <StatCard
                     title="Total Commission"
-                    value={`₹${totalCommission.toLocaleString('en-IN')}`}
+                    value={`₹${Math.round(totalCommission).toLocaleString('en-IN')}`}
                     icon={Calendar}
                     color="text-emerald-600"
                     bg="bg-emerald-50"
                 />
                 <StatCard
-                    title="Pending Entries"
-                    value={pendingCount.toString()}
+                    title="Logged Daily Entries"
+                    value={totalEntriesLogged.toString()}
                     icon={Clock}
                     color="text-amber-600"
                     bg="bg-amber-50"
@@ -2041,33 +2101,66 @@ const VendorRevenueTab = memo(function VendorRevenueTab({ propertyId }: { proper
                 />
             </div>
 
+            {/* Table Container */}
             <div className="bg-white border border-border rounded-3xl overflow-hidden shadow-sm">
-                <div className="p-8 border-b border-border flex justify-between items-center bg-white">
+                <div className="p-6 sm:p-8 border-b border-border flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white">
                     <div>
                         <h3 className="text-xl font-bold text-text-primary">Cafeteria Performance</h3>
-                        <div className="flex items-center gap-3 mt-2">
-                            <p className="text-text-secondary text-xs font-medium">Revenue tracking for:</p>
-                            <input 
-                                type="date" 
-                                value={selectedRevenueDate}
-                                onChange={(e) => setSelectedRevenueDate(e.target.value)}
-                                className="text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 rounded-md px-2 py-1 outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
-                            />
+                        {/* Range Selection Controls */}
+                        <div className="flex flex-wrap items-center gap-3 mt-3">
+                            <span className="text-xs text-text-secondary font-medium">Filter Range:</span>
+                            <div className="flex flex-wrap items-center gap-1 bg-slate-100 dark:bg-[#161b22] p-1 rounded-lg border border-slate-200 dark:border-[#30363d]">
+                                {(['month', 'week', 'today', 'yesterday', 'custom'] as const).map((m) => (
+                                    <button
+                                        key={m}
+                                        onClick={() => handlePresetChange(m)}
+                                        className={`px-2.5 py-1 text-xs font-bold rounded-md transition-all capitalize ${
+                                            rangeMode === m
+                                                ? 'bg-white dark:bg-[#30363d] shadow-sm text-indigo-600 dark:text-indigo-400'
+                                                : 'text-slate-500 hover:text-slate-700'
+                                        }`}
+                                    >
+                                        {m === 'month' ? 'This Month' : m === 'week' ? 'Last 7 Days' : m}
+                                    </button>
+                                ))}
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                                <input 
+                                    type="date" 
+                                    value={startDate}
+                                    onChange={(e) => {
+                                        setRangeMode('custom');
+                                        setStartDate(e.target.value);
+                                    }}
+                                    className="text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 rounded-md px-2 py-1 outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                                />
+                                <span className="text-xs text-slate-400 font-bold">to</span>
+                                <input 
+                                    type="date" 
+                                    value={endDate}
+                                    onChange={(e) => {
+                                        setRangeMode('custom');
+                                        setEndDate(e.target.value);
+                                    }}
+                                    className="text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 rounded-md px-2 py-1 outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                                />
+                            </div>
                         </div>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 shrink-0">
                         <button
                             onClick={() => {
                                 setVendorToEdit(null);
                                 setIsManageModalOpen(true);
                             }}
-                            className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-black hover:opacity-90 transition-all shadow-lg shadow-indigo-600/20"
+                            className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-black hover:opacity-90 transition-all shadow-lg shadow-indigo-600/20"
                         >
                             <Plus className="w-4 h-4" /> Add Vendor
                         </button>
                         <button
                             onClick={() => setShowExportModal(true)}
-                            className="flex items-center gap-2 px-6 py-2.5 bg-primary text-text-inverse rounded-xl text-sm font-black hover:opacity-90 transition-all shadow-lg shadow-primary/20"
+                            className="flex items-center gap-2 px-5 py-2.5 bg-primary text-text-inverse rounded-xl text-sm font-black hover:opacity-90 transition-all shadow-lg shadow-primary/20"
                         >
                             <FileDown className="w-4 h-4" /> Export
                         </button>
@@ -2078,12 +2171,12 @@ const VendorRevenueTab = memo(function VendorRevenueTab({ propertyId }: { proper
                     <table className="w-full text-left border-collapse">
                         <thead className="bg-surface-elevated border-b border-border">
                             <tr>
-                                <th className="px-8 py-4 text-[10px] font-black text-text-tertiary uppercase tracking-widest">Vendor / Shop</th>
-                                <th className="px-8 py-4 text-[10px] font-black text-text-tertiary uppercase tracking-widest text-center">Commission %</th>
-                                <th className="px-8 py-4 text-[10px] font-black text-text-tertiary uppercase tracking-widest text-right">Revenue</th>
-                                <th className="px-8 py-4 text-[10px] font-black text-text-tertiary uppercase tracking-widest text-right">Commission Due</th>
-                                <th className="px-8 py-4 text-[10px] font-black text-text-tertiary uppercase tracking-widest text-center">Status</th>
-                                <th className="px-8 py-4 text-[10px] font-black text-text-tertiary uppercase tracking-widest text-right">Actions</th>
+                                <th className="px-6 py-4 text-[10px] font-black text-text-tertiary uppercase tracking-widest">Vendor / Shop</th>
+                                <th className="px-6 py-4 text-[10px] font-black text-text-tertiary uppercase tracking-widest text-center">Commission %</th>
+                                <th className="px-6 py-4 text-[10px] font-black text-text-tertiary uppercase tracking-widest text-right">Range Revenue</th>
+                                <th className="px-6 py-4 text-[10px] font-black text-text-tertiary uppercase tracking-widest text-right">Commission Due</th>
+                                <th className="px-6 py-4 text-[10px] font-black text-text-tertiary uppercase tracking-widest text-center">Logs / Status</th>
+                                <th className="px-6 py-4 text-[10px] font-black text-text-tertiary uppercase tracking-widest text-right">Actions</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-50">
@@ -2093,69 +2186,156 @@ const VendorRevenueTab = memo(function VendorRevenueTab({ propertyId }: { proper
                                 </tr>
                             ) : (
                                 vendors.map((vendor) => {
-                                    const entry = vendor.vendor_daily_revenue?.find((r: any) => r.revenue_date === selectedRevenueDate);
-                                    const todayRevenue = entry?.revenue_amount || 0;
-                                    const commission = (todayRevenue * ((vendor.commission_rate || 0) / 100)).toFixed(2);
+                                    const entriesInRange = getVendorEntriesInRange(vendor);
+                                    const periodRevenue = entriesInRange.reduce((sum: number, r: any) => sum + (Number(r.revenue_amount) || 0), 0);
+                                    const commission = (periodRevenue * ((vendor.commission_rate || 0) / 100)).toFixed(2);
+                                    const isExpanded = expandedVendorId === vendor.id;
 
                                     return (
-                                        <tr key={vendor.id} className="hover:bg-slate-50/50 transition-all">
-                                            <td className="px-8 py-5">
-                                                <div>
-                                                    <p className="font-black text-slate-900 text-sm">{vendor.shop_name}</p>
-                                                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{vendor.owner_name}</p>
-                                                </div>
-                                            </td>
-                                            <td className="px-8 py-5 text-center">
-                                                <span className="bg-blue-50 text-blue-600 px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider border border-blue-100">
-                                                    {vendor.commission_rate}%
-                                                </span>
-                                            </td>
-                                            <td className="px-8 py-5 text-right">
-                                                <p className={`font-black text-sm ${todayRevenue > 0 ? 'text-slate-900' : 'text-slate-300'}`}>
-                                                    ₹{todayRevenue.toLocaleString('en-IN')}
-                                                </p>
-                                            </td>
-                                            <td className="px-8 py-5 text-right text-emerald-600 font-black text-sm">
-                                                ₹{Number(commission).toLocaleString('en-IN')}
-                                            </td>
-                                            <td className="px-8 py-5 text-center">
-                                                <span className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider border ${todayRevenue > 0
-                                                    ? 'bg-emerald-50 text-emerald-600 border-emerald-100'
-                                                    : 'bg-amber-50 text-amber-600 border-amber-100'
-                                                    }`}>
-                                                    {todayRevenue > 0 ? 'Submitted' : 'Pending'}
-                                                </span>
-                                            </td>
-                                            <td className="px-8 py-5 text-right">
-                                                <div className="flex items-center justify-end gap-2">
-                                                    <button
-                                                        onClick={() => {
-                                                            setVendorToEdit(vendor);
-                                                            setIsManageModalOpen(true);
-                                                        }}
-                                                        className="p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600 rounded-lg transition-colors"
-                                                    >
-                                                        <Settings className="w-4 h-4" />
-                                                    </button>
-                                                    <button
-                                                        onClick={async () => {
-                                                            if (confirm('Are you sure you want to delete this vendor? This cannot be undone.')) {
-                                                                try {
-                                                                    const res = await fetch(`/api/properties/${propertyId}/vendors?id=${vendor.id}`, { method: 'DELETE' });
-                                                                    if (res.ok) fetchVendors();
-                                                                    else alert('Failed to delete vendor');
-                                                                } catch (e) {
-                                                                    console.error(e);
+                                        <React.Fragment key={vendor.id}>
+                                            <tr className="hover:bg-slate-50/50 transition-all">
+                                                <td className="px-6 py-5">
+                                                    <div className="flex items-center gap-3">
+                                                        <button
+                                                            onClick={() => setExpandedVendorId(isExpanded ? null : vendor.id)}
+                                                            className="p-1 rounded-md hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
+                                                            title="Toggle daily revenue breakdown"
+                                                        >
+                                                            {isExpanded ? <ChevronUp className="w-4 h-4 text-indigo-600" /> : <ChevronDown className="w-4 h-4" />}
+                                                        </button>
+                                                        <div>
+                                                            <p className="font-black text-slate-900 text-sm">{vendor.shop_name}</p>
+                                                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{vendor.owner_name}</p>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                                <td className="px-6 py-5 text-center">
+                                                    <span className="bg-blue-50 text-blue-600 px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider border border-blue-100">
+                                                        {vendor.commission_rate}%
+                                                    </span>
+                                                </td>
+                                                <td className="px-6 py-5 text-right">
+                                                    <p className={`font-black text-sm ${periodRevenue > 0 ? 'text-slate-900' : 'text-slate-300'}`}>
+                                                        ₹{periodRevenue.toLocaleString('en-IN')}
+                                                    </p>
+                                                </td>
+                                                <td className="px-6 py-5 text-right text-emerald-600 font-black text-sm">
+                                                    ₹{Number(commission).toLocaleString('en-IN')}
+                                                </td>
+                                                <td className="px-6 py-5 text-center">
+                                                    <span className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider border ${entriesInRange.length > 0
+                                                        ? 'bg-emerald-50 text-emerald-600 border-emerald-100'
+                                                        : 'bg-amber-50 text-amber-600 border-amber-100'
+                                                        }`}>
+                                                        {isSingleDay
+                                                            ? (entriesInRange.length > 0 ? 'Submitted' : 'Pending')
+                                                            : `${entriesInRange.length} day${entriesInRange.length === 1 ? '' : 's'} logged`}
+                                                    </span>
+                                                </td>
+                                                <td className="px-6 py-5 text-right">
+                                                    <div className="flex items-center justify-end gap-2">
+                                                        <button
+                                                            onClick={() => setExpandedVendorId(isExpanded ? null : vendor.id)}
+                                                            className={`px-2.5 py-1 text-xs font-bold rounded-lg border transition-all ${isExpanded ? 'bg-indigo-50 text-indigo-600 border-indigo-200' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}
+                                                        >
+                                                            {isExpanded ? 'Hide Logs' : 'View Logs'}
+                                                        </button>
+                                                        <button
+                                                            onClick={() => {
+                                                                setVendorToEdit(vendor);
+                                                                setIsManageModalOpen(true);
+                                                            }}
+                                                            className="p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600 rounded-lg transition-colors"
+                                                            title="Vendor Settings"
+                                                        >
+                                                            <Settings className="w-4 h-4" />
+                                                        </button>
+                                                        <button
+                                                            onClick={async () => {
+                                                                if (confirm(`Are you sure you want to delete "${vendor.shop_name}"? This cannot be undone.`)) {
+                                                                    try {
+                                                                        const res = await fetch(`/api/properties/${propertyId}/vendors?id=${vendor.id}`, { method: 'DELETE' });
+                                                                        if (res.ok) {
+                                                                            setToast({ message: `Vendor "${vendor.shop_name}" deleted successfully!`, type: 'success', visible: true });
+                                                                            fetchVendors();
+                                                                        } else {
+                                                                            const errData = await res.json().catch(() => ({}));
+                                                                            setToast({ message: errData.error || 'Failed to delete vendor', type: 'error', visible: true });
+                                                                        }
+                                                                    } catch (e: any) {
+                                                                        console.error(e);
+                                                                        setToast({ message: e.message || 'Failed to delete vendor', type: 'error', visible: true });
+                                                                    }
                                                                 }
-                                                            }
-                                                        }}
-                                                        className="p-2 text-red-400 hover:bg-red-50 hover:text-red-600 rounded-lg transition-colors"
-                                                    >
-                                                        <X className="w-4 h-4" />
-                                                    </button>
-                                                </div>
-                                            </td>
-                                        </tr>
+                                                            }}
+                                                            className="p-2 text-red-400 hover:bg-red-50 hover:text-red-600 rounded-lg transition-colors"
+                                                            title="Delete Vendor"
+                                                        >
+                                                            <X className="w-4 h-4" />
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+
+                                            {/* Expandable Daily Revenue Breakdown Sub-Table */}
+                                            {isExpanded && (
+                                                <tr className="bg-indigo-50/30">
+                                                    <td colSpan={6} className="px-8 py-4">
+                                                        <div className="bg-white border border-indigo-100 rounded-2xl p-5 shadow-sm">
+                                                            <div className="flex items-center justify-between mb-3">
+                                                                <h4 className="text-xs font-black uppercase text-indigo-700 tracking-wider">
+                                                                    Daily Logs Breakdown: {vendor.shop_name} ({startDate} to {endDate})
+                                                                </h4>
+                                                                <span className="text-[11px] font-bold text-slate-500">
+                                                                    {entriesInRange.length} record{entriesInRange.length === 1 ? '' : 's'} found
+                                                                </span>
+                                                            </div>
+                                                            {entriesInRange.length === 0 ? (
+                                                                <p className="text-xs text-slate-400 italic py-2">No daily revenue entries recorded for this selected date range.</p>
+                                                            ) : (
+                                                                <table className="w-full text-xs text-left border-collapse">
+                                                                    <thead>
+                                                                        <tr className="border-b border-slate-100 text-slate-400 font-bold text-[10px] uppercase tracking-wider">
+                                                                            <th className="py-2">Date</th>
+                                                                            <th className="py-2 text-right">Daily Revenue</th>
+                                                                            <th className="py-2 text-right">Commission ({vendor.commission_rate}%)</th>
+                                                                            <th className="py-2 pl-6">Entry Status</th>
+                                                                        </tr>
+                                                                    </thead>
+                                                                    <tbody className="divide-y divide-slate-100">
+                                                                        {entriesInRange.map((entry: any) => {
+                                                                            const dRev = Number(entry.revenue_amount) || 0;
+                                                                            const dComm = (dRev * ((vendor.commission_rate || 0) / 100)).toFixed(2);
+                                                                            const entryDate = entry.revenue_date || entry.entry_date;
+                                                                            return (
+                                                                                <tr key={entry.id || entryDate} className="hover:bg-slate-50">
+                                                                                    <td className="py-2.5 font-bold text-slate-800">
+                                                                                        {new Date(entryDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                                                                    </td>
+                                                                                    <td className="py-2.5 text-right font-black text-slate-900">
+                                                                                        ₹{dRev.toLocaleString('en-IN')}
+                                                                                    </td>
+                                                                                    <td className="py-2.5 text-right font-black text-emerald-600">
+                                                                                        ₹{Number(dComm).toLocaleString('en-IN')}
+                                                                                    </td>
+                                                                                    <td className="py-2.5 pl-6 text-slate-500 font-medium">
+                                                                                        {dRev > 0 ? (
+                                                                                            <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-600 border border-emerald-100">Logged</span>
+                                                                                        ) : (
+                                                                                            <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-500">₹0 Logged</span>
+                                                                                        )}
+                                                                                    </td>
+                                                                                </tr>
+                                                                            );
+                                                                        })}
+                                                                    </tbody>
+                                                                </table>
+                                                            )}
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </React.Fragment>
                                     );
                                 })
                             )}
@@ -2177,6 +2357,13 @@ const VendorRevenueTab = memo(function VendorRevenueTab({ propertyId }: { proper
                 propertyId={propertyId}
                 vendorToEdit={vendorToEdit}
                 onSuccess={() => fetchVendors()}
+            />
+
+            <Toast
+                visible={toast.visible}
+                message={toast.message}
+                type={toast.type}
+                onClose={() => setToast(prev => ({ ...prev, visible: false }))}
             />
         </div>
     );

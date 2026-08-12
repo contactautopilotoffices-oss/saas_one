@@ -277,8 +277,8 @@ export default function ElectricitySpreadsheetLogger({ propertyId, isDark = fals
             
             newState[dateStr][meterId] = updatedReading;
             
-            // Auto fill next day's initial reading if modifying today's final reading
-            if (field === 'final_reading') {
+            // Auto fill next day's initial reading if modifying today's final or day 1 initial reading
+            if (field === 'final_reading' || field === 'initial_reading') {
                 const currDate = new Date(dateStr);
                 currDate.setDate(currDate.getDate() + 1);
                 const nextDateStr = currDate.toISOString().split('T')[0];
@@ -294,21 +294,23 @@ export default function ElectricitySpreadsheetLogger({ propertyId, isDark = fals
                         is_rollover: false
                     };
                     
-                    nextDay.initial_reading = val;
-                    if (nextDay.final_reading !== null && nextDay.final_reading !== '') {
-                        const initVal = val !== null && val !== '' ? parseFloat(val as string) : NaN;
-                        const finalVal = typeof nextDay.final_reading === 'string' ? parseFloat(nextDay.final_reading) : nextDay.final_reading;
-                        
-                        if (!isNaN(initVal) && !isNaN(finalVal)) {
-                            const diff = finalVal - initVal;
-                            nextDay.consumption = diff >= 0 ? Number((diff * nextDay.meter_constant_used).toFixed(2)) : null;
+                    if (field === 'final_reading' || (field === 'initial_reading' && (nextDay.initial_reading === null || nextDay.initial_reading === ''))) {
+                        nextDay.initial_reading = val;
+                        if (nextDay.final_reading !== null && nextDay.final_reading !== '') {
+                            const initVal = val !== null && val !== '' ? parseFloat(val as string) : NaN;
+                            const finalVal = typeof nextDay.final_reading === 'string' ? parseFloat(nextDay.final_reading) : nextDay.final_reading;
+                            
+                            if (!isNaN(initVal) && !isNaN(finalVal)) {
+                                const diff = finalVal - initVal;
+                                nextDay.consumption = diff >= 0 ? Number((diff * nextDay.meter_constant_used).toFixed(2)) : null;
+                            } else {
+                                nextDay.consumption = null;
+                            }
                         } else {
                             nextDay.consumption = null;
                         }
-                    } else {
-                        nextDay.consumption = null;
+                        newState[nextDateStr][meterId] = nextDay;
                     }
-                    newState[nextDateStr][meterId] = nextDay;
                 }
             }
             
@@ -1195,9 +1197,38 @@ export default function ElectricitySpreadsheetLogger({ propertyId, isDark = fals
                                             const isSelected = isCellSelected(rowIndex, meter.id);
                                             return (
                                                 <React.Fragment key={meter.id}>
-                                                    <td className={`border-r border-b p-1 text-center text-xs font-bold bg-transparent ${isDark ? 'border-[#30363d] text-white' : 'border-slate-200 text-black'}`}>
-                                                        {reading?.initial_reading !== undefined && reading?.initial_reading !== null ? Number(Number(reading.initial_reading).toFixed(2)) : '-'}
-                                                    </td>
+                                                    {rowIndex === 0 || day.dateNum === 1 ? (
+                                                        <td 
+                                                            onMouseDown={() => handleCellMouseDown(rowIndex, meter.id)}
+                                                            onMouseEnter={() => handleCellMouseEnter(rowIndex, meter.id)}
+                                                            className={`border-r border-b p-0 relative transition-all ${
+                                                                isSelected 
+                                                                    ? 'bg-blue-500/20 dark:bg-blue-500/30 ring-2 ring-blue-500 z-20' 
+                                                                    : 'bg-emerald-500/5 dark:bg-emerald-500/10'
+                                                            } ${isDark ? 'border-[#30363d]' : 'border-slate-200'}`}
+                                                        >
+                                                            <input 
+                                                                type="text"
+                                                                inputMode="decimal"
+                                                                value={reading?.initial_reading ?? ''}
+                                                                onChange={(e) => handleValueChange(day.dateStr, meter.id, 'initial_reading', e.target.value, meter.meter_constant)}
+                                                                onPaste={(e) => handleCellPaste(e, day.dateStr, meter.id, 'initial_reading', meter.meter_constant)}
+                                                                onMouseDown={() => handleCellMouseDown(rowIndex, meter.id)}
+                                                                onMouseEnter={() => handleCellMouseEnter(rowIndex, meter.id)}
+                                                                className={`w-full h-full p-1 text-xs bg-transparent text-center focus:outline-none focus:bg-primary/10 transition-colors font-bold ${
+                                                                    isSelected 
+                                                                        ? (isDark ? 'text-white font-black' : 'text-blue-950 font-black') 
+                                                                        : (isDark ? 'text-emerald-300 placeholder:text-slate-600' : 'text-emerald-900 placeholder:text-slate-300')
+                                                                }`}
+                                                                placeholder="Initial..."
+                                                                title="Editable Initial Reading for Day 1 of Month"
+                                                            />
+                                                        </td>
+                                                    ) : (
+                                                        <td className={`border-r border-b p-1 text-center text-xs font-bold bg-transparent ${isDark ? 'border-[#30363d] text-white' : 'border-slate-200 text-black'}`}>
+                                                            {reading?.initial_reading !== undefined && reading?.initial_reading !== null ? Number(Number(reading.initial_reading).toFixed(2)) : '-'}
+                                                        </td>
+                                                    )}
                                                     <td 
                                                         onMouseDown={() => handleCellMouseDown(rowIndex, meter.id)}
                                                         onMouseEnter={() => handleCellMouseEnter(rowIndex, meter.id)}

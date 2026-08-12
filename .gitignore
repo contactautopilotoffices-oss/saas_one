@@ -47,3 +47,8 @@ next-env.d.ts
 # vendored HyperFrames checkout. Large binary output, not app code.
 /onboarding-video-project/
 /hyperframes/
+
+# scratch
+scratch/
+scratch_check.mjs
+

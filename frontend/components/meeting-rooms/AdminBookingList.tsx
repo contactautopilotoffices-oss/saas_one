@@ -168,8 +168,8 @@ const AdminBookingList: React.FC<AdminBookingListProps> = ({ propertyId }) => {
 
     return (
         <div className="space-y-6">
-            {/* Filters */}
-            <div className="flex flex-col md:flex-row gap-3 md:gap-4">
+            {/* Search & Filter Bar */}
+            <div className="flex flex-col md:flex-row gap-3 md:gap-4 items-stretch md:items-center">
                 <div className="flex-1 relative group">
                     <Search className="absolute left-4 md:left-5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 group-focus-within:text-primary transition-colors" />
                     <input
@@ -177,27 +177,29 @@ const AdminBookingList: React.FC<AdminBookingListProps> = ({ propertyId }) => {
                         placeholder="Search by client or room..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        className="w-full pl-12 md:pl-14 pr-4 md:pr-6 py-3.5 md:py-4 bg-white border border-slate-100 rounded-xl md:rounded-2xl text-sm font-bold placeholder:text-slate-300 focus:outline-none focus:ring-4 focus:ring-primary/5 transition-all shadow-sm outline-none"
+                        className="w-full pl-12 md:pl-14 pr-4 md:pr-6 py-3.5 md:py-4 bg-white border border-slate-200 rounded-2xl text-sm font-medium placeholder:text-slate-400 focus:outline-none focus:ring-4 focus:ring-primary/5 transition-all shadow-sm outline-none"
                     />
                 </div>
-                <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
-                    <input
-                        type="date"
-                        value={dateFilter}
-                        onChange={(e) => setDateFilter(e.target.value)}
-                        className="px-4 py-3.5 md:py-4 bg-white border border-slate-100 rounded-xl md:rounded-2xl text-[11px] md:text-sm font-black text-slate-700 focus:ring-4 focus:ring-primary/5 transition-all cursor-pointer outline-none shrink-0 shadow-sm uppercase tracking-widest"
-                    />
-                    <div className="flex items-center gap-2 bg-white px-4 md:px-6 py-3.5 md:py-4 rounded-xl md:rounded-2xl border border-slate-100 shadow-sm overflow-hidden min-w-[140px] md:min-w-[160px]">
+                <div className="flex items-center gap-3 overflow-x-auto no-scrollbar">
+                    <div className="flex items-center gap-2 bg-white px-4 py-3.5 md:py-4 rounded-2xl border border-slate-200 shadow-sm shrink-0">
+                        <input
+                            type="date"
+                            value={dateFilter}
+                            onChange={(e) => setDateFilter(e.target.value)}
+                            className="bg-transparent text-xs font-bold text-slate-700 focus:outline-none cursor-pointer outline-none uppercase tracking-wider"
+                        />
+                    </div>
+                    <div className="flex items-center gap-2 bg-white px-5 py-3.5 md:py-4 rounded-2xl border border-slate-200 shadow-sm overflow-hidden shrink-0">
                         <Filter className="w-4 h-4 text-slate-400 flex-shrink-0" />
                         <select
                             value={statusFilter}
                             onChange={(e) => setStatusFilter(e.target.value)}
-                            className="bg-transparent text-[11px] md:text-sm font-black text-slate-700 focus:outline-none cursor-pointer uppercase tracking-widest w-full appearance-none outline-none"
+                            className="bg-transparent text-xs font-black text-slate-700 focus:outline-none cursor-pointer uppercase tracking-widest w-full appearance-none outline-none pr-2"
                         >
-                            <option value="all">All Status</option>
-                            <option value="confirmed">Confirmed</option>
-                            <option value="cancelled">Cancelled</option>
-                            <option value="completed">Completed</option>
+                            <option value="all">ALL STATUS</option>
+                            <option value="confirmed">CONFIRMED</option>
+                            <option value="cancelled">CANCELLED</option>
+                            <option value="completed">COMPLETED</option>
                         </select>
                     </div>
                 </div>
@@ -211,9 +213,9 @@ const AdminBookingList: React.FC<AdminBookingListProps> = ({ propertyId }) => {
                     ))}
                 </div>
             ) : filteredBookings.length === 0 ? (
-                <div className="bg-slate-50 border-2 border-dashed border-slate-200 rounded-[2rem] p-12 text-center">
-                    <Calendar className="w-12 h-12 text-slate-200 mx-auto mb-4" />
-                    <p className="text-slate-500 font-bold uppercase tracking-widest text-[10px]">No bookings found</p>
+                <div className="bg-white border border-slate-200 rounded-[2rem] p-12 text-center shadow-sm">
+                    <Calendar className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+                    <p className="text-slate-500 font-bold uppercase tracking-widest text-xs">No bookings found</p>
                 </div>
             ) : (
                 <div className="grid gap-4">
@@ -225,30 +227,36 @@ const AdminBookingList: React.FC<AdminBookingListProps> = ({ propertyId }) => {
                                 initial={{ opacity: 0, y: 10 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 exit={{ opacity: 0, scale: 0.95 }}
-                                className="bg-white p-4 md:p-6 rounded-xl md:rounded-2xl border border-slate-100 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4 md:gap-6 hover:shadow-md transition-shadow group/card"
+                                className="bg-white p-5 md:p-6 rounded-2xl border border-slate-200/90 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4 md:gap-6 hover:shadow-md transition-all group/card"
                             >
-                                <div className="flex items-center gap-4 flex-1 min-w-0">
-                                    <div className="w-12 h-12 md:w-14 md:h-14 rounded-lg md:rounded-xl overflow-hidden bg-slate-100 shrink-0 border border-slate-50">
-                                        <img src={booking.meeting_room.photo_url} alt="" className="w-full h-full object-cover" />
+                                <div className="flex items-center gap-4 md:gap-5 flex-1 min-w-0">
+                                    <div className="w-14 h-14 md:w-16 md:h-16 rounded-full overflow-hidden bg-slate-100 shrink-0 border border-slate-200 shadow-sm flex items-center justify-center">
+                                        {booking.meeting_room?.photo_url ? (
+                                            <img src={booking.meeting_room.photo_url} alt="" className="w-full h-full object-cover" />
+                                        ) : (
+                                            <Calendar className="w-6 h-6 text-slate-400" />
+                                        )}
                                     </div>
-                                    <div className="min-w-0">
-                                        <h4 className="text-sm font-bold text-slate-900 truncate">{booking.meeting_room.name}</h4>
-                                        <div className="flex items-center flex-wrap gap-x-3 gap-y-1 mt-1">
-                                            <div className="flex items-center gap-1.5 text-slate-400">
-                                                <Calendar className="w-3 h-3" />
-                                                <span className="text-[10px] font-bold uppercase tracking-wider">{new Date(booking.booking_date + 'T00:00:00').toLocaleDateString('en-GB')}</span>
+                                    <div className="min-w-0 flex-1">
+                                        <h4 className="text-base md:text-lg font-bold text-slate-900 truncate tracking-tight">{booking.meeting_room?.name || 'Meeting Room'}</h4>
+                                        <div className="flex items-center flex-wrap gap-x-3 gap-y-1 mt-1 text-slate-400 text-[11px] md:text-xs">
+                                            <div className="flex items-center gap-1.5 font-medium">
+                                                <Calendar className="w-3.5 h-3.5" />
+                                                <span>{new Date(booking.booking_date + 'T00:00:00').toLocaleDateString('en-GB')}</span>
+                                            </div>
+                                            <div className="flex items-center gap-1.5 font-medium">
+                                                <Clock className="w-3.5 h-3.5" />
+                                                <span>{formatTime(booking.start_time)} - {formatTime(booking.end_time)}</span>
                                             </div>
                                             <div className="flex items-center gap-1.5 text-slate-400">
-                                                <Clock className="w-3 h-3" />
-                                                <span className="text-[10px] font-bold uppercase tracking-wider">{formatTime(booking.start_time)} - {formatTime(booking.end_time)}</span>
-                                            </div>
-                                            <div className="flex items-center gap-1.5 text-primary/60">
-                                                <div className="w-1 h-1 rounded-full bg-current" />
-                                                <span className="text-[10px] font-black uppercase tracking-wider">Booked: {new Date(booking.created_at).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                                                <span className="text-slate-300">•</span>
+                                                <span className="font-bold text-[10px] uppercase tracking-wider">
+                                                    BOOKED: {new Date(booking.created_at).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                                                </span>
                                             </div>
                                         </div>
                                         {booking.comment && (
-                                            <div className="mt-2 text-xs text-slate-500 font-medium italic border-l-2 border-slate-200 pl-2">
+                                            <div className="mt-1.5 text-xs text-slate-500 font-semibold italic uppercase tracking-wide">
                                                 {booking.comment}
                                             </div>
                                         )}
@@ -259,9 +267,9 @@ const AdminBookingList: React.FC<AdminBookingListProps> = ({ propertyId }) => {
                                     <div className="flex flex-col md:items-end gap-1.5">
                                         <div className="flex items-center gap-2">
                                             <User className="w-3.5 h-3.5 text-slate-400" />
-                                            <span className="text-xs font-bold text-slate-700">{booking.tenant.full_name}</span>
+                                            <span className="text-xs md:text-sm font-bold text-slate-800">{booking.tenant?.full_name || booking.tenant?.email || 'User'}</span>
                                         </div>
-                                        <span className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border ${getStatusColor(booking.status)}`}>
+                                        <span className={`px-3.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border ${getStatusColor(booking.status)}`}>
                                             {booking.status}
                                         </span>
                                     </div>
@@ -270,13 +278,13 @@ const AdminBookingList: React.FC<AdminBookingListProps> = ({ propertyId }) => {
                                         <button
                                             onClick={() => handleDelete(booking.id)}
                                             disabled={deletingId === booking.id}
-                                            className="p-3 bg-rose-50 text-rose-500 rounded-xl hover:bg-rose-100 transition-colors md:opacity-0 group-hover/card:opacity-100"
+                                            className="p-2.5 bg-rose-50 text-rose-500 rounded-xl hover:bg-rose-100 transition-colors md:opacity-0 group-hover/card:opacity-100 shrink-0"
                                             title="Delete Booking"
                                         >
                                             {deletingId === booking.id ? (
-                                                <Loader2 className="w-5 h-5 animate-spin" />
+                                                <Loader2 className="w-4 h-4 animate-spin" />
                                             ) : (
-                                                <Trash2 className="w-5 h-5" />
+                                                <Trash2 className="w-4 h-4" />
                                             )}
                                         </button>
                                     )}

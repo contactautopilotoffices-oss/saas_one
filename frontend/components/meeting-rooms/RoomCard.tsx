@@ -120,6 +120,34 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, slots = [], selectedDate: _se
         });
     };
 
+    const [selectedSlotIndex, setSelectedSlotIndex] = useState<number | null>(null);
+
+    const handleBookNowClick = () => {
+        let targetIndex = selectedSlotIndex;
+        if (targetIndex === null || targetIndex < 0 || targetIndex >= slots.length) {
+            // Find first available slot
+            const availIdx = slots.findIndex(s => getSlotAvailability(s.start_time, s.end_time).type !== 'BOOKED');
+            if (availIdx !== -1) targetIndex = availIdx;
+        }
+        if (targetIndex !== null && targetIndex >= 0 && slots[targetIndex]) {
+            const slot = slots[targetIndex];
+            const avail = getSlotAvailability(slot.start_time, slot.end_time);
+            const timeDisplay = formatTimeForDisplay(slot.start_time);
+            if (avail.type === 'PARTIAL') {
+                setPartialConfirm({ room, avail, timeDisplay });
+            } else if (avail.availableTime) {
+                onBook?.(room, {
+                    time: formatTimeForDisplay(avail.availableTime.start),
+                    start: avail.availableTime.start,
+                    end: avail.availableTime.end,
+                    endLabel: formatTimeForDisplay(avail.availableTime.end)
+                });
+            }
+        } else {
+            setIsCustomTime(true);
+        }
+    };
+
     return (
         <>
             <div className="w-full h-full">
@@ -213,77 +241,102 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, slots = [], selectedDate: _se
                                         {customError && <p className="text-[10px] text-rose-500 font-bold">{customError}</p>}
                                         <button 
                                             onClick={handleCustomBook}
-                                            className="w-full py-2 bg-primary text-white rounded-lg text-xs font-bold uppercase tracking-widest hover:opacity-90 transition-opacity"
+                                            className="w-full py-2.5 bg-primary text-text-inverse rounded-xl text-xs font-black uppercase tracking-widest hover:bg-primary/90 transition-all shadow-md flex items-center justify-center gap-2"
                                         >
                                             Book Custom Time
                                         </button>
                                     </div>
                                 ) : (
-                                    <div className="w-full overflow-x-auto no-scrollbar">
-                                        <div className="flex gap-2 min-w-max pb-1">
-                                            {slots.length === 0 ? (
-                                                <div className="text-xs text-muted-foreground italic py-2">No predefined slots available. Use Custom Time.</div>
-                                            ) : slots.map((slot, i) => {
-                                                const avail = getSlotAvailability(slot.start_time, slot.end_time);
-                                                const isBooked = avail.type === 'BOOKED';
-                                                const isPartial = avail.type === 'PARTIAL';
-                                                const timeDisplay = formatTimeForDisplay(slot.start_time);
-                                                
-                                                let tooltip = '';
-                                                if (isPartial) {
-                                                    tooltip = `Partially booked. You can book from ${formatTimeForDisplay(avail.availableTime!.start)} to ${formatTimeForDisplay(avail.availableTime!.end)}`;
-                                                } else if (isBooked) {
-                                                    tooltip = 'Fully booked';
-                                                }
+                                    <div className="space-y-3">
+                                        <div className="w-full overflow-x-auto no-scrollbar">
+                                            <div className="flex gap-2 min-w-max pb-1">
+                                                {slots.length === 0 ? (
+                                                    <div className="text-xs text-muted-foreground italic py-2">No predefined slots available. Use Custom Time.</div>
+                                                ) : slots.map((slot, i) => {
+                                                    const avail = getSlotAvailability(slot.start_time, slot.end_time);
+                                                    const isBooked = avail.type === 'BOOKED';
+                                                    const isPartial = avail.type === 'PARTIAL';
+                                                    const isSelected = selectedSlotIndex === i;
+                                                    const timeDisplay = formatTimeForDisplay(slot.start_time);
+                                                    
+                                                    let tooltip = '';
+                                                    if (isPartial) {
+                                                        tooltip = `Partially booked. You can book from ${formatTimeForDisplay(avail.availableTime!.start)} to ${formatTimeForDisplay(avail.availableTime!.end)}`;
+                                                    } else if (isBooked) {
+                                                        tooltip = 'Fully booked';
+                                                    }
 
-                                                return (
-                                                    <button
-                                                        key={i}
-                                                        disabled={isBooked}
-                                                        title={tooltip}
-                                                        onClick={() => {
-                                                            if (!isBooked && avail.availableTime) {
-                                                                if (isPartial) {
-                                                                    setPartialConfirm({ room, avail, timeDisplay });
-                                                                } else {
-                                                                    onBook?.(room, {
-                                                                        time: formatTimeForDisplay(avail.availableTime.start),
-                                                                        start: avail.availableTime.start,
-                                                                        end: avail.availableTime.end,
-                                                                        endLabel: formatTimeForDisplay(avail.availableTime.end)
-                                                                    });
+                                                    return (
+                                                        <button
+                                                            key={i}
+                                                            disabled={isBooked}
+                                                            title={tooltip}
+                                                            onClick={() => {
+                                                                if (!isBooked && avail.availableTime) {
+                                                                    setSelectedSlotIndex(i);
+                                                                    if (isPartial) {
+                                                                        setPartialConfirm({ room, avail, timeDisplay });
+                                                                    } else {
+                                                                        onBook?.(room, {
+                                                                            time: formatTimeForDisplay(avail.availableTime.start),
+                                                                            start: avail.availableTime.start,
+                                                                            end: avail.availableTime.end,
+                                                                            endLabel: formatTimeForDisplay(avail.availableTime.end)
+                                                                        });
+                                                                    }
                                                                 }
-                                                            }
-                                                        }}
-                                                        className={`group shrink-0 relative overflow-hidden rounded-xl border-2 transition-all ${isBooked ? 'border-slate-200 cursor-not-allowed opacity-70' : isPartial ? 'border-amber-200 hover:border-amber-400 shadow-sm' : 'border-emerald-100 hover:border-emerald-400 shadow-sm'}`}
-                                                    >
-                                                        {/* Background layers */}
-                                                        <div className="absolute inset-0 flex w-full h-full z-0 pointer-events-none">
-                                                            {isBooked ? (
-                                                                <div className="w-full h-full bg-slate-100" />
-                                                            ) : isPartial ? (
-                                                                <>
-                                                                    <div className={`w-1/2 h-full ${avail.position === 'right' ? 'bg-slate-200 [background-image:repeating-linear-gradient(45deg,transparent,transparent_2px,rgba(0,0,0,0.04)_2px,rgba(0,0,0,0.04)_4px)] border-r border-slate-300/50' : 'bg-emerald-50 group-hover:bg-emerald-100 border-r border-emerald-200/50 transition-colors'}`} />
-                                                                    <div className={`w-1/2 h-full ${avail.position === 'left' ? 'bg-slate-200 [background-image:repeating-linear-gradient(45deg,transparent,transparent_2px,rgba(0,0,0,0.04)_2px,rgba(0,0,0,0.04)_4px)]' : 'bg-emerald-50 group-hover:bg-emerald-100 transition-colors'}`} />
-                                                                </>
-                                                            ) : (
-                                                                <div className="w-full h-full bg-emerald-50 group-hover:bg-emerald-100 transition-colors" />
-                                                            )}
-                                                        </div>
+                                                            }}
+                                                            className={`group shrink-0 relative overflow-hidden rounded-xl border-2 transition-all ${
+                                                                isBooked 
+                                                                    ? 'border-slate-200 cursor-not-allowed opacity-70' 
+                                                                    : isSelected
+                                                                        ? 'border-primary ring-2 ring-primary/20 shadow-md scale-105'
+                                                                        : isPartial 
+                                                                            ? 'border-amber-200 hover:border-amber-400 shadow-sm' 
+                                                                            : 'border-emerald-100 hover:border-emerald-400 shadow-sm'
+                                                            }`}
+                                                        >
+                                                            {/* Background layers */}
+                                                            <div className="absolute inset-0 flex w-full h-full z-0 pointer-events-none">
+                                                                {isBooked ? (
+                                                                    <div className="w-full h-full bg-slate-100" />
+                                                                ) : isPartial ? (
+                                                                    <>
+                                                                        <div className={`w-1/2 h-full ${avail.position === 'right' ? 'bg-slate-200 [background-image:repeating-linear-gradient(45deg,transparent,transparent_2px,rgba(0,0,0,0.04)_2px,rgba(0,0,0,0.04)_4px)] border-r border-slate-300/50' : 'bg-emerald-50 group-hover:bg-emerald-100 border-r border-emerald-200/50 transition-colors'}`} />
+                                                                        <div className={`w-1/2 h-full ${avail.position === 'left' ? 'bg-slate-200 [background-image:repeating-linear-gradient(45deg,transparent,transparent_2px,rgba(0,0,0,0.04)_2px,rgba(0,0,0,0.04)_4px)]' : 'bg-emerald-50 group-hover:bg-emerald-100 transition-colors'}`} />
+                                                                    </>
+                                                                ) : (
+                                                                    <div className={`w-full h-full ${isSelected ? 'bg-primary/10' : 'bg-emerald-50 group-hover:bg-emerald-100'} transition-colors`} />
+                                                                )}
+                                                            </div>
 
-                                                        {/* Content */}
-                                                        <div className={`relative z-10 py-2.5 px-4 flex flex-col items-center justify-center gap-0.5 ${isBooked ? 'text-slate-400' : 'text-slate-700'}`}>
-                                                            <span className={`text-[13px] font-black leading-none`}>
-                                                                {timeDisplay.split(' ')[0]}
-                                                            </span>
-                                                            <span className={`text-[9px] font-black tracking-widest uppercase ${isBooked ? 'text-slate-400' : isPartial ? 'text-amber-600' : 'text-emerald-600'}`}>
-                                                                {timeDisplay.split(' ')[1]}
-                                                            </span>
-                                                        </div>
-                                                    </button>
-                                                );
-                                            })}
+                                                            {/* Content */}
+                                                            <div className={`relative z-10 py-2.5 px-4 flex flex-col items-center justify-center gap-0.5 ${isBooked ? 'text-slate-400' : isSelected ? 'text-primary font-black' : 'text-slate-700'}`}>
+                                                                <span className={`text-[13px] font-black leading-none`}>
+                                                                    {timeDisplay.split(' ')[0]}
+                                                                </span>
+                                                                <span className={`text-[9px] font-black tracking-widest uppercase ${isBooked ? 'text-slate-400' : isSelected ? 'text-primary' : isPartial ? 'text-amber-600' : 'text-emerald-600'}`}>
+                                                                    {timeDisplay.split(' ')[1]}
+                                                                </span>
+                                                            </div>
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
                                         </div>
+
+                                        {/* Prominent Book Now Button */}
+                                        <button
+                                            onClick={handleBookNowClick}
+                                            className="w-full py-2.5 px-4 bg-primary hover:bg-primary/90 text-text-inverse rounded-xl text-xs font-black uppercase tracking-widest transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2 active:scale-[0.99]"
+                                        >
+                                            <span>Book Now</span>
+                                            {selectedSlotIndex !== null && slots[selectedSlotIndex] && (
+                                                <span className="text-[10px] opacity-90 font-medium">
+                                                    ({formatTimeForDisplay(slots[selectedSlotIndex].start_time)})
+                                                </span>
+                                            )}
+                                        </button>
                                     </div>
                                 )}
                             </div>

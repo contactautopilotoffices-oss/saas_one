@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Calendar, Loader2, X, CheckCircle2, ClipboardList, Clock, Trash2, Zap, AlertTriangle } from 'lucide-react';
 import RoomCard from './RoomCard';
+import AdminBookingList from './AdminBookingList';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useDataCache } from '@/frontend/context/DataCacheContext';
 
@@ -71,16 +72,23 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
     const [refillRequestSent, setRefillRequestSent] = useState(false);
     const [refillError, setRefillError] = useState('');
 
+    // Main View Tab ('book' | 'bookings')
+    const [activeViewTab, setActiveViewTab] = useState<'book' | 'bookings'>('book');
+    const [bookingFilter, setBookingFilter] = useState<'all' | 'upcoming' | 'past' | 'mine'>('all');
+    const [bookingSearchQuery, setBookingSearchQuery] = useState('');
+
     // My refill request history
     const [myRequests, setMyRequests] = useState<any[]>([]);
     const [isLoadingRequests, setIsLoadingRequests] = useState(false);
     const [historyTab, setHistoryTab] = useState<'bookings' | 'requests'>('bookings');
 
     const fetchMyBookings = useCallback(async () => {
-        if (!user?.id) return;
+        if (!propertyId) return;
         setIsLoadingHistory(true);
         try {
-            const res = await fetch(`/api/meeting-room-bookings?tenantId=${user.id}&propertyId=${propertyId}`);
+            // Fetch ALL room bookings for the property so security and staff see everyone's bookings
+            const url = `/api/meeting-room-bookings?propertyId=${propertyId}`;
+            const res = await fetch(url);
             const data = await res.json();
             if (res.ok) {
                 const fetched = data.bookings || [];
@@ -92,7 +100,7 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
         } finally {
             setIsLoadingHistory(false);
         }
-    }, [user?.id, propertyId]);
+    }, [propertyId]);
 
     const handleDeleteBooking = async (bookingId: string) => {
         if (!confirm('Cancel this booking?')) return;
@@ -114,8 +122,8 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
     };
 
     useEffect(() => {
-        if (showHistory) fetchMyBookings();
-    }, [showHistory, fetchMyBookings]);
+        if (showHistory || activeViewTab === 'bookings') fetchMyBookings();
+    }, [showHistory, activeViewTab, fetchMyBookings]);
 
     const fetchCredit = useCallback(async () => {
         if (!user?.id) return;
@@ -259,6 +267,7 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
                 invalidateCache('rooms-avail-');
                 fetchRooms();
                 fetchCredit();
+                fetchMyBookings();
                 setTimeout(() => { setPendingBooking(null); setBookingSuccess(false); }, 1800);
             } else {
                 setBookingError(data.error || 'Failed to create booking');
@@ -273,6 +282,61 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
     return (
         <>
             <div className="flex flex-col gap-4 md:gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-12 w-full max-w-full overflow-hidden">
+                {/* View Switcher Top Bar */}
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-slate-50 p-2.5 rounded-2xl border border-slate-200/80">
+                    <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-slate-200 shadow-sm">
+                        <button
+                            onClick={() => setActiveViewTab('book')}
+                            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${
+                                activeViewTab === 'book'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                            }`}
+                        >
+                            <Calendar className="w-3.5 h-3.5" />
+                            <span>Book Room</span>
+                        </button>
+                        <button
+                            onClick={() => { setActiveViewTab('bookings'); fetchMyBookings(); }}
+                            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${
+                                activeViewTab === 'bookings'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                            }`}
+                        >
+                            <ClipboardList className="w-3.5 h-3.5" />
+                            <span>Bookings</span>
+                            {myBookings.length > 0 && (
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                                    activeViewTab === 'bookings' ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-700'
+                                }`}>
+                                    {myBookings.length}
+                                </span>
+                            )}
+                        </button>
+                    </div>
+
+                    <div className="flex items-center gap-2 justify-end">
+                        {activeViewTab === 'book' ? (
+                            <button
+                                onClick={() => { setActiveViewTab('bookings'); fetchMyBookings(); }}
+                                className="flex items-center gap-2 px-3.5 py-2 bg-white border border-slate-200 hover:border-slate-300 text-slate-700 rounded-xl text-xs font-bold transition-all shadow-sm"
+                            >
+                                <ClipboardList className="w-4 h-4 text-primary" />
+                                <span>My Bookings ({myBookings.length})</span>
+                            </button>
+                        ) : (
+                            <button
+                                onClick={() => setActiveViewTab('book')}
+                                className="flex items-center gap-2 px-3.5 py-2 bg-primary text-text-inverse rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-sm"
+                            >
+                                <Calendar className="w-4 h-4" />
+                                <span>+ Book New Room</span>
+                            </button>
+                        )}
+                    </div>
+                </div>
+
                 {/* Local Header */}
                 {!hideHeader && (
                     <div className="flex items-start justify-between md:px-0">
@@ -280,13 +344,6 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
                             <h2 className="text-2xl md:text-3xl font-display font-semibold text-foreground tracking-tight">Meeting Rooms</h2>
                             <p className="text-sm md:text-base text-muted-foreground font-medium">Book your workspace</p>
                         </div>
-                        <button
-                            onClick={() => setShowHistory(true)}
-                            className="flex items-center gap-2 px-4 py-2.5 bg-white border-2 border-primary/20 text-primary rounded-xl text-xs font-black uppercase tracking-widest hover:bg-primary/5 transition-all shadow-sm"
-                        >
-                            <ClipboardList className="w-4 h-4" />
-                            <span className="hidden sm:inline">My Bookings</span>
-                        </button>
                     </div>
                 )}
 
@@ -322,103 +379,109 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
                     </div>
                 )}
 
-                {/* Selection Controls (Standalone Pattern) */}
-                <div className="space-y-4 md:space-y-6 max-w-full overflow-hidden">
-                    {/* Wheel Date Picker */}
-                    <div className="relative h-[120px] md:h-[144px] w-full overflow-hidden border border-slate-100 bg-white rounded-xl md:rounded-[2rem] shadow-sm">
-                        {/* Scrollable wheel */}
-                        <div
-                            ref={wheelRef}
-                            className="h-full overflow-y-auto snap-y snap-mandatory no-scrollbar"
-                        >
-                            <div className="h-[36px] md:h-[48px] shrink-0" />
-                            {days.map((d, i) => {
-                                const isSelected = d.toDateString() === selectedDate.toDateString();
-                                return (
-                                    <div
-                                        key={i}
-                                        onClick={() => {
-                                            setSelectedDate(d);
-                                            if (wheelRef.current) wheelRef.current.scrollTo({ top: (i + 1) * (window.innerWidth < 768 ? 36 : 48), behavior: 'smooth' });
-                                        }}
-                                        className={`h-[36px] md:h-[48px] shrink-0 flex items-center justify-center snap-center cursor-pointer transition-all select-none ${isSelected
-                                            ? 'text-primary font-black text-xs md:text-base scale-105'
-                                            : 'text-slate-400 font-medium text-[10px] md:text-sm'
-                                            }`}
-                                    >
-                                        <span className="mr-2 uppercase text-[7px] md:text-[10px] font-bold tracking-widest opacity-60">
-                                            {d.toLocaleDateString('en-US', { weekday: 'short' })}
-                                        </span>
-                                        <span className="text-sm md:text-lg font-black">{d.getDate()}</span>
-                                        <span className="ml-2 uppercase text-[7px] md:text-[10px] font-bold tracking-widest opacity-60">
-                                            {d.toLocaleDateString('en-US', { month: 'short' })}
-                                        </span>
-                                    </div>
-                                );
-                            })}
-                            <div className="h-[36px] md:h-[48px] shrink-0" />
-                        </div>
-
-                        {/* Fades & Highlight */}
-                        <div className="pointer-events-none absolute top-0 left-0 right-0 h-6 bg-gradient-to-b from-white to-transparent z-10" />
-                        <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-6 bg-gradient-to-t from-white to-transparent z-10" />
-                        <div className="pointer-events-none absolute top-1/2 -translate-y-1/2 left-0 right-0 h-[36px] md:h-[48px] border-y border-primary/5 bg-primary/5" />
-                    </div>
-
-                    {/* Filter Chips */}
-                    <div className="w-full overflow-x-auto no-scrollbar py-1">
-                        <div className="flex gap-2 min-w-max">
-                            {[
-                                { label: 'Any Size', value: 0 },
-                                { label: '2-4 People', value: 2 },
-                                { label: '6-10 People', value: 6 },
-                                { label: '12+ People', value: 12 }
-                            ].map((cap) => (
-                                <button
-                                    key={cap.value}
-                                    onClick={() => setSelectedCapacity(cap.value)}
-                                    className={`px-3.5 py-2.5 bg-white border rounded-xl shadow-sm text-[9px] md:text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap shrink-0 ${selectedCapacity === cap.value
-                                        ? 'bg-primary text-primary-foreground border-primary shadow-md'
-                                        : 'border-slate-100 text-slate-400 hover:bg-slate-50'
-                                        }`}
+                {activeViewTab === 'book' ? (
+                    <>
+                        {/* Selection Controls (Standalone Pattern) */}
+                        <div className="space-y-4 md:space-y-6 max-w-full overflow-hidden">
+                            {/* Wheel Date Picker */}
+                            <div className="relative h-[120px] md:h-[144px] w-full overflow-hidden border border-slate-100 bg-white rounded-xl md:rounded-[2rem] shadow-sm">
+                                {/* Scrollable wheel */}
+                                <div
+                                    ref={wheelRef}
+                                    className="h-full overflow-y-auto snap-y snap-mandatory no-scrollbar"
                                 >
-                                    {cap.label}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-                </div>
+                                    <div className="h-[36px] md:h-[48px] shrink-0" />
+                                    {days.map((d, i) => {
+                                        const isSelected = d.toDateString() === selectedDate.toDateString();
+                                        return (
+                                            <div
+                                                key={i}
+                                                onClick={() => {
+                                                    setSelectedDate(d);
+                                                    if (wheelRef.current) wheelRef.current.scrollTo({ top: (i + 1) * (window.innerWidth < 768 ? 36 : 48), behavior: 'smooth' });
+                                                }}
+                                                className={`h-[36px] md:h-[48px] shrink-0 flex items-center justify-center snap-center cursor-pointer transition-all select-none ${isSelected
+                                                    ? 'text-primary font-black text-xs md:text-base scale-105'
+                                                    : 'text-slate-400 font-medium text-[10px] md:text-sm'
+                                                    }`}
+                                            >
+                                                <span className="mr-2 uppercase text-[7px] md:text-[10px] font-bold tracking-widest opacity-60">
+                                                    {d.toLocaleDateString('en-US', { weekday: 'short' })}
+                                                </span>
+                                                <span className="text-sm md:text-lg font-black">{d.getDate()}</span>
+                                                <span className="ml-2 uppercase text-[7px] md:text-[10px] font-bold tracking-widest opacity-60">
+                                                    {d.toLocaleDateString('en-US', { month: 'short' })}
+                                                </span>
+                                            </div>
+                                        );
+                                    })}
+                                    <div className="h-[36px] md:h-[48px] shrink-0" />
+                                </div>
 
-
-                {/* Results */}
-                <div className="py-1 md:py-4">
-                    {isSearching ? (
-                        <div className="flex flex-col items-center justify-center py-20">
-                            <Loader2 className="w-10 h-10 text-primary animate-spin mb-4" />
-                            <p className="text-muted-foreground font-bold uppercase tracking-widest text-xs">Finding available rooms...</p>
-                        </div>
-                    ) : rooms.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center py-20 text-center">
-                            <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mb-4">
-                                <Calendar className="w-6 h-6 text-muted-foreground" />
+                                {/* Fades & Highlight */}
+                                <div className="pointer-events-none absolute top-0 left-0 right-0 h-6 bg-gradient-to-b from-white to-transparent z-10" />
+                                <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-6 bg-gradient-to-t from-white to-transparent z-10" />
+                                <div className="pointer-events-none absolute top-1/2 -translate-y-1/2 left-0 right-0 h-[36px] md:h-[48px] border-y border-primary/5 bg-primary/5" />
                             </div>
-                            <h3 className="text-lg font-bold text-foreground mb-1">No rooms found</h3>
-                            <p className="text-muted-foreground text-sm max-w-xs">We couldn't find any rooms matching your current filters and date.</p>
+
+                            {/* Filter Chips */}
+                            <div className="w-full overflow-x-auto no-scrollbar py-1">
+                                <div className="flex gap-2 min-w-max">
+                                    {[
+                                        { label: 'Any Size', value: 0 },
+                                        { label: '2-4 People', value: 2 },
+                                        { label: '6-10 People', value: 6 },
+                                        { label: '12+ People', value: 12 }
+                                    ].map((cap) => (
+                                        <button
+                                            key={cap.value}
+                                            onClick={() => setSelectedCapacity(cap.value)}
+                                            className={`px-3.5 py-2.5 bg-white border rounded-xl shadow-sm text-[9px] md:text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap shrink-0 ${selectedCapacity === cap.value
+                                                ? 'bg-primary text-primary-foreground border-primary shadow-md'
+                                                : 'border-slate-100 text-slate-400 hover:bg-slate-50'
+                                                }`}
+                                        >
+                                            {cap.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
                         </div>
-                    ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-8 w-full">
-                            {rooms.map(room => (
-                                <RoomCard
-                                    key={room.id}
-                                    room={room}
-                                    slots={slots}
-                                    selectedDate={formatLocalDate(selectedDate)}
-                                    onBook={handleBook}
-                                />
-                            ))}
+
+                        {/* Results */}
+                        <div className="py-1 md:py-4">
+                            {isSearching ? (
+                                <div className="flex flex-col items-center justify-center py-20">
+                                    <Loader2 className="w-10 h-10 text-primary animate-spin mb-4" />
+                                    <p className="text-muted-foreground font-bold uppercase tracking-widest text-xs">Finding available rooms...</p>
+                                </div>
+                            ) : rooms.length === 0 ? (
+                                <div className="flex flex-col items-center justify-center py-20 text-center">
+                                    <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mb-4">
+                                        <Calendar className="w-6 h-6 text-muted-foreground" />
+                                    </div>
+                                    <h3 className="text-lg font-bold text-foreground mb-1">No rooms found</h3>
+                                    <p className="text-muted-foreground text-sm max-w-xs">We couldn't find any rooms matching your current filters and date.</p>
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-8 w-full">
+                                    {rooms.map(room => (
+                                        <RoomCard
+                                            key={room.id}
+                                            room={room}
+                                            slots={slots}
+                                            selectedDate={formatLocalDate(selectedDate)}
+                                            onBook={handleBook}
+                                        />
+                                    ))}
+                                </div>
+                            )}
                         </div>
-                    )}
-                </div>
+                    </>
+                ) : (
+                    /* Bookings View */
+                    <AdminBookingList propertyId={propertyId} />
+                )}
             </div>
 
             {/* Booking Confirmation Modal */}

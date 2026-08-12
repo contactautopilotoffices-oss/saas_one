@@ -14,6 +14,7 @@ import GeneratorConfigModal from './GeneratorConfigModal';
 import DieselRegisterView from './DieselRegisterView';
 import DGTariffModal from './DGTariffModal';
 import DieselImportModal from './DieselImportModal';
+import DieselSpreadsheetLogger from './DieselSpreadsheetLogger';
 import { Toast } from '../ui/Toast';
 
 interface Generator {
@@ -54,15 +55,17 @@ interface DieselReading {
 interface DieselStaffDashboardProps {
     propertyId?: string;
     isDark?: boolean;
+    initialViewMode?: 'cards' | 'spreadsheet';
 }
 
-const DieselStaffDashboard: React.FC<DieselStaffDashboardProps> = ({ propertyId: propIdFromProps, isDark = false }) => {
+const DieselStaffDashboard: React.FC<DieselStaffDashboardProps> = ({ propertyId: propIdFromProps, isDark = false, initialViewMode = 'cards' }) => {
     const params = useParams();
     const router = useRouter();
     const propertyId = propIdFromProps || (params?.propertyId as string);
     const supabase = React.useMemo(() => createClient(), []);
 
     // State
+    const [viewMode, setViewMode] = useState<'cards' | 'spreadsheet'>(initialViewMode);
     const [property, setProperty] = useState<Property | null>(null);
     const [generators, setGenerators] = useState<Generator[]>([]);
     const [readings, setReadings] = useState<Record<string, DieselReading>>({});
@@ -86,9 +89,9 @@ const DieselStaffDashboard: React.FC<DieselStaffDashboardProps> = ({ propertyId:
 
 
     // Fetch data
-    const fetchData = useCallback(async () => {
+    const fetchData = useCallback(async (isInitial = false) => {
         if (!propertyId) return;
-        setIsLoading(true);
+        if (isInitial) setIsLoading(true);
         setError(null);
 
         try {
@@ -199,7 +202,7 @@ const DieselStaffDashboard: React.FC<DieselStaffDashboardProps> = ({ propertyId:
     }, [propertyId, supabase]);
 
     useEffect(() => {
-        fetchData();
+        fetchData(true);
     }, [fetchData]);
 
     // Handle reading changes
@@ -360,37 +363,55 @@ const DieselStaffDashboard: React.FC<DieselStaffDashboardProps> = ({ propertyId:
 
 
             {/* Main Content */}
-            <main className="max-w-7xl mx-auto px-2 py-3 pb-6">
-                {/* Action Buttons */}
-                <div className="mb-6 flex items-center gap-1.5">
-                    <button
-                        onClick={() => setShowImportModal(true)}
-                        className={`flex items-center justify-center gap-1.5 px-2.5 sm:px-4 py-2 text-xs sm:text-sm font-bold ${isDark ? 'bg-emerald-900/20 text-emerald-400 border-emerald-800/50 hover:bg-emerald-900/30' : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'} rounded-lg border transition-all hover:scale-105 active:scale-95`}
-                    >
-                        <Upload className="w-4 h-4 shrink-0" />
-                        <span className="hidden sm:inline whitespace-nowrap">Import CSV</span>
-                    </button>
-                    <button
-                        onClick={() => setShowTariffModal(true)}
-                        className={`flex items-center justify-center gap-1.5 px-2.5 sm:px-4 py-2 text-xs sm:text-sm font-bold ${isDark ? 'bg-[#21262d] text-white border-[#30363d] hover:bg-[#30363d]' : 'bg-white text-emerald-700 border-emerald-200 hover:bg-emerald-50'} rounded-lg border transition-all hover:scale-105 active:scale-95`}
-                    >
-                        <Coins className="w-4 h-4 text-emerald-500 shrink-0" />
-                        <span className="hidden sm:inline whitespace-nowrap">Fuel Costs</span>
-                    </button>
-                    <button
-                        onClick={() => setShowRegisterView(true)}
-                        className={`flex items-center justify-center gap-1.5 px-2.5 sm:px-4 py-2 text-xs sm:text-sm font-bold ${isDark ? 'bg-primary/10 text-primary border-primary/30 hover:bg-primary/20' : 'bg-primary/5 text-primary border-primary/20 hover:bg-primary/10'} rounded-lg border transition-all hover:scale-105 active:scale-95`}
-                    >
-                        <History className="w-4 h-4 shrink-0" />
-                        <span className="hidden sm:inline whitespace-nowrap">View Register</span>
-                    </button>
-                    <button
-                        onClick={() => setShowConfigModal(true)}
-                        className={`flex items-center justify-center gap-1.5 px-2.5 sm:px-4 py-2 text-xs sm:text-sm font-bold ${isDark ? 'bg-[#21262d] text-white border-[#30363d] hover:bg-[#30363d]' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'} rounded-lg border transition-all hover:scale-105 active:scale-95`}
-                    >
-                        <Plus className="w-4 h-4 shrink-0" />
-                        <span className="hidden sm:inline whitespace-nowrap">Add Generator</span>
-                    </button>
+            <main className={`flex-1 w-full transition-all duration-300 ${viewMode === 'spreadsheet' ? 'max-w-full px-4 sm:px-6 lg:px-8 pt-6 pb-6' : 'max-w-7xl mx-auto px-2 py-3 pb-6'}`}>
+                {/* Action Buttons & View Mode Switcher */}
+                <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-1.5">
+                        <button
+                            onClick={() => setShowImportModal(true)}
+                            className={`flex items-center justify-center gap-1.5 px-2.5 sm:px-4 py-2 text-xs sm:text-sm font-bold ${isDark ? 'bg-emerald-900/20 text-emerald-400 border-emerald-800/50 hover:bg-emerald-900/30' : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'} rounded-lg border transition-all hover:scale-105 active:scale-95`}
+                        >
+                            <Upload className="w-4 h-4 shrink-0" />
+                            <span className="hidden sm:inline whitespace-nowrap">Import CSV</span>
+                        </button>
+                        <button
+                            onClick={() => setShowTariffModal(true)}
+                            className={`flex items-center justify-center gap-1.5 px-2.5 sm:px-4 py-2 text-xs sm:text-sm font-bold ${isDark ? 'bg-[#21262d] text-white border-[#30363d] hover:bg-[#30363d]' : 'bg-white text-emerald-700 border-emerald-200 hover:bg-emerald-50'} rounded-lg border transition-all hover:scale-105 active:scale-95`}
+                        >
+                            <Coins className="w-4 h-4 text-emerald-500 shrink-0" />
+                            <span className="hidden sm:inline whitespace-nowrap">Fuel Costs</span>
+                        </button>
+                        <button
+                            onClick={() => setShowRegisterView(true)}
+                            className={`flex items-center justify-center gap-1.5 px-2.5 sm:px-4 py-2 text-xs sm:text-sm font-bold ${isDark ? 'bg-primary/10 text-primary border-primary/30 hover:bg-primary/20' : 'bg-primary/5 text-primary border-primary/20 hover:bg-primary/10'} rounded-lg border transition-all hover:scale-105 active:scale-95`}
+                        >
+                            <History className="w-4 h-4 shrink-0" />
+                            <span className="hidden sm:inline whitespace-nowrap">View Register</span>
+                        </button>
+                        <button
+                            onClick={() => setShowConfigModal(true)}
+                            className={`flex items-center justify-center gap-1.5 px-2.5 sm:px-4 py-2 text-xs sm:text-sm font-bold ${isDark ? 'bg-[#21262d] text-white border-[#30363d] hover:bg-[#30363d]' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'} rounded-lg border transition-all hover:scale-105 active:scale-95`}
+                        >
+                            <Plus className="w-4 h-4 shrink-0" />
+                            <span className="hidden sm:inline whitespace-nowrap">Add Generator</span>
+                        </button>
+                    </div>
+
+                    {/* View Mode Toggle (Cards vs Spreadsheet) */}
+                    <div className={`flex items-center justify-center bg-slate-100 dark:bg-[#161b22] p-1 rounded-lg border w-full sm:w-auto ${isDark ? 'border-[#30363d]' : 'border-slate-200'}`}>
+                        <button
+                            onClick={() => setViewMode('cards')}
+                            className={`flex-1 sm:flex-none px-3 py-2 sm:py-1.5 text-xs font-bold rounded-md transition-all ${viewMode === 'cards' ? 'bg-white dark:bg-[#30363d] shadow-sm text-primary' : 'text-slate-500 hover:text-slate-700'}`}
+                        >
+                            Cards
+                        </button>
+                        <button
+                            onClick={() => setViewMode('spreadsheet')}
+                            className={`flex-1 sm:flex-none px-3 py-2 sm:py-1.5 text-xs font-bold rounded-md transition-all ${viewMode === 'spreadsheet' ? 'bg-white dark:bg-[#30363d] shadow-sm text-primary' : 'text-slate-500 hover:text-slate-700'}`}
+                        >
+                            Spreadsheet
+                        </button>
+                    </div>
                 </div>
 
                 <Toast
@@ -400,29 +421,41 @@ const DieselStaffDashboard: React.FC<DieselStaffDashboardProps> = ({ propertyId:
                     onClose={() => setToast(prev => ({ ...prev, visible: false }))}
                 />
 
-                {/* Grid */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                    {generators.map(gen => (
-                        <DieselLoggerCard
-                            key={gen.id}
-                            generator={gen}
-                            previousClosing={previousClosings[gen.id]}
-                            averageConsumption={averages[gen.id]}
-                            activeTariff={activeTariffs[gen.id]}
-                            onReadingChange={handleReadingChange}
-                            onSave={handleSaveSingleReading}
-                            onDelete={handleDeleteGenerator}
-                            isSubmitting={isSubmitting}
+                {viewMode === 'spreadsheet' ? (
+                    <div className="mt-4">
+                        <DieselSpreadsheetLogger
+                            propertyId={propertyId}
                             isDark={isDark}
+                            generators={generators}
+                            activeTariffs={activeTariffs}
+                            onSaveSuccess={() => fetchData(false)}
                         />
-                    ))}
-                    {generators.length === 0 && (
-                        <div className="col-span-full py-12 text-center border-2 border-dashed border-slate-200 rounded-xl">
-                            <p className="text-slate-400 font-bold">No generators found.</p>
-                            <button onClick={() => setShowConfigModal(true)} className="mt-4 text-primary font-bold hover:underline">Configure Generators</button>
-                        </div>
-                    )}
-                </div>
+                    </div>
+                ) : (
+                    /* Cards Grid */
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                        {generators.map(gen => (
+                            <DieselLoggerCard
+                                key={gen.id}
+                                generator={gen}
+                                previousClosing={previousClosings[gen.id]}
+                                averageConsumption={averages[gen.id]}
+                                activeTariff={activeTariffs[gen.id]}
+                                onReadingChange={handleReadingChange}
+                                onSave={handleSaveSingleReading}
+                                onDelete={handleDeleteGenerator}
+                                isSubmitting={isSubmitting}
+                                isDark={isDark}
+                            />
+                        ))}
+                        {generators.length === 0 && (
+                            <div className="col-span-full py-12 text-center border-2 border-dashed border-slate-200 rounded-xl">
+                                <p className="text-slate-400 font-bold">No generators found.</p>
+                                <button onClick={() => setShowConfigModal(true)} className="mt-4 text-primary font-bold hover:underline">Configure Generators</button>
+                            </div>
+                        )}
+                    </div>
+                )}
             </main>
 
 

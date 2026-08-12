@@ -3,8 +3,8 @@
 import { useState, useEffect } from 'react';
 import {
     LayoutDashboard, Ticket, Settings, LogOut, Plus,
-    Clock, UsersRound, UserCircle, Shield, Fuel, LogIn, Menu, X, AlertCircle, ClipboardCheck,
-  MessageSquarePlus
+    Clock, UsersRound, UserCircle, Shield, Fuel, LogIn, Menu, X, AlertCircle, ClipboardCheck,
+    MessageSquarePlus, CalendarDays
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
@@ -19,11 +19,12 @@ import TenantTicketingDashboard from '@/frontend/components/tickets/TenantTicket
 import TicketsView from '@/frontend/components/dashboard/TicketsView';
 import SettingsView from './SettingsView';
 import SOPDashboard from '@/frontend/components/sop/SOPDashboard';
+import TenantRoomBooking from '@/frontend/components/meeting-rooms/TenantRoomBooking';
 import { useDataCache } from '@/frontend/context/DataCacheContext';
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
 
 // Types
-type Tab = 'overview' | 'requests' | 'checkinout' | 'visitors' | 'diesel' | 'checklist' | 'settings' | 'profile';
+type Tab = 'overview' | 'requests' | 'checkinout' | 'visitors' | 'diesel' | 'checklist' | 'meeting_rooms' | 'settings' | 'profile';
 
 interface Property {
     id: string;
@@ -73,7 +74,7 @@ const SecurityDashboard = () => {
     // Restore tab from URL and handle back navigation
     useEffect(() => {
         const tab = searchParams.get('tab');
-        if (tab && ['overview', 'requests', 'checkinout', 'visitors', 'diesel', 'checklist', 'settings', 'profile'].includes(tab)) {
+        if (tab && ['overview', 'requests', 'checkinout', 'visitors', 'diesel', 'checklist', 'meeting_rooms', 'settings', 'profile'].includes(tab)) {
             setActiveTab(tab as Tab);
         }
     }, [searchParams]);
@@ -259,18 +260,7 @@ const SecurityDashboard = () => {
         <div className="p-10 text-center">
             <h2 className="text-xl font-bold text-red-600">Error Loading Dashboard</h2>
             <p className="text-muted-foreground mt-2">{errorMsg || 'Property not found.'}</p>
-            
-                            <button
-                                onClick={() => setShowFeedbackModal(true)}
-                                className="w-72 bg-white border-r border-slate-300 flex flex-col inset-y-0 z-50 transition-all duration-300 fixed left-0 text-text-secondary hover:bg-muted hover:text-text-primary overflow-hidden group"
-                            >
-                                <MessageSquarePlus className="w-4 h-4 group-hover:scale-110 transition-transform" />
-                                Feedback / Bug
-                            </button>
-
-            <FeedbackModal isOpen={showFeedbackModal} onClose={() => setShowFeedbackModal(false)} />
-
-<button onClick={() => router.back()} className="mt-4 text-foreground font-bold hover:underline">Go Back</button>
+            <button onClick={() => router.back()} className="mt-4 text-foreground font-bold hover:underline">Go Back</button>
         </div>
     );
 
@@ -432,6 +422,16 @@ const SecurityDashboard = () => {
                                 <ClipboardCheck className="w-4 h-4" />
                                 Checklists
                             </button>
+                            <button
+                                onClick={() => handleTabChange('meeting_rooms')}
+                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'meeting_rooms'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                    }`}
+                            >
+                                <CalendarDays className="w-4 h-4" />
+                                Meeting Rooms
+                            </button>
                         </div>
                     </div>
 
@@ -507,7 +507,7 @@ const SecurityDashboard = () => {
                             <Menu className="w-6 h-6" />
                         </button>
                         <div>
-                            <h1 className="text-xl md:text-2xl font-black text-text-primary tracking-tight capitalize">{activeTab}</h1>
+                            <h1 className="text-xl md:text-2xl font-black text-text-primary tracking-tight capitalize">{activeTab === 'meeting_rooms' ? 'Meeting Rooms' : activeTab}</h1>
                             {activeTab === 'overview' && (
                                 <p className="hidden sm:block text-text-tertiary text-[10px] font-black uppercase tracking-widest mt-0.5">
                                     Security Monitoring Hub
@@ -567,6 +567,11 @@ const SecurityDashboard = () => {
                             {activeTab === 'diesel' && <DieselStaffDashboard />}
                             {activeTab === 'checklist' && property && (
                                 <SOPDashboard propertyId={property.id} />
+                            )}
+                            {activeTab === 'meeting_rooms' && property && user && (
+                                <div className="bg-white rounded-3xl border border-border p-6 shadow-sm">
+                                    <TenantRoomBooking propertyId={property.id} user={user} hideHeader={true} />
+                                </div>
                             )}
                             {activeTab === 'settings' && <SettingsView />}
                             {activeTab === 'profile' && (
