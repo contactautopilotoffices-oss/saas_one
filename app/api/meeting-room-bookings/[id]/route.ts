@@ -149,6 +149,11 @@ async function cancelBooking(bookingId: string, user: any) {
         console.error('Activity log insertion failed:', err);
     }
 
+    // 7. Trigger cancellation notifications asynchronously
+    NotificationService.afterRoomCancelled(bookingId).catch(err => {
+        console.error('[Booking Cancel API] Notification trigger error:', err);
+    });
+
     return { success: true, message: 'Booking cancelled and credits refunded successfully' };
 }
 

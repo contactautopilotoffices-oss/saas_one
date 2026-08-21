@@ -593,10 +593,40 @@ export class NotificationService {
             }
             if (!booking) return;
 
-            // Note: Email and WhatsApp dispatch are handled asynchronously via event_outbox database trigger
-            // (tr_meeting_room_booking_outbox_insert_update_delete -> webhook -> EventProcessor / WhatsAppEventProcessor)
+            // 1. Mark corresponding outbox event as completed to prevent remote webhook double-firing
+            try {
+                await supabaseAdmin
+                    .from('event_outbox')
+                    .update({ status: 'completed', updated_at: new Date().toISOString() })
+                    .eq('entity_id', booking.id)
+                    .eq('event_type', 'MEETING_ROOM_BOOKED');
+            } catch (outboxErr) {
+                console.error('[NotificationService] Outbox update error:', outboxErr);
+            }
 
-            // In-App Notification dispatch
+            // 2. Dispatch Omnichannel Email
+            try {
+                const { EventProcessor } = await import('./EventProcessor');
+                await EventProcessor.processEvent({
+                    event_type: 'MEETING_ROOM_BOOKED',
+                    payload: booking
+                });
+            } catch (emailErr) {
+                console.error('[NotificationService] Booking email dispatch error:', emailErr);
+            }
+
+            // 3. Dispatch Omnichannel WhatsApp (AiSensy)
+            try {
+                const { WhatsAppEventProcessor } = await import('./WhatsAppEventProcessor');
+                await WhatsAppEventProcessor.processEvent({
+                    event_type: 'MEETING_ROOM_BOOKED',
+                    payload: booking
+                });
+            } catch (waErr) {
+                console.error('[NotificationService] Booking WhatsApp dispatch error:', waErr);
+            }
+
+            // 4. In-App Notification dispatch
             const bookerName = booking.users?.full_name || 'A tenant';
             const roomName = booking.meeting_rooms?.name || 'a meeting room';
             const message = `${bookerName} has booked "${roomName}" for ${booking.booking_date} (${booking.start_time} - ${booking.end_time}).`;
@@ -625,9 +655,79 @@ export class NotificationService {
         }
     }
 
-    static async afterRoomCancelled(booking: any) {
-        // Handled asynchronously via database trigger on meeting_room_bookings -> event_outbox -> webhook
-        console.log(`[NotificationService] Meeting room cancellation queued via DB trigger for booking ${booking?.id || ''}`);
+    static async afterRoomCancelled(bookingIdOrPayload: any) {
+        try {
+            let booking = bookingIdOrPayload;
+            if (typeof bookingIdOrPayload === 'string') {
+                const { data } = await supabaseAdmin
+                    .from('meeting_room_bookings')
+                    .select('*, meeting_rooms(name), users(full_name, email, phone)')
+                    .eq('id', bookingIdOrPayload)
+                    .maybeSingle();
+                booking = data;
+            }
+            if (!booking) return;
+
+            // 1. Mark corresponding outbox event as completed to prevent remote webhook double-firing
+            try {
+                await supabaseAdmin
+                    .from('event_outbox')
+                    .update({ status: 'completed', updated_at: new Date().toISOString() })
+                    .eq('entity_id', booking.id)
+                    .eq('event_type', 'MEETING_ROOM_CANCELLED');
+            } catch (outboxErr) {
+                console.error('[NotificationService] Outbox update error:', outboxErr);
+            }
+
+            // 2. Dispatch Omnichannel Email
+            try {
+                const { EventProcessor } = await import('./EventProcessor');
+                await EventProcessor.processEvent({
+                    event_type: 'MEETING_ROOM_CANCELLED',
+                    payload: booking
+                });
+            } catch (emailErr) {
+                console.error('[NotificationService] Cancellation email dispatch error:', emailErr);
+            }
+
+            // 3. Dispatch Omnichannel WhatsApp (AiSensy)
+            try {
+                const { WhatsAppEventProcessor } = await import('./WhatsAppEventProcessor');
+                await WhatsAppEventProcessor.processEvent({
+                    event_type: 'MEETING_ROOM_CANCELLED',
+                    payload: booking
+                });
+            } catch (waErr) {
+                console.error('[NotificationService] Cancellation WhatsApp dispatch error:', waErr);
+            }
+
+            // 4. In-App Notification dispatch
+            const bookerName = booking.users?.full_name || 'A tenant';
+            const roomName = booking.meeting_rooms?.name || 'a meeting room';
+            const message = `${bookerName} has cancelled the booking for "${roomName}" on ${booking.booking_date}.`;
+
+            const { data: members } = await supabaseAdmin
+                .from('property_memberships')
+                .select('user_id')
+                .eq('property_id', booking.property_id)
+                .in('role', ['property_admin']);
+
+            const uniqueRecipients = Array.from(new Set((members || []).map(m => String(m.user_id))));
+
+            for (const userId of uniqueRecipients) {
+                await this.send({
+                    userId,
+                    bookingId: booking.id,
+                    propertyId: booking.property_id,
+                    type: 'ROOM_CANCELLED',
+                    title: 'Room Booking Cancelled',
+                    message,
+                    deepLink: `/property-admin/bookings?date=${booking.booking_date}`
+                });
+            }
+        } catch (error) {
+            console.error('[NotificationService] afterRoomCancelled error:', error);
+        }
     }
 
     static async afterSOPStarted(templateId: string, propertyId: string, organizationId?: string) {
