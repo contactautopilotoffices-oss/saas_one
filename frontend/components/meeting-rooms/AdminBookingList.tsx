@@ -109,34 +109,41 @@ const AdminBookingList: React.FC<AdminBookingListProps> = ({ propertyId }) => {
         fetchBookings();
     }, [fetchBookings]);
 
-    const handleDelete = async (id: string) => {
-        if (!confirm('Are you sure you want to delete this booking?')) return;
+    const [cancellingId, setCancellingId] = useState<string | null>(null);
 
-        setDeletingId(id);
+    const handleCancelBooking = async (id: string) => {
+        if (!confirm('Are you sure you want to cancel this booking? Credits will be refunded and the slot will be released.')) return;
+
+        setCancellingId(id);
         try {
             const res = await fetch(`/api/meeting-room-bookings/${id}`, {
-                method: 'DELETE',
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: 'cancelled' })
             });
             if (res.ok) {
                 invalidateCache('admin-bookings-');
                 invalidateCache('tenant-bookings-');
-                setBookings(prev => prev.filter(b => b.id !== id));
+                invalidateCache('rooms-avail-');
+                // Update status in place to keep the cancellation history
+                setBookings(prev => prev.map(b => b.id === id ? { ...b, status: 'cancelled' } : b));
             } else {
                 const error = await res.json();
-                alert(error.error || 'Failed to delete booking');
+                alert(error.error || 'Failed to cancel booking');
             }
         } catch (error) {
-            console.error('Error deleting booking:', error);
+            console.error('Error cancelling booking:', error);
             alert('An unexpected error occurred');
         } finally {
-            setDeletingId(null);
+            setCancellingId(null);
         }
     };
 
-    const canDelete = (bookingUserId: string) => {
+    const canCancel = (bookingUserId: string, bookingStatus: string) => {
+        if (bookingStatus !== 'confirmed') return false;
         if (userRole === 'master_admin') return true;
         if (currentUserId === bookingUserId) return true;
-        if (userRole === 'property_admin') return true;
+        if (userRole === 'property_admin' || userRole === 'org_super_admin' || userRole === 'org_admin') return true;
         if ((userRole === 'staff' || userRole === 'mst') && isTechnical) return true;
         return false;
     };
@@ -274,17 +281,24 @@ const AdminBookingList: React.FC<AdminBookingListProps> = ({ propertyId }) => {
                                         </span>
                                     </div>
 
-                                    {canDelete(booking.user_id) && (
+                                    {canCancel(booking.user_id, booking.status) && (
                                         <button
-                                            onClick={() => handleDelete(booking.id)}
-                                            disabled={deletingId === booking.id}
-                                            className="p-2.5 bg-rose-50 text-rose-500 rounded-xl hover:bg-rose-100 transition-colors md:opacity-0 group-hover/card:opacity-100 shrink-0"
-                                            title="Delete Booking"
+                                            type="button"
+                                            onClick={() => handleCancelBooking(booking.id)}
+                                            disabled={cancellingId === booking.id}
+                                            className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl text-xs font-bold transition-all border border-rose-100 hover:border-rose-200 cursor-pointer shadow-2xs shrink-0"
+                                            title="Cancel Booking"
                                         >
-                                            {deletingId === booking.id ? (
-                                                <Loader2 className="w-4 h-4 animate-spin" />
+                                            {cancellingId === booking.id ? (
+                                                <>
+                                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                    <span>Cancelling...</span>
+                                                </>
                                             ) : (
-                                                <Trash2 className="w-4 h-4" />
+                                                <>
+                                                    <XCircle className="w-3.5 h-3.5 text-rose-500" />
+                                                    <span>Cancel</span>
+                                                </>
                                             )}
                                         </button>
                                     )}

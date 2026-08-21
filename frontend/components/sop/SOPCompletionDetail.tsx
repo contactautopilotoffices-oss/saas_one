@@ -4,11 +4,12 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { createClient } from '@/frontend/utils/supabase/client';
 import Skeleton from '@/frontend/components/ui/Skeleton';
 import { motion } from 'framer-motion';
-import { ChevronLeft, User, Calendar, CheckCircle2, Circle, Camera, Clock, Eye, Video, Play, ThumbsDown, Minus, ThumbsUp, Paperclip, Loader2, X } from 'lucide-react';
+import { ChevronLeft, User, Calendar, CheckCircle2, Circle, Camera, Clock, Eye, Video, Play, ThumbsDown, Minus, ThumbsUp, Paperclip, Loader2, X, MapPin } from 'lucide-react';
 import ImagePreviewModal from '@/frontend/components/shared/ImagePreviewModal';
 import VideoPreviewModal from '@/frontend/components/shared/VideoPreviewModal';
 import CameraCaptureModal from '@/frontend/components/shared/CameraCaptureModal';
 import VideoCaptureModal from '@/frontend/components/shared/VideoCaptureModal';
+import SOPCADOverlayView from '@/frontend/components/sop/SOPCADOverlayView';
 import { compressImage } from '@/frontend/utils/image-compression';
 import { compressVideo } from '@/frontend/utils/video-compression';
 import { Toast } from '@/frontend/components/ui/Toast';
@@ -42,7 +43,36 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
     const [activeVideoItemId, setActiveVideoItemId] = useState<string | null>(null);
     const [uploadLoading, setUploadLoading] = useState<string | null>(null);
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+    const [showCADOverlay, setShowCADOverlay] = useState(false);
+    const [aiScoring, setAiScoring] = useState<Record<string, boolean>>({});
     const supabase = React.useMemo(() => createClient(), []);
+
+    // Fire-and-forget AI cleanliness scoring after a photo is (re-)uploaded
+    const triggerAIScoring = useCallback((completionItemId: string) => {
+        setAiScoring(prev => ({ ...prev, [completionItemId]: true }));
+        fetch(`/api/properties/${propertyId}/sop/completions/${completionId}/score-photo`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ completionItemId }),
+        })
+            .then(async (res) => {
+                const data = await res.json().catch(() => ({}));
+                if (res.ok) {
+                    setCompletion((prev: any) => prev ? ({
+                        ...prev,
+                        items: prev.items.map((it: any) =>
+                            it.id === completionItemId
+                                ? { ...it, ai_cleanliness_score: data.score, ai_cleanliness_reason: data.reason, ai_reference_used: data.referenceUsed, ai_analyzed_at: new Date().toISOString() }
+                                : it
+                        ),
+                    }) : prev);
+                } else {
+                    console.warn('[AI Score] Scoring skipped:', data.error);
+                }
+            })
+            .catch((err) => console.warn('[AI Score] Request failed:', err))
+            .finally(() => setAiScoring(prev => ({ ...prev, [completionItemId]: false })));
+    }, [completionId, propertyId]);
 
 
     useEffect(() => {
@@ -174,7 +204,7 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
         } finally {
             setUploadLoading(null);
         }
-    }, [activeCameraItemId, completionId, propertyId, supabase]);
+    }, [activeCameraItemId, completionId, propertyId, supabase, triggerAIScoring]);
 
     const handleVideoCapture = useCallback(async (file: File) => {
         if (!activeVideoItemId) return;
@@ -332,13 +362,24 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
                     </div>
                 </div>
 
-                <div className={`px-2.5 md:px-4 py-1 md:py-1.5 rounded-full text-[8px] md:text-[9px] font-black uppercase tracking-widest flex-shrink-0 ${completion.status === 'completed'
-                    ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'
-                    : 'bg-amber-50 text-amber-600 border border-amber-100'
-                    }`}>
-                    {completion.status === 'pending' || completion.status === 'missed' 
-                        ? 'Pending' 
-                        : completion.status.replace('_', ' ')}
+                <div className="flex items-center gap-2 flex-shrink-0">
+                    {completion.template?.cad_converted_image_url && Array.isArray(completion.template?.cad_areas) && completion.template.cad_areas.length > 0 && (
+                        <button
+                            onClick={() => setShowCADOverlay(true)}
+                            className="flex items-center gap-1.5 px-2.5 md:px-3 py-1 md:py-1.5 bg-primary/10 text-primary rounded-full text-[8px] md:text-[9px] font-black uppercase tracking-widest hover:bg-primary/20 transition-all"
+                        >
+                            <MapPin size={10} />
+                            CAD Overlay
+                        </button>
+                    )}
+                    <div className={`px-2.5 md:px-4 py-1 md:py-1.5 rounded-full text-[8px] md:text-[9px] font-black uppercase tracking-widest flex-shrink-0 ${completion.status === 'completed'
+                        ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'
+                        : 'bg-amber-50 text-amber-600 border border-amber-100'
+                        }`}>
+                        {completion.status === 'pending' || completion.status === 'missed' 
+                            ? 'Pending' 
+                            : completion.status.replace('_', ' ')}
+                    </div>
                 </div>
             </div>
 
@@ -446,65 +487,119 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
                                             <Camera size={9} />
                                             Visual Proof
                                         </p>
-                                        {/* Thumbnails */}
-                                        {(item.photo_url || item.video_url) && (
-                                            <div className="flex flex-wrap gap-2 md:gap-3 mb-2">
-                                                {item.photo_url && (
-                                                    <div className="relative w-full max-w-[200px] md:max-w-xs aspect-video rounded-lg md:rounded-xl overflow-hidden shadow-md border border-slate-100 group/img">
-                                                        <div 
-                                                            className="w-full h-full cursor-pointer"
-                                                            onClick={() => setPreviewImageUrl(item.photo_url)}
-                                                        >
-                                                            <img src={item.photo_url} alt="Audit Proof" className="w-full h-full object-cover" />
-                                                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 transition-all flex items-center justify-center">
-                                                                <div className="p-2 bg-white/20 rounded-full text-white"><Eye size={20} /></div>
+                                        {/* Side-by-Side Comparison of Clean Reference Photo vs Uploaded Execution Photo */}
+                                        {(item.photo_url || templateItem?.reference_photo_url) && (
+                                            <div className="mb-3 p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                                                <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                                                    <Camera size={10} className="text-primary" />
+                                                    Photo Comparison (Standard Clean vs Uploaded Execution)
+                                                </p>
+
+                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                    {/* Clean Standard Reference Photo */}
+                                                    <div className="flex flex-col">
+                                                        <span className="text-[9px] font-black text-emerald-700 uppercase tracking-wider mb-1 flex items-center gap-1">
+                                                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                                            Clean Standard Photo
+                                                        </span>
+                                                        {templateItem?.reference_photo_url ? (
+                                                            <div
+                                                                className="relative aspect-video rounded-xl overflow-hidden shadow-sm border border-emerald-200 cursor-pointer group bg-slate-900"
+                                                                onClick={() => setPreviewImageUrl(templateItem.reference_photo_url)}
+                                                            >
+                                                                <img
+                                                                    src={templateItem.reference_photo_url}
+                                                                    alt="Clean Standard Reference"
+                                                                    className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                                                                />
+                                                                <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                                                    <Eye size={20} className="text-white" />
+                                                                </div>
+                                                                <div className="absolute bottom-1.5 left-1.5 px-2 py-0.5 bg-emerald-950/80 rounded text-[8px] text-emerald-300 font-bold uppercase tracking-wider">
+                                                                    Standard Clean Ref
+                                                                </div>
                                                             </div>
-                                                        </div>
-                                                        <button
-                                                            onClick={(e) => { e.stopPropagation(); handleRemoveMedia(item.id, 'photo'); }}
-                                                            className="absolute top-2 right-2 w-7 h-7 bg-black/50 backdrop-blur-md rounded-full flex items-center justify-center text-white hover:bg-rose-500 transition-all z-10"
-                                                            title="Delete photo"
-                                                        >
-                                                            <X size={14} />
-                                                        </button>
-                                                        <div className="absolute bottom-1 left-1 px-1.5 py-0.5 bg-black/60 rounded text-[8px] text-white font-bold flex items-center gap-1">
-                                                            <Camera size={8} />Photo
-                                                        </div>
-                                                        {item.checked_at && (
-                                                            <div className="absolute bottom-1 right-1 px-1.5 py-0.5 bg-black/60 rounded text-[7px] text-white font-bold font-mono">
-                                                                {new Date(item.checked_at).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).replace(',', '')}
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                )}
-                                                {item.video_url && (
-                                                    <div className="relative w-full max-w-[200px] md:max-w-xs aspect-video rounded-lg md:rounded-xl overflow-hidden shadow-md border border-slate-100 group/vid">
-                                                        <div
-                                                            className="w-full h-full cursor-pointer"
-                                                            onClick={() => setPreviewVideoUrl(item.video_url)}
-                                                        >
-                                                            <video src={item.video_url} className="w-full h-full object-cover" muted playsInline />
-                                                            <div className="absolute inset-0 bg-black/40 flex items-center justify-center group-hover/vid:bg-black/50 transition-all">
-                                                                <div className="p-2 bg-white/20 rounded-full text-white"><Play size={20} /></div>
-                                                            </div>
-                                                        </div>
-                                                        <button
-                                                            onClick={(e) => { e.stopPropagation(); handleRemoveMedia(item.id, 'video'); }}
-                                                            className="absolute top-2 right-2 w-7 h-7 bg-black/50 backdrop-blur-md rounded-full flex items-center justify-center text-white hover:bg-rose-500 transition-all z-10"
-                                                            title="Delete video"
-                                                        >
-                                                            <X size={14} />
-                                                        </button>
-                                                        <div className="absolute bottom-1 left-1 px-1.5 py-0.5 bg-black/60 rounded text-[8px] text-white font-bold flex items-center gap-1">
-                                                            <Video size={8} />Video
-                                                        </div>
-                                                        {item.checked_at && (
-                                                            <div className="absolute bottom-1 right-1 px-1.5 py-0.5 bg-black/60 rounded text-[7px] text-white font-bold font-mono">
-                                                                {new Date(item.checked_at).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).replace(',', '')}
+                                                        ) : (
+                                                            <div className="aspect-video rounded-xl border border-dashed border-slate-200 bg-white flex flex-col items-center justify-center text-slate-400 p-2 text-center">
+                                                                <Camera size={18} className="mb-1 opacity-40" />
+                                                                <span className="text-[9px] font-bold">No Clean Standard Photo</span>
                                                             </div>
                                                         )}
                                                     </div>
-                                                )}
+
+                                                    {/* Uploaded Execution Photo */}
+                                                    <div className="flex flex-col">
+                                                        <span className="text-[9px] font-black text-blue-700 uppercase tracking-wider mb-1 flex items-center gap-1">
+                                                            <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                                                            Uploaded Execution Photo
+                                                        </span>
+                                                        {item.photo_url ? (
+                                                            <div className="relative aspect-video rounded-xl overflow-hidden shadow-sm border border-blue-200 group bg-slate-900">
+                                                                <div
+                                                                    className="w-full h-full cursor-pointer"
+                                                                    onClick={() => setPreviewImageUrl(item.photo_url)}
+                                                                >
+                                                                    <img src={item.photo_url} alt="Uploaded Execution Proof" className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                                                                    <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                                                        <Eye size={20} className="text-white" />
+                                                                    </div>
+                                                                </div>
+                                                                <button
+                                                                    onClick={(e) => { e.stopPropagation(); handleRemoveMedia(item.id, 'photo'); }}
+                                                                    className="absolute top-2 right-2 w-6 h-6 bg-black/60 backdrop-blur-md rounded-full flex items-center justify-center text-white hover:bg-rose-500 transition-all z-10"
+                                                                    title="Delete photo"
+                                                                >
+                                                                    <X size={12} />
+                                                                </button>
+                                                                <div className="absolute bottom-1.5 left-1.5 px-2 py-0.5 bg-blue-950/80 rounded text-[8px] text-blue-300 font-bold uppercase tracking-wider">
+                                                                    Execution Uploaded
+                                                                </div>
+                                                                {item.checked_at && (
+                                                                    <div className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 bg-black/70 rounded text-[7px] text-white font-mono font-bold">
+                                                                        {new Date(item.checked_at).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).replace(',', '')}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        ) : (
+                                                            <div className="aspect-video rounded-xl border border-dashed border-slate-200 bg-white flex flex-col items-center justify-center text-slate-400 p-2 text-center">
+                                                                <Camera size={18} className="mb-1 opacity-40" />
+                                                                <span className="text-[9px] font-bold">No Photo Uploaded Yet</span>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Video Proof if present */}
+                                        {item.video_url && (
+                                            <div className="mb-2">
+                                                <div className="relative w-full max-w-[200px] md:max-w-xs aspect-video rounded-lg md:rounded-xl overflow-hidden shadow-md border border-slate-100 group/vid">
+                                                    <div
+                                                        className="w-full h-full cursor-pointer"
+                                                        onClick={() => setPreviewVideoUrl(item.video_url)}
+                                                    >
+                                                        <video src={item.video_url} className="w-full h-full object-cover" muted playsInline />
+                                                        <div className="absolute inset-0 bg-black/40 flex items-center justify-center group-hover/vid:bg-black/50 transition-all">
+                                                            <div className="p-2 bg-white/20 rounded-full text-white"><Play size={20} /></div>
+                                                        </div>
+                                                    </div>
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); handleRemoveMedia(item.id, 'video'); }}
+                                                        className="absolute top-2 right-2 w-7 h-7 bg-black/50 backdrop-blur-md rounded-full flex items-center justify-center text-white hover:bg-rose-500 transition-all z-10"
+                                                        title="Delete video"
+                                                    >
+                                                        <X size={14} />
+                                                    </button>
+                                                    <div className="absolute bottom-1 left-1 px-1.5 py-0.5 bg-black/60 rounded text-[8px] text-white font-bold flex items-center gap-1">
+                                                        <Video size={8} />Video
+                                                    </div>
+                                                    {item.checked_at && (
+                                                        <div className="absolute bottom-1 right-1 px-1.5 py-0.5 bg-black/60 rounded text-[7px] text-white font-bold font-mono">
+                                                            {new Date(item.checked_at).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).replace(',', '')}
+                                                        </div>
+                                                    )}
+                                                </div>
                                             </div>
                                         )}
                                         {/* Change buttons */}
@@ -532,6 +627,63 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
                                             </button>
                                         </div>
                                     </div>
+                                    {/* ── AI Cleanliness Score (On-Demand) ── */}
+                                    {item.photo_url && (
+                                        <div className="mt-2 md:mt-3">
+                                            {aiScoring[item.id] || (item.ai_cleanliness_score !== null && item.ai_cleanliness_score !== undefined) ? (() => {
+                                                const isScoring = aiScoring[item.id];
+                                                const score = item.ai_cleanliness_score;
+                                                const scoreColor = isScoring
+                                                    ? { bg: 'bg-slate-50', border: 'border-slate-200', text: 'text-slate-500', badge: 'bg-slate-400' }
+                                                    : score >= 80
+                                                        ? { bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-600', badge: 'bg-emerald-500' }
+                                                        : score >= 50
+                                                            ? { bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-600', badge: 'bg-amber-500' }
+                                                            : { bg: 'bg-rose-50', border: 'border-rose-200', text: 'text-rose-600', badge: 'bg-rose-500' };
+
+                                                return (
+                                                    <div className={`px-3 py-2.5 rounded-xl border ${scoreColor.bg} ${scoreColor.border} flex items-center justify-between gap-2.5`}>
+                                                        {isScoring ? (
+                                                            <div className="flex items-center gap-2">
+                                                                <Loader2 size={13} className="text-primary animate-spin flex-shrink-0" />
+                                                                <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">AI analyzing cleanliness...</span>
+                                                            </div>
+                                                        ) : (
+                                                            <>
+                                                                <div className="flex items-center gap-2.5 min-w-0">
+                                                                    <div className={`w-8 h-8 rounded-lg ${scoreColor.badge} flex items-center justify-center flex-shrink-0`}>
+                                                                        <span className="text-xs font-black text-white">{score}</span>
+                                                                    </div>
+                                                                    <div className="flex-1 min-w-0">
+                                                                        <p className={`text-[9px] font-black uppercase tracking-widest ${scoreColor.text}`}>
+                                                                            AI Cleanliness Score{item.ai_reference_used === 'cad' ? ' · vs CAD' : item.ai_reference_used === 'uploaded' ? ' · vs Reference' : ''}
+                                                                        </p>
+                                                                        {item.ai_cleanliness_reason && (
+                                                                            <p className="text-[10px] text-slate-500 font-medium leading-snug mt-0.5">{item.ai_cleanliness_reason}</p>
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                                <button
+                                                                    onClick={() => triggerAIScoring(item.id)}
+                                                                    className="px-2 py-1 text-[8px] font-black uppercase tracking-widest bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-slate-600 flex-shrink-0 transition-all"
+                                                                >
+                                                                    Re-Audit
+                                                                </button>
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })() : (
+                                                <button
+                                                    onClick={() => triggerAIScoring(item.id)}
+                                                    className="w-full sm:w-auto flex items-center justify-center gap-1.5 px-3 py-2 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all cursor-pointer"
+                                                >
+                                                    <Eye size={12} />
+                                                    <span>Audit Cleanliness (AI)</span>
+                                                </button>
+                                            )}
+                                        </div>
+                                    )}
 
                                     {/* ── Satisfaction Rating ── */}
                                     {isCompleted && (
@@ -619,6 +771,28 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
                 title="Update Video Proof"
                 maxDuration={15}
             />
+
+            {/* CAD Score Overlay */}
+            {completion.template?.cad_converted_image_url && (
+                <SOPCADOverlayView
+                    isOpen={showCADOverlay}
+                    onClose={() => setShowCADOverlay(false)}
+                    cadImageUrl={completion.template.cad_converted_image_url}
+                    areas={completion.template.cad_areas || []}
+                    templateTitle={completion.template?.title}
+                    items={effectiveItems.map((item: any) => ({
+                        id: item.id,
+                        checklist_item_id: item.checklist_item_id,
+                        title: item.checklist_item?.title || 'Step',
+                        ai_cleanliness_score: item.ai_cleanliness_score ?? null,
+                        ai_cleanliness_reason: item.ai_cleanliness_reason ?? null,
+                        photo_url: item.photo_url || null,
+                        reference_photo_url: item.checklist_item?.reference_photo_url || null,
+                    }))}
+                    onScorePhoto={triggerAIScoring}
+                    aiScoring={aiScoring}
+                />
+            )}
 
             {/* Toast */}
             {toast && (

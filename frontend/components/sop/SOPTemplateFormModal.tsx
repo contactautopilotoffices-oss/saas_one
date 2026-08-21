@@ -1,10 +1,12 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { X, Plus, Trash2, Check, Info, Edit3, Camera, Paperclip } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { X, Plus, Trash2, Check, Info, Edit3, Camera, Paperclip, MapPin, Image as ImageIcon, Loader2, Eye } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
 import { Toast } from '@/frontend/components/ui/Toast';
+import SOPCADConfigModal from '@/frontend/components/sop/SOPCADConfigModal';
 
 interface SOPTemplateFormModalProps {
     isOpen: boolean;
@@ -22,6 +24,7 @@ interface SOPTemplateFormModalProps {
 }
 
 const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onClose, propertyId, template, initialData, onSuccess }) => {
+    const [mounted, setMounted] = useState(false);
     const [formData, setFormData] = useState({
         title: '',
         description: '',
@@ -53,6 +56,11 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
     const [isUserDropdownOpen, setIsUserDropdownOpen] = useState(false);
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
     const [currentPropertyId, setCurrentPropertyId] = useState<string | null>(null);
+    const [showCADModal, setShowCADModal] = useState(false);
+    const [createdTemplateId, setCreatedTemplateId] = useState<string | null>(null);
+    const activeTemplateId = template?.id || createdTemplateId;
+    const [referencePhotoUploads, setReferencePhotoUploads] = useState<Record<number, { uploading: boolean; url?: string }>>({});
+    const [templateCADStatus, setTemplateCADStatus] = useState<{ hasCAD: boolean; imageUrl?: string } | null>(null);
 
 
     const supabase = React.useMemo(() => createClient(), []);
@@ -101,7 +109,12 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
     }, [supabase, propertyId, isOpen]);
 
     useEffect(() => {
+        setMounted(true);
+    }, []);
+
+    useEffect(() => {
         if (template) {
+            setCreatedTemplateId(null);
             setFormData({
                 title: template.title,
                 description: template.description || '',
@@ -112,9 +125,9 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
                 end_time: template.end_time ? template.end_time.slice(0, 5) : '',
             });
 
-
             setItems(template.items || []);
         } else if (initialData) {
+            setCreatedTemplateId(null);
             setFormData({
                 title: initialData.title || '',
                 description: initialData.description || '',
@@ -125,10 +138,10 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
                 end_time: '17:00',
             });
             setItems(
-                (initialData.items || []).map((item, idx) => ({
-                    id: `ai-${idx}`,
+                (initialData.items || []).map((item: any, idx: number) => ({
+                    id: item.id || `ai-${idx}`,
                     title: item.title,
-                    description: '',
+                    description: item.description || '',
                     type: item.type || 'checkbox',
                     requires_photo: false,
                     requires_comment: false,
@@ -137,6 +150,7 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
                 }))
             );
         } else {
+            setCreatedTemplateId(null);
             setFormData({
                 title: '',
                 description: '',
@@ -146,7 +160,6 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
                 start_time: '',
                 end_time: '',
             });
-
 
             setItems([]);
         }
@@ -195,15 +208,87 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
         setItems(items.filter((_, i) => i !== index));
     };
 
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!formData.title) {
-            setToast({ message: 'Title is required', type: 'error' });
+    // Fetch CAD status for existing template
+    useEffect(() => {
+        if (!isOpen || !template?.id || !propertyId) {
+            setTemplateCADStatus(null);
+            return;
+        }
+        const fetchCADStatus = async () => {
+            try {
+                const res = await fetch(`/api/properties/${propertyId}/sop/templates/${template.id}/cad/areas`);
+                const data = await res.json();
+                if (res.ok && data.cadConvertedImageUrl) {
+                    setTemplateCADStatus({ hasCAD: true, imageUrl: data.cadConvertedImageUrl });
+                } else {
+                    setTemplateCADStatus({ hasCAD: false });
+                }
+            } catch (err) {
+                console.error('Failed to fetch CAD status:', err);
+                setTemplateCADStatus({ hasCAD: false });
+            }
+        };
+        fetchCADStatus();
+    }, [isOpen, template?.id, propertyId]);
+
+    const handleReferencePhotoUpload = async (index: number, file: File) => {
+        const item = items[index];
+        if (!item?.id || item.id.startsWith('ai-')) {
+            setToast({ message: 'Please save the template first before uploading reference photos', type: 'error' });
+            return;
+        }
+
+        setReferencePhotoUploads(prev => ({ ...prev, [index]: { uploading: true } }));
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            const res = await fetch(`/api/properties/${propertyId}/sop/checklist-items/${item.id}/reference-photo`, {
+                method: 'POST',
+                body: formData,
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Upload failed');
+
+            setItems(prev => prev.map((it, i) => i === index ? { ...it, reference_photo_url: data.referencePhotoUrl, reference_photo_source: 'uploaded' } : it));
+            setReferencePhotoUploads(prev => ({ ...prev, [index]: { uploading: false, url: data.referencePhotoUrl } }));
+            setToast({ message: 'Reference photo uploaded', type: 'success' });
+        } catch (err: any) {
+            setReferencePhotoUploads(prev => ({ ...prev, [index]: { uploading: false } }));
+            setToast({ message: err.message || 'Failed to upload reference photo', type: 'error' });
+        }
+    };
+
+    const handleRemoveReferencePhoto = async (index: number) => {
+        const item = items[index];
+        if (!item?.id || item.id.startsWith('ai-')) return;
+
+        try {
+            const res = await fetch(`/api/properties/${propertyId}/sop/checklist-items/${item.id}/reference-photo`, {
+                method: 'DELETE',
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Delete failed');
+
+            setItems(prev => prev.map((it, i) => i === index ? { ...it, reference_photo_url: undefined, reference_photo_source: undefined } : it));
+            setReferencePhotoUploads(prev => ({ ...prev, [index]: { uploading: false } }));
+            setToast({ message: 'Reference photo removed', type: 'success' });
+        } catch (err: any) {
+            setToast({ message: err.message || 'Failed to remove reference photo', type: 'error' });
+        }
+    };
+
+    const handleOpenCAD = async () => {
+        if (activeTemplateId) {
+            setShowCADModal(true);
+            return;
+        }
+
+        if (!formData.title.trim()) {
+            setToast({ message: 'Please enter a Template Title first before uploading CAD', type: 'error' });
             return;
         }
 
         setIsLoading(true);
-
         try {
             const payload = {
                 ...formData,
@@ -220,9 +305,62 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
                 })),
             };
 
-            if (template) {
-                // Update template
-                const response = await fetch(`/api/properties/${propertyId}/sop/templates/${template.id}`, {
+            const response = await fetch(`/api/properties/${propertyId}/sop/templates`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || 'Failed to create template');
+
+            const newId = data.template?.id || data.id;
+            if (newId) {
+                setCreatedTemplateId(newId);
+                if (data.template?.items && data.template.items.length > 0) {
+                    setItems(data.template.items);
+                }
+                setShowCADModal(true);
+                setToast({ message: 'Template saved! Upload your CAD floor plan now.', type: 'success' });
+            }
+        } catch (err: any) {
+            setToast({ message: err.message || 'Error creating template', type: 'error' });
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!formData.title) {
+            setToast({ message: 'Title is required', type: 'error' });
+            return;
+        }
+
+        setIsLoading(true);
+
+        try {
+            const payload = {
+                ...formData,
+                items: items.map((it, idx) => ({
+                    id: it.id && !it.id.startsWith('ai-') ? it.id : undefined,
+                    title: it.title,
+                    description: it.description || '',
+                    type: it.type || 'checkbox',
+                    requires_photo: it.requires_photo || false,
+                    requires_comment: it.requires_comment || false,
+                    is_optional: false,
+                    order_index: idx,
+                    start_time: it.start_time || null,
+                    end_time: it.end_time || null,
+                })),
+            };
+
+            const targetTemplateId = template?.id || createdTemplateId;
+
+            if (targetTemplateId) {
+                // Update existing template
+                const response = await fetch(`/api/properties/${propertyId}/sop/templates/${targetTemplateId}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload),
@@ -340,10 +478,12 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
         return times;
     }, [formData.frequency, formData.start_time, formData.end_time, isHourly]);
 
-    return (
+    if (!isOpen || !mounted) return null;
+
+    const modalContent = (
         <AnimatePresence>
             {isOpen && (
-                <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center">
+                <div className="fixed inset-0 z-[1000] flex items-end sm:items-center justify-center">
                     {/* Backdrop */}
                     <motion.div
                         initial={{ opacity: 0 }}
@@ -408,6 +548,30 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
                                             className={inputCls}
                                             required
                                         />
+                                    </div>
+
+                                    {/* CAD Configuration */}
+                                    <div className="flex items-center justify-between px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl">
+                                        <div className="flex items-center gap-2.5">
+                                            <div className="w-8 h-8 rounded-xl bg-primary/10 flex items-center justify-center">
+                                                <MapPin size={14} className="text-primary" />
+                                            </div>
+                                            <div>
+                                                <p className="text-xs font-black text-slate-900">CAD Floor Plan</p>
+                                                <p className="text-[9px] text-slate-400 font-medium">
+                                                    {templateCADStatus?.hasCAD ? 'Configured — click to edit areas' : 'Upload floor plan & map areas to steps'}
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={handleOpenCAD}
+                                            disabled={isLoading}
+                                            className="px-3 py-1.5 bg-primary text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-primary/90 transition-all flex items-center gap-1"
+                                        >
+                                            {isLoading ? <Loader2 size={10} className="animate-spin" /> : null}
+                                            {templateCADStatus?.hasCAD ? 'Edit CAD' : 'Upload CAD'}
+                                        </button>
                                     </div>
 
                                     <div>
@@ -596,22 +760,94 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
                                     <div className="space-y-2 mb-3">
                                         {items.map((item, idx) => (
                                             <motion.div key={idx} layout initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }}
-                                                className="flex items-center gap-3 bg-slate-50 border border-slate-200 px-3 py-2.5 rounded-2xl">
-                                                <div className="w-6 h-6 bg-white border border-slate-200 rounded-full flex items-center justify-center text-[10px] font-black text-slate-500 flex-shrink-0">{idx + 1}</div>
-                                                <div className="flex-1 min-w-0">
-                                                    <p className="font-black text-sm text-slate-900 truncate">{item.title}</p>
-                                                    {item.description && <p className="text-[10px] text-slate-400 font-medium truncate">{item.description}</p>}
-                                                    {(item.start_time || item.end_time) && (
-                                                        <div className="flex items-center gap-1.5 mt-0.5">
-                                                            <p className="text-[9px] font-black text-primary/70">
-                                                                {item.start_time ? fmt12(item.start_time) : '—'} – {item.end_time ? fmt12(item.end_time) : '—'}
-                                                            </p>
-                                                        </div>
+                                                className="bg-slate-50 border border-slate-200 px-3.5 py-3 rounded-2xl hover:border-slate-300 transition-colors">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="w-6 h-6 bg-white border border-slate-200 rounded-full flex items-center justify-center text-[10px] font-black text-slate-500 flex-shrink-0">{idx + 1}</div>
+                                                    
+                                                    {/* Reference photo thumbnail */}
+                                                    {item.reference_photo_url && (
+                                                        <a
+                                                            href={item.reference_photo_url}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="relative group flex-shrink-0 cursor-pointer"
+                                                            title="Click to view clean standard reference photo"
+                                                        >
+                                                            <img
+                                                                src={item.reference_photo_url}
+                                                                alt="Clean Ref"
+                                                                className="w-10 h-10 rounded-xl object-cover border border-emerald-200 shadow-xs group-hover:scale-105 transition-transform"
+                                                            />
+                                                            <div className="absolute inset-0 bg-black/40 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                                                <Eye size={12} className="text-white" />
+                                                            </div>
+                                                        </a>
                                                     )}
-                                                </div>
-                                                <div className="flex items-center gap-1 flex-shrink-0">
-                                                    <button type="button" onClick={() => { setNewItem(item); setEditingIndex(idx); setShowStepTimeSlot(!!(item.start_time || item.end_time)); }} className="p-1.5 text-slate-400 hover:text-primary hover:bg-primary/5 rounded-lg transition-all"><Edit3 size={13} /></button>
-                                                    <button type="button" onClick={() => handleRemoveItem(idx)} className="p-1.5 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"><Trash2 size={13} /></button>
+
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="flex items-center gap-2 flex-wrap">
+                                                            <p className="font-black text-sm text-slate-900 truncate">{item.title}</p>
+                                                            {/* Reference photo badge */}
+                                                            {item.reference_photo_url && (
+                                                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded text-[9px] font-black uppercase tracking-wider">
+                                                                    <ImageIcon size={9} />
+                                                                    Clean Photo Set
+                                                                </span>
+                                                            )}
+                                                            {item.cad_area_id && (
+                                                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded text-[9px] font-black uppercase tracking-wider">
+                                                                    <MapPin size={9} />
+                                                                    CAD Area
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        {item.description && <p className="text-[10px] text-slate-400 font-medium truncate mt-0.5">{item.description}</p>}
+                                                        {(item.start_time || item.end_time) && (
+                                                            <div className="flex items-center gap-1.5 mt-0.5">
+                                                                <p className="text-[9px] font-black text-primary/70">
+                                                                    {item.start_time ? fmt12(item.start_time) : '—'} – {item.end_time ? fmt12(item.end_time) : '—'}
+                                                                </p>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    <div className="flex items-center gap-1 flex-shrink-0">
+                                                        {/* Reference photo upload & view button */}
+                                                        <>
+                                                            <input
+                                                                type="file"
+                                                                accept="image/*"
+                                                                className="hidden"
+                                                                id={`ref-photo-${idx}`}
+                                                                onChange={(e) => {
+                                                                    const file = e.target.files?.[0];
+                                                                    if (file) handleReferencePhotoUpload(idx, file);
+                                                                }}
+                                                            />
+                                                            <label
+                                                                htmlFor={`ref-photo-${idx}`}
+                                                                className={`p-2 rounded-xl transition-all cursor-pointer ${referencePhotoUploads[idx]?.uploading ? 'text-primary bg-primary/10' : item.reference_photo_url ? 'text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 bg-emerald-50/50' : 'text-slate-400 hover:text-primary hover:bg-primary/5 bg-white border border-slate-200'}`}
+                                                                title={item.reference_photo_url ? 'Change clean reference photo' : 'Upload clean reference photo'}
+                                                            >
+                                                                {referencePhotoUploads[idx]?.uploading ? (
+                                                                    <Loader2 size={14} className="animate-spin" />
+                                                                ) : (
+                                                                    <Camera size={14} />
+                                                                )}
+                                                            </label>
+                                                            {item.reference_photo_url && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleRemoveReferencePhoto(idx)}
+                                                                    className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
+                                                                    title="Remove clean reference photo"
+                                                                >
+                                                                    <Trash2 size={14} />
+                                                                </button>
+                                                            )}
+                                                        </>
+                                                        <button type="button" onClick={() => { setNewItem(item); setEditingIndex(idx); setShowStepTimeSlot(!!(item.start_time || item.end_time)); }} className="p-2 text-slate-400 hover:text-primary hover:bg-primary/5 rounded-xl transition-all" title="Edit Step"><Edit3 size={14} /></button>
+                                                        <button type="button" onClick={() => handleRemoveItem(idx)} className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all" title="Delete Step"><Trash2 size={14} /></button>
+                                                    </div>
                                                 </div>
                                             </motion.div>
                                         ))}
@@ -709,10 +945,33 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
                     {toast && (
                         <Toast message={toast.message} type={toast.type} visible={true} onClose={() => setToast(null)} duration={3000} />
                     )}
+
+                    {activeTemplateId && (
+                        <SOPCADConfigModal
+                            isOpen={showCADModal}
+                            onClose={() => setShowCADModal(false)}
+                            propertyId={propertyId}
+                            templateId={activeTemplateId}
+                            templateTitle={formData.title || template?.title}
+                            items={items.map((it: any) => ({ id: it.id, title: it.title, order_index: it.order_index, reference_photo_url: it.reference_photo_url }))}
+                            onItemsUpdate={(updated) => {
+                                setItems(prev => prev.map(p => {
+                                    const match = updated.find(u => u.id === p.id);
+                                    return match ? { ...p, reference_photo_url: match.reference_photo_url } : p;
+                                }));
+                            }}
+                            onSuccess={() => {
+                                setToast({ message: 'CAD areas updated', type: 'success' });
+                                onSuccess?.();
+                            }}
+                        />
+                    )}
                 </div>
             )}
         </AnimatePresence>
     );
+
+    return createPortal(modalContent, document.body);
 };
 
 export default SOPTemplateFormModal;

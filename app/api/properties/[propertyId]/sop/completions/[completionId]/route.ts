@@ -192,6 +192,13 @@ export async function PUT(
             if (updateError) {
                 return NextResponse.json({ error: updateError.message }, { status: 500 });
             }
+
+            if (updates.status === 'completed') {
+                const { NotificationService } = await import('@/backend/services/NotificationService');
+                NotificationService.afterSOPCompleted(completionId).catch(err => {
+                    console.error('[SOP Completion PATCH] afterSOPCompleted notification error:', err);
+                });
+            }
         }
 
         if (item) {

@@ -87,6 +87,10 @@ export async function POST(
             convertedPngBuffer = await convertCadWithCloudConvert(buffer, fileExt, cloudConvertApiKey);
         }
 
+        // Ensure storage buckets exist
+        await ensureBucket('sop-cad-files');
+        await ensureBucket('sop-cad-images');
+
         // Upload original CAD file
         const timestamp = Date.now();
         const originalExt = cadFileType === 'image' ? (fileExt === 'jpg' ? 'jpeg' : fileExt) : fileExt;
@@ -250,4 +254,15 @@ async function convertCadWithCloudConvert(buffer: Buffer, ext: string, apiKey: s
 
     const convertedArrayBuffer = await downloadResponse.arrayBuffer();
     return Buffer.from(convertedArrayBuffer);
+}
+
+async function ensureBucket(bucketName: string) {
+    try {
+        const { data: bucket } = await supabaseAdmin.storage.getBucket(bucketName);
+        if (!bucket) {
+            await supabaseAdmin.storage.createBucket(bucketName, { public: true });
+        }
+    } catch {
+        await supabaseAdmin.storage.createBucket(bucketName, { public: true }).catch(() => {});
+    }
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { WhatsAppService } from '@/backend/services/WhatsAppService';
+import { AiSensyService } from '@/backend/services/AiSensyService';
 
 /**
  * POST /api/webhooks/whatsapp-queue
@@ -36,11 +37,28 @@ export async function POST(request: NextRequest) {
     console.log(`[WhatsAppQueue] Processing row ${row.id} for event: ${row.event_type}, phone: ${row.phone}`);
 
     try {
-        const sent = await WhatsAppService.sendAsync(row.phone, {
-            message: row.message,
-            mediaUrl: row.media_url ?? undefined,
-            mediaType: row.media_type ?? undefined,
-        });
+        let sent: boolean;
+        let sendError: string | undefined;
+
+        if (row.template_name) {
+            // Config-driven AiSensy template path
+            const result = await AiSensyService.sendTemplate({
+                phone: row.phone,
+                campaignName: row.template_name,
+                templateParams: Array.isArray(row.template_params) ? row.template_params : [],
+                mediaUrl: row.media_url ?? undefined,
+            });
+
+            sent = result.success;
+            sendError = result.error;
+        } else {
+            // Legacy WasenderAPI free-text path
+            sent = await WhatsAppService.sendAsync(row.phone, {
+                message: row.message,
+                mediaUrl: row.media_url ?? undefined,
+                mediaType: row.media_type ?? undefined,
+            });
+        }
 
         if (sent) {
             await supabaseAdmin
@@ -55,10 +73,10 @@ export async function POST(request: NextRequest) {
                 .update({
                     status: 'failed',
                     retry_count: (row.retry_count ?? 0) + 1,
-                    error: 'WasenderAPI returned failure',
+                    error: sendError || 'WasenderAPI returned failure',
                 })
                 .eq('id', row.id);
-            console.error(`[WhatsAppQueue] ❌ WasenderAPI rejected send for row ${row.id}`);
+            console.error(`[WhatsAppQueue] ❌ Send rejected for row ${row.id}: ${sendError || 'WasenderAPI returned failure'}`);
             return NextResponse.json({ error: 'Send failed' }, { status: 500 });
         }
 

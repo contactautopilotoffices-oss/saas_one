@@ -103,19 +103,27 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
     }, [propertyId]);
 
     const handleDeleteBooking = async (bookingId: string) => {
-        if (!confirm('Cancel this booking?')) return;
+        if (!confirm('Cancel this booking? Your credits will be refunded.')) return;
         setDeletingId(bookingId);
         try {
-            const res = await fetch(`/api/meeting-room-bookings/${bookingId}`, { method: 'DELETE' });
+            const res = await fetch(`/api/meeting-room-bookings/${bookingId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: 'cancelled' })
+            });
             if (res.ok) {
                 invalidateCache('tenant-bookings-');
                 invalidateCache('admin-bookings-');
                 invalidateCache('rooms-avail-');
-                setMyBookings(prev => prev.filter(b => b.id !== bookingId));
+                setMyBookings(prev => prev.map(b => b.id === bookingId ? { ...b, status: 'cancelled' } : b));
                 fetchRooms(); // refresh availability
+                fetchCredit(); // refresh refunded credits
+            } else {
+                const errData = await res.json().catch(() => ({}));
+                alert(errData.error || 'Failed to cancel booking');
             }
         } catch (err) {
-            console.error('Error deleting booking:', err);
+            console.error('Error cancelling booking:', err);
         } finally {
             setDeletingId(null);
         }
@@ -714,11 +722,14 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
                                     <>
                                         {myBookings.map((booking) => {
                                             const isPast = new Date(`${booking.booking_date}T${booking.end_time}`) < new Date();
-                                            const statusColor = isPast
-                                                ? 'bg-slate-100 text-slate-500'
-                                                : booking.status === 'confirmed'
-                                                    ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'
-                                                    : 'bg-amber-50 text-amber-600 border border-amber-100';
+                                            const isCancelled = booking.status === 'cancelled';
+                                            const statusColor = isCancelled
+                                                ? 'bg-rose-50 text-rose-600 border border-rose-100'
+                                                : isPast
+                                                    ? 'bg-slate-100 text-slate-500'
+                                                    : booking.status === 'confirmed'
+                                                        ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'
+                                                        : 'bg-amber-50 text-amber-600 border border-amber-100';
 
                                             const formatTime = (t: string) => {
                                                 const [h, m] = t.split(':').map(Number);
@@ -728,13 +739,13 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
                                             };
 
                                             return (
-                                                <div key={booking.id} className={`p-4 rounded-xl border transition-all ${isPast ? 'border-border bg-muted/30 opacity-70' : 'border-border bg-white shadow-sm'}`}>
+                                                <div key={booking.id} className={`p-4 rounded-xl border transition-all ${isCancelled ? 'border-rose-100 bg-rose-50/20' : isPast ? 'border-border bg-muted/30 opacity-70' : 'border-border bg-white shadow-sm'}`}>
                                                     <div className="flex items-start justify-between gap-3">
                                                         <div className="flex-1 min-w-0">
                                                             <div className="flex items-center gap-2 mb-1.5">
                                                                 <p className="font-bold text-foreground text-sm truncate">{booking.meeting_room?.name || 'Meeting Room'}</p>
                                                                 <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${statusColor}`}>
-                                                                    {isPast ? 'Past' : booking.status}
+                                                                    {isCancelled ? 'Cancelled' : isPast ? 'Past' : booking.status}
                                                                 </span>
                                                             </div>
                                                             <div className="flex items-center gap-3 text-xs text-muted-foreground">
@@ -757,14 +768,15 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
                                                                 Booked at: {new Date(booking.created_at).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
                                                             </p>
                                                         </div>
-                                                        {!isPast && (
+                                                        {!isPast && !isCancelled && (
                                                             <button
                                                                 onClick={() => handleDeleteBooking(booking.id)}
                                                                 disabled={deletingId === booking.id}
-                                                                className="p-2 rounded-lg hover:bg-rose-50 text-muted-foreground hover:text-rose-500 transition-all disabled:opacity-50 flex-shrink-0"
+                                                                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold text-xs transition-all border border-rose-100 hover:border-rose-200 cursor-pointer disabled:opacity-50 flex-shrink-0"
                                                                 title="Cancel booking"
                                                             >
-                                                                {deletingId === booking.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                                                                {deletingId === booking.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                                                                <span>Cancel</span>
                                                             </button>
                                                         )}
                                                     </div>

@@ -1,14 +1,17 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { X, Upload, FileText, Loader2, Trash2, Save, MapPin, CheckSquare, AlertCircle, RefreshCw } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { X, Upload, FileText, Loader2, Trash2, Save, MapPin, CheckSquare, AlertCircle, RefreshCw, Camera, Eye, Plus, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Toast } from '@/frontend/components/ui/Toast';
+import { createClient } from '@/frontend/utils/supabase/client';
 
 interface ChecklistItem {
     id: string;
     title: string;
     order_index?: number;
+    reference_photo_url?: string;
 }
 
 interface CADArea {
@@ -26,6 +29,7 @@ interface SOPCADConfigModalProps {
     templateTitle?: string;
     items: ChecklistItem[];
     onSuccess?: () => void;
+    onItemsUpdate?: (updatedItems: ChecklistItem[]) => void;
 }
 
 /** Render first page of a PDF file to a PNG blob using pdfjs-dist */
@@ -61,7 +65,9 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
     templateTitle,
     items,
     onSuccess,
+    onItemsUpdate,
 }) => {
+    const [mounted, setMounted] = useState(false);
     const [step, setStep] = useState<'upload' | 'converting' | 'editing' | 'error'>('upload');
     const [preview, setPreview] = useState<string | null>(null);
     const [uploadBlob, setUploadBlob] = useState<Blob | null>(null);
@@ -79,17 +85,38 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
     const [drawCurrent, setDrawCurrent] = useState<{ x: number; y: number } | null>(null);
     const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
     const [editingAreaLabel, setEditingAreaLabel] = useState('');
+    const [localItems, setLocalItems] = useState<ChecklistItem[]>(items);
+    const [refUploads, setRefUploads] = useState<Record<string, boolean>>({});
+
+    const supabase = React.useMemo(() => createClient(), []);
+
+    useEffect(() => {
+        if (items && items.length > 0) {
+            setLocalItems(prev => items.map(incoming => {
+                const existing = prev.find(p => p.id === incoming.id);
+                return {
+                    ...incoming,
+                    reference_photo_url: incoming.reference_photo_url || existing?.reference_photo_url,
+                };
+            }));
+        }
+    }, [items]);
 
     const fileInputRef = useRef<HTMLInputElement>(null);
     const imageRef = useRef<HTMLImageElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
 
-    // Load existing CAD config
+    useEffect(() => {
+        setMounted(true);
+    }, []);
+
+    // Load existing CAD config and latest checklist items with photos
     useEffect(() => {
         if (!isOpen || !templateId) return;
         const loadExisting = async () => {
             try {
+                // 1. Fetch CAD areas
                 const res = await fetch(`/api/properties/${propertyId}/sop/templates/${templateId}/cad/areas`);
                 const data = await res.json();
                 if (res.ok && data.cadConvertedImageUrl) {
@@ -99,12 +126,55 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
                     setPreview(data.cadConvertedImageUrl);
                     setStep('editing');
                 }
+
+                // 2. Fetch fresh checklist items to guarantee reference_photo_url is always loaded
+                const { data: dbItems } = await supabase
+                    .from('sop_checklist_items')
+                    .select('id, title, description, order_index, reference_photo_url')
+                    .eq('template_id', templateId)
+                    .order('order_index', { ascending: true });
+
+                if (dbItems && dbItems.length > 0) {
+                    setLocalItems(dbItems);
+                    onItemsUpdate?.(dbItems);
+                }
             } catch (err) {
                 console.error('Failed to load CAD config:', err);
             }
         };
         loadExisting();
-    }, [isOpen, templateId, propertyId]);
+    }, [isOpen, templateId, propertyId, supabase]);
+
+    const handleStepPhotoUpload = async (stepId: string, file: File) => {
+        if (!stepId || stepId.startsWith('ai-')) {
+            setToast({ message: 'Please save the template first before uploading reference photos', type: 'error' });
+            return;
+        }
+
+        setRefUploads(prev => ({ ...prev, [stepId]: true }));
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            const res = await fetch(`/api/properties/${propertyId}/sop/checklist-items/${stepId}/reference-photo`, {
+                method: 'POST',
+                body: formData,
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Upload failed');
+
+            const photoUrl = data.referencePhotoUrl || data.reference_photo_url;
+            setLocalItems(prev => {
+                const updated = prev.map(it => it.id === stepId ? { ...it, reference_photo_url: photoUrl } : it);
+                onItemsUpdate?.(updated);
+                return updated;
+            });
+            setToast({ message: 'Clean reference photo updated', type: 'success' });
+        } catch (err: any) {
+            setToast({ message: err.message || 'Failed to upload photo', type: 'error' });
+        } finally {
+            setRefUploads(prev => ({ ...prev, [stepId]: false }));
+        }
+    };
 
     const processFile = async (file: File) => {
         setFileName(file.name);
@@ -370,33 +440,54 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
         }
     };
 
-    if (!isOpen) return null;
+    const handleSelectAllSteps = (areaId: string) => {
+        setAreas(areas.map(a => a.id === areaId ? { ...a, linked_step_ids: items.map(it => it.id) } : a));
+    };
 
-    return (
+    const handleClearSteps = (areaId: string) => {
+        setAreas(areas.map(a => a.id === areaId ? { ...a, linked_step_ids: [] } : a));
+    };
+
+    const [isMaximized, setIsMaximized] = useState(false);
+
+    if (!isOpen || !mounted) return null;
+
+    const modalContent = (
         <AnimatePresence>
-            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="fixed inset-0 bg-black/75 backdrop-blur-md z-[9999] flex items-center justify-center p-1 sm:p-3">
                 <motion.div
                     initial={{ opacity: 0, scale: 0.95, y: 20 }}
                     animate={{ opacity: 1, scale: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                    className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden"
+                    className={`bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-slate-200 transition-all duration-300 ${
+                        isMaximized ? 'w-[99vw] h-[98vh]' : 'w-[96vw] max-w-[1500px] h-[92vh]'
+                    }`}
                 >
                     {/* Header */}
-                    <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 flex-shrink-0">
+                    <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-100 flex-shrink-0 bg-slate-50/50">
                         <div className="flex items-center gap-2.5">
-                            <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-                                <MapPin size={16} className="text-primary" />
+                            <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center">
+                                <MapPin size={18} className="text-primary" />
                             </div>
                             <div>
-                                <h2 className="font-black text-sm text-slate-900 tracking-tight">CAD Configuration</h2>
-                                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
-                                    {templateTitle ? `${templateTitle} — ` : ''}Upload floor plan & map areas to steps
+                                <h2 className="font-black text-sm text-slate-900 tracking-tight">CAD Floor Plan Configuration</h2>
+                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                                    {templateTitle ? `${templateTitle} — ` : ''}Draw Areas & Link Checklist Steps
                                 </p>
                             </div>
                         </div>
-                        <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-all">
-                            <X size={16} />
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                            <button
+                                onClick={() => setIsMaximized(!isMaximized)}
+                                className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-all font-bold text-xs flex items-center gap-1"
+                                title={isMaximized ? 'Restore down' : 'Maximize window'}
+                            >
+                                {isMaximized ? '🗗 Restore' : '🗖 Maximize'}
+                            </button>
+                            <button onClick={onClose} className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-all">
+                                <X size={18} />
+                            </button>
+                        </div>
                     </div>
 
                     {/* Body */}
@@ -408,66 +499,35 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
                                 </p>
 
                                 <div
-                                    onDrop={handleDrop}
                                     onDragOver={(e) => e.preventDefault()}
-                                    onClick={() => !preview && fileInputRef.current?.click()}
-                                    className={`relative border-2 border-dashed rounded-xl transition-all overflow-hidden ${preview ? 'border-primary/40 bg-primary/5' : 'border-slate-200 hover:border-primary/40 hover:bg-slate-50 cursor-pointer'}`}
+                                    onDrop={handleDrop}
+                                    onClick={() => fileInputRef.current?.click()}
+                                    className="border-2 border-dashed border-slate-200 hover:border-primary/40 rounded-2xl p-8 text-center cursor-pointer transition-all bg-slate-50/50 hover:bg-primary/[0.02]"
                                 >
                                     <input
                                         ref={fileInputRef}
                                         type="file"
-                                        accept="image/jpeg,image/png,image/webp,application/pdf,.dwg,.dxf"
-                                        className="hidden"
+                                        accept=".dwg,.dxf,.pdf,image/*"
                                         onChange={handleFileChange}
+                                        className="hidden"
                                     />
-
-                                    {preview ? (
-                                        <div className="relative">
-                                            <img src={preview} alt="CAD preview" className="w-full max-h-96 object-contain p-2" />
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
-                                                className="absolute bottom-2 right-2 bg-black/60 hover:bg-black/80 text-white text-[10px] font-black px-2.5 py-1 rounded-lg uppercase tracking-widest transition-all"
-                                            >
-                                                Change
-                                            </button>
-                                        </div>
-                                    ) : (
-                                        <div className="flex flex-col items-center py-12 px-6 text-center">
-                                            <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center mb-3">
-                                                <Upload size={20} className="text-slate-400" />
-                                            </div>
-                                            <p className="font-black text-sm text-slate-700">Drop CAD file here</p>
-                                            <p className="text-xs text-slate-400 mt-1 font-medium">or click to browse</p>
-                                            <div className="flex items-center gap-2 mt-3 flex-wrap justify-center">
-                                                <span className="px-2 py-0.5 bg-slate-100 text-slate-500 text-[10px] font-black rounded uppercase tracking-widest">DWG</span>
-                                                <span className="px-2 py-0.5 bg-slate-100 text-slate-500 text-[10px] font-black rounded uppercase tracking-widest">DXF</span>
-                                                <span className="px-2 py-0.5 bg-rose-50 text-rose-500 text-[10px] font-black rounded uppercase tracking-widest">PDF</span>
-                                                <span className="px-2 py-0.5 bg-slate-100 text-slate-500 text-[10px] font-black rounded uppercase tracking-widest">PNG</span>
-                                                <span className="px-2 py-0.5 bg-slate-100 text-slate-500 text-[10px] font-black rounded uppercase tracking-widest">JPEG</span>
-                                            </div>
-                                        </div>
-                                    )}
+                                    <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center mx-auto mb-3">
+                                        <Upload size={22} />
+                                    </div>
+                                    <p className="font-black text-sm text-slate-900 mb-1">Click to upload CAD Floor Plan</p>
+                                    <p className="text-xs text-slate-400 font-medium">Supports PDF, DWG, DXF, PNG, JPG (up to 50MB)</p>
                                 </div>
 
-                                {fileName && (
-                                    <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 rounded-lg border border-slate-100">
-                                        <FileText size={13} className="text-slate-500 flex-shrink-0" />
-                                        <p className="text-xs font-bold text-slate-700 truncate">{fileName}</p>
-                                    </div>
-                                )}
-
                                 {preview && (
-                                    <div className="flex gap-2 pt-1">
-                                        <button
-                                            onClick={handleReset}
-                                            className="flex-1 py-2.5 border border-slate-200 text-slate-600 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-slate-50 transition-all"
-                                        >
-                                            Reset
-                                        </button>
+                                    <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                                        <div className="flex items-center gap-2 min-w-0">
+                                            <FileText size={16} className="text-primary flex-shrink-0" />
+                                            <span className="text-xs font-bold text-slate-700 truncate">{fileName}</span>
+                                        </div>
                                         <button
                                             onClick={handleUpload}
                                             disabled={isUploading}
-                                            className="flex-1 py-2.5 bg-primary text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-primary/90 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                                            className="px-4 py-2 bg-primary text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-primary/90 transition-all disabled:opacity-50 flex items-center gap-1.5"
                                         >
                                             {isUploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
                                             {isUploading ? 'Uploading...' : 'Upload & Configure'}
@@ -511,26 +571,29 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
                         )}
 
                         {step === 'editing' && (
-                            <div className="p-5 space-y-4">
-                                <div className="flex items-center justify-between">
-                                    <p className="text-xs text-slate-500 font-medium">
-                                        Draw rectangles on the CAD image, label each area, and link to checklist steps.
-                                    </p>
+                            <div className="p-4 sm:p-5 space-y-4 flex-1 flex flex-col min-h-0 overflow-hidden">
+                                <div className="flex items-center justify-between flex-shrink-0">
+                                    <div className="flex items-center gap-2">
+                                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                                        <p className="text-xs text-slate-600 font-medium">
+                                            Draw rectangles on the floor plan to define areas, then check off the checklist steps for each area.
+                                        </p>
+                                    </div>
                                     <button
                                         onClick={handleReset}
-                                        className="text-[10px] font-black text-slate-400 hover:text-slate-600 uppercase tracking-widest flex items-center gap-1"
+                                        className="text-[10px] font-black text-slate-400 hover:text-slate-600 uppercase tracking-widest flex items-center gap-1.5 px-2.5 py-1 rounded-lg hover:bg-slate-100 transition-all"
                                     >
                                         <RefreshCw size={12} />
-                                        Re-upload
+                                        Re-upload CAD
                                     </button>
                                 </div>
 
-                                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                                <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 flex-1 min-h-0">
                                     {/* CAD Image with overlay */}
-                                    <div className="lg:col-span-2 relative bg-slate-50 rounded-xl overflow-hidden border border-slate-200">
+                                    <div className="lg:col-span-2 relative bg-slate-900 rounded-2xl overflow-auto border border-slate-200 shadow-inner flex items-center justify-center h-full min-h-[500px]">
                                         <div
                                             ref={containerRef}
-                                            className="relative cursor-crosshair"
+                                            className="relative cursor-crosshair max-w-full my-auto"
                                             onMouseDown={handleImageMouseDown}
                                             onMouseMove={handleImageMouseMove}
                                             onMouseUp={handleImageMouseUp}
@@ -539,92 +602,251 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
                                             <img
                                                 ref={imageRef}
                                                 src={preview || ''}
-                                                alt="CAD"
-                                                className="w-full h-auto select-none"
+                                                alt="CAD Floor Plan"
+                                                className="w-full h-auto select-none rounded-lg"
                                                 onLoad={handleImageLoad}
                                                 draggable={false}
                                             />
                                             <canvas
                                                 ref={canvasRef}
-                                                className="absolute top-0 left-0 pointer-events-none"
+                                                className="absolute top-0 left-0 pointer-events-none w-full h-full"
                                                 onClick={handleCanvasClick}
                                             />
                                         </div>
                                     </div>
 
                                     {/* Areas panel */}
-                                    <div className="space-y-3">
-                                        <div className="flex items-center justify-between">
-                                            <h3 className="font-black text-xs text-slate-700 uppercase tracking-widest">Areas ({areas.length})</h3>
+                                    <div className="flex flex-col h-full space-y-3 bg-slate-50/70 p-3.5 rounded-2xl border border-slate-200 min-h-0">
+                                        <div className="flex items-center justify-between pb-1 border-b border-slate-200 flex-shrink-0">
+                                            <h3 className="font-black text-xs text-slate-800 uppercase tracking-widest flex items-center gap-1.5">
+                                                <span>Areas</span>
+                                                <span className="px-1.5 py-0.5 rounded-full bg-primary/10 text-primary text-[10px]">{areas.length}</span>
+                                            </h3>
+                                            <span className="text-[10px] font-bold text-slate-400">
+                                                {items.length} checklist step{items.length !== 1 ? 's' : ''}
+                                            </span>
                                         </div>
 
-                                        {areas.length === 0 && (
-                                            <div className="text-center py-8 text-slate-400">
-                                                <MapPin size={24} className="mx-auto mb-2 opacity-50" />
-                                                <p className="text-xs font-medium">No areas yet. Draw on the image to create one.</p>
+                                        {items.length === 0 && (
+                                            <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-800 flex items-start gap-2 flex-shrink-0">
+                                                <AlertCircle size={14} className="flex-shrink-0 mt-0.5 text-amber-600" />
+                                                <span>No steps added in template yet. You can draw areas now and link steps once you add steps to the template.</span>
                                             </div>
                                         )}
 
-                                        <div className="space-y-2 max-h-96 overflow-y-auto">
-                                            {areas.map((area) => (
-                                                <div
-                                                    key={area.id}
-                                                    className={`border rounded-xl p-3 transition-all ${selectedAreaId === area.id ? 'border-blue-300 bg-blue-50/50' : 'border-slate-200 bg-white'}`}
-                                                >
-                                                    <div className="flex items-center justify-between mb-2">
-                                                        <input
-                                                            type="text"
-                                                            value={selectedAreaId === area.id ? editingAreaLabel : area.label}
-                                                            onChange={(e) => {
-                                                                if (selectedAreaId === area.id) setEditingAreaLabel(e.target.value);
-                                                            }}
-                                                            onBlur={() => {
-                                                                if (selectedAreaId === area.id) {
-                                                                    handleUpdateAreaLabel(area.id, editingAreaLabel);
-                                                                }
-                                                            }}
-                                                            className="font-black text-xs text-slate-900 bg-transparent border-none outline-none flex-1"
-                                                            placeholder="Area label"
-                                                        />
-                                                        <button
-                                                            onClick={() => handleDeleteArea(area.id)}
-                                                            className="p-1 text-slate-400 hover:text-rose-500 transition-all"
-                                                        >
-                                                            <Trash2 size={14} />
-                                                        </button>
-                                                    </div>
+                                        {areas.length === 0 && (
+                                            <div className="text-center py-10 px-4 text-slate-400 bg-white rounded-xl border border-dashed border-slate-200">
+                                                <MapPin size={28} className="mx-auto mb-2 text-primary/40" />
+                                                <p className="text-xs font-black text-slate-700 mb-1">No areas drawn yet</p>
+                                                <p className="text-[11px] font-medium text-slate-400">Click and drag on the floor plan on the left to create an area.</p>
+                                            </div>
+                                        )}
 
-                                                    <div className="space-y-1">
-                                                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Linked Steps</p>
-                                                        <div className="max-h-32 overflow-y-auto space-y-1">
-                                                            {items.map((item) => (
-                                                                <label
-                                                                    key={item.id}
-                                                                    className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-slate-50 cursor-pointer"
+                                        <div className="space-y-2.5 flex-1 overflow-y-auto pr-1">
+                                            {areas.map((area, areaIdx) => {
+                                                const linkedCount = area.linked_step_ids?.length || 0;
+                                                const isSelected = selectedAreaId === area.id;
+                                                return (
+                                                    <div
+                                                        key={area.id}
+                                                        className={`border rounded-xl p-3 transition-all ${
+                                                            isSelected
+                                                                ? 'border-blue-400 bg-blue-50/70 shadow-sm ring-1 ring-blue-400/30'
+                                                                : linkedCount > 0
+                                                                ? 'border-emerald-200 bg-white hover:border-emerald-300'
+                                                                : 'border-amber-200 bg-white hover:border-amber-300'
+                                                        }`}
+                                                    >
+                                                        {/* Area Header */}
+                                                        <div className="flex items-center justify-between mb-2">
+                                                            <div className="flex items-center gap-2 flex-1 mr-2">
+                                                                <span
+                                                                    className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                                                                    style={{ backgroundColor: getAreaColor(area.id) }}
+                                                                />
+                                                                <input
+                                                                    type="text"
+                                                                    value={isSelected ? editingAreaLabel : area.label}
+                                                                    onChange={(e) => {
+                                                                        if (isSelected) setEditingAreaLabel(e.target.value);
+                                                                    }}
+                                                                    onBlur={() => {
+                                                                        if (isSelected) {
+                                                                            handleUpdateAreaLabel(area.id, editingAreaLabel);
+                                                                        }
+                                                                    }}
+                                                                    onFocus={() => {
+                                                                        setSelectedAreaId(area.id);
+                                                                        setEditingAreaLabel(area.label);
+                                                                    }}
+                                                                    className="font-black text-xs text-slate-900 bg-transparent border-b border-transparent focus:border-primary outline-none flex-1 py-0.5"
+                                                                    placeholder="Area name (e.g. Cafeteria)"
+                                                                />
+                                                            </div>
+                                                            <div className="flex items-center gap-1">
+                                                                <span
+                                                                    className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded-md ${
+                                                                        linkedCount > 0
+                                                                            ? 'bg-emerald-100 text-emerald-700'
+                                                                            : 'bg-amber-100 text-amber-700'
+                                                                    }`}
                                                                 >
-                                                                    <input
-                                                                        type="checkbox"
-                                                                        checked={area.linked_step_ids.includes(item.id)}
-                                                                        onChange={() => handleToggleStepLink(area.id, item.id)}
-                                                                        className="w-3.5 h-3.5 rounded border-slate-300 text-primary focus:ring-primary"
-                                                                    />
-                                                                    <span className="text-xs text-slate-700 font-medium">{item.title}</span>
-                                                                </label>
-                                                            ))}
+                                                                    {linkedCount} {linkedCount === 1 ? 'step' : 'steps'}
+                                                                </span>
+                                                                <button
+                                                                    onClick={() => handleDeleteArea(area.id)}
+                                                                    className="p-1 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
+                                                                    title="Delete Area"
+                                                                >
+                                                                    <Trash2 size={13} />
+                                                                </button>
+                                                            </div>
                                                         </div>
+
+                                                        {/* Linked Steps Dropdown Section */}
+                                                        {localItems.length > 0 && (
+                                                            <div className="space-y-2 pt-1 border-t border-slate-100">
+                                                                <div className="flex items-center justify-between">
+                                                                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                                                                        Select Steps for Area
+                                                                    </p>
+                                                                    {area.linked_step_ids.length > 0 && (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => handleClearSteps(area.id)}
+                                                                            className="text-[9px] font-bold text-rose-500 hover:underline"
+                                                                        >
+                                                                            Clear All
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+
+                                                                {/* Dropdown to select step */}
+                                                                <div className="relative">
+                                                                    <select
+                                                                        value=""
+                                                                        onChange={(e) => {
+                                                                            const val = e.target.value;
+                                                                            if (val === 'ALL') {
+                                                                                handleSelectAllSteps(area.id);
+                                                                            } else if (val) {
+                                                                                handleToggleStepLink(area.id, val);
+                                                                            }
+                                                                        }}
+                                                                        className="w-full text-xs font-bold text-slate-700 bg-white border border-slate-200 rounded-xl p-2 focus:border-primary outline-none appearance-none cursor-pointer"
+                                                                    >
+                                                                        <option value="" disabled>+ Add / Select Step for Area...</option>
+                                                                        <option value="ALL">-- Select All Steps --</option>
+                                                                        {localItems.map((item) => {
+                                                                            const isLinked = area.linked_step_ids?.includes(item.id);
+                                                                            return (
+                                                                                <option key={item.id} value={item.id}>
+                                                                                    {isLinked ? '✓ ' : ''}{item.title}
+                                                                                </option>
+                                                                            );
+                                                                        })}
+                                                                    </select>
+                                                                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2.5 text-slate-400">
+                                                                        <span className="text-[10px]">▼</span>
+                                                                    </div>
+                                                                </div>
+
+                                                                {/* Display linked steps with Clean Photo Upload & View option */}
+                                                                {area.linked_step_ids.length > 0 && (
+                                                                    <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1 bg-slate-50 p-1.5 rounded-xl border border-slate-100">
+                                                                        {localItems
+                                                                            .filter((item) => area.linked_step_ids.includes(item.id))
+                                                                            .map((item) => (
+                                                                                <div key={item.id} className="flex items-center justify-between gap-2 p-2 bg-white rounded-lg border border-slate-200 text-xs shadow-xs">
+                                                                                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                                                                                        {/* Step title */}
+                                                                                        <span className="font-bold text-slate-800 truncate text-[11px] flex-1">{item.title}</span>
+
+                                                                                        {/* Clean reference photo thumbnail view */}
+                                                                                        {item.reference_photo_url ? (
+                                                                                            <a
+                                                                                                href={item.reference_photo_url}
+                                                                                                target="_blank"
+                                                                                                rel="noopener noreferrer"
+                                                                                                className="relative group flex-shrink-0"
+                                                                                                title="View Clean Reference Photo"
+                                                                                            >
+                                                                                                <img
+                                                                                                    src={item.reference_photo_url}
+                                                                                                    alt="Clean Ref"
+                                                                                                    className="w-7 h-7 rounded-lg object-cover border border-emerald-300"
+                                                                                                />
+                                                                                                <div className="absolute inset-0 bg-black/40 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                                                                                    <Eye size={10} className="text-white" />
+                                                                                                </div>
+                                                                                            </a>
+                                                                                        ) : (
+                                                                                            <span className="text-[8px] font-bold text-slate-400 uppercase bg-slate-100 px-1.5 py-0.5 rounded">
+                                                                                                No Clean Photo
+                                                                                            </span>
+                                                                                        )}
+                                                                                    </div>
+
+                                                                                    {/* Photo Upload action */}
+                                                                                    <div className="flex items-center gap-1 flex-shrink-0">
+                                                                                        <input
+                                                                                            type="file"
+                                                                                            accept="image/*"
+                                                                                            className="hidden"
+                                                                                            id={`cad-step-ref-${area.id}-${item.id}`}
+                                                                                            onChange={(e) => {
+                                                                                                const file = e.target.files?.[0];
+                                                                                                if (file) handleStepPhotoUpload(item.id, file);
+                                                                                            }}
+                                                                                        />
+                                                                                        <label
+                                                                                            htmlFor={`cad-step-ref-${area.id}-${item.id}`}
+                                                                                            className={`p-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider cursor-pointer flex items-center gap-1 transition-all ${
+                                                                                                refUploads[item.id]
+                                                                                                    ? 'bg-primary/10 text-primary'
+                                                                                                    : item.reference_photo_url
+                                                                                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
+                                                                                                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200'
+                                                                                            }`}
+                                                                                            title={item.reference_photo_url ? 'Change Clean Photo' : 'Upload Clean Photo'}
+                                                                                        >
+                                                                                            {refUploads[item.id] ? (
+                                                                                                <Loader2 size={11} className="animate-spin" />
+                                                                                            ) : (
+                                                                                                <Camera size={11} />
+                                                                                            )}
+                                                                                            <span>{item.reference_photo_url ? 'Edit Photo' : 'Add Photo'}</span>
+                                                                                        </label>
+
+                                                                                        {/* Unlink step button */}
+                                                                                        <button
+                                                                                            type="button"
+                                                                                            onClick={() => handleToggleStepLink(area.id, item.id)}
+                                                                                            className="p-1 text-slate-400 hover:text-rose-500 rounded-lg hover:bg-rose-50"
+                                                                                            title="Remove step from area"
+                                                                                        >
+                                                                                            <X size={12} />
+                                                                                        </button>
+                                                                                    </div>
+                                                                                </div>
+                                                                            ))}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        )}
                                                     </div>
-                                                </div>
-                                            ))}
+                                                );
+                                            })}
                                         </div>
 
                                         {areas.length > 0 && (
                                             <button
                                                 onClick={handleSaveAreas}
                                                 disabled={isSavingAreas}
-                                                className="w-full py-2.5 bg-primary text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-primary/90 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                                                className="w-full mt-auto py-3 bg-primary text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-primary/90 transition-all shadow-md shadow-primary/20 disabled:opacity-50 flex items-center justify-center gap-2"
                                             >
                                                 {isSavingAreas ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                                                {isSavingAreas ? 'Saving...' : 'Save Areas'}
+                                                {isSavingAreas ? 'Saving Areas...' : 'Save Areas'}
                                             </button>
                                         )}
                                     </div>
@@ -646,6 +868,9 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
             </div>
         </AnimatePresence>
     );
+
+    return createPortal(modalContent, document.body);
 };
 
 export default SOPCADConfigModal;
+

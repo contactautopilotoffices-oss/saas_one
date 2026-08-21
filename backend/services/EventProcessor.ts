@@ -61,15 +61,18 @@ export const EventProcessor = {
             .eq('id', userId)
             .single();
 
+        const isCancellation = ['MEETING_ROOM_CANCELLED', 'ROOM_CANCELLED', 'ROOM_BOOKING_CANCELLED'].includes(eventType);
+        const featureKey = isCancellation ? 'meeting_room_cancelled' : 'meeting_room_booked';
+
         const { enabled, emails } = await EmailRecipientResolver.resolveRecipients({
             organizationId: property.organization_id,
             propertyId,
-            featureKey: 'meeting_rooms',
+            featureKey,
             contextualEmails: [userData?.email]
         });
 
         if (!enabled || emails.length === 0) {
-            console.log(`[EventProcessor] Meeting room email disabled or no recipients for org ${property.organization_id}`);
+            console.log(`[EventProcessor] Meeting room email disabled or no recipients for org ${property.organization_id} (feature: ${featureKey})`);
             return;
         }
 
@@ -86,8 +89,6 @@ export const EventProcessor = {
             .select('name')
             .eq('id', meetingRoomId)
             .single();
-
-        const isCancellation = ['MEETING_ROOM_CANCELLED', 'ROOM_CANCELLED', 'ROOM_BOOKING_CANCELLED'].includes(eventType);
 
         for (const emailTo of emails) {
             await EmailService.sendMeetingRoomEmail({
@@ -125,7 +126,7 @@ export const EventProcessor = {
         const { enabled, emails } = await EmailRecipientResolver.resolveRecipients({
             organizationId: orgId,
             propertyId: payload.property_id,
-            featureKey: 'material_requests',
+            featureKey: 'material_request_created',
             contextualEmails: [assigneeEmail]
         });
 
@@ -192,10 +193,11 @@ export const EventProcessor = {
         const itemsList: any[] = (request.items as any[]) || [];
         const appUrl = (process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://fms.autopilotoffices.com').replace(/\/$/, '');
 
-        let featureKey = 'comparative_quotes';
-        if (eventType === 'MATERIAL_DELIVERED') {
-            featureKey = 'material_delivery';
-        }
+        let featureKey = eventType.toLowerCase();
+        if (eventType === 'COMPARATIVE_UPLOADED') featureKey = 'comparative_uploaded';
+        else if (eventType === 'COMPARATIVE_APPROVED') featureKey = 'comparative_approved';
+        else if (eventType === 'COMPARATIVE_REJECTED') featureKey = 'comparative_rejected';
+        else if (eventType === 'MATERIAL_DELIVERED') featureKey = 'material_delivered';
 
         const { enabled, emails } = await EmailRecipientResolver.resolveRecipients({
             organizationId: orgId,
@@ -429,7 +431,7 @@ export const EventProcessor = {
         const { enabled, emails } = await EmailRecipientResolver.resolveRecipients({
             organizationId: organization_id,
             propertyId: property_id,
-            featureKey: 'monthly_requisitions'
+            featureKey: 'monthly_requisition_uploaded'
         });
 
         if (!enabled || emails.length === 0) {

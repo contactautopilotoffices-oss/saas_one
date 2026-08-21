@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
-import { EventProcessor } from '@/backend/services/EventProcessor';
+import { generateRequisitionExcelWorkbook, RequisitionItemData } from '@/backend/lib/excel/requisitionExcelGenerator';
+import { PricingAndAliasService, normalizeText } from '@/backend/lib/procurement/pricingAndAliasService';
+import { EmailService } from '@/backend/services/EmailService';
+import { EmailRecipientResolver } from '@/backend/services/EmailRecipientResolver';
+import { WhatsAppEventProcessor } from '@/backend/services/WhatsAppEventProcessor';
+
+const MONTH_NAMES = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+];
 
 export async function GET(request: NextRequest) {
     try {
@@ -17,8 +26,8 @@ export async function GET(request: NextRequest) {
             .from('property_monthly_requisitions')
             .select(`
                 *,
-                property:properties!property_id(id, name),
-                uploader:users!uploaded_by(id, full_name, email),
+                property:properties!property_id(id, name, address, city),
+                uploader:users!uploaded_by(id, full_name, email, phone),
                 acknowledger:users!acknowledged_by(id, full_name, email)
             `)
             .order('created_at', { ascending: false });
@@ -46,7 +55,31 @@ export async function GET(request: NextRequest) {
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
-        return NextResponse.json({ requisitions: data || [] });
+        // Augment each record with parsed JSON metadata
+        const enriched = (data || []).map((req: any) => {
+            let parsedData: any = {};
+            try {
+                if (req.notes && typeof req.notes === 'string' && req.notes.trim().startsWith('{')) {
+                    parsedData = JSON.parse(req.notes);
+                }
+            } catch {
+                parsedData = {};
+            }
+
+            return {
+                ...req,
+                floor_tag: req.floor_tag || parsedData.floor_tag || 'All Floors',
+                items: parsedData.items || [],
+                categories: parsedData.categories || [],
+                total_estimated_amount: parsedData.total_estimated_amount || 0,
+                total_items_count: parsedData.items?.length || 0,
+                site_notes: parsedData.site_notes || req.notes || '',
+                vendor_quotation: parsedData.vendor_quotation || null,
+                approver_info: parsedData.approver_info || null
+            };
+        });
+
+        return NextResponse.json({ requisitions: enriched });
     } catch (err: any) {
         console.error('[Requisitions GET Server Error]:', err);
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
@@ -57,10 +90,10 @@ export async function POST(request: NextRequest) {
     try {
         const adminSupabase = createAdminClient();
 
-        // Ensure bucket exists
+        // Ensure storage bucket exists
         const { data: bucket, error: bucketErr } = await adminSupabase.storage.getBucket('procurement_requisitions');
         if (bucketErr) {
-            const { error: createErr } = await adminSupabase.storage.createBucket('procurement_requisitions', {
+            await adminSupabase.storage.createBucket('procurement_requisitions', {
                 public: true,
                 allowedMimeTypes: [
                     'application/vnd.ms-excel',
@@ -68,35 +101,114 @@ export async function POST(request: NextRequest) {
                     'text/csv',
                     'application/csv',
                     'application/octet-stream',
-                    'text/plain'
+                    'application/pdf'
                 ],
             });
-            if (createErr && !createErr.message?.includes('already exists')) {
-                console.error('[Requisitions Storage Bucket Create Error]:', createErr);
+        }
+
+        const contentType = request.headers.get('content-type') || '';
+        let organizationId = '';
+        let propertyId = '';
+        let floorTag = 'All Floors';
+        let requisitionMonth = 0;
+        let requisitionYear = 0;
+        let userId = '';
+        let siteNotes = '';
+        let rawItems: RequisitionItemData[] = [];
+        let uploadedFileBuffer: Buffer | null = null;
+        let uploadedFileName = '';
+
+        if (contentType.includes('application/json')) {
+            // Interactive UI submission with dual-table items
+            const body = await request.json();
+            organizationId = body.organization_id;
+            propertyId = body.property_id;
+            floorTag = body.floor_tag || 'All Floors';
+            requisitionMonth = parseInt(body.requisition_month || '0');
+            requisitionYear = parseInt(body.requisition_year || '0');
+            userId = body.user_id;
+            siteNotes = body.site_notes || body.notes || '';
+            rawItems = body.items || [];
+
+            if (!organizationId || !propertyId || !requisitionMonth || !requisitionYear || !userId) {
+                return NextResponse.json({ error: 'Missing required parameters' }, { status: 400 });
             }
+
+            // CRITICAL SECURITY RULE: Resolve authorized prices server-side from item_site_prices / procurement_catalog
+            const siteCatalog = await PricingAndAliasService.getCatalogWithSitePrices(organizationId, propertyId);
+            const verifiedPriceMap = new Map<string, number>();
+            siteCatalog.forEach((item: any) => {
+                verifiedPriceMap.set(normalizeText(item.name), item.unit_price);
+            });
+
+            // Enforce verified price snapshot on each line item
+            const verifiedItems: RequisitionItemData[] = rawItems.map(item => {
+                const normalized = normalizeText(item.name);
+                const serverVerifiedPrice = verifiedPriceMap.get(normalized);
+                const finalPrice = serverVerifiedPrice !== undefined ? serverVerifiedPrice : (item.unit_price || 0);
+
+                return {
+                    ...item,
+                    unit_price: finalPrice
+                };
+            });
+
+            // Fetch property & user info to populate Excel template
+            const { data: prop } = await adminSupabase.from('properties').select('id, name, address, city').eq('id', propertyId).single();
+            const { data: uploader } = await adminSupabase.from('users').select('id, full_name, email, phone').eq('id', userId).single();
+
+            const monthName = MONTH_NAMES[requisitionMonth - 1] || 'Month';
+            const now = new Date();
+            const dateFormatted = `${now.getDate()}/${now.getMonth() + 1}/${now.getFullYear()}`;
+
+            // Generate exact Excel workbook buffer matching user photos
+            uploadedFileBuffer = await generateRequisitionExcelWorkbook({
+                propertyName: `${prop?.name || 'Site Property'} (${floorTag})`,
+                propertyLocation: prop?.address || prop?.city || prop?.name,
+                requesterName: uploader?.full_name || uploader?.email || 'Site Admin',
+                requesterPhone: uploader?.phone || '',
+                dateFormatted,
+                monthName,
+                monthIndex: requisitionMonth,
+                year: requisitionYear,
+                siteNotes,
+                items: verifiedItems,
+                status: 'submitted'
+            });
+
+            const cleanPropName = (prop?.name || 'Requisition').replace(/\s+/g, '_');
+            const cleanFloor = floorTag.replace(/\s+/g, '_');
+            uploadedFileName = `${cleanPropName}_${cleanFloor}_${monthName}_${requisitionYear}_requisition.xlsx`;
+            rawItems = verifiedItems;
+        } else {
+            // FormData File Upload
+            const form = await request.formData();
+            const file = form.get('file') as File | null;
+            organizationId = form.get('organization_id') as string;
+            propertyId = form.get('property_id') as string;
+            floorTag = (form.get('floor_tag') as string) || 'All Floors';
+            requisitionMonth = parseInt(form.get('requisition_month') as string || '0');
+            requisitionYear = parseInt(form.get('requisition_year') as string || '0');
+            siteNotes = form.get('notes') as string || '';
+            userId = form.get('user_id') as string;
+
+            if (!file || !organizationId || !propertyId || !requisitionMonth || !requisitionYear || !userId) {
+                return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+            }
+
+            uploadedFileName = file.name;
+            const arrayBuffer = await file.arrayBuffer();
+            uploadedFileBuffer = Buffer.from(arrayBuffer);
         }
 
-        const form = await request.formData();
-        const file = form.get('file') as File | null;
-        const organizationId = form.get('organization_id') as string;
-        const propertyId = form.get('property_id') as string;
-        const requisitionMonth = parseInt(form.get('requisition_month') as string || '0');
-        const requisitionYear = parseInt(form.get('requisition_year') as string || '0');
-        const notes = form.get('notes') as string || '';
-        const userId = form.get('user_id') as string;
-
-        if (!file || !organizationId || !propertyId || !requisitionMonth || !requisitionYear || !userId) {
-            return NextResponse.json({ error: 'Missing required fields: file, organization_id, property_id, requisition_month, requisition_year, user_id' }, { status: 400 });
-        }
-
-        // Upload file to Supabase storage
-        const filePath = `${organizationId}/${propertyId}/${requisitionYear}_${requisitionMonth}_${Date.now()}_${file.name}`;
-        const arrayBuffer = await file.arrayBuffer();
-        const buffer = Buffer.from(arrayBuffer);
-
+        // Upload generated / submitted Excel to Supabase storage
+        const filePath = `${organizationId}/${propertyId}/${requisitionYear}_${requisitionMonth}_${Date.now()}_${uploadedFileName}`;
         const { data: uploadData, error: uploadError } = await adminSupabase.storage
             .from('procurement_requisitions')
-            .upload(filePath, buffer, { upsert: true, contentType: file.type || 'application/octet-stream' });
+            .upload(filePath, uploadedFileBuffer, {
+                upsert: true,
+                contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            });
 
         if (uploadError) {
             console.error('[Requisition Upload Storage Error]:', uploadError);
@@ -105,58 +217,173 @@ export async function POST(request: NextRequest) {
 
         const publicUrl = adminSupabase.storage.from('procurement_requisitions').getPublicUrl(uploadData.path).data.publicUrl;
 
-        // Insert or Upsert into property_monthly_requisitions table
+        // Calculate total cost using locked price snapshots
+        const totalEstimatedAmount = rawItems.reduce((acc, curr) => acc + ((curr.requested_qty || 0) * (curr.unit_price || 0)), 0);
+
+        // Store structured JSON inside notes column for rich persistence
+        const notesPayload = JSON.stringify({
+            floor_tag: floorTag,
+            site_notes: siteNotes,
+            total_estimated_amount: totalEstimatedAmount,
+            total_items_count: rawItems.length,
+            categories: Array.from(new Set(rawItems.map(i => i.category || 'HK'))),
+            items: rawItems,
+            submitted_at: new Date().toISOString()
+        });
+
+        // Insert / Update into property_monthly_requisitions
         const { data: insertedRecord, error: insertError } = await adminSupabase
             .from('property_monthly_requisitions')
-            .upsert(
-                {
-                    organization_id: organizationId,
-                    property_id: propertyId,
-                    requisition_month: requisitionMonth,
-                    requisition_year: requisitionYear,
-                    file_url: publicUrl,
-                    file_name: file.name,
-                    file_size_bytes: file.size,
-                    notes,
-                    status: 'uploaded',
-                    uploaded_by: userId,
-                    updated_at: new Date().toISOString()
-                },
-                { onConflict: 'property_id,requisition_month,requisition_year' }
-            )
+            .insert({
+                organization_id: organizationId,
+                property_id: propertyId,
+                requisition_month: requisitionMonth,
+                requisition_year: requisitionYear,
+                floor_tag: floorTag,
+                file_url: publicUrl,
+                file_name: uploadedFileName,
+                file_size_bytes: uploadedFileBuffer.length,
+                notes: notesPayload,
+                status: 'submitted',
+                uploaded_by: userId,
+                updated_at: new Date().toISOString()
+            })
             .select(`
                 *,
                 property:properties!property_id(id, name),
-                uploader:users!uploaded_by(id, full_name, email)
+                uploader:users!uploaded_by(id, full_name, email, phone)
             `)
             .single();
 
         if (insertError) {
             console.error('[Requisition Insert Error]:', insertError);
-            return NextResponse.json({ error: 'Failed to save requisition metadata', details: insertError.message }, { status: 500 });
+            return NextResponse.json({ error: 'Failed to save requisition record', details: insertError.message }, { status: 500 });
         }
 
-        // Process event strictly via event_outbox queue (supports mobile app, web app, and direct inserts without duplicates)
+        // Auto-sync available stock counts to property's stock_items table so they appear in Stock Management
+        try {
+            if (Array.isArray(rawItems) && rawItems.length > 0) {
+                const siteCatalog = await PricingAndAliasService.getCatalogWithSitePrices(organizationId, propertyId);
+                for (const item of rawItems) {
+                    if (!item.name) continue;
+                    const norm = normalizeText(item.name);
+                    
+                    const { data: existingStock } = await adminSupabase
+                        .from('stock_items')
+                        .select('id, quantity')
+                        .eq('property_id', propertyId)
+                        .ilike('name', item.name)
+                        .maybeSingle();
+
+                    const matchedCatalog = (siteCatalog || []).find((c: any) => normalizeText(c.name) === norm);
+
+                    if (existingStock) {
+                        if (item.available_stock_qty !== undefined && item.available_stock_qty !== null) {
+                            await adminSupabase
+                                .from('stock_items')
+                                .update({
+                                    quantity: Number(item.available_stock_qty) || 0,
+                                    catalog_item_id: matchedCatalog?.id || null,
+                                    updated_at: new Date().toISOString()
+                                })
+                                .eq('id', existingStock.id);
+                        }
+                    } else {
+                        const itemCode = `STK-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+                        await adminSupabase
+                            .from('stock_items')
+                            .insert({
+                                organization_id: organizationId,
+                                property_id: propertyId,
+                                catalog_item_id: matchedCatalog?.id || null,
+                                name: item.name,
+                                category: item.category || 'HK',
+                                unit: item.unit || 'pcs',
+                                item_code: itemCode,
+                                quantity: Number(item.available_stock_qty) || 0,
+                                min_threshold: 10,
+                                unit_price: item.unit_price || 0
+                            });
+                    }
+                }
+            }
+        } catch (syncStockErr) {
+            console.warn('[Auto Sync Stock Error]:', syncStockErr);
+        }
+
+        const propertyName = insertedRecord.property?.name || 'Site Property';
+        const uploaderName = insertedRecord.uploader?.full_name || insertedRecord.uploader?.email || 'Site Team';
+        const monthName = MONTH_NAMES[requisitionMonth - 1] || 'Month';
+
+        // 1. Insert into event_outbox for guaranteed webhook & omnichannel delivery
+        try {
+            await adminSupabase.from('event_outbox').insert({
+                organization_id: organizationId,
+                property_id: propertyId,
+                event_type: 'REQUISITION_UPLOADED',
+                payload: {
+                    requisition_id: insertedRecord.id,
+                    organization_id: organizationId,
+                    property_id: propertyId,
+                    floor_tag: floorTag,
+                    requisition_month: requisitionMonth,
+                    requisition_year: requisitionYear,
+                    file_name: uploadedFileName,
+                    file_url: publicUrl,
+                    total_amount: totalEstimatedAmount,
+                    uploaded_by: userId
+                },
+                status: 'pending'
+            });
+        } catch (outboxErr) {
+            console.warn('[Outbox Insert Note]:', outboxErr);
+        }
+
+        // 2. Send Email to Procurement Team via Dynamic Recipient Resolver (OmniChannel Notification Settings)
         (async () => {
             try {
-                const { data: outboxEvent } = await adminSupabase
-                    .from('event_outbox')
-                    .update({ status: 'processing', updated_at: new Date().toISOString() })
-                    .eq('entity_id', insertedRecord.id)
-                    .eq('event_type', 'REQUISITION_UPLOADED')
-                    .in('status', ['pending', 'retry'])
-                    .select()
-                    .maybeSingle();
+                const { enabled, emails } = await EmailRecipientResolver.resolveRecipients({
+                    organizationId,
+                    propertyId,
+                    featureKey: 'monthly_requisition_uploaded'
+                });
 
-                if (outboxEvent) {
-                    await EventProcessor.processEvent(outboxEvent);
-                    await adminSupabase
-                        .from('event_outbox')
-                        .update({ status: 'completed', updated_at: new Date().toISOString() })
-                        .eq('id', outboxEvent.id);
+                if (enabled && emails && emails.length > 0) {
+                    await EmailService.sendRequisitionUploadedEmail({
+                        emailTo: emails,
+                        propertyName: `${propertyName} (${floorTag})`,
+                        monthName,
+                        year: requisitionYear,
+                        fileName: uploadedFileName,
+                        uploaderName
+                    });
                 }
-            } catch (e) {
-                console.error('[Requisition Outbox Processing Error]:', e);
+            } catch (emailErr) {
+                console.error('[Requisition Procurement Email Error]:', emailErr);
+            }
+        })();
+
+        // 3. Dispatch WhatsApp Notification to Procurement Team
+        (async () => {
+            try {
+                await WhatsAppEventProcessor.processEvent({
+                    event_type: 'REQUISITION_UPLOADED',
+                    payload: {
+                        requisition_id: insertedRecord.id,
+                        organization_id: organizationId,
+                        property_id: propertyId,
+                        floor_tag: floorTag,
+                        requisition_month: requisitionMonth,
+                        requisition_year: requisitionYear,
+                        file_name: uploadedFileName,
+                        items_count: rawItems.length,
+                        total_amount: totalEstimatedAmount,
+                        total_estimated_amount: totalEstimatedAmount,
+                        uploaded_by: userId
+                    }
+                });
+            } catch (waErr) {
+                console.error('[Requisition Procurement WhatsApp Error]:', waErr);
             }
         })();
 

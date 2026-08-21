@@ -4,16 +4,18 @@ import React, { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import { 
     Settings, List, ShoppingCart, 
-    Loader2, FileText, FileSpreadsheet 
+    Loader2, FileText, FileSpreadsheet,
+    DollarSign
 } from 'lucide-react';
 import ProcurementAdminSettings from './ProcurementAdminSettings';
 import ProcurementRequestList from './ProcurementRequestList';
 import ProcurementPOProcessor from './ProcurementPOProcessor';
 import ProcurementCatalogModal from './ProcurementCatalogModal';
 import MonthlyRequisitionsTab from './MonthlyRequisitionsTab';
+import SitePricingAdminTab from './SitePricingAdminTab';
 import { useAuth } from '@/frontend/context/AuthContext';
 
-type TabType = 'orders' | 'requisitions' | 'catalog' | 'po-generator' | 'settings';
+type TabType = 'orders' | 'requisitions' | 'site-pricing' | 'catalog' | 'po-generator' | 'settings';
 
 export default function ProcurementModule({ orgId: propOrgId, isAdmin: propIsAdmin, properties: propProperties }: { orgId?: string, isAdmin?: boolean, properties?: any[] }) {
     const params = useParams();
@@ -25,8 +27,10 @@ export default function ProcurementModule({ orgId: propOrgId, isAdmin: propIsAdm
     const [isLoading, setIsLoading] = useState(true);
     const [counts, setCounts] = useState({ orders: 0, pending_quotation: 0 });
 
-    const isSuperAdmin = propIsAdmin || user?.user_metadata?.role === 'org_super_admin' || user?.user_metadata?.role === 'master_admin';
-    const isProcurementUser = user?.user_metadata?.role?.toLowerCase().includes('procurement');
+    const userRole = (user?.user_metadata?.role || '').toLowerCase();
+    const isSuperAdmin = propIsAdmin || userRole === 'org_super_admin' || userRole === 'master_admin';
+    const isProcurementUser = userRole.includes('procurement');
+    const canManageCatalogAndPricing = isSuperAdmin || isProcurementUser;
 
     useEffect(() => {
         const initialize = async () => {
@@ -61,12 +65,15 @@ export default function ProcurementModule({ orgId: propOrgId, isAdmin: propIsAdm
     };
 
     const fetchProperties = async () => {
+        if (!orgId) return;
         try {
-            const res = await fetch(`/api/properties?organizationId=${orgId}`);
+            const res = await fetch(`/api/properties?organization_id=${orgId}`);
             const data = await res.json();
-            setProperties(data || []);
+            if (Array.isArray(data)) {
+                setProperties(data);
+            }
         } catch (err) {
-            console.error(err);
+            console.error('Failed to fetch properties:', err);
         }
     };
 
@@ -81,20 +88,21 @@ export default function ProcurementModule({ orgId: propOrgId, isAdmin: propIsAdm
     const TABS = [
         { id: 'orders', label: 'All Orders', icon: List, show: true, count: counts.orders },
         { id: 'requisitions', label: 'Monthly Requisitions', icon: FileSpreadsheet, show: true, count: 0 },
-        { id: 'catalog', label: 'Manage Items', icon: ShoppingCart, show: isSuperAdmin || isProcurementUser, count: 0 },
-        { id: 'po-generator', label: 'PO Generator', icon: FileText, show: isSuperAdmin || isProcurementUser || user?.user_metadata?.role === 'org_admin', count: 0 },
+        { id: 'site-pricing', label: 'Site Pricing & Aliases', icon: DollarSign, show: canManageCatalogAndPricing, count: 0 },
+        { id: 'catalog', label: 'Manage Items Master', icon: ShoppingCart, show: canManageCatalogAndPricing, count: 0 },
+        { id: 'po-generator', label: 'PO Generator', icon: FileText, show: canManageCatalogAndPricing || userRole === 'org_admin', count: 0 },
         { id: 'settings', label: 'Settings', icon: Settings, show: isSuperAdmin, count: 0 },
     ];
 
     return (
         <div className="space-y-6">
             {/* Tabs Navigation */}
-            <div className="flex items-center gap-1 bg-white p-1 rounded-2xl border border-slate-200 shadow-sm w-fit">
+            <div className="flex flex-wrap items-center gap-1 bg-white p-1.5 rounded-2xl border border-slate-200 shadow-xs w-fit">
                 {TABS.filter(t => t.show).map(tab => (
                     <button
                         key={`tab-${tab.id}`}
                         onClick={() => setActiveTab(tab.id as TabType)}
-                        className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-black transition-all relative
+                        className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-black transition-all relative cursor-pointer
                             ${activeTab === tab.id 
                                 ? 'bg-primary text-white shadow-md' 
                                 : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'}`}
@@ -131,10 +139,19 @@ export default function ProcurementModule({ orgId: propOrgId, isAdmin: propIsAdm
                 )}
 
                 {activeTab === 'requisitions' && (
-                    <MonthlyRequisitionsTab user={user} organizationId={orgId} userRole={user?.user_metadata?.role || 'property_admin'} />
+                    <MonthlyRequisitionsTab 
+                        user={user} 
+                        organizationId={orgId} 
+                        propertyId={propertyId}
+                        userRole={userRole || 'property_admin'} 
+                    />
                 )}
 
-                {activeTab === 'catalog' && (isSuperAdmin || isProcurementUser) && (
+                {activeTab === 'site-pricing' && canManageCatalogAndPricing && (
+                    <SitePricingAdminTab user={user} organizationId={orgId || ''} properties={properties} />
+                )}
+
+                {activeTab === 'catalog' && canManageCatalogAndPricing && (
                     <div className="bg-white rounded-3xl border border-slate-200 p-8">
                         <ProcurementCatalogModal 
                             isOpen={true}
@@ -147,7 +164,7 @@ export default function ProcurementModule({ orgId: propOrgId, isAdmin: propIsAdm
                     </div>
                 )}
 
-                {activeTab === 'po-generator' && (isSuperAdmin || isProcurementUser || user?.user_metadata?.role === 'org_admin') && (
+                {activeTab === 'po-generator' && (canManageCatalogAndPricing || userRole === 'org_admin') && (
                     <ProcurementPOProcessor organizationId={orgId} />
                 )}
             </div>

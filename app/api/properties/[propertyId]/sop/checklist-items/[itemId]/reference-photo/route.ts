@@ -59,6 +59,9 @@ export async function POST(
         const timestamp = Date.now();
         const filePath = `sop-reference-photos/${propertyId}/${itemId}-${timestamp}.webp`;
 
+        // Ensure storage bucket exists
+        await ensureBucket('sop-reference-photos');
+
         const { error: uploadError } = await supabaseAdmin.storage
             .from('sop-reference-photos')
             .upload(filePath, compressedBuffer, {
@@ -146,5 +149,16 @@ export async function DELETE(
             { error: err instanceof Error ? err.message : 'Unknown error' },
             { status: 500 }
         );
+    }
+}
+
+async function ensureBucket(bucketName: string) {
+    try {
+        const { data: bucket } = await supabaseAdmin.storage.getBucket(bucketName);
+        if (!bucket) {
+            await supabaseAdmin.storage.createBucket(bucketName, { public: true });
+        }
+    } catch {
+        await supabaseAdmin.storage.createBucket(bucketName, { public: true }).catch(() => {});
     }
 }

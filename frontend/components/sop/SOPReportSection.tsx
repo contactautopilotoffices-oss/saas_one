@@ -5,6 +5,8 @@ import { Calendar, Download, FileText, CheckCircle2, XCircle, Clock, ChevronRigh
 import { motion } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
 import Skeleton from '@/frontend/components/ui/Skeleton';
+import SOPCADOverlayView from './SOPCADOverlayView';
+import { Toast } from '@/frontend/components/ui/Toast';
 
 interface ReportSummary {
     templateId: string;
@@ -30,7 +32,64 @@ const SOPReportSection: React.FC<SOPReportSectionProps> = ({ propertyId, isAdmin
     });
     const [isLoading, setIsLoading] = useState(true);
     const [summaries, setSummaries] = useState<ReportSummary[]>([]);
+    const [showCADOverlay, setShowCADOverlay] = useState(false);
+    const [aiScoring, setAiScoring] = useState<Record<string, boolean>>({});
+    const [cadOverlayData, setCadOverlayData] = useState<{
+        cadImageUrl: string;
+        areas: any[];
+        items: any[];
+        templateTitle: string;
+    } | null>(null);
     const supabase = createClient();
+
+    const triggerAIScoring = async (completionItemId: string) => {
+        if (!cadOverlayData) return;
+        const targetItem = cadOverlayData.items.find(i => (i.id === completionItemId || i.checklist_item_id === completionItemId));
+        const completionId = targetItem?.completion_id;
+        const itemId = targetItem?.id || completionItemId;
+        if (!completionId || !itemId) {
+            setToast({ message: 'Cannot score: completion session not found for this item', type: 'error' });
+            return;
+        }
+
+        setAiScoring(prev => ({ ...prev, [completionItemId]: true, [itemId]: true }));
+        try {
+            const res = await fetch(`/api/properties/${propertyId}/sop/completions/${completionId}/score-photo`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ completionItemId: itemId }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                setCadOverlayData(prev => {
+                    if (!prev) return prev;
+                    return {
+                        ...prev,
+                        items: prev.items.map(mapped =>
+                            (mapped.id === itemId || mapped.checklist_item_id === targetItem?.checklist_item_id)
+                                ? { ...mapped, ai_cleanliness_score: data.score, ai_cleanliness_reason: data.reason }
+                                : mapped
+                        ),
+                    };
+                });
+                setToast({ message: `AI Cleanliness Score: ${data.score}/100`, type: 'success' });
+            } else {
+                setToast({ message: data.error || 'Failed to score photo', type: 'error' });
+            }
+        } catch (err: any) {
+            setToast({ message: err.message || 'Scoring request failed', type: 'error' });
+        } finally {
+            setAiScoring(prev => ({ ...prev, [completionItemId]: false, [itemId]: false }));
+        }
+    };
+
+    const handleDownloadAll = () => {
+        window.open(`/api/properties/${propertyId}/sop/report?date=${selectedDate}`, '_blank');
+    };
+
+    const handleDownloadSingle = (id: string) => {
+        window.open(`/api/properties/${propertyId}/sop/report?templateId=${id}&date=${selectedDate}`, '_blank');
+    };
 
     const fetchDailyData = async () => {
         try {
@@ -103,12 +162,81 @@ const SOPReportSection: React.FC<SOPReportSectionProps> = ({ propertyId, isAdmin
         fetchDailyData();
     }, [selectedDate, propertyId]);
 
-    const handleDownloadAll = () => {
-        window.open(`/api/properties/${propertyId}/sop/report?date=${selectedDate}`, '_blank');
-    };
+    const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
-    const handleDownloadSingle = (id: string) => {
-        window.open(`/api/properties/${propertyId}/sop/report?templateId=${id}&date=${selectedDate}`, '_blank');
+    const handleCardClick = async (templateId: string, title: string) => {
+        try {
+            // 1. Fetch template CAD info
+            const cadRes = await fetch(`/api/properties/${propertyId}/sop/templates/${templateId}/cad/areas`);
+            const cadData = await cadRes.json();
+            if (!cadRes.ok || !cadData.cadConvertedImageUrl) {
+                setToast({ message: 'No CAD floor plan uploaded for this checklist template', type: 'info' });
+                return;
+            }
+
+            // 2. Fetch latest completion session for this date & template
+            const { data: completions } = await supabase
+                .from('sop_completions')
+                .select(`
+                    id,
+                    items:sop_completion_items(
+                        id,
+                        checklist_item_id,
+                        is_checked,
+                        value,
+                        photo_url,
+                        ai_cleanliness_score,
+                        ai_cleanliness_reason,
+                        checklist_item:sop_checklist_items(title, reference_photo_url)
+                    )
+                `)
+                .eq('template_id', templateId)
+                .eq('property_id', propertyId)
+                .eq('completion_date', selectedDate)
+                .order('created_at', { ascending: false });
+
+            let mappedItems: any[] = [];
+            const latestComp = (completions || [])[0];
+
+            if (latestComp?.items && latestComp.items.length > 0) {
+                mappedItems = latestComp.items.map((it: any) => ({
+                    id: it.id,
+                    completion_id: latestComp.id,
+                    checklist_item_id: it.checklist_item_id,
+                    title: it.checklist_item?.title || 'Checklist Step',
+                    ai_cleanliness_score: it.ai_cleanliness_score,
+                    ai_cleanliness_reason: it.ai_cleanliness_reason,
+                    photo_url: it.photo_url,
+                    reference_photo_url: it.checklist_item?.reference_photo_url,
+                }));
+            } else {
+                // If no completion session recorded yet for this date, fetch template checklist items so clean reference photos still display
+                const { data: templateItems } = await supabase
+                    .from('sop_checklist_items')
+                    .select('id, title, reference_photo_url')
+                    .eq('template_id', templateId);
+
+                mappedItems = (templateItems || []).map((it: any) => ({
+                    checklist_item_id: it.id,
+                    title: it.title,
+                    ai_cleanliness_score: null,
+                    ai_cleanliness_reason: 'Pending completion for this date',
+                    photo_url: null,
+                    reference_photo_url: it.reference_photo_url,
+                }));
+            }
+
+            setCadOverlayData({
+                cadImageUrl: cadData.cadConvertedImageUrl,
+                areas: cadData.areas || [],
+                items: mappedItems,
+                templateTitle: title,
+            });
+            setShowCADOverlay(true);
+        } catch (err) {
+            console.error('Failed to open CAD report overlay:', err);
+            setToast({ message: 'Error loading CAD report view', type: 'error' });
+        }
     };
 
     return (
@@ -158,7 +286,8 @@ const SOPReportSection: React.FC<SOPReportSectionProps> = ({ propertyId, isAdmin
                             initial={{ opacity: 0, y: 10 }}
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ delay: idx * 0.05 }}
-                            className="bg-white border border-slate-100 rounded-2xl p-4 shadow-sm hover:shadow-md hover:border-primary/20 transition-all group"
+                            onClick={() => handleCardClick(s.templateId, s.title)}
+                            className="bg-white border border-slate-100 rounded-2xl p-4 shadow-sm hover:shadow-md hover:border-primary/30 transition-all group cursor-pointer"
                         >
                             <div className="flex justify-between items-start mb-3">
                                 <div className={`p-2 rounded-xl ${
@@ -171,7 +300,7 @@ const SOPReportSection: React.FC<SOPReportSectionProps> = ({ propertyId, isAdmin
                                      <XCircle size={16} />}
                                 </div>
                                 <button
-                                    onClick={() => handleDownloadSingle(s.templateId)}
+                                    onClick={(e) => { e.stopPropagation(); handleDownloadSingle(s.templateId); }}
                                     className="p-2 text-slate-300 hover:text-primary hover:bg-primary/5 rounded-lg transition-all"
                                     title="Download Single CSV"
                                 >
@@ -203,6 +332,32 @@ const SOPReportSection: React.FC<SOPReportSectionProps> = ({ propertyId, isAdmin
                         </div>
                     )}
                 </div>
+            )}
+
+            {cadOverlayData && (
+                <SOPCADOverlayView
+                    isOpen={showCADOverlay}
+                    onClose={() => {
+                        setShowCADOverlay(false);
+                        setCadOverlayData(null);
+                    }}
+                    cadImageUrl={cadOverlayData.cadImageUrl}
+                    areas={cadOverlayData.areas}
+                    items={cadOverlayData.items}
+                    templateTitle={cadOverlayData.templateTitle}
+                    onScorePhoto={triggerAIScoring}
+                    aiScoring={aiScoring}
+                />
+            )}
+
+            {toast && (
+                <Toast
+                    message={toast.message}
+                    type={toast.type === 'info' ? 'info' : toast.type}
+                    visible={true}
+                    onClose={() => setToast(null)}
+                    duration={3000}
+                />
             )}
         </div>
     );

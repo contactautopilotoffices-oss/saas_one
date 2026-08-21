@@ -74,6 +74,15 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         if (body.email_service_config !== undefined) {
             updateData.email_service_config = body.email_service_config;
         }
+        if (body.whatsapp_service_config !== undefined) {
+            updateData.whatsapp_service_config = body.whatsapp_service_config;
+        }
+        if (body.whatsapp_templates !== undefined) {
+            updateData.whatsapp_templates = body.whatsapp_templates;
+        }
+        if (body.notification_matrix !== undefined) {
+            updateData.notification_matrix = body.notification_matrix;
+        }
 
         if (Object.keys(updateData).length === 0) {
             return NextResponse.json({ error: 'No fields to update' }, { status: 400 });

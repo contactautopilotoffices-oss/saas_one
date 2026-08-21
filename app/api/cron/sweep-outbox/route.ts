@@ -23,13 +23,12 @@ export async function GET(request: NextRequest) {
         const fiveMinsAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
         const fifteenMinsAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
 
-        // 1. Fetch pending
+        // 1. Fetch pending outbox events (e.g. inserted via mobile/database trigger)
         const { data: pendingEvents } = await supabaseAdmin
             .from('event_outbox')
             .select('*')
             .eq('status', 'pending')
-            .lt('created_at', fiveMinsAgo)
-            .limit(10);
+            .limit(20);
 
         // 2. Fetch crashed processing
         const { data: processingEvents } = await supabaseAdmin
@@ -58,30 +57,38 @@ export async function GET(request: NextRequest) {
             return NextResponse.json({ success: true, retriedCount: 0 });
         }
 
-        console.log(`[SweepOutbox] Found ${eventsToRetry.length} events to retry.`);
+        console.log(`[SweepOutbox] Found ${eventsToRetry.length} events to process/retry.`);
 
         let retriedCount = 0;
 
         for (const event of eventsToRetry) {
-            // Atomically claim the event for retry
+            // Atomically claim the event for processing
             const { data: claimData, error: claimError } = await supabaseAdmin
                 .from('event_outbox')
                 .update({ status: 'processing', updated_at: new Date().toISOString() })
                 .eq('id', event.id)
-                // Ensure it hasn't been picked up by a concurrent process
                 .eq('status', event.status) 
                 .select()
                 .maybeSingle();
 
             if (claimError || !claimData) {
-                console.log(`[SweepOutbox] Failed to claim event ${event.id} for retry, skipping.`);
+                console.log(`[SweepOutbox] Failed to claim event ${event.id}, skipping.`);
                 continue;
             }
 
-            console.log(`[SweepOutbox] Retrying event ${event.id}: ${event.event_type}`);
+            console.log(`[SweepOutbox] Processing outbox event ${event.id}: ${event.event_type}`);
 
             try {
+                // Run email & notification pipeline
                 await EventProcessor.processEvent(claimData);
+
+                // Run WhatsApp pipeline
+                try {
+                    const { WhatsAppEventProcessor } = await import('@/backend/services/WhatsAppEventProcessor');
+                    await WhatsAppEventProcessor.processEvent(claimData);
+                } catch (waErr) {
+                    console.error(`[SweepOutbox] WhatsAppEventProcessor error for event ${event.id}:`, waErr);
+                }
                 
                 await supabaseAdmin
                     .from('event_outbox')
@@ -90,7 +97,7 @@ export async function GET(request: NextRequest) {
 
                 retriedCount++;
             } catch (err: any) {
-                console.error(`[SweepOutbox] Retry failed for event ${event.id}:`, err);
+                console.error(`[SweepOutbox] Processing failed for event ${event.id}:`, err);
                 const newRetryCount = (claimData.retry_count || 0) + 1;
                 const newStatus = newRetryCount >= 3 ? 'dead' : 'failed';
                 

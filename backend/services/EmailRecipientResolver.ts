@@ -16,61 +16,52 @@ export interface FeatureEmailConfig {
     notify_approver?: boolean;
 }
 
+const ALIAS_MAP: Record<string, string> = {
+    meeting_rooms: 'meeting_room_booked',
+    tickets: 'ticket_created',
+    material_requests: 'material_request_created',
+    comparative_quotes: 'comparative_uploaded',
+    material_delivery: 'material_delivered',
+    monthly_requisitions: 'monthly_requisition_uploaded',
+    crm_leads: 'lead_created',
+    checklists: 'checklist_slot_reminder',
+    ppm: 'reminder_ppm'
+};
+
 export const DEFAULT_EMAIL_SERVICE_CONFIG: Record<string, FeatureEmailConfig> = {
-    material_requests: {
-        enabled: true,
-        roles: ['procurement', 'org_super_admin'],
-        user_ids: [],
-        custom_emails: [],
-        notify_assignee: true
-    },
-    comparative_quotes: {
-        enabled: true,
-        roles: ['org_super_admin', 'procurement'],
-        user_ids: [],
-        custom_emails: [],
-        notify_approver: true
-    },
-    material_delivery: {
-        enabled: true,
-        roles: ['property_admin', 'procurement', 'org_super_admin'],
-        user_ids: [],
-        custom_emails: [],
-        notify_requester: true
-    },
-    monthly_requisitions: {
-        enabled: true,
-        roles: ['procurement', 'org_super_admin'],
-        user_ids: [],
-        custom_emails: []
-    },
-    meeting_rooms: {
-        enabled: true,
-        roles: ['property_admin', 'org_super_admin'],
-        user_ids: [],
-        custom_emails: [],
-        notify_requester: true
-    },
-    crm_leads: {
-        enabled: true,
-        roles: ['org_super_admin'],
-        user_ids: [],
-        custom_emails: ['saniel@worksquare.in', 'rushab@worksquare.in', 'nirupam.lahiri@worksquare.in', 'lohitexplores@gmail.com'],
-        notify_assignee: true
-    },
-    procurement: {
-        enabled: true,
-        roles: ['procurement'],
-        user_ids: [],
-        custom_emails: []
-    },
-    procurement_vendor_aligned: {
-        enabled: true,
-        roles: [],
-        user_ids: [],
-        custom_emails: [],
-        notify_requester: true
-    }
+    ticket_created: { enabled: true, roles: ['property_admin', 'staff'], user_ids: [], notify_assignee: true, notify_requester: true },
+    ticket_assigned: { enabled: true, roles: [], user_ids: [], notify_assignee: true },
+    ticket_completed: { enabled: true, roles: [], user_ids: [], notify_requester: true },
+    reminder_ticket_sla: { enabled: false, roles: ['property_admin', 'org_super_admin'], user_ids: [], notify_assignee: true },
+    checklist_slot_reminder: { enabled: false, roles: ['mst', 'staff'], user_ids: [], notify_assignee: true },
+    checklist_started: { enabled: false, roles: ['mst', 'staff'], user_ids: [], notify_assignee: true },
+    checklist_completed: { enabled: true, roles: ['property_admin', 'soft_service_manager', 'soft_service_supervisor'], user_ids: [], notify_requester: true },
+    checklist_overdue_alert: { enabled: true, roles: ['property_admin', 'org_super_admin'], user_ids: [], notify_assignee: true },
+    checklist_rated: { enabled: false, roles: [], user_ids: [], notify_requester: true },
+    checklists: { enabled: true, roles: ['property_admin'], user_ids: [] },
+    daily_property_report: { enabled: true, roles: ['org_super_admin', 'owner', 'admin'], user_ids: [] },
+    material_request_created: { enabled: true, roles: ['procurement', 'org_super_admin'], user_ids: [], notify_assignee: true },
+    material_requests: { enabled: true, roles: ['procurement', 'org_super_admin'], user_ids: [], notify_assignee: true },
+    comparative_uploaded: { enabled: true, roles: ['org_super_admin', 'procurement'], user_ids: [], notify_approver: true },
+    comparative_quotes: { enabled: true, roles: ['org_super_admin', 'procurement'], user_ids: [], notify_approver: true },
+    comparative_approved: { enabled: true, roles: ['procurement'], user_ids: [], notify_requester: true },
+    comparative_rejected: { enabled: true, roles: ['procurement'], user_ids: [] },
+    material_delivered: { enabled: true, roles: ['property_admin', 'procurement'], user_ids: [], notify_requester: true },
+    material_delivery: { enabled: true, roles: ['property_admin', 'procurement'], user_ids: [], notify_requester: true },
+    monthly_requisition_uploaded: { enabled: true, roles: ['procurement', 'org_super_admin'], user_ids: [], notify_requester: true },
+    monthly_requisitions: { enabled: true, roles: ['procurement', 'org_super_admin'], user_ids: [] },
+    requisition_approval_requested: { enabled: true, roles: ['org_super_admin'], user_ids: [], notify_approver: true },
+    requisition_status_updated: { enabled: true, roles: ['procurement'], user_ids: [], notify_requester: true },
+    requisition_po_issued: { enabled: true, roles: ['property_admin'], user_ids: [], notify_requester: true },
+    procurement_vendor_tag: { enabled: true, roles: ['procurement'], user_ids: [] },
+    procurement_vendor_aligned: { enabled: true, roles: [], user_ids: [], notify_requester: true },
+    meeting_rooms: { enabled: true, roles: ['property_admin', 'org_super_admin'], user_ids: [], notify_requester: true },
+    meeting_room_booked: { enabled: true, roles: ['property_admin', 'org_super_admin'], user_ids: [], notify_requester: true },
+    meeting_room_cancelled: { enabled: true, roles: ['property_admin', 'org_super_admin'], user_ids: [], notify_requester: true },
+    reminder_ppm: { enabled: true, roles: ['property_admin', 'org_super_admin'], user_ids: [] },
+    lead_created: { enabled: true, roles: ['sales', 'org_super_admin'], user_ids: [] },
+    lead_assigned: { enabled: true, roles: [], user_ids: [], notify_assignee: true },
+    crm_leads: { enabled: true, roles: ['org_super_admin'], user_ids: [], notify_assignee: true }
 };
 
 const ORG_SCOPED_ROLES = new Set([
@@ -104,51 +95,95 @@ export const EmailRecipientResolver = {
         // 1. Fetch organization settings
         const { data: orgData } = await supabaseAdmin
             .from('organization_settings')
-            .select('email_service_config, email_preferences')
+            .select('notification_matrix, email_service_config, email_preferences')
             .eq('organization_id', organizationId)
             .maybeSingle();
 
+        const matrix = orgData?.notification_matrix || {};
         const orgConfigMap = orgData?.email_service_config || {};
-        const legacyPrefs = orgData?.email_preferences || {};
 
-        // Merge config with default fallback
-        let featureConfig: FeatureEmailConfig = orgConfigMap[featureKey] || DEFAULT_EMAIL_SERVICE_CONFIG[featureKey] || {
-            enabled: true,
-            roles: [],
-            user_ids: [],
-            custom_emails: []
-        };
-
-        // Check if property-specific override exists for this propertyId
-        if (propertyId && featureConfig.property_overrides && featureConfig.property_overrides[propertyId]) {
-            const override = featureConfig.property_overrides[propertyId];
-            featureConfig = {
-                ...featureConfig,
-                ...override,
-                enabled: override.enabled !== undefined ? override.enabled : featureConfig.enabled
-            };
+        // Find matrix rule for this featureKey across all modules
+        const searchKeys = [featureKey, ALIAS_MAP[featureKey]].filter(Boolean);
+        let matrixRule: any = null;
+        for (const key of searchKeys) {
+            for (const mod of Object.values(matrix)) {
+                if (mod && typeof mod === 'object' && (mod as any)[key]) {
+                    matrixRule = (mod as any)[key];
+                    break;
+                }
+            }
+            if (matrixRule) break;
         }
 
-        // Check if feature is disabled
-        const isEnabled = featureConfig.enabled !== false;
-        if (!isEnabled) {
+        let featureConfig: FeatureEmailConfig;
+        if (matrixRule) {
+            let propOverride: any = null;
+            if (propertyId && matrixRule.property_overrides && matrixRule.property_overrides[propertyId]) {
+                propOverride = matrixRule.property_overrides[propertyId];
+            }
+
+            const isEmailEnabled = propOverride
+                ? (propOverride.channels?.email === true)
+                : (matrixRule.channels?.email === true);
+
+            featureConfig = {
+                enabled: isEmailEnabled,
+                roles: propOverride?.roles || matrixRule.roles || [],
+                user_ids: propOverride?.user_ids || matrixRule.user_ids || [],
+                custom_emails: propOverride?.custom_emails || matrixRule.custom_emails || [],
+                notify_assignee: propOverride?.notify_assignee !== undefined ? propOverride.notify_assignee !== false : matrixRule.notify_assignee !== false,
+                notify_requester: propOverride?.notify_requester !== undefined ? propOverride.notify_requester !== false : matrixRule.notify_requester !== false,
+                notify_approver: propOverride?.notify_approver !== undefined ? propOverride.notify_approver !== false : matrixRule.notify_approver !== false,
+                property_overrides: matrixRule.property_overrides || {}
+            };
+        } else {
+            featureConfig = orgConfigMap[featureKey] || DEFAULT_EMAIL_SERVICE_CONFIG[featureKey] || {
+                enabled: false,
+                roles: [],
+                user_ids: [],
+                custom_emails: []
+            };
+
+            // Check if property-specific override exists in legacy orgConfigMap
+            if (propertyId && featureConfig.property_overrides && featureConfig.property_overrides[propertyId]) {
+                const override = featureConfig.property_overrides[propertyId];
+                featureConfig = {
+                    ...featureConfig,
+                    ...override,
+                    enabled: override.enabled !== undefined ? override.enabled : featureConfig.enabled
+                };
+            }
+        }
+
+        // Check if feature email channel is disabled
+        if (!featureConfig.enabled) {
             return { enabled: false, emails: [], config: featureConfig };
         }
 
         const targetRoles = featureConfig.roles || [];
         const targetUserIds = featureConfig.user_ids || [];
+        const customEmails = featureConfig.custom_emails || [];
 
         const orgRoles = targetRoles.filter(r => ORG_SCOPED_ROLES.has(r.toLowerCase()));
         const propertyRoles = targetRoles.filter(r => !ORG_SCOPED_ROLES.has(r.toLowerCase()));
 
         const recipientEmails = new Set<string>();
 
-        // Include contextual emails (e.g. assigned user or requester if enabled)
-        contextualEmails.forEach(e => {
+        // Include explicit custom emails
+        customEmails.forEach(e => {
             if (e && typeof e === 'string' && e.trim()) {
                 recipientEmails.add(e.trim().toLowerCase());
             }
         });
+
+        // Include contextual emails only if contextual notify is enabled
+        if (featureConfig.notify_requester !== false || featureConfig.notify_assignee !== false || featureConfig.notify_approver !== false) {
+            contextualEmails.forEach(e => {
+                if (e && typeof e === 'string' && e.trim()) {
+                    recipientEmails.add(e.trim().toLowerCase());
+                }
+            });
+        }
 
         // 2. Parallel Database Lookups
         const tasks: Promise<any>[] = [];

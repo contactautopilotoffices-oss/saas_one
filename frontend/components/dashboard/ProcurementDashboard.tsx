@@ -19,6 +19,7 @@ import ProcurementCatalogModal from '../procurement/ProcurementCatalogModal';
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
 import MonthlyRequisitionsTab from '../procurement/MonthlyRequisitionsTab';
 import ProcurementVendorTicketsTab from '../procurement/ProcurementVendorTicketsTab';
+import { ProcurementSettingsTab } from '../procurement/ProcurementSettingsTab';
 
 // --- Types ---
 interface MaterialRequest {
@@ -673,8 +674,18 @@ export default function ProcurementDashboard() {
                                 <ProcurementPOProcessor organizationId={user?.user_metadata?.organization_id} />
                             </div>
                         )}
-                        {activeTab === 'settings' && <PlaceholderTab title="Settings" icon={Settings} desc="Configure procurement thresholds and approval workflows." />}
-                        {activeTab === 'profile' && <ProfileTab user={user} />}
+                        {activeTab === 'settings' && (
+                            <ProcurementSettingsTab 
+                                user={user} 
+                                onUserUpdated={(updatedUser) => setUser(updatedUser)} 
+                            />
+                        )}
+                        {activeTab === 'profile' && (
+                            <ProcurementSettingsTab 
+                                user={user} 
+                                onUserUpdated={(updatedUser) => setUser(updatedUser)} 
+                            />
+                        )}
                     </AnimatePresence>
                 </div>
             </main>

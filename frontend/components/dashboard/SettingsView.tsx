@@ -7,13 +7,15 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
     User, Mail, Phone, Camera, Save, Loader2,
     Shield, Building, CheckCircle2, AlertCircle, Home, Store,
-    Bell, Video, ExternalLink, Info, X
+    Bell, Video, ExternalLink, Info, X, MessageSquare
 } from 'lucide-react';
 import Image from 'next/image';
 import imageCompression from 'browser-image-compression';
 import WallpaperSettings from '@/frontend/components/dashboard/WallpaperSettings';
 
 import EmailServiceSettings from '@/frontend/components/admin/EmailServiceSettings';
+import WhatsAppServiceSettings from '@/frontend/components/admin/WhatsAppServiceSettings';
+import OmnichannelNotificationSettings from '@/frontend/components/admin/OmnichannelNotificationSettings';
 
 interface RoleInfo {
     role: string;
@@ -44,7 +46,7 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
     const [cameraPerm, setCameraPerm] = useState<'granted' | 'denied' | 'prompt' | 'unsupported'>('prompt');
     const [revokeHint, setRevokeHint] = useState<'notif' | 'camera' | null>(null);
 
-    const [activeTab, setActiveTab] = useState<'profile' | 'email_service' | 'appearance'>('profile');
+    const [activeTab, setActiveTab] = useState<'profile' | 'omnichannel_notifications' | 'email_service' | 'whatsapp_service' | 'appearance'>('profile');
 
     useEffect(() => {
         // Notification permission
@@ -338,6 +340,20 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
                 {superAdminOrgId && (
                     <button
                         type="button"
+                        onClick={() => setActiveTab('omnichannel_notifications')}
+                        className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs transition-all whitespace-nowrap ${
+                            activeTab === 'omnichannel_notifications'
+                                ? 'bg-primary text-white shadow-sm'
+                                : 'text-slate-600 hover:bg-slate-100'
+                        }`}
+                    >
+                        <Bell className="w-4 h-4" /> Omnichannel Notifications & Reminders
+                    </button>
+                )}
+
+                {superAdminOrgId && (
+                    <button
+                        type="button"
                         onClick={() => setActiveTab('email_service')}
                         className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs transition-all whitespace-nowrap ${
                             activeTab === 'email_service'
@@ -345,7 +361,21 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
                                 : 'text-slate-600 hover:bg-slate-100'
                         }`}
                     >
-                        <Mail className="w-4 h-4" /> Email Service Management
+                        <Mail className="w-4 h-4" /> Email Service
+                    </button>
+                )}
+
+                {superAdminOrgId && (
+                    <button
+                        type="button"
+                        onClick={() => setActiveTab('whatsapp_service')}
+                        className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs transition-all whitespace-nowrap ${
+                            activeTab === 'whatsapp_service'
+                                ? 'bg-primary text-white shadow-sm'
+                                : 'text-slate-600 hover:bg-slate-100'
+                        }`}
+                    >
+                        <MessageSquare className="w-4 h-4" /> WhatsApp (AiSensy) Service
                     </button>
                 )}
 
@@ -724,10 +754,24 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
                 </form>
             )}
 
+            {/* Omnichannel Notification & Communication Center Tab */}
+            {activeTab === 'omnichannel_notifications' && superAdminOrgId && (
+                <section className="bg-white rounded-2xl border border-slate-200 p-4 md:p-8 shadow-sm">
+                    <OmnichannelNotificationSettings organizationId={superAdminOrgId} />
+                </section>
+            )}
+
             {/* Email Service Tab */}
             {activeTab === 'email_service' && superAdminOrgId && (
                 <section className="bg-white rounded-2xl border border-slate-200 p-4 md:p-8 shadow-sm">
                     <EmailServiceSettings organizationId={superAdminOrgId} />
+                </section>
+            )}
+
+            {/* WhatsApp Service Tab */}
+            {activeTab === 'whatsapp_service' && superAdminOrgId && (
+                <section className="bg-white rounded-2xl border border-slate-200 p-4 md:p-8 shadow-sm">
+                    <WhatsAppServiceSettings organizationId={superAdminOrgId} />
                 </section>
             )}
 

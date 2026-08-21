@@ -1,0 +1,3185 @@
+{
+  "totalExtracted": 469,
+  "presentCount": 107,
+  "missingCount": 362,
+  "presentInDb": [
+    {
+      "product": "Toilet Roll",
+      "matchedDbName": "Toilet Roll",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, 3i, Delhi, AMR Tech Park"
+    },
+    {
+      "product": "Urinal Screen",
+      "matchedDbName": "Urinal Screen",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Wet Mop Stick Red - Small",
+      "matchedDbName": "Wet Mop Stick Red - Small",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Wet Mop Clip Red - Small",
+      "matchedDbName": "Wet Mop Clip Red - Small",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Blue MicroFibre Duster",
+      "matchedDbName": "Blue MicroFibre Duster",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Yellow MicroFibre Duster",
+      "matchedDbName": "Duster",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Red MicroFibre Duster",
+      "matchedDbName": "Duster",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Grren MicroFibre Duster",
+      "matchedDbName": "Duster",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Garbage Bag Big 29*39",
+      "matchedDbName": "Garbage Bag Big 29*39",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, ETPL"
+    },
+    {
+      "product": "Garbage Bag small 19*21",
+      "matchedDbName": "Garbage Bag Small 19*21",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, Indore"
+    },
+    {
+      "product": "Toilet Choke Up Pump",
+      "matchedDbName": "Toilet Choke Up Pump",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, ETPL"
+    },
+    {
+      "product": "Feather Brush",
+      "matchedDbName": "Feather Brush",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, ETPL, Mafatlal D-Wing"
+    },
+    {
+      "product": "Toilet Brush Round",
+      "matchedDbName": "Toilet Brush Round",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, ETPL"
+    },
+    {
+      "product": "Squeeze Bottle",
+      "matchedDbName": "Squeeze Bottle",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, ETPL"
+    },
+    {
+      "product": "Rubbles hand gloves - Blue",
+      "matchedDbName": "Rubbles hand gloves - Blue",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Air Freshner (R5)",
+      "matchedDbName": "Air Freshner (R5)",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, Indore"
+    },
+    {
+      "product": "Toilet Cleaning Liquid (R6)",
+      "matchedDbName": "Toilet Cleaning Liquid (R6)",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, Indore"
+    },
+    {
+      "product": "Bathroom Sanitizer (R1)",
+      "matchedDbName": "Bathroom Sanitizer (R1)",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, ETPL"
+    },
+    {
+      "product": "Carpet Shampooing Liquid (TR-101)",
+      "matchedDbName": "Carpet Shampooing Liquid (TR-101)",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Carpet Detergent Liquid (TR-103)",
+      "matchedDbName": "Carpet Detergent Liquid (TR-103)",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, Indore"
+    },
+    {
+      "product": "Chemical spray bottle",
+      "matchedDbName": "Spray Bottle",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Hand wash spray bottle",
+      "matchedDbName": "Hand wash spray bottle",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Handwash",
+      "matchedDbName": "Handwash",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Use & throw Facemask",
+      "matchedDbName": "Use & throw Facemask",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Drainex",
+      "matchedDbName": "Drainex",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Colour Goli",
+      "matchedDbName": "Colour Goli",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, 3i, ETPL"
+    },
+    {
+      "product": "Tissue Premier",
+      "matchedDbName": "Tissue Premier",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Red Caddy",
+      "matchedDbName": "Red Caddy",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "20 ltr Water Jar Cover",
+      "matchedDbName": "20 ltr Water Jar Cover",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Ceiling broom - Blue",
+      "matchedDbName": "Ceiling broom - Blue",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Aroma diffuser - Aer fragnance refill",
+      "matchedDbName": "Aroma diffuser - Aer fragnance refill",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Scotch bright 2 in 1",
+      "matchedDbName": "Scotch bright 2 in 1",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Water glass",
+      "matchedDbName": "Water glass",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Water Bottle",
+      "matchedDbName": "250 Ml Water Bottle",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Pantry transparent handgloves",
+      "matchedDbName": "Pantry transparent handgloves",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Pantry disposable bouffant  head caps",
+      "matchedDbName": "Pantry disposable bouffant head caps",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Kitchen Wiper",
+      "matchedDbName": "Wiper",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Water bottle cleaner brush",
+      "matchedDbName": "Water bottle cleaner brush",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "A4 Copier paper",
+      "matchedDbName": "A4 Copier paper",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "White board marker - Black",
+      "matchedDbName": "White board marker - Black",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Feviquik",
+      "matchedDbName": "Feviquik",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Stappler - Small",
+      "matchedDbName": "Stappler - Small",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Punching Machine",
+      "matchedDbName": "Punching Machine",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, ETPL"
+    },
+    {
+      "product": "Steel Scale - Big",
+      "matchedDbName": "Steel Scale - Big",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Plastic Scale - Big",
+      "matchedDbName": "Plastic Scale - Big",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Scissor",
+      "matchedDbName": "Scissor",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Soft Board Pin",
+      "matchedDbName": "Soft Board Pin",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, ETPL"
+    },
+    {
+      "product": "Brown cover",
+      "matchedDbName": "Brown cover",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Beverages",
+      "matchedDbName": "Beverages",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, MyGate, SK, 3i, Kolkata, Delhi, ETPL, Mafatlal D-Wing"
+    },
+    {
+      "product": "Requisition - Beverages (Tea/Coffee)",
+      "matchedDbName": "Beverages",
+      "unit": "List of available Stock at the center",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, MyGate, 3i, Kolkata, ETPL, Mafatlal D-Wing"
+    },
+    {
+      "product": "Coffee",
+      "matchedDbName": "Pre Mix Coffee per cup",
+      "unit": "Coffee",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, Kolkata"
+    },
+    {
+      "product": "Tea",
+      "matchedDbName": "Steal Polish (R7)",
+      "unit": "Tea",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, 3i"
+    },
+    {
+      "product": "Soft Broom",
+      "matchedDbName": "Soft Broom",
+      "unit": "pcs",
+      "sites": "MyGate, Mafatlal D-Wing"
+    },
+    {
+      "product": "Check Duster",
+      "matchedDbName": "Duster",
+      "unit": "pcs",
+      "sites": "MyGate"
+    },
+    {
+      "product": "wiper",
+      "matchedDbName": "Wiper",
+      "unit": "pcs",
+      "sites": "MyGate, ETPL"
+    },
+    {
+      "product": "Scotch bright",
+      "matchedDbName": "Scotch Bright",
+      "unit": "pcs",
+      "sites": "3i, ETPL"
+    },
+    {
+      "product": "Microfiber Duster",
+      "matchedDbName": "Duster",
+      "unit": "pcs",
+      "sites": "3i"
+    },
+    {
+      "product": "Wet mop Refill",
+      "matchedDbName": "Wet Mop Refill",
+      "unit": "pcs",
+      "sites": "3i, Mafatlal D-Wing"
+    },
+    {
+      "product": "Hand wash",
+      "matchedDbName": "Hand Washing Liquid",
+      "unit": "pcs",
+      "sites": "3i"
+    },
+    {
+      "product": "Multi Purpose Cleaner (R2)",
+      "matchedDbName": "Multi Purpose Cleaner (R2)",
+      "unit": "4",
+      "sites": "Indore"
+    },
+    {
+      "product": "Furniture Polish (R4)",
+      "matchedDbName": "Furniture Polish (R4)",
+      "unit": "5",
+      "sites": "Indore"
+    },
+    {
+      "product": "Hand Washing Liquid",
+      "matchedDbName": "Hand Washing Liquid",
+      "unit": "9",
+      "sites": "Indore, ETPL"
+    },
+    {
+      "product": "Blue Duster microfiber Cloth",
+      "matchedDbName": "Duster",
+      "unit": "15",
+      "sites": "Indore"
+    },
+    {
+      "product": "vacuum wiper Small",
+      "matchedDbName": "Wiper",
+      "unit": "17",
+      "sites": "Indore"
+    },
+    {
+      "product": "Air Freshener Aroma Oil Refill for Machine",
+      "matchedDbName": "Aroma Oil ",
+      "unit": "20",
+      "sites": "Indore"
+    },
+    {
+      "product": "Classy Touch Plastic Glass Cleaning Small Handy Wiper",
+      "matchedDbName": "Wiper",
+      "unit": "22",
+      "sites": "Indore"
+    },
+    {
+      "product": "Toliet Hand Gloves Blue",
+      "matchedDbName": "Hand Gloves Blue",
+      "unit": "27",
+      "sites": "Indore"
+    },
+    {
+      "product": "Dry Mop Stick",
+      "matchedDbName": "Dry Mop Stick",
+      "unit": "35",
+      "sites": "Indore, ETPL"
+    },
+    {
+      "product": "Wiper Stick  4 Fit",
+      "matchedDbName": "Wiper",
+      "unit": "38",
+      "sites": "Indore"
+    },
+    {
+      "product": "Wet Mop Clip ( Small )",
+      "matchedDbName": "Wet Mop Clip",
+      "unit": "41",
+      "sites": "Indore"
+    },
+    {
+      "product": "Table Top (Hand Tissue Paper)",
+      "matchedDbName": "Table Top",
+      "unit": "pcs",
+      "sites": "Kolkata"
+    },
+    {
+      "product": "Dettol Handwash",
+      "matchedDbName": "Handwash",
+      "unit": "pcs",
+      "sites": "Kolkata"
+    },
+    {
+      "product": "M fold",
+      "matchedDbName": "M Fold Tissue",
+      "unit": "pcs",
+      "sites": "Delhi"
+    },
+    {
+      "product": "Urnial Pad",
+      "matchedDbName": "Urnial Pad",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Wet Mop Stick Red",
+      "matchedDbName": "Wet Mop Stick",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Wet Mop Stick Bliue",
+      "matchedDbName": "Wet Mop Stick",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Wet Mop Refill Blue",
+      "matchedDbName": "Wet Mop Refill",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Wet Mop Clip",
+      "matchedDbName": "Wet Mop Clip",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Dry Mop Refill",
+      "matchedDbName": "Dry Mop Refill",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Red microfiber Duster",
+      "matchedDbName": "Duster",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Yellow microfiber Duster",
+      "matchedDbName": "Duster",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Green Microfiber Duster",
+      "matchedDbName": "Duster",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Blue Micro fiber Duster",
+      "matchedDbName": "Duster",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Soft Broom Gala",
+      "matchedDbName": "Soft Broom",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Hard Room",
+      "matchedDbName": "Hard Room",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Ceiling Broom",
+      "matchedDbName": "Ceiling Broom",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Hand Hard Brush",
+      "matchedDbName": "Hand Hard Brush",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Toilet Brush Hockey",
+      "matchedDbName": "Toilet Brush Hockey",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Dambar Goli",
+      "matchedDbName": "Dambar Goli",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Dust Pan",
+      "matchedDbName": "Dust Pan",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Bucket ( 10 Ltr.)",
+      "matchedDbName": "Bucket",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Mug",
+      "matchedDbName": "Mug",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Spray Bottle",
+      "matchedDbName": "Spray Bottle",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Furniture Polish -R4 (5 Ltr 1 Can)",
+      "matchedDbName": "Furniture Polish (R4)",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Air Freshner -R5 (5 Ltr 1 Can)",
+      "matchedDbName": "Air Freshner (R5)",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Dish Wash Liquid",
+      "matchedDbName": "Dish Wash Liquid",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Sanitizer",
+      "matchedDbName": "Sanitizer",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "T Brush",
+      "matchedDbName": "Toilet Brush Hockey",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Aroma Oil Liquid",
+      "matchedDbName": "Aroma Oil ",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Steel Scale",
+      "matchedDbName": "Steel Scale - Big",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "scissor (Big)",
+      "matchedDbName": "Scissor",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Dettol Sanitizer",
+      "matchedDbName": "Sanitizer",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Scotch Bright Scrub spong",
+      "matchedDbName": "Scotch Bright",
+      "unit": "pcs",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Floor Wiper 18 inch  with rod",
+      "matchedDbName": "Wiper",
+      "unit": "pcs",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Glass Wiper and scraper",
+      "matchedDbName": "Wiper",
+      "unit": "pcs",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Duster  for wet and dry cleaning",
+      "matchedDbName": "Duster",
+      "unit": "pcs",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Cups",
+      "matchedDbName": "Paper Cups 70ml",
+      "unit": "pcs",
+      "sites": "Mafatlal D-Wing"
+    }
+  ],
+  "missingFromDb": [
+    {
+      "product": "HK, Stationery, Paper Products",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, MyGate, 3i, Indore, Kolkata, Delhi, AMR Tech Park, ETPL, Mafatlal D-Wing"
+    },
+    {
+      "product": "Example",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, MyGate, 3i, Indore, Kolkata, Delhi, AMR Tech Park, ETPL, Mafatlal D-Wing"
+    },
+    {
+      "product": "Product",
+      "brand": "Item name",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, MyGate, 3i, Indore, Kolkata, Delhi, AMR Tech Park, ETPL, Mafatlal D-Wing"
+    },
+    {
+      "product": "Brand",
+      "brand": "Company Name",
+      "details": "(JK, Kangaroo, Flair, Doms, Camlin, Kores, etc.)",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, MyGate, 3i, Indore, Kolkata, Delhi, AMR Tech Park, ETPL, Mafatlal D-Wing"
+    },
+    {
+      "product": "Details",
+      "brand": "Color, Size, Unit",
+      "details": "(Yellow, 25mm, etc.)",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, MyGate, 3i, Indore, Kolkata, Delhi, AMR Tech Park, ETPL, Mafatlal D-Wing"
+    },
+    {
+      "product": "UOM",
+      "brand": "Unit of Measurement",
+      "details": "(box, pkt, pcs, nos, ltr, can, bottle, jar)",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, MyGate, 3i, Indore, Kolkata, Delhi, AMR Tech Park, ETPL, Mafatlal D-Wing"
+    },
+    {
+      "product": "Sanket Bate",
+      "brand": "",
+      "details": "Date: 27.05.2026",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Center:",
+      "brand": "Sigma IT Park 2nd Floor, Rabale",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, MyGate, 3i, Indore, Kolkata, Delhi, AMR Tech Park, ETPL, Mafatlal D-Wing"
+    },
+    {
+      "product": "Requisition of Material for above specified center",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, MyGate, 3i, Indore, Kolkata, Delhi, AMR Tech Park, ETPL, Mafatlal D-Wing"
+    },
+    {
+      "product": "Product Name/Type",
+      "brand": "Specific Brand if any",
+      "details": "Color, Size",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, MyGate, 3i, Kolkata, Delhi, AMR Tech Park, ETPL, Mafatlal D-Wing"
+    },
+    {
+      "product": "Wet Mop Refiil",
+      "brand": "Any Brand",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Dry Mop Clip",
+      "brand": "Any Brand",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, Indore"
+    },
+    {
+      "product": "All purpose cleaner (R2)",
+      "brand": "TASKI",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Damber Goli",
+      "brand": "Any Brand",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Stainless Steel Spoon",
+      "brand": "Any Brand",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Dinner Plate",
+      "brand": "Any Brand",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Blue Pen",
+      "brand": "Any Brand",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Rabale",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "27.05.2026",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Signed:",
+      "brand": "Sanket Bate",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, MyGate, 3i, Kolkata, Delhi, AMR Tech Park, ETPL, Mafatlal D-Wing"
+    },
+    {
+      "product": "Mobile#",
+      "brand": "9284159409",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, Kolkata, Delhi, ETPL, Mafatlal D-Wing"
+    },
+    {
+      "product": "Particulars",
+      "brand": "Qty",
+      "details": "UOM",
+      "unit": "Particulars",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, MyGate, 3i, Kolkata, Delhi, ETPL, Mafatlal D-Wing"
+    },
+    {
+      "product": "Sugar",
+      "brand": "5",
+      "details": "Kg",
+      "unit": "Sugar",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, 3i, Delhi, ETPL"
+    },
+    {
+      "product": "Paper Cups (4800pc/pack)",
+      "brand": "",
+      "details": "Pc",
+      "unit": "Paper Cups (4800pc/pack)",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor"
+    },
+    {
+      "product": "Note:",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, MyGate, 3i, Kolkata, ETPL, Mafatlal D-Wing"
+    },
+    {
+      "product": "Particulars & UOM shall change as per the brand/supplier",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Sigma 2nd Floor, Sigma 7th Floor, MyGate, 3i, Kolkata, ETPL, Mafatlal D-Wing"
+    },
+    {
+      "product": "Abhijeet",
+      "brand": "",
+      "details": "DATE:25-05-26",
+      "unit": "pcs",
+      "sites": "MyGate, 3i"
+    },
+    {
+      "product": "aer pocket",
+      "brand": "Godrej",
+      "details": "",
+      "unit": "pcs",
+      "sites": "MyGate, 3i"
+    },
+    {
+      "product": "Air Freshener Spray",
+      "brand": "Godrej",
+      "details": "",
+      "unit": "pcs",
+      "sites": "MyGate, 3i"
+    },
+    {
+      "product": "A-4 Size paper",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "MyGate"
+    },
+    {
+      "product": "Envelop Small",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "MyGate"
+    },
+    {
+      "product": "Envelop medium",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "MyGate"
+    },
+    {
+      "product": "Mygate 4th floor center point jb nagar andheri east",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "MyGate"
+    },
+    {
+      "product": "Mobile",
+      "brand": "9930368976",
+      "details": "",
+      "unit": "pcs",
+      "sites": "MyGate, 3i, Indore"
+    },
+    {
+      "product": "Green Tea",
+      "brand": "6",
+      "details": "Packet",
+      "unit": "Green Tea",
+      "sites": "MyGate"
+    },
+    {
+      "product": "Myagate Center point JB nagar Andheri",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "MyGate"
+    },
+    {
+      "product": "CCD ORDERED MATERIAL - ( JUNE - 2026 )",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "SK"
+    },
+    {
+      "product": "Item Name",
+      "brand": "Current Stock",
+      "details": "To Be Ordered",
+      "unit": "pcs",
+      "sites": "SK"
+    },
+    {
+      "product": "Coffeeday  Tetra Pack Milk - 1 box ( 12 Litre )",
+      "brand": "10",
+      "details": "350",
+      "unit": "pcs",
+      "sites": "SK"
+    },
+    {
+      "product": "Coffee Beens - 1Kg",
+      "brand": "10",
+      "details": "40",
+      "unit": "pcs",
+      "sites": "SK"
+    },
+    {
+      "product": "Sugar ( Sachets ) - 1PKT ( 200Pc )",
+      "brand": "10",
+      "details": "40",
+      "unit": "pcs",
+      "sites": "SK"
+    },
+    {
+      "product": "Green Tea - 1PKT ( 25 Dips. )",
+      "brand": "13",
+      "details": "20",
+      "unit": "pcs",
+      "sites": "SK"
+    },
+    {
+      "product": "Wooden Stirrers  - 1 PKT ( 500 Pc )",
+      "brand": "10",
+      "details": "12",
+      "unit": "pcs",
+      "sites": "SK"
+    },
+    {
+      "product": "Ginger Tea - 1PKT ( 100 Dips.)",
+      "brand": "9",
+      "details": "12",
+      "unit": "pcs",
+      "sites": "SK"
+    },
+    {
+      "product": "Plain Paper Cups - 1PKT (50 Pc )",
+      "brand": "10000",
+      "details": "15000",
+      "unit": "pcs",
+      "sites": "SK"
+    },
+    {
+      "product": "Air Freshener",
+      "brand": "aer matic",
+      "details": "225ml",
+      "unit": "pcs",
+      "sites": "3i"
+    },
+    {
+      "product": "Garbage bags",
+      "brand": "",
+      "details": "19*21",
+      "unit": "pcs",
+      "sites": "3i"
+    },
+    {
+      "product": "Ball Pen",
+      "brand": "",
+      "details": "Laxi",
+      "unit": "pcs",
+      "sites": "3i"
+    },
+    {
+      "product": "Note Pad",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "3i, ETPL"
+    },
+    {
+      "product": "3i Infotech crescent solitaire bldg sakinaka mumbai 400072",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "3i"
+    },
+    {
+      "product": "90ML   Disposable paper cup",
+      "brand": "",
+      "details": "PCS",
+      "unit": "Disposable paper cup",
+      "sites": "3i"
+    },
+    {
+      "product": "3i Infotech crescent solitaire buld sakinaka mumbai 400072",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "3i"
+    },
+    {
+      "product": "Person Ordering:         Mr. Dheerendra Tiwari",
+      "brand": "",
+      "details": "DATE:28-05-26",
+      "unit": "pcs",
+      "sites": "Indore"
+    },
+    {
+      "product": "S.No.",
+      "brand": "Product Name/Type",
+      "details": "Specific Brand if any",
+      "unit": "UOM",
+      "sites": "Indore"
+    },
+    {
+      "product": "Toilet Tissue Roll",
+      "brand": "",
+      "details": "",
+      "unit": "1",
+      "sites": "Indore"
+    },
+    {
+      "product": "Urinal Pad",
+      "brand": "",
+      "details": "",
+      "unit": "2",
+      "sites": "Indore, Mafatlal D-Wing"
+    },
+    {
+      "product": "Bleach Chemical",
+      "brand": "Please Provide the Good Quality",
+      "details": "",
+      "unit": "12",
+      "sites": "Indore"
+    },
+    {
+      "product": "Phenyl( Sunny)",
+      "brand": "Strong fragrance (Citrus, Lavender, Floral)\r\nGerm kill + fresh smell",
+      "details": "",
+      "unit": "13",
+      "sites": "Indore"
+    },
+    {
+      "product": "Air Pocket (Air Freshner)",
+      "brand": "",
+      "details": "",
+      "unit": "14",
+      "sites": "Indore"
+    },
+    {
+      "product": "Godrej Aer Spray Room Freshener - Lavender Bloom (220 Ml)",
+      "brand": "Godrej aer",
+      "details": "",
+      "unit": "16",
+      "sites": "Indore"
+    },
+    {
+      "product": "3M Scotch Brite Single disc 380 mm blue",
+      "brand": "",
+      "details": "",
+      "unit": "18",
+      "sites": "Indore"
+    },
+    {
+      "product": "Surf",
+      "brand": "",
+      "details": "",
+      "unit": "19",
+      "sites": "Indore"
+    },
+    {
+      "product": "Wet Mop Rifil Single Piece Make - Eassy",
+      "brand": "",
+      "details": "",
+      "unit": "21",
+      "sites": "Indore"
+    },
+    {
+      "product": "M Fold Tissu Paper Princo 150Pcs In 1 Packet",
+      "brand": "",
+      "details": "",
+      "unit": "23",
+      "sites": "Indore"
+    },
+    {
+      "product": "Soft Tissue Paper Napkin White Paper Napkins",
+      "brand": "",
+      "details": "",
+      "unit": "24",
+      "sites": "Indore"
+    },
+    {
+      "product": "Sodium Hypochlorite 5 Liter Can",
+      "brand": "",
+      "details": "",
+      "unit": "25",
+      "sites": "Indore"
+    },
+    {
+      "product": "Carpet Cleaning Brush Single Disk Machine Soft Brush",
+      "brand": "17 Inch",
+      "details": "",
+      "unit": "26",
+      "sites": "Indore"
+    },
+    {
+      "product": "Mask Sky Blue Colour",
+      "brand": "",
+      "details": "",
+      "unit": "28",
+      "sites": "Indore"
+    },
+    {
+      "product": "Toliet Hand Gloves Yellow",
+      "brand": "",
+      "details": "",
+      "unit": "29",
+      "sites": "Indore"
+    },
+    {
+      "product": "Water Dispenser Machine Stand",
+      "brand": "",
+      "details": "",
+      "unit": "30",
+      "sites": "Indore"
+    },
+    {
+      "product": "Paseo Tissue Box",
+      "brand": "",
+      "details": "",
+      "unit": "31",
+      "sites": "Indore"
+    },
+    {
+      "product": "Bottle Cleaning Brush",
+      "brand": "",
+      "details": "",
+      "unit": "32",
+      "sites": "Indore, ETPL"
+    },
+    {
+      "product": "Wet Sinage (Cleaning Board)",
+      "brand": "",
+      "details": "",
+      "unit": "33",
+      "sites": "Indore"
+    },
+    {
+      "product": "Phenyl Goli  white",
+      "brand": "",
+      "details": "",
+      "unit": "34",
+      "sites": "Indore"
+    },
+    {
+      "product": "Water plastic Glass",
+      "brand": "",
+      "details": "",
+      "unit": "37",
+      "sites": "Indore"
+    },
+    {
+      "product": "Scrotch Bright",
+      "brand": "",
+      "details": "",
+      "unit": "39",
+      "sites": "Indore"
+    },
+    {
+      "product": "Saintizer",
+      "brand": "",
+      "details": "",
+      "unit": "40",
+      "sites": "Indore"
+    },
+    {
+      "product": "Single Disk Machine floor brush",
+      "brand": "17 Inch",
+      "details": "",
+      "unit": "42",
+      "sites": "Indore"
+    },
+    {
+      "product": "Vacuum Cleaner Accessories set",
+      "brand": "",
+      "details": "",
+      "unit": "43",
+      "sites": "Indore"
+    },
+    {
+      "product": "NRK Star- Indore Altruist",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Indore"
+    },
+    {
+      "product": "Prepared Signed:",
+      "brand": "Raksha Sharma",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Indore"
+    },
+    {
+      "product": "Approved Signed",
+      "brand": "Dheerendra Tiwari",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Indore"
+    },
+    {
+      "product": "Kanai Das",
+      "brand": "",
+      "details": "Date:",
+      "unit": "pcs",
+      "sites": "Kolkata"
+    },
+    {
+      "product": "250ml paper glass",
+      "brand": "White",
+      "details": "250ml",
+      "unit": "pcs",
+      "sites": "Kolkata"
+    },
+    {
+      "product": "ROOM FRESHNER",
+      "brand": "Odonil, Multi fragrance",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Kolkata, Delhi"
+    },
+    {
+      "product": "Kolkata",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Kolkata"
+    },
+    {
+      "product": "Ginger tea",
+      "brand": "8",
+      "details": "Kg",
+      "unit": "Ginger tea",
+      "sites": "Kolkata"
+    },
+    {
+      "product": "Lemon tea",
+      "brand": "5",
+      "details": "Kg",
+      "unit": "Lemon tea",
+      "sites": "Kolkata"
+    },
+    {
+      "product": "Sachin",
+      "brand": "",
+      "details": "Date:",
+      "unit": "pcs",
+      "sites": "Delhi"
+    },
+    {
+      "product": "Tissue paper",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Delhi"
+    },
+    {
+      "product": "Disposel",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Delhi"
+    },
+    {
+      "product": "garbage Big 32x42",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Delhi"
+    },
+    {
+      "product": "garbage 19x21",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Delhi"
+    },
+    {
+      "product": "Odonil Zipper",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Delhi, AMR Tech Park"
+    },
+    {
+      "product": "Prill Liquid",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Delhi"
+    },
+    {
+      "product": "Black Hit",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Delhi"
+    },
+    {
+      "product": "Red hit",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Delhi, AMR Tech Park"
+    },
+    {
+      "product": "Harpic",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Delhi"
+    },
+    {
+      "product": "Surf Excel",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Delhi"
+    },
+    {
+      "product": "plastic Water bottle",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Delhi"
+    },
+    {
+      "product": "Delhi",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Delhi"
+    },
+    {
+      "product": "27/5/2026",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Delhi"
+    },
+    {
+      "product": "CCD (Tea/Coffee)",
+      "brand": "",
+      "details": "",
+      "unit": "List of available Stock at the center",
+      "sites": "Delhi"
+    },
+    {
+      "product": "CCD coffe Beans",
+      "brand": "5",
+      "details": "KG",
+      "unit": "Coffee Beans",
+      "sites": "Delhi"
+    },
+    {
+      "product": "CCD tetra Milk",
+      "brand": "24",
+      "details": "Ltr",
+      "unit": "Milk",
+      "sites": "Delhi"
+    },
+    {
+      "product": "CCD Assam Tea",
+      "brand": "2",
+      "details": "PKT",
+      "unit": "Assam Tea",
+      "sites": "Delhi"
+    },
+    {
+      "product": "Siddalingappa",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "AMR Tech Park"
+    },
+    {
+      "product": "Garbage Small Pkt",
+      "brand": "",
+      "details": "Black",
+      "unit": "pcs",
+      "sites": "AMR Tech Park"
+    },
+    {
+      "product": "Garbage Big",
+      "brand": "",
+      "details": "Black",
+      "unit": "pcs",
+      "sites": "AMR Tech Park"
+    },
+    {
+      "product": "Taski R-4",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "AMR Tech Park"
+    },
+    {
+      "product": "Taski R-5",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "AMR Tech Park"
+    },
+    {
+      "product": "Taski R-1",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "AMR Tech Park"
+    },
+    {
+      "product": "Taski R-6",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "AMR Tech Park"
+    },
+    {
+      "product": "Fem liquid",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "AMR Tech Park"
+    },
+    {
+      "product": "Room Freshner (Big)",
+      "brand": "",
+      "details": "Lemon,Rose",
+      "unit": "pcs",
+      "sites": "AMR Tech Park"
+    },
+    {
+      "product": "Wet mapStick",
+      "brand": "",
+      "details": "Green & Yellow.Wood Stick",
+      "unit": "pcs",
+      "sites": "AMR Tech Park"
+    },
+    {
+      "product": "Floor wipher",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "AMR Tech Park"
+    },
+    {
+      "product": "Phenal",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "AMR Tech Park"
+    },
+    {
+      "product": "AMR-Altruist Bangalore",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "AMR Tech Park"
+    },
+    {
+      "product": "Mobile:",
+      "brand": "7738069357",
+      "details": "",
+      "unit": "pcs",
+      "sites": "AMR Tech Park"
+    },
+    {
+      "product": "Garbag Small 19*21",
+      "brand": "TASKI",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Godrej Air Freshner Spray",
+      "brand": "Godrej",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Hit Spray",
+      "brand": "Hit",
+      "details": "Black",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Multi Purpose R2 (5 Ltr 1 Can)",
+      "brand": "Any Brand",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Glass Cleaning -R3 (5 Ltr 1 Can)",
+      "brand": "TASKI",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Toilet Cleaning -R6 (5 Ltr 1 Can)",
+      "brand": "TASKI",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Steel Polish- D7 (5 Ltr 1 Can)",
+      "brand": "TASKI",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "R9 (5 Ltr 1 Can)",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Carpet Spot  Liquid",
+      "brand": "Any Brand",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Carpet Shamping TR 101",
+      "brand": "Any Brand",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Carpet Brush",
+      "brand": "Any Brand",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Cady Red",
+      "brand": "Any Brand",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Cady Blue",
+      "brand": "Any Brand",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Face Mask",
+      "brand": "Any Brand",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Hand Glove Pantry ( White Cotton)",
+      "brand": "Any Brand",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Serving Cap",
+      "brand": "Any Brand",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Orange Hand Gloves",
+      "brand": "Any Brand",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Blue Hand Gloves",
+      "brand": "Any Brand",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Sign Board",
+      "brand": "Any Brand",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "M fold (40Pkt in 1 Box)",
+      "brand": "Any Brand",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Hard scrub pad ( Green)",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Drainage Powder",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Premier Tissues",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Steel Dusbin",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Joyo duro swing bin 45 ltr",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Aroma Defuser",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Roll (100 Roll in 1 Box)",
+      "brand": "Any Brand",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Facial Tissue",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Box File",
+      "brand": "Any Brand",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Spring File",
+      "brand": "Any Brand",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Register 200 Pages",
+      "brand": "Any Brand",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Pen",
+      "brand": "Any Brand",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Masking Tape",
+      "brand": "Any Brand",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "2\" Cello Tape",
+      "brand": "Any Brand",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "2\" Brown tape",
+      "brand": "Any Brand",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Stapler Big",
+      "brand": "Any Brand",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Stapler Small",
+      "brand": "Any Brand",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Pencil Apsara",
+      "brand": "Any Brand",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Eraser",
+      "brand": "Any Brand",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Sharpner",
+      "brand": "Any Brand",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "A4 Sticker Paper Reem",
+      "brand": "Any Brand",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "1\" Cello Tape",
+      "brand": "Any Brand",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Tape Despencer",
+      "brand": "Any Brand",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Brown Register Cover",
+      "brand": "Any Brand",
+      "details": "-",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Pencil Cell",
+      "brand": "Any Brand",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Blue Marker",
+      "brand": "Any Brand",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Red Marker",
+      "brand": "Any Brand",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Black Marker",
+      "brand": "Any Brand",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "CD Marker",
+      "brand": "Any Brand",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Stapler Pin Small",
+      "brand": "Any Brand",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "3 M Double Tape",
+      "brand": "Any Brand",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Double Side red Polyster tapeTape 2 inches",
+      "brand": "Any Brand",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Epson 003 - Black",
+      "brand": "Epson",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Epson 003- Cyan",
+      "brand": "Epson",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Epson 003-Magenta",
+      "brand": "Epson",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Epson 003- Yellow",
+      "brand": "Epson",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "A4 Size Print Paper",
+      "brand": "Any Brand",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Rubber Band",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Fevi quick",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Permenant Marker",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Acralic sheet holder",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Duracell Battery Medium",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Duracell Battery Small",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Round Serving tray with rubber coating for Pantry",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Small Bowl",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Spoon",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Sachin Karandikar",
+      "brand": "",
+      "details": "Date: 23.05.2026",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Nes Coffee Sachet (72 Pcs in Pkt)",
+      "brand": "3",
+      "details": "Pkt",
+      "unit": "Nes Coffee Sachet (72 Pcs in Pkt)",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Paper Cups (5000pc/Box )",
+      "brand": "3",
+      "details": "Box",
+      "unit": "Paper Cups (5000pc/Box )",
+      "sites": "ETPL"
+    },
+    {
+      "product": "Thane",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "ETPL"
+    },
+    {
+      "product": "2026- REQUISITION",
+      "brand": "",
+      "details": "ITEMS",
+      "unit": "pcs",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HOUSEKEEPING",
+      "brand": "Qty in Stock",
+      "details": "Qty Required",
+      "unit": "Qty Required",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00001",
+      "brand": "House keeping",
+      "details": "Urinal Pad Make - Bindu",
+      "unit": "80",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00002",
+      "brand": "House keeping",
+      "details": "Colour Goli 12/pck",
+      "unit": "100",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00003",
+      "brand": "House keeping",
+      "details": "Microfiber Duster Red Single Piece Make - Bindu",
+      "unit": "20",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00004",
+      "brand": "House keeping",
+      "details": "Microfiber Duster Blue Single Piece Make - Bindu",
+      "unit": "20",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00005",
+      "brand": "House keeping",
+      "details": "Green MicroFibre Duster",
+      "unit": "20",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00006",
+      "brand": "House keeping",
+      "details": "Yellow Microfiber Duster",
+      "unit": "20",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00007",
+      "brand": "House keeping",
+      "details": "Yellow Sponge Single Piece make - Akash Foam",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00008",
+      "brand": "House keeping",
+      "details": "Scotch Brite Sponge Scrub",
+      "unit": "20",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00009",
+      "brand": "House keeping",
+      "details": "Schevaran S1 Germ Free 5 Liter Can",
+      "unit": "9",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00010",
+      "brand": "House keeping",
+      "details": "Schevaran S2 All Klean 5 Liter Can",
+      "unit": "9",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00011",
+      "brand": "House keeping",
+      "details": "Schevaran S3 Window Shine 5 Liter Can",
+      "unit": "9",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00012",
+      "brand": "House keeping",
+      "details": "Schevaran S4 Sun Gloh 5 Liter Can",
+      "unit": "1",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00013",
+      "brand": "House keeping",
+      "details": "Schevaran S5 Room Freshener 5 Liter Can",
+      "unit": "9",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00014",
+      "brand": "House keeping",
+      "details": "Schevaran S6 Super Lime Away plus 5 Liter Can",
+      "unit": "9",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00015",
+      "brand": "House keeping",
+      "details": "Schevaran K6 Natural Shine 5 Liter Can",
+      "unit": "1",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00016",
+      "brand": "House keeping",
+      "details": "Schevaran S11 Labello 5 Liter Can (Hand wash)",
+      "unit": "9",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00017",
+      "brand": "House keeping",
+      "details": "Schevaran S17 Carpetbrite 5 Liter Can",
+      "unit": "4",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00018",
+      "brand": "House keeping",
+      "details": "Cleaning Acid",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00019",
+      "brand": "House keeping",
+      "details": "Dish wash Liquid 5ltrs Can",
+      "unit": "3",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00020",
+      "brand": "House keeping",
+      "details": "Diversey Crew Emerel Multi Surface Creme Cleanser \r\nfor Bathroom Sanitary fittings",
+      "unit": "10",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00021",
+      "brand": "House keeping",
+      "details": "Garbage Roll 19X21 Ft 30 Pcs In 1 Roll Make - Sawari",
+      "unit": "150",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00022",
+      "brand": "House keeping",
+      "details": "Garbage Roll 29X39 Ft 20 Pcs In 1 Roll Make - Sawari",
+      "unit": "150",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00023",
+      "brand": "House keeping",
+      "details": "Hand Hard Brush",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00024",
+      "brand": "House keeping",
+      "details": "Toilet Brush Hockey",
+      "unit": "10",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00025",
+      "brand": "House keeping",
+      "details": "Bucket Small Blue",
+      "unit": "2",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00026",
+      "brand": "House keeping",
+      "details": "Bucket Small Green",
+      "unit": "2",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00027",
+      "brand": "House keeping",
+      "details": "Mug",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00028",
+      "brand": "House keeping",
+      "details": "Rubber hand gloves - Purple (Disposable hand gloves)",
+      "unit": "500",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00029",
+      "brand": "House keeping",
+      "details": "Rubber hand gloves - Orange",
+      "unit": "20",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00030",
+      "brand": "House keeping",
+      "details": "Rubber hand gloves - Blue",
+      "unit": "10",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00031",
+      "brand": "House keeping",
+      "details": "Wet Mop Rifill Single Piece Make - Eassy",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00032",
+      "brand": "House keeping",
+      "details": "Wet Mop Clip",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00033",
+      "brand": "House keeping",
+      "details": "Plastic Spray Bottle single Piece 500 Ml",
+      "unit": "10",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00034",
+      "brand": "House keeping",
+      "details": "Godrej Aer Spray Room Freshener - All Falvours (220 Ml)",
+      "unit": "40",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00035",
+      "brand": "House keeping",
+      "details": "Wet Mop Stick blue 5 ft",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00036",
+      "brand": "House keeping",
+      "details": "Wet Mop Stick red 5 ft",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00037",
+      "brand": "House keeping",
+      "details": "Wet Mop Clip Blue",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00038",
+      "brand": "House keeping",
+      "details": "Wet Mop Clip Red",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00039",
+      "brand": "House keeping",
+      "details": "Floor Wiper",
+      "unit": "2",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00040",
+      "brand": "House keeping",
+      "details": "Godrej aer matic automatic spray refill (Toilet)",
+      "unit": "50",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00041",
+      "brand": "House keeping",
+      "details": "Tissue Premier",
+      "unit": "30",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00042",
+      "brand": "House keeping",
+      "details": "Steel scrubber",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00043",
+      "brand": "House keeping",
+      "details": "Gala Super Scrub",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00044",
+      "brand": "House keeping",
+      "details": "Water Bottle Cleaning Brush",
+      "unit": "2",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00045",
+      "brand": "House keeping",
+      "details": "Godrej Air Wick Automatic Spray Machine",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00046",
+      "brand": "House keeping",
+      "details": "Pollie Drain Cleaner Powder 50g",
+      "unit": "20",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00047",
+      "brand": "House keeping",
+      "details": "Squeeze brush",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00048",
+      "brand": "House keeping",
+      "details": "Washing Liquid",
+      "unit": "2",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00049",
+      "brand": "House keeping",
+      "details": "Dust Pan",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00050",
+      "brand": "House keeping",
+      "details": "Dry Mop Stick 5 Ft Trade Make - Patel",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00051",
+      "brand": "House keeping",
+      "details": "Iris Air Freshener Aroma Oil Refill 1ltr - Jasmine",
+      "unit": "4",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00052",
+      "brand": "House keeping",
+      "details": "Iris Air Freshener Aroma Oil Refill 1ltr - Lavendar",
+      "unit": "8",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00053",
+      "brand": "House keeping",
+      "details": "Iris Air Freshener Aroma Oil Refill 1ltr- Rose",
+      "unit": "4",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00054",
+      "brand": "House keeping",
+      "details": "All Out Ultra Mosquito Repellant Refill Faster Action",
+      "unit": "20",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00055",
+      "brand": "House keeping",
+      "details": "All Out Ultra Mosquito Repellant (Head)",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "HK00056",
+      "brand": "House keeping",
+      "details": "Toilet Brush Round Single Piece  Make - patel",
+      "unit": "10",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "Toiletries",
+      "brand": "Qty in Stock",
+      "details": "Qty Required",
+      "unit": "pcs",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "TO00001",
+      "brand": "Toiletries",
+      "details": "Toilet Paper Roll Princo 100 Grms In 1 Packet",
+      "unit": "4500",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "TO00002",
+      "brand": "Toiletries",
+      "details": "M Fold Tissu Paper Princo 150Pcs In 1 Packet",
+      "unit": "600",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "PANTRY CONSUMABLES",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "BEV00001",
+      "brand": "Beverages",
+      "details": "Amber Masala Tea Premix, Granules 1 Kg",
+      "unit": "pcs",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "BEV00002",
+      "brand": "Beverages",
+      "details": "Amber Powder Instant Strong Coffee Premix 1 Kg",
+      "unit": "pcs",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "BEV00003",
+      "brand": "Paper Products",
+      "details": "Paper Cups 80Ml 50 Pcs In 1 Packet Make - Krazee",
+      "unit": "500",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "BEV00004",
+      "brand": "Paper Products",
+      "details": "Table top Tissue 100 Pull",
+      "unit": "500",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "BEV00005",
+      "brand": "Water Can",
+      "details": "20 ltr Water Jar Cover",
+      "unit": "10",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STATIONARY",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00001",
+      "brand": "Stationery",
+      "details": "Blue Pen",
+      "unit": "40",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00002",
+      "brand": "Stationery",
+      "details": "Red Pen",
+      "unit": "10",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00003",
+      "brand": "Stationery",
+      "details": "Apsara Platinum Extra Dark Pencils 1 Pack (10 Pieces)",
+      "unit": "2",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00004",
+      "brand": "Stationery",
+      "details": "A4 Copier paper",
+      "unit": "10",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00005",
+      "brand": "Stationery",
+      "details": "Epson L6170 Ink - BK",
+      "unit": "1",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00006",
+      "brand": "Stationery",
+      "details": "Epson L6170  Ink - C",
+      "unit": "1",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00007",
+      "brand": "Stationery",
+      "details": "Epson L6170 Ink - M",
+      "unit": "1",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00008",
+      "brand": "Stationery",
+      "details": "Epson L6170 Ink - Y",
+      "unit": "1",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00009",
+      "brand": "Stationery",
+      "details": "White board marker - Black",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00010",
+      "brand": "Stationery",
+      "details": "White board marker - Blue",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00011",
+      "brand": "Stationery",
+      "details": "White board marker - Green",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00012",
+      "brand": "Stationery",
+      "details": "White board marker - Red",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00013",
+      "brand": "Stationery",
+      "details": "Highlighter - All Color",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00014",
+      "brand": "Stationery",
+      "details": "DVD Marker - Black",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00015",
+      "brand": "Stationery",
+      "details": "White board Duster",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00016",
+      "brand": "Stationery",
+      "details": "Brown Book Cover Roll",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00017",
+      "brand": "Stationery",
+      "details": "Registers - 200 pages",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00018",
+      "brand": "Stationery",
+      "details": "Attendance Register - 200 pages",
+      "unit": "2",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00019",
+      "brand": "Stationery",
+      "details": "Feviquik",
+      "unit": "10",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00020",
+      "brand": "Stationery",
+      "details": "Stappler Pin - No 10",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00021",
+      "brand": "Stationery",
+      "details": "Eraser",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00022",
+      "brand": "Stationery",
+      "details": "Sharpner",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00023",
+      "brand": "Stationery",
+      "details": "Plastic Scale - Big",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00024",
+      "brand": "Stationery",
+      "details": "Scissor",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00025",
+      "brand": "Stationery",
+      "details": "Soft Board Pin",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00026",
+      "brand": "Stationery",
+      "details": "PP Sheet protector",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00027",
+      "brand": "Stationery",
+      "details": "Masking Tape",
+      "unit": "10",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00028",
+      "brand": "Stationery",
+      "details": "Transparent tape 1 inch",
+      "unit": "10",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00029",
+      "brand": "Stationery",
+      "details": "Transparent tape 2 inch",
+      "unit": "10",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00030",
+      "brand": "Stationery",
+      "details": "Double Tape",
+      "unit": "10",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00031",
+      "brand": "Stationery",
+      "details": "3M tape double transparent white colour",
+      "unit": "10",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00032",
+      "brand": "Stationery",
+      "details": "Conference Pad",
+      "unit": "10",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00033",
+      "brand": "Stationery",
+      "details": "Kitchen Knife (Medium Size)",
+      "unit": "2",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00034",
+      "brand": "Stationery",
+      "details": "Battery Cell AAA",
+      "unit": "30",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00035",
+      "brand": "Stationery",
+      "details": "Battery Cell AA",
+      "unit": "30",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00036",
+      "brand": "Stationery",
+      "details": "Battery Cell C2",
+      "unit": "8",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00037",
+      "brand": "Stationery",
+      "details": "1 SD Register 100 Pages",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00038",
+      "brand": "Stationery",
+      "details": "3 SD Register 300 Pages",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00039",
+      "brand": "Stationery",
+      "details": "4 SD Register 400 Pages",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00040",
+      "brand": "Stationery",
+      "details": "5 SD Register 500 Pages",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00041",
+      "brand": "Stationery",
+      "details": "Zebra Tape",
+      "unit": "20",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00042",
+      "brand": "Stationery",
+      "details": "Cutter",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00043",
+      "brand": "Stationery",
+      "details": "Wringer Trolley Buckets (Red & Blue)",
+      "unit": "4",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00044",
+      "brand": "Stationery",
+      "details": "Brown Tape 3 Inch",
+      "unit": "10",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00045",
+      "brand": "Stationery",
+      "details": "Cello white Tape 3 Inch",
+      "unit": "10",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00046",
+      "brand": "Stationery",
+      "details": "Spring file",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00047",
+      "brand": "Stationery",
+      "details": "Box file",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00048",
+      "brand": "Stationery",
+      "details": "CUTLERY Cling Wrap For Food Wrapping",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00049",
+      "brand": "Stationery",
+      "details": "BRUSH HOUSE Reusable Cotton Hand Gloves pantry",
+      "unit": "10",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00050",
+      "brand": "Stationery",
+      "details": "Glossy Photo Paper 180 GSM A4 Size",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00051",
+      "brand": "Stationery",
+      "details": "Grease (200Ml)",
+      "unit": "2",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00052",
+      "brand": "Stationery",
+      "details": "Lamination sheet",
+      "unit": "1",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00053",
+      "brand": "Stationery",
+      "details": "Rat trap pad glue board",
+      "unit": "10",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00054",
+      "brand": "Stationery",
+      "details": "3M Ear Plug",
+      "unit": "2",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00055",
+      "brand": "First Aid",
+      "details": "Nose Mask Disposable 100 Pcs In 1 Packet",
+      "unit": "2",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "BMS Requirement",
+      "brand": "Qty in Stock",
+      "details": "Qty Required",
+      "unit": "pcs",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00056",
+      "brand": "Stationery",
+      "details": "A4 Size Acrylic Transparent Checklist Holder | \r\nClear Wall Mount Vertical Frame Display Stand",
+      "unit": "15",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00057",
+      "brand": "Stationery",
+      "details": "9V Battery",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00058",
+      "brand": "Stationery",
+      "details": "Fevicol Gum 200gm",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00059",
+      "brand": "Stationery",
+      "details": "NovaJet Multipurpose Label for Inkjet",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00060",
+      "brand": "Stationery",
+      "details": "Rubber band",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00061",
+      "brand": "Stationery",
+      "details": "2 Ring Binder D ring",
+      "unit": "5",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "STA00062",
+      "brand": "Stationery",
+      "details": "Keychain with Name Tag Labels Multicolour",
+      "unit": "4",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "PREPARED BY NAME-",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "DATE OF REQUEST-",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "APPROVED BY MANAGER NAME-",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "APPROVAL DATE-",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "CAN PROCUREMENT PROCESS THIS REQUEST- YES/NO-",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "SS Plaza"
+    },
+    {
+      "product": "Meenaa Chavan",
+      "brand": "",
+      "details": "Date:",
+      "unit": "pcs",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "sticker white clr sheet",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "calculator",
+      "brand": "Casio good quality",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Sticky note",
+      "brand": "of different colors",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "A4 Size paper coppier packets",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Duracell battery",
+      "brand": "big size",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Computer Mouse in Bluetooth",
+      "brand": "Dell or Logitech",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "R 5",
+      "brand": "Reva Company",
+      "details": "White Clr",
+      "unit": "pcs",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Aer pockets  different fragnance",
+      "brand": "Godrej Brand",
+      "details": "different frangance",
+      "unit": "pcs",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Godrej Aer Spray Room Freshner",
+      "brand": "Godrej Brand",
+      "details": "different frangance",
+      "unit": "pcs",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Aer spray Automatic",
+      "brand": "",
+      "details": "Refill",
+      "unit": "pcs",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "White  bleach Liquid",
+      "brand": "Harpic",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "S-3 Glass Cleaner",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Hand Wash Liquid",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Cups with Saucers",
+      "brand": "In Plain White",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Kitchen Knife in Steel",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Glass Crystal High ball",
+      "brand": "drinking water",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Coffee Premium Roastea",
+      "brand": "80",
+      "details": "PKTS (150gm Per pkt)",
+      "unit": "Coffee Premium Roastea",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Tea  Assam Premium Roaste",
+      "brand": "80",
+      "details": "PKTS (200gm Per pkt)",
+      "unit": "Tea  Assam Premium Roaste",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Sugar  sachet (200pc/pack)",
+      "brand": "5",
+      "details": "PKTS   Sachet 5 grm",
+      "unit": "Sugar  sachet (200pc/pack)",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Brown Sugar Sachet",
+      "brand": "2",
+      "details": "PKTS   Sachet 5 grm",
+      "unit": "Brown Sugar Sachet",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Paper Cups Branded (1000pc/pack)",
+      "brand": "3000",
+      "details": "PKTS  110ML",
+      "unit": "Paper Cups Branded (1000pc/pack)",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Wooden Stirrer 5.5  (500pc/pack)",
+      "brand": "3",
+      "details": "pkts",
+      "unit": "Wooden Stirrer 5.5  (500pc/pack)",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Milk  Bag inside the container",
+      "brand": "60",
+      "details": "Bags",
+      "unit": "Milk  Bag",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Honey Lemon green Tea",
+      "brand": "5",
+      "details": "BOX",
+      "unit": "Honey Lemon green Tea",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Detox Kahwa green Tea  2.5 Grms",
+      "brand": "3",
+      "details": "box",
+      "unit": "Tulsi Green Tea 1.8 grms",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Tomato ginger Soup",
+      "brand": "3",
+      "details": "pcs ( 60 pcs in one pkt)",
+      "unit": "Adrak Elaichi Extract 5 ml bottle",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Sweet Corn Soup",
+      "brand": "2",
+      "details": "PCs (1 pkt of 60 pcs)",
+      "unit": "Masala Extract Green Tea 205 grms",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Hot and Sour Soup",
+      "brand": "3",
+      "details": "PCs (1 pkt of 60 pcs)",
+      "unit": "Detox Kahwa green Tea  2.5 Grms",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Hot Chocolate",
+      "brand": "5",
+      "details": "PCs (1 pkt of 60 pcs)",
+      "unit": "Tomato ginger Soup",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Jaggery Powder",
+      "brand": "2",
+      "details": "Pcs (1 pkt of 200 pcs)",
+      "unit": "Sweet Corn Soup",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Adrak Elaichi Extract 5 ml bottle",
+      "brand": "4",
+      "details": "Bottle",
+      "unit": "Hot and Sour Soup",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Masala Extract Green Tea 205 grms",
+      "brand": "4",
+      "details": "Bottle",
+      "unit": "Hot Chocolate",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Assam Tea bags",
+      "brand": "3",
+      "details": "box",
+      "unit": "Jaggery Powder",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "Mafatlal Chamber,  D Wing,1st Floor,N.M.Joshi Marg ,Lower Parel Mumbai-13",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Mafatlal D-Wing"
+    },
+    {
+      "product": "30/04/2026",
+      "brand": "",
+      "details": "",
+      "unit": "pcs",
+      "sites": "Mafatlal D-Wing"
+    }
+  ]
+}

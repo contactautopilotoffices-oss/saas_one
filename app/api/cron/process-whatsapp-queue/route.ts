@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { WhatsAppService } from '@/backend/services/WhatsAppService';
+import { AiSensyService } from '@/backend/services/AiSensyService';
 
 /**
  * GET /api/cron/process-whatsapp-queue
@@ -40,11 +41,26 @@ export async function GET(request: NextRequest) {
     let failed = 0;
 
     for (const row of pending) {
-        const success = await WhatsAppService.sendAsync(row.phone, {
-            message: row.message,
-            mediaUrl: row.media_url ?? undefined,
-            mediaType: row.media_type ?? undefined,
-        });
+        let success: boolean;
+
+        if (row.template_name) {
+            // Config-driven AiSensy template path
+            const result = await AiSensyService.sendTemplate({
+                phone: row.phone,
+                campaignName: row.template_name,
+                templateParams: Array.isArray(row.template_params) ? row.template_params : [],
+                mediaUrl: row.media_url ?? undefined,
+            });
+
+            success = result.success;
+        } else {
+            // Legacy WasenderAPI free-text path
+            success = await WhatsAppService.sendAsync(row.phone, {
+                message: row.message,
+                mediaUrl: row.media_url ?? undefined,
+                mediaType: row.media_type ?? undefined,
+            });
+        }
 
         if (success) {
             await supabaseAdmin

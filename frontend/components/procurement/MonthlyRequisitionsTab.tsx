@@ -5,36 +5,51 @@ import { createClient } from '@/frontend/utils/supabase/client';
 import {
     FileText, Upload, CheckCircle2, Clock, Download, Filter,
     Building2, Calendar, Search, RefreshCw, Loader2, AlertCircle,
-    Plus, FileSpreadsheet, Eye, UserCheck, X
+    Plus, FileSpreadsheet, Eye, UserCheck, X, ShieldCheck,
+    DollarSign, User as UserIcon, ArrowRight, Send, ShoppingCart, Truck, PackageCheck, FileCheck2, Trash2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import SiteRequisitionSheet from './SiteRequisitionSheet';
+import ApproverRequisitionModal from './ApproverRequisitionModal';
 
 interface Property {
     id: string;
     name: string;
+    location?: string;
 }
 
 interface MonthlyRequisition {
     id: string;
     organization_id: string;
     property_id: string;
+    floor_tag?: string;
     requisition_month: number;
     requisition_year: number;
     file_url: string;
     file_name: string;
     file_size_bytes?: number;
     notes?: string;
-    status: 'uploaded' | 'acknowledged';
+    status: string; // 'submitted' | 'uploaded' | 'acknowledged' | 'pending_approval' | 'approved' | 'rejected' | 'ordered'
     created_at: string;
     acknowledged_at?: string;
+    uploaded_by?: string;
+    acknowledged_by?: string;
     property?: { id: string; name: string };
     uploader?: { id: string; full_name?: string; email: string };
     acknowledger?: { id: string; full_name?: string; email: string };
+    items?: any[];
+    categories?: string[];
+    total_estimated_amount?: number;
+    total_items_count?: number;
+    vendor_quotation?: any;
+    approver_info?: any;
+    po_info?: any;
 }
 
 interface MonthlyRequisitionsTabProps {
     user: any;
     organizationId?: string;
+    propertyId?: string;
     userRole?: string;
 }
 
@@ -43,34 +58,55 @@ const MONTH_NAMES = [
     'July', 'August', 'September', 'October', 'November', 'December'
 ];
 
-export default function MonthlyRequisitionsTab({ user, organizationId, userRole }: MonthlyRequisitionsTabProps) {
+export default function MonthlyRequisitionsTab({ user, organizationId, propertyId, userRole }: MonthlyRequisitionsTabProps) {
     const supabase = createClient();
 
     const userRoleLower = (userRole || user?.user_metadata?.role || '').toLowerCase();
 
-    // Is Property Admin / Site Team (Upload allowed, Acknowledge NOT allowed)
+    // Permissions
     const isPropertyAdmin =
         userRoleLower.includes('property_admin') ||
         userRoleLower.includes('property_manager') ||
         userRoleLower === 'property_admin';
 
-    // Is Procurement Role / Admin
     const isProcurementRole =
         userRoleLower.includes('procurement') ||
         userRoleLower === 'org_super_admin' ||
         userRoleLower === 'master_admin';
 
-    // 1. Upload Requisition button: ONLY for Property Admins (and Org Super Admins)
-    const canUploadRequisition = isPropertyAdmin || userRoleLower === 'org_super_admin' || userRoleLower === 'master_admin';
+    const isSuperAdmin =
+        userRoleLower === 'org_super_admin' ||
+        userRoleLower === 'master_admin';
 
-    // 2. Acknowledge button: ONLY for Procurement users (and Org Super Admins)
-    const canAcknowledgeRequisition = (isProcurementRole || !isPropertyAdmin) && !isPropertyAdmin;
+    const canCreateRequisition = isPropertyAdmin || isSuperAdmin || isProcurementRole;
 
     const [requisitions, setRequisitions] = useState<MonthlyRequisition[]>([]);
     const [properties, setProperties] = useState<Property[]>([]);
+    const [approverUsers, setApproverUsers] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
-    const [isSubmitting, setIsSubmitting] = useState(false);
-    const [acknowledgingId, setAcknowledgingId] = useState<string | null>(null);
+    const [viewMode, setViewMode] = useState<'list' | 'create_sheet'>('list');
+
+    // Modals
+    const [approverModalReq, setApproverModalReq] = useState<MonthlyRequisition | null>(null);
+    const [vendorQuoteModalReq, setVendorQuoteModalReq] = useState<MonthlyRequisition | null>(null);
+    const [issuePoModalReq, setIssuePoModalReq] = useState<MonthlyRequisition | null>(null);
+
+    // Vendor Quote Modal Form State
+    const [vendorName, setVendorName] = useState<string>('');
+    const [vendorQuotedAmount, setVendorQuotedAmount] = useState<string>('');
+    const [vendorNotes, setVendorNotes] = useState<string>('');
+    const [selectedApproverId, setSelectedApproverId] = useState<string>('');
+    const [vendorQuoteFile, setVendorQuoteFile] = useState<File | null>(null);
+    const [isSubmittingVendorQuote, setIsSubmittingVendorQuote] = useState<boolean>(false);
+
+    // Issue PO Modal Form State
+    const [poNumber, setPoNumber] = useState<string>('');
+    const [poVendorName, setPoVendorName] = useState<string>('');
+    const [poAmount, setPoAmount] = useState<string>('');
+    const [poExpectedDeliveryDate, setPoExpectedDeliveryDate] = useState<string>('');
+    const [poNotes, setPoNotes] = useState<string>('');
+    const [poFile, setPoFile] = useState<File | null>(null);
+    const [isSubmittingPo, setIsSubmittingPo] = useState<boolean>(false);
 
     // Filters
     const [selectedPropertyFilter, setSelectedPropertyFilter] = useState<string>('all');
@@ -79,73 +115,64 @@ export default function MonthlyRequisitionsTab({ user, organizationId, userRole 
     const [selectedYearFilter, setSelectedYearFilter] = useState<string>('all');
     const [searchQuery, setSearchQuery] = useState<string>('');
 
-    // Upload Modal State
-    const [showUploadModal, setShowUploadModal] = useState<boolean>(false);
-    const [uploadPropertyId, setUploadPropertyId] = useState<string>('');
-    const [uploadMonth, setUploadMonth] = useState<number>(new Date().getMonth() + 1);
-    const [uploadYear, setUploadYear] = useState<number>(new Date().getFullYear());
-    const [uploadNotes, setUploadNotes] = useState<string>('');
-    const [uploadFile, setUploadFile] = useState<File | null>(null);
-    const [modalError, setModalError] = useState<string | null>(null);
-    const [toastMessage, setToastMessage] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
-
-    const showToast = (message: string, type: 'success' | 'error' = 'success') => {
-        setToastMessage({ message, type });
-        setTimeout(() => setToastMessage(null), 3500);
-    };
-
-    // Load Properties (Filter based on User Permissions)
+    // Load Properties
     const fetchProperties = useCallback(async () => {
         try {
-            const isSuperAdmin = userRole === 'org_super_admin' || userRole === 'procurement_admin' || userRole === 'master_admin';
-
-            if (isSuperAdmin) {
-                let query = supabase.from('properties').select('id, name').order('name');
+            if (isSuperAdmin || isProcurementRole) {
+                let query = supabase.from('properties').select('id, name, location').order('name');
                 if (organizationId) {
                     query = query.eq('organization_id', organizationId);
                 }
-                const { data, error } = await query;
-                if (!error && data) {
-                    setProperties(data);
-                    if (data.length > 0 && !uploadPropertyId) {
-                        setUploadPropertyId(data[0].id);
-                    }
-                }
+                const { data } = await query;
+                if (data) setProperties(data);
             } else if (user?.id) {
-                // Property Admins / Members: fetch assigned properties from property_memberships
-                const { data: memberships, error: memError } = await supabase
+                const { data: memberships } = await supabase
                     .from('property_memberships')
-                    .select('property_id, property:properties(id, name)')
+                    .select('property_id, property:properties(id, name, location)')
                     .eq('user_id', user.id)
                     .eq('is_active', true);
 
-                if (!memError && memberships && memberships.length > 0) {
+                if (memberships && memberships.length > 0) {
                     const userProps: Property[] = memberships
                         .map((m: any) => m.property)
-                        .filter(Boolean)
-                        .sort((a: Property, b: Property) => a.name.localeCompare(b.name));
-
-                    // Remove duplicate properties
+                        .filter(Boolean);
                     const uniqueProps = Array.from(new Map(userProps.map(p => [p.id, p])).values());
                     setProperties(uniqueProps);
-                    if (uniqueProps.length > 0) {
-                        setUploadPropertyId(uniqueProps[0].id);
-                    }
                 } else {
-                    // Fallback to org properties if no memberships found
-                    let query = supabase.from('properties').select('id, name').order('name');
+                    let query = supabase.from('properties').select('id, name, location').order('name');
                     if (organizationId) query = query.eq('organization_id', organizationId);
                     const { data } = await query;
-                    if (data && data.length > 0) {
-                        setProperties(data);
-                        setUploadPropertyId(data[0].id);
-                    }
+                    if (data) setProperties(data);
                 }
             }
         } catch (err) {
             console.error('Failed to fetch properties:', err);
         }
-    }, [supabase, organizationId, user, userRole, uploadPropertyId]);
+    }, [supabase, organizationId, user, isSuperAdmin, isProcurementRole]);
+
+    // Load Approvers (Admins & Directors)
+    const fetchApprovers = useCallback(async () => {
+        try {
+            if (!organizationId) return;
+            const { data: members } = await supabase
+                .from('organization_memberships')
+                .select('user:users!user_id(id, full_name, email, phone), role')
+                .eq('organization_id', organizationId)
+                .in('role', ['org_super_admin', 'master_admin', 'org_admin', 'property_admin'])
+                .eq('is_active', true);
+
+            if (members) {
+                const usersList = members.map((m: any) => m.user).filter(Boolean);
+                const uniqueUsers = Array.from(new Map(usersList.map((u: any) => [u.id, u])).values());
+                setApproverUsers(uniqueUsers);
+                if (uniqueUsers.length > 0 && !selectedApproverId) {
+                    setSelectedApproverId(uniqueUsers[0].id);
+                }
+            }
+        } catch (e) {
+            console.error('Failed to fetch approvers:', e);
+        }
+    }, [supabase, organizationId, selectedApproverId]);
 
     // Load Requisitions
     const fetchRequisitions = useCallback(async () => {
@@ -162,8 +189,6 @@ export default function MonthlyRequisitionsTab({ user, organizationId, userRole 
             const data = await res.json();
             if (res.ok) {
                 setRequisitions(data.requisitions || []);
-            } else {
-                console.error('Fetch requisitions error:', data.error);
             }
         } catch (err) {
             console.error('Error fetching requisitions:', err);
@@ -174,192 +199,232 @@ export default function MonthlyRequisitionsTab({ user, organizationId, userRole 
 
     useEffect(() => {
         fetchProperties();
-    }, [fetchProperties]);
+        fetchApprovers();
+    }, [fetchProperties, fetchApprovers]);
 
     useEffect(() => {
         fetchRequisitions();
     }, [fetchRequisitions]);
 
-    // Handle Upload Requisition
-    const handleUploadSubmit = async (e: React.FormEvent) => {
+    // Handle Vendor Quotation Submission
+    const handleVendorQuotationSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        setModalError(null);
+        if (!vendorQuoteModalReq) return;
 
-        const effectivePropertyId = uploadPropertyId || properties[0]?.id;
-
-        if (!uploadFile) {
-            setModalError('Please select a file to upload (.xlsx, .xls, .csv).');
-            return;
-        }
-        if (!effectivePropertyId) {
-            setModalError('Please select a property.');
-            return;
-        }
-
-        setIsSubmitting(true);
+        setIsSubmittingVendorQuote(true);
         try {
             const formData = new FormData();
-            formData.append('file', uploadFile);
-            formData.append('organization_id', organizationId || '');
-            formData.append('property_id', effectivePropertyId);
-            formData.append('requisition_month', uploadMonth.toString());
-            formData.append('requisition_year', uploadYear.toString());
-            formData.append('notes', uploadNotes);
-            formData.append('user_id', user?.id || '');
-
-            const res = await fetch('/api/procurement/requisitions', {
-                method: 'POST',
-                body: formData,
-            });
-            const data = await res.json();
-
-            if (!res.ok) {
-                throw new Error(data.error || 'Failed to upload requisition');
+            formData.append('vendor_name', vendorName);
+            formData.append('total_quoted_amount', vendorQuotedAmount);
+            formData.append('vendor_notes', vendorNotes);
+            formData.append('target_approver_id', selectedApproverId);
+            formData.append('action', 'submit_for_approval');
+            if (vendorQuoteFile) {
+                formData.append('quote_file', vendorQuoteFile);
             }
 
-            showToast('Requisition uploaded successfully! Procurement team notified.');
-            setShowUploadModal(false);
-            setUploadFile(null);
-            setUploadNotes('');
+            const res = await fetch(`/api/procurement/requisitions/${vendorQuoteModalReq.id}`, {
+                method: 'PATCH',
+                body: formData
+            });
+
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to submit vendor quote');
+
+            alert('✅ Vendor quotation submitted and sent to Approver for review via WhatsApp & Email!');
+            setVendorQuoteModalReq(null);
             fetchRequisitions();
         } catch (err: any) {
-            setModalError(err.message || 'Upload failed');
+            console.error('Quotation upload error:', err);
+            alert(`Error: ${err.message}`);
         } finally {
-            setIsSubmitting(false);
+            setIsSubmittingVendorQuote(false);
         }
     };
 
-    // Handle Acknowledge Requisition
-    const handleAcknowledge = async (id: string) => {
-        if (!user?.id) return;
-        setAcknowledgingId(id);
-        try {
-            const res = await fetch(`/api/procurement/requisitions/${id}/acknowledge`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ user_id: user.id }),
-            });
-            const data = await res.json();
+    const handleIssuePo = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!issuePoModalReq) return;
 
-            if (!res.ok) {
-                throw new Error(data.error || 'Failed to acknowledge requisition');
+        if (!poNumber.trim()) {
+            alert('Please enter a PO Number.');
+            return;
+        }
+
+        setIsSubmittingPo(true);
+        try {
+            const formData = new FormData();
+            formData.append('action', 'issue_po');
+            formData.append('po_number', poNumber.trim());
+            formData.append('vendor_name', poVendorName.trim() || issuePoModalReq.vendor_quotation?.vendor_name || 'Selected Vendor');
+            formData.append('total_po_amount', poAmount || String(issuePoModalReq.vendor_quotation?.total_quoted_amount || issuePoModalReq.total_estimated_amount || 0));
+            formData.append('expected_delivery_date', poExpectedDeliveryDate);
+            formData.append('po_notes', poNotes);
+            if (poFile) {
+                formData.append('po_file', poFile);
             }
 
-            showToast('Requisition acknowledged successfully!');
-            setRequisitions(prev => prev.map(r => r.id === id ? data.requisition : r));
+            const res = await fetch(`/api/procurement/requisitions/${issuePoModalReq.id}`, {
+                method: 'PATCH',
+                body: formData
+            });
+
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to issue Purchase Order');
+
+            alert(`✅ Purchase Order #${poNumber} issued successfully! Site team has been notified via WhatsApp & Email.`);
+            setIssuePoModalReq(null);
+            fetchRequisitions();
         } catch (err: any) {
-            showToast(err.message || 'Failed to acknowledge', 'error');
+            console.error('Error issuing PO:', err);
+            alert(`Error: ${err.message}`);
         } finally {
-            setAcknowledgingId(null);
+            setIsSubmittingPo(false);
         }
     };
 
-    // Filtered requisitions (search query)
+    const handleDeleteRequisition = async (req: MonthlyRequisition) => {
+        const monthName = MONTH_NAMES[(req.requisition_month || 1) - 1];
+        const confirmMsg = `Are you sure you want to delete the monthly requisition for ${req.property?.name || 'this property'} (${monthName} ${req.requisition_year})?\n\nThis action will delete the requisition sheet and cannot be undone.`;
+        if (!window.confirm(confirmMsg)) return;
+
+        try {
+            const res = await fetch(`/api/procurement/requisitions/${req.id}`, {
+                method: 'DELETE'
+            });
+
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.error || 'Failed to delete requisition');
+            }
+
+            alert('✅ Requisition deleted successfully.');
+            fetchRequisitions();
+        } catch (err: any) {
+            console.error('Error deleting requisition:', err);
+            alert(`Error: ${err.message}`);
+        }
+    };
+
+    // Filtered Requisitions
     const filteredRequisitions = useMemo(() => {
         return requisitions.filter(req => {
-            const propName = req.property?.name?.toLowerCase() || '';
-            const fileName = req.file_name?.toLowerCase() || '';
-            const uploaderName = (req.uploader?.full_name || req.uploader?.email || '').toLowerCase();
-            const query = searchQuery.toLowerCase();
-            return propName.includes(query) || fileName.includes(query) || uploaderName.includes(query);
+            if (searchQuery) {
+                const q = searchQuery.toLowerCase();
+                const propName = (req.property?.name || '').toLowerCase();
+                const uploaderName = (req.uploader?.full_name || '').toLowerCase();
+                const fileName = (req.file_name || '').toLowerCase();
+                if (!propName.includes(q) && !uploaderName.includes(q) && !fileName.includes(q)) {
+                    return false;
+                }
+            }
+            return true;
         });
     }, [requisitions, searchQuery]);
 
     const formatFileSize = (bytes?: number) => {
         if (!bytes) return 'N/A';
-        if (bytes < 1024) return `${bytes} B`;
-        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
     };
 
-    return (
-        <div className="space-y-6 p-4 md:p-6 bg-slate-50/50 dark:bg-slate-900/50 min-h-screen">
-            {/* Notification Toast */}
-            <AnimatePresence>
-                {toastMessage && (
-                    <motion.div
-                        initial={{ opacity: 0, y: -20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -20 }}
-                        className={`fixed top-5 right-5 z-[100] flex items-center gap-2 px-4 py-3 rounded-xl shadow-lg border text-sm font-medium ${
-                            toastMessage.type === 'success'
-                                ? 'bg-emerald-50 border-emerald-200 text-emerald-800 dark:bg-emerald-950/80 dark:border-emerald-800 dark:text-emerald-200'
-                                : 'bg-red-50 border-red-200 text-red-800 dark:bg-red-950/80 dark:border-red-800 dark:text-red-200'
-                        }`}
-                    >
-                        {toastMessage.type === 'success' ? <CheckCircle2 className="w-5 h-5 text-emerald-600" /> : <AlertCircle className="w-5 h-5 text-red-600" />}
-                        <span>{toastMessage.message}</span>
-                    </motion.div>
-                )}
-            </AnimatePresence>
+    // If in Create Sheet mode, render the full-screen interactive dual-table sheet
+    if (viewMode === 'create_sheet') {
+        const effectivePropertyId = propertyId || (selectedPropertyFilter !== 'all' ? selectedPropertyFilter : properties[0]?.id);
+        return (
+            <SiteRequisitionSheet
+                user={user}
+                organizationId={organizationId || ''}
+                properties={properties}
+                initialPropertyId={effectivePropertyId}
+                onSubmitted={() => {
+                    setViewMode('list');
+                    fetchRequisitions();
+                }}
+                onCancel={() => setViewMode('list')}
+            />
+        );
+    }
 
-            {/* Header & Stats Banner */}
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-white dark:bg-slate-800 p-6 rounded-2xl border border-slate-200/80 dark:border-slate-700 shadow-sm">
-                <div>
-                    <div className="flex items-center gap-3">
-                        <div className="p-3 bg-secondary/10 text-secondary rounded-xl dark:bg-secondary/20">
-                            <FileSpreadsheet className="w-6 h-6" />
-                        </div>
-                        <div>
-                            <h1 className="text-xl font-bold text-slate-900 dark:text-white">Monthly Requisitions</h1>
-                            <p className="text-xs md:text-sm text-slate-500 dark:text-slate-400">
-                                Upload property monthly requirement spreadsheets and track acknowledgement status.
-                            </p>
-                        </div>
+    return (
+        <div className="space-y-6">
+            {/* Header Section */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-slate-800 p-6 rounded-2xl border border-slate-200/80 dark:border-slate-700 shadow-xs">
+                <div className="flex items-center gap-3">
+                    <div className="p-3 bg-emerald-500/10 text-emerald-600 rounded-xl dark:bg-emerald-500/20">
+                        <FileSpreadsheet className="w-6 h-6" />
+                    </div>
+                    <div>
+                        <h1 className="text-xl font-bold text-slate-900 dark:text-white">Monthly Material Requisitions</h1>
+                        <p className="text-xs md:text-sm text-slate-500 dark:text-slate-400">
+                            Create, download, and track site requisitions, vendor quotes, and in-app approvals.
+                        </p>
                     </div>
                 </div>
 
                 <div className="flex items-center gap-3">
                     <button
                         onClick={fetchRequisitions}
-                        className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                        className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors cursor-pointer"
                         title="Refresh List"
                     >
                         <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
                     </button>
-                    {canUploadRequisition && (
+
+                    {canCreateRequisition && (
                         <button
-                            onClick={() => setShowUploadModal(true)}
-                            className="flex items-center gap-2 bg-secondary hover:bg-secondary-dark text-white px-4 py-2.5 rounded-xl font-medium text-sm transition-all shadow-sm hover:shadow"
+                            onClick={() => setViewMode('create_sheet')}
+                            className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm transition-all shadow-md shadow-emerald-600/20 cursor-pointer"
                         >
-                            <Upload className="w-4 h-4" />
-                            <span>Upload Requisition</span>
+                            <Plus className="w-4 h-4" />
+                            <span>+ Create Requisition Sheet</span>
                         </button>
                     )}
                 </div>
             </div>
 
-            {/* Controls & Filters Toolbar */}
+            {/* Filter Bar */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-                {/* Search */}
                 <div className="relative">
                     <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
                     <input
                         type="text"
-                        placeholder="Search property, file..."
+                        placeholder="Search property, user..."
                         value={searchQuery}
                         onChange={e => setSearchQuery(e.target.value)}
-                        className="w-full pl-9 pr-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-slate-200 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-secondary/20 focus:border-secondary"
+                        className="w-full pl-9 pr-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-slate-200 placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
                     />
                 </div>
 
-                {/* Property Filter */}
-                <select
-                    value={selectedPropertyFilter}
-                    onChange={e => setSelectedPropertyFilter(e.target.value)}
-                    className="py-2 px-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-secondary/20 focus:border-secondary"
-                >
-                    <option value="all">All Properties</option>
-                    {properties.map(p => (
-                        <option key={p.id} value={p.id}>{p.name}</option>
-                    ))}
-                </select>
+                {(!isSuperAdmin && !isProcurementRole && properties.length <= 1) ? (
+                    <div className="flex items-center gap-2 py-2 px-3.5 bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-bold text-slate-800 dark:text-slate-200 shadow-xs">
+                        <Building2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span className="truncate">{properties[0]?.name || 'My Property'}</span>
+                    </div>
+                ) : (
+                    <select
+                        value={selectedPropertyFilter}
+                        onChange={e => setSelectedPropertyFilter(e.target.value)}
+                        className="py-2 px-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 font-medium"
+                    >
+                        {(isSuperAdmin || isProcurementRole) && (
+                            <option value="all">All Properties</option>
+                        )}
+                        {(!isSuperAdmin && !isProcurementRole && properties.length > 1) && (
+                            <option value="all">All Assigned Properties</option>
+                        )}
+                        {properties.map(p => (
+                            <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                    </select>
+                )}
 
-                {/* Month Filter */}
                 <select
                     value={selectedMonthFilter}
                     onChange={e => setSelectedMonthFilter(e.target.value)}
-                    className="py-2 px-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-secondary/20 focus:border-secondary"
+                    className="py-2 px-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
                 >
                     <option value="all">All Months</option>
                     {MONTH_NAMES.map((month, idx) => (
@@ -367,11 +432,10 @@ export default function MonthlyRequisitionsTab({ user, organizationId, userRole 
                     ))}
                 </select>
 
-                {/* Year Filter */}
                 <select
                     value={selectedYearFilter}
                     onChange={e => setSelectedYearFilter(e.target.value)}
-                    className="py-2 px-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-secondary/20 focus:border-secondary"
+                    className="py-2 px-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
                 >
                     <option value="all">All Years</option>
                     <option value="2025">2025</option>
@@ -379,40 +443,42 @@ export default function MonthlyRequisitionsTab({ user, organizationId, userRole 
                     <option value="2027">2027</option>
                 </select>
 
-                {/* Status Filter */}
                 <select
                     value={selectedStatusFilter}
                     onChange={e => setSelectedStatusFilter(e.target.value)}
-                    className="py-2 px-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-secondary/20 focus:border-secondary"
+                    className="py-2 px-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
                 >
                     <option value="all">All Statuses</option>
-                    <option value="uploaded">Uploaded (Pending)</option>
-                    <option value="acknowledged">Acknowledged</option>
+                    <option value="submitted">Submitted (Site)</option>
+                    <option value="pending_approval">Pending Approval</option>
+                    <option value="approved">Approved</option>
+                    <option value="rejected">Rejected</option>
+                    <option value="ordered">PO Issued / Ordered</option>
                 </select>
             </div>
 
             {/* Requisitions List Table */}
-            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700 shadow-sm overflow-hidden">
+            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700 shadow-xs overflow-hidden">
                 {isLoading ? (
                     <div className="py-16 text-center text-slate-500 dark:text-slate-400">
-                        <Loader2 className="w-8 h-8 animate-spin mx-auto mb-3 text-sky-500" />
+                        <Loader2 className="w-8 h-8 animate-spin mx-auto mb-3 text-emerald-500" />
                         <p className="text-sm">Loading requisitions...</p>
                     </div>
                 ) : filteredRequisitions.length === 0 ? (
                     <div className="py-16 text-center text-slate-500 dark:text-slate-400">
                         <FileSpreadsheet className="w-12 h-12 mx-auto mb-3 text-slate-300 dark:text-slate-600" />
                         <h3 className="text-base font-semibold text-slate-800 dark:text-slate-200 mb-1">No Requisitions Found</h3>
-                        <p className="text-xs md:text-sm">Try adjusting your filters or upload a new requisition file.</p>
+                        <p className="text-xs md:text-sm">Click "+ Create Requisition Sheet" to create your first monthly requisition.</p>
                     </div>
                 ) : (
                     <div className="overflow-x-auto">
                         <table className="w-full text-left text-sm text-slate-600 dark:text-slate-300">
                             <thead className="bg-slate-50 dark:bg-slate-900/60 text-slate-500 dark:text-slate-400 uppercase text-[11px] tracking-wider font-semibold border-b border-slate-200 dark:border-slate-700">
                                 <tr>
-                                    <th className="py-3.5 px-4">Property</th>
+                                    <th className="py-3.5 px-4">Center / Property</th>
                                     <th className="py-3.5 px-4">Period</th>
-                                    <th className="py-3.5 px-4">File Details</th>
-                                    <th className="py-3.5 px-4">Uploaded By</th>
+                                    <th className="py-3.5 px-4">Items & Estimated Amount</th>
+                                    <th className="py-3.5 px-4">Requested By</th>
                                     <th className="py-3.5 px-4">Status</th>
                                     <th className="py-3.5 px-4 text-right">Actions</th>
                                 </tr>
@@ -420,109 +486,176 @@ export default function MonthlyRequisitionsTab({ user, organizationId, userRole 
                             <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
                                 {filteredRequisitions.map(req => {
                                     const monthName = MONTH_NAMES[req.requisition_month - 1] || req.requisition_month;
-                                    const isAcknowledged = req.status === 'acknowledged';
+                                    const itemsCount = req.total_items_count || req.items?.length || 0;
+                                    const totalAmount = req.vendor_quotation?.total_quoted_amount || req.total_estimated_amount || 0;
 
                                     return (
                                         <tr key={req.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-700/30 transition-colors">
-                                            {/* Property */}
                                             <td className="py-4 px-4 font-semibold text-slate-900 dark:text-white">
                                                 <div className="flex items-center gap-2">
                                                     <Building2 className="w-4 h-4 text-slate-400 shrink-0" />
-                                                    <span>{req.property?.name || 'Property'}</span>
+                                                    <div>
+                                                        <span>{req.property?.name || 'Property'}</span>
+                                                        {req.floor_tag && req.floor_tag !== 'All Floors' && (
+                                                            <span className="block text-[11px] font-bold text-emerald-600">
+                                                                Floor: {req.floor_tag}
+                                                            </span>
+                                                        )}
+                                                    </div>
                                                 </div>
                                             </td>
 
-                                            {/* Month & Year */}
                                             <td className="py-4 px-4">
                                                 <div className="flex items-center gap-1.5 font-medium text-slate-800 dark:text-slate-200">
-                                                    <Calendar className="w-4 h-4 text-secondary" />
+                                                    <Calendar className="w-4 h-4 text-emerald-600" />
                                                     <span>{monthName} {req.requisition_year}</span>
                                                 </div>
                                             </td>
 
-                                            {/* File Info */}
                                             <td className="py-4 px-4">
                                                 <div className="space-y-0.5">
-                                                    <div className="font-medium text-slate-900 dark:text-white flex items-center gap-1.5 truncate max-w-xs" title={req.file_name}>
-                                                        <FileSpreadsheet className="w-4 h-4 text-secondary shrink-0" />
-                                                        <span className="truncate">{req.file_name}</span>
+                                                    <div className="font-bold text-slate-900 dark:text-white">
+                                                        ₹{totalAmount.toLocaleString('en-IN')}
                                                     </div>
-                                                    <div className="text-xs text-slate-400">
-                                                        {formatFileSize(req.file_size_bytes)}
+                                                    <div className="text-xs text-slate-500 font-medium">
+                                                        {itemsCount} line items requested
                                                     </div>
                                                 </div>
                                             </td>
 
-                                            {/* Uploaded By & Date */}
                                             <td className="py-4 px-4">
                                                 <div className="space-y-0.5">
-                                                    <div className="text-xs font-medium text-slate-800 dark:text-slate-200">
-                                                        {req.uploader?.full_name || req.uploader?.email || 'Admin'}
+                                                    <div className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                                                        {req.uploader?.full_name || req.uploader?.email || 'Site Admin'}
                                                     </div>
-                                                    <div className="text-xs text-slate-400 flex items-center gap-1">
-                                                        <Clock className="w-3 h-3" />
-                                                        <span>{new Date(req.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
+                                                    <div className="text-[11px] text-slate-400">
+                                                        {new Date(req.created_at).toLocaleDateString('en-GB')}
                                                     </div>
                                                 </div>
                                             </td>
 
-                                            {/* Status & Acknowledgement */}
                                             <td className="py-4 px-4">
-                                                {isAcknowledged ? (
-                                                    <div className="space-y-1">
-                                                        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
-                                                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                                                            <span>Acknowledged</span>
-                                                        </div>
-                                                        <div className="text-xs font-medium text-slate-700 dark:text-slate-300 flex items-center gap-1">
-                                                            <UserCheck className="w-3 h-3 text-emerald-600 shrink-0" />
-                                                            <span className="truncate">{req.acknowledger?.full_name || req.acknowledger?.email || 'Procurement Team'}</span>
-                                                        </div>
-                                                        {req.acknowledged_at && (
-                                                            <div className="text-[11px] text-slate-400 flex items-center gap-1">
-                                                                <Clock className="w-3 h-3 shrink-0" />
-                                                                <span>{new Date(req.acknowledged_at).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                ) : (
-                                                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
-                                                        <Clock className="w-3.5 h-3.5 text-amber-600" />
-                                                        <span>Uploaded (Pending)</span>
-                                                    </div>
-                                                )}
+                                                <div className="space-y-1">
+                                                    <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-black uppercase ${
+                                                        req.status === 'approved' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' :
+                                                        req.status === 'ordered' ? 'bg-indigo-100 text-indigo-800 border border-indigo-200' :
+                                                        req.status === 'rejected' ? 'bg-red-100 text-red-800 border border-red-200' :
+                                                        req.status === 'pending_approval' ? 'bg-sky-100 text-sky-800 border border-sky-200' :
+                                                        'bg-amber-100 text-amber-800 border border-amber-200'
+                                                    }`}>
+                                                        {req.status === 'ordered' ? 'PO Issued' :
+                                                         req.status === 'pending_approval' ? 'Pending Approval' : req.status}
+                                                    </span>
+                                                    {req.status === 'pending_approval' && req.approver_info?.name && (
+                                                        <span className="block text-[10px] font-semibold text-slate-400 dark:text-slate-500">
+                                                            Approver: <b>{req.approver_info.name}</b>
+                                                        </span>
+                                                    )}
+                                                    {req.status === 'ordered' && req.po_info?.po_number && (
+                                                        <span className="block text-[10px] font-semibold text-indigo-600 dark:text-indigo-400">
+                                                            #{req.po_info.po_number}
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </td>
 
-                                            {/* Actions */}
                                             <td className="py-4 px-4 text-right">
                                                 <div className="flex items-center justify-end gap-2">
-                                                    {/* Download file button */}
+                                                    {/* Download Formatted Excel */}
                                                     <a
-                                                        href={req.file_url}
+                                                        href={`/api/procurement/requisitions/${req.id}/export`}
                                                         target="_blank"
                                                         rel="noopener noreferrer"
                                                         download
-                                                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-medium transition-colors"
+                                                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold transition-all cursor-pointer"
+                                                        title="Download color-coded Excel spreadsheet matching site format"
                                                     >
-                                                        <Download className="w-3.5 h-3.5" />
-                                                        <span>Download</span>
+                                                        <Download className="w-3.5 h-3.5 text-emerald-600" />
+                                                        <span>Download .xlsx</span>
                                                     </a>
 
-                                                    {/* Acknowledge Button (Procurement users & Super Admins only) */}
-                                                    {!isAcknowledged && canAcknowledgeRequisition && (
+                                                    {/* Procurement: Upload Vendor Quotation & Request Approval */}
+                                                    {isProcurementRole && req.status === 'submitted' && (
                                                         <button
-                                                            onClick={() => handleAcknowledge(req.id)}
-                                                            disabled={acknowledgingId === req.id}
-                                                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium transition-colors disabled:opacity-50"
+                                                            onClick={() => {
+                                                                setVendorQuoteModalReq(req);
+                                                                setVendorName(req.vendor_quotation?.vendor_name || '');
+                                                                setVendorQuotedAmount(req.vendor_quotation?.total_quoted_amount?.toString() || req.total_estimated_amount?.toString() || '');
+                                                            }}
+                                                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
                                                         >
-                                                            {acknowledgingId === req.id ? (
-                                                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                                            ) : (
-                                                                <UserCheck className="w-3.5 h-3.5" />
-                                                            )}
-                                                            <span>Acknowledge</span>
+                                                            <Upload className="w-3.5 h-3.5" />
+                                                            <span>Upload Quote & Approver</span>
                                                         </button>
                                                     )}
+
+                                                    {/* Procurement: Issue Purchase Order when status is approved */}
+                                                    {isProcurementRole && req.status === 'approved' && (
+                                                        <button
+                                                            onClick={() => {
+                                                                setIssuePoModalReq(req);
+                                                                setPoNumber(`PO-${req.requisition_year}-${String(Math.floor(1000 + Math.random() * 9000))}`);
+                                                                setPoVendorName(req.vendor_quotation?.vendor_name || '');
+                                                                setPoAmount(req.vendor_quotation?.total_quoted_amount?.toString() || req.total_estimated_amount?.toString() || '');
+                                                                setPoExpectedDeliveryDate('');
+                                                                setPoNotes('');
+                                                                setPoFile(null);
+                                                            }}
+                                                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
+                                                            title="Issue formal Purchase Order to vendor and alert site team"
+                                                        >
+                                                            <ShoppingCart className="w-3.5 h-3.5" />
+                                                            <span>Issue PO</span>
+                                                        </button>
+                                                    )}
+
+                                                    {/* Review & Approve / View Details Modal */}
+                                                    {(() => {
+                                                        const targetApproverId = req.approver_info?.id || req.approver_info?.approver_id || (req as any).target_approver_id;
+                                                        const isDesignatedApprover = Boolean(targetApproverId && user?.id === targetApproverId);
+                                                        const canApproveThisReq = (isSuperAdmin || isDesignatedApprover) && req.status === 'pending_approval';
+
+                                                        return (
+                                                            <button
+                                                                onClick={() => setApproverModalReq(req)}
+                                                                className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer ${
+                                                                    canApproveThisReq
+                                                                        ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                                                                        : 'border border-slate-200 dark:border-slate-700 bg-slate-900 hover:bg-slate-800 text-white'
+                                                                }`}
+                                                            >
+                                                                {canApproveThisReq ? (
+                                                                    <>
+                                                                        <ShieldCheck className="w-3.5 h-3.5 text-white" />
+                                                                        <span>Review & Approve</span>
+                                                                    </>
+                                                                ) : (
+                                                                    <>
+                                                                        <Eye className="w-3.5 h-3.5 text-slate-300" />
+                                                                        <span>View Details</span>
+                                                                    </>
+                                                                )}
+                                                            </button>
+                                                        );
+                                                    })()}
+
+                                                    {/* Delete Option for Requester / Admins */}
+                                                    {(() => {
+                                                        const isOwner = Boolean(user?.id && (user.id === req.uploaded_by || user.id === req.uploader?.id));
+                                                        const canDelete = isOwner || isSuperAdmin || isProcurementRole;
+
+                                                        if (!canDelete) return null;
+
+                                                        return (
+                                                            <button
+                                                                onClick={() => handleDeleteRequisition(req)}
+                                                                className="inline-flex items-center justify-center p-2 rounded-xl text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-all cursor-pointer"
+                                                                title="Delete Requisition"
+                                                            >
+                                                                <Trash2 className="w-3.5 h-3.5" />
+                                                            </button>
+                                                        );
+                                                    })()}
                                                 </div>
                                             </td>
                                         </tr>
@@ -534,167 +667,122 @@ export default function MonthlyRequisitionsTab({ user, organizationId, userRole 
                 )}
             </div>
 
-            {/* Modal: Upload Monthly Requisition */}
+            {/* Modal: Upload Vendor Quotation & Assign Approver */}
             <AnimatePresence>
-                {showUploadModal && (
-                    <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+                {vendorQuoteModalReq && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
                         <motion.div
                             initial={{ opacity: 0, scale: 0.95 }}
                             animate={{ opacity: 1, scale: 1 }}
                             exit={{ opacity: 0, scale: 0.95 }}
-                            className="bg-white dark:bg-slate-800 w-full max-w-lg rounded-2xl border border-slate-200 dark:border-slate-700 shadow-2xl overflow-hidden"
+                            className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden"
                         >
-                            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/50">
+                            <div className="bg-slate-900 text-white p-5 flex items-center justify-between">
                                 <div className="flex items-center gap-2">
-                                    <Upload className="w-5 h-5 text-secondary" />
-                                    <h3 className="font-bold text-slate-900 dark:text-white text-lg">Upload Monthly Requisition</h3>
+                                    <Upload className="w-5 h-5 text-sky-400" />
+                                    <h3 className="font-bold text-base">Finalize Vendor Quote & Assign Approver</h3>
                                 </div>
                                 <button
-                                    onClick={() => setShowUploadModal(false)}
-                                    className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700"
+                                    onClick={() => setVendorQuoteModalReq(null)}
+                                    className="p-1 rounded-lg text-slate-400 hover:text-white"
                                 >
                                     <X className="w-5 h-5" />
                                 </button>
                             </div>
 
-                            <form onSubmit={handleUploadSubmit} className="p-6 space-y-4">
-                                {modalError && (
-                                    <div className="p-3 bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 rounded-xl text-xs flex items-center gap-2">
-                                        <AlertCircle className="w-4 h-4 shrink-0" />
-                                        <span>{modalError}</span>
-                                    </div>
-                                )}
-
-                                {/* Property Select / Single Property Display */}
+                            <form onSubmit={handleVendorQuotationSubmit} className="p-6 space-y-4">
                                 <div>
-                                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                                        Property <span className="text-red-500">*</span>
+                                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                                        Selected Vendor Name <span className="text-red-500">*</span>
                                     </label>
-                                    {properties.length === 1 ? (
-                                        <div className="flex items-center gap-2.5 px-3.5 py-2.5 bg-slate-100/90 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-semibold text-slate-900 dark:text-white">
-                                            <Building2 className="w-4 h-4 text-secondary shrink-0" />
-                                            <span>{properties[0].name}</span>
-                                            <span className="ml-auto text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full bg-secondary/10 text-secondary border border-secondary/20">
-                                                Assigned Property
-                                            </span>
-                                        </div>
-                                    ) : (
-                                        <select
-                                            value={uploadPropertyId}
-                                            onChange={e => setUploadPropertyId(e.target.value)}
-                                            required
-                                            className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-secondary/20 focus:border-secondary"
-                                        >
-                                            <option value="" disabled>Select Property</option>
-                                            {properties.map(p => (
-                                                <option key={p.id} value={p.id}>{p.name}</option>
-                                            ))}
-                                        </select>
-                                    )}
-                                </div>
-
-                                {/* Requisition Month & Year */}
-                                <div className="grid grid-cols-2 gap-3">
-                                    <div>
-                                        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                                            Requisition Month <span className="text-red-500">*</span>
-                                        </label>
-                                        <select
-                                            value={uploadMonth}
-                                            onChange={e => setUploadMonth(parseInt(e.target.value))}
-                                            required
-                                            className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-secondary/20 focus:border-secondary"
-                                        >
-                                            {MONTH_NAMES.map((month, idx) => (
-                                                <option key={idx + 1} value={idx + 1}>{month}</option>
-                                            ))}
-                                        </select>
-                                    </div>
-
-                                    <div>
-                                        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                                            Requisition Year <span className="text-red-500">*</span>
-                                        </label>
-                                        <select
-                                            value={uploadYear}
-                                            onChange={e => setUploadYear(parseInt(e.target.value))}
-                                            required
-                                            className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-secondary/20 focus:border-secondary"
-                                        >
-                                            <option value={2025}>2025</option>
-                                            <option value={2026}>2026</option>
-                                            <option value={2027}>2027</option>
-                                        </select>
-                                    </div>
-                                </div>
-
-                                {/* File Attachment */}
-                                <div>
-                                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                                        Requisition File (.xlsx, .xls, .csv) <span className="text-red-500">*</span>
-                                    </label>
-                                    <div className="border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl p-4 text-center bg-slate-50/50 dark:bg-slate-900/50 hover:bg-slate-100/50 transition-colors cursor-pointer relative">
-                                        <input
-                                            type="file"
-                                            accept=".xlsx,.xls,.csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
-                                            onChange={e => setUploadFile(e.target.files?.[0] || null)}
-                                            required
-                                            className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                                        />
-                                        <FileSpreadsheet className="w-8 h-8 mx-auto text-secondary mb-1" />
-                                        {uploadFile ? (
-                                            <div>
-                                                <p className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">{uploadFile.name}</p>
-                                                <p className="text-[11px] text-slate-400">{formatFileSize(uploadFile.size)}</p>
-                                            </div>
-                                        ) : (
-                                            <div>
-                                                <p className="text-xs font-medium text-slate-600 dark:text-slate-300">Click or drag requisition spreadsheet here</p>
-                                                <p className="text-[11px] text-slate-400">Supports .xlsx, .xls, .csv up to 15MB</p>
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-
-                                {/* Notes */}
-                                <div>
-                                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                                        Notes / Remarks (Optional)
-                                    </label>
-                                    <textarea
-                                        rows={2}
-                                        value={uploadNotes}
-                                        onChange={e => setUploadNotes(e.target.value)}
-                                        placeholder="Add any specific requirements or notes for procurement team..."
-                                        className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-secondary/20 focus:border-secondary"
+                                    <input
+                                        type="text"
+                                        required
+                                        value={vendorName}
+                                        onChange={e => setVendorName(e.target.value)}
+                                        placeholder="e.g. Reliable Spares & Supplies"
+                                        className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-sky-500"
                                     />
                                 </div>
 
-                                {/* Modal Footer */}
-                                <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-200 dark:border-slate-700">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                                        Total Final Quoted Amount (₹) <span className="text-red-500">*</span>
+                                    </label>
+                                    <input
+                                        type="number"
+                                        required
+                                        min="0"
+                                        step="0.01"
+                                        value={vendorQuotedAmount}
+                                        onChange={e => setVendorQuotedAmount(e.target.value)}
+                                        placeholder="Final Negotiated Amount"
+                                        className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-emerald-700 focus:outline-hidden focus:ring-2 focus:ring-sky-500"
+                                    />
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                                        Select Designated Approver <span className="text-red-500">*</span>
+                                    </label>
+                                    <select
+                                        value={selectedApproverId}
+                                        onChange={e => setSelectedApproverId(e.target.value)}
+                                        required
+                                        className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-sky-500"
+                                    >
+                                        {approverUsers.map(u => (
+                                            <option key={u.id} value={u.id}>
+                                                {u.full_name || u.email} ({u.email})
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                                        Attach Vendor Comparative Quotation Sheet (.xlsx / .pdf)
+                                    </label>
+                                    <input
+                                        type="file"
+                                        accept=".xlsx,.xls,.pdf,.csv"
+                                        onChange={e => setVendorQuoteFile(e.target.files?.[0] || null)}
+                                        className="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-sky-50 file:text-sky-700 hover:file:bg-sky-100"
+                                    />
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                                        Procurement Notes for Approver
+                                    </label>
+                                    <textarea
+                                        value={vendorNotes}
+                                        onChange={e => setVendorNotes(e.target.value)}
+                                        placeholder="Quotes received from 3 vendors, lowest quoted attached..."
+                                        rows={2}
+                                        className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-sky-500"
+                                    />
+                                </div>
+
+                                <div className="flex items-center justify-end gap-2 pt-2">
                                     <button
                                         type="button"
-                                        onClick={() => setShowUploadModal(false)}
-                                        className="px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-xl transition-colors"
+                                        onClick={() => setVendorQuoteModalReq(null)}
+                                        className="px-4 py-2 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-100"
                                     >
                                         Cancel
                                     </button>
                                     <button
                                         type="submit"
-                                        disabled={isSubmitting}
-                                        className="flex items-center gap-2 px-5 py-2 text-sm font-medium bg-secondary hover:bg-secondary-dark text-white rounded-xl transition-all disabled:opacity-50 shadow-sm"
+                                        disabled={isSubmittingVendorQuote}
+                                        className="flex items-center gap-1.5 px-5 py-2 rounded-xl text-sm font-black text-white bg-sky-600 hover:bg-sky-700 shadow-md shadow-sky-600/20 disabled:opacity-50"
                                     >
-                                        {isSubmitting ? (
-                                            <>
-                                                <Loader2 className="w-4 h-4 animate-spin" />
-                                                <span>Uploading...</span>
-                                            </>
+                                        {isSubmittingVendorQuote ? (
+                                            <Loader2 className="w-4 h-4 animate-spin" />
                                         ) : (
-                                            <>
-                                                <Upload className="w-4 h-4" />
-                                                <span>Submit Requisition</span>
-                                            </>
+                                            <Send className="w-4 h-4" />
                                         )}
+                                        Send for In-App Approval
                                     </button>
                                 </div>
                             </form>
@@ -702,6 +790,166 @@ export default function MonthlyRequisitionsTab({ user, organizationId, userRole 
                     </div>
                 )}
             </AnimatePresence>
+
+            {/* Modal: Issue Purchase Order (PO) */}
+            <AnimatePresence>
+                {issuePoModalReq && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+                        <motion.div
+                            initial={{ opacity: 0, scale: 0.95 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            exit={{ opacity: 0, scale: 0.95 }}
+                            className="bg-white dark:bg-slate-800 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-700 w-full max-w-lg overflow-hidden"
+                        >
+                            <div className="bg-slate-900 text-white p-5 flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                                        <ShoppingCart className="w-5 h-5" />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-base font-black">Issue Purchase Order (PO)</h3>
+                                        <p className="text-xs text-slate-400">
+                                            {issuePoModalReq.property?.name} • {MONTH_NAMES[(issuePoModalReq.requisition_month || 1) - 1]} {issuePoModalReq.requisition_year}
+                                        </p>
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={() => setIssuePoModalReq(null)}
+                                    className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800"
+                                >
+                                    <X className="w-5 h-5" />
+                                </button>
+                            </div>
+
+                            <form onSubmit={handleIssuePo} className="p-6 space-y-4">
+                                <div className="p-3.5 bg-emerald-50 dark:bg-emerald-950/30 rounded-2xl border border-emerald-200 dark:border-emerald-800/40 text-xs">
+                                    <span className="font-bold text-emerald-800 dark:text-emerald-300 block mb-0.5">Approved Requisition</span>
+                                    <p className="text-emerald-700 dark:text-emerald-400">
+                                        Approved for ₹{Number(issuePoModalReq.vendor_quotation?.total_quoted_amount || issuePoModalReq.total_estimated_amount || 0).toLocaleString('en-IN')}. Issuing the PO will notify site staff via WhatsApp & Email.
+                                    </p>
+                                </div>
+
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1">
+                                            PO Number <span className="text-red-500">*</span>
+                                        </label>
+                                        <input
+                                            type="text"
+                                            required
+                                            value={poNumber}
+                                            onChange={e => setPoNumber(e.target.value)}
+                                            placeholder="e.g. PO-2026-089"
+                                            className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-bold text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                                        />
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1">
+                                            Final PO Amount (₹) <span className="text-red-500">*</span>
+                                        </label>
+                                        <input
+                                            type="number"
+                                            required
+                                            min="0"
+                                            step="0.01"
+                                            value={poAmount}
+                                            onChange={e => setPoAmount(e.target.value)}
+                                            placeholder="Total PO Value"
+                                            className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-bold text-emerald-600 dark:text-emerald-400 focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                                        />
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1">
+                                        Vendor / Supplier Name <span className="text-red-500">*</span>
+                                    </label>
+                                    <input
+                                        type="text"
+                                        required
+                                        value={poVendorName}
+                                        onChange={e => setPoVendorName(e.target.value)}
+                                        placeholder="e.g. Reliable Spares & Supplies"
+                                        className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-semibold text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                                    />
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1">
+                                        Expected Delivery Date
+                                    </label>
+                                    <input
+                                        type="date"
+                                        value={poExpectedDeliveryDate}
+                                        onChange={e => setPoExpectedDeliveryDate(e.target.value)}
+                                        className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-semibold text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                                    />
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1">
+                                        Attach PO Document / PDF (Optional)
+                                    </label>
+                                    <input
+                                        type="file"
+                                        accept=".pdf,.png,.jpg,.jpeg,.xlsx"
+                                        onChange={e => setPoFile(e.target.files?.[0] || null)}
+                                        className="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100"
+                                    />
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1">
+                                        Site Delivery Instructions / Notes
+                                    </label>
+                                    <textarea
+                                        value={poNotes}
+                                        onChange={e => setPoNotes(e.target.value)}
+                                        placeholder="Items will be delivered in 2 lots. Site team to verify physical quantities on arrival..."
+                                        rows={2}
+                                        className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                                    />
+                                </div>
+
+                                <div className="flex items-center justify-end gap-2 pt-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => setIssuePoModalReq(null)}
+                                        className="px-4 py-2 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-700"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        type="submit"
+                                        disabled={isSubmittingPo}
+                                        className="flex items-center gap-1.5 px-5 py-2 rounded-xl text-sm font-black text-white bg-emerald-600 hover:bg-emerald-700 shadow-md shadow-emerald-600/20 disabled:opacity-50 cursor-pointer"
+                                    >
+                                        {isSubmittingPo ? (
+                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                        ) : (
+                                            <ShoppingCart className="w-4 h-4" />
+                                        )}
+                                        Issue PO & Notify Site
+                                    </button>
+                                </div>
+                            </form>
+                        </motion.div>
+                    </div>
+                )}
+            </AnimatePresence>
+
+            {/* In-App Approver Review Modal */}
+            <ApproverRequisitionModal
+                isOpen={!!approverModalReq}
+                onClose={() => setApproverModalReq(null)}
+                requisition={approverModalReq}
+                currentUser={user}
+                onStatusUpdated={() => {
+                    fetchRequisitions();
+                    setApproverModalReq(null);
+                }}
+            />
         </div>
     );
 }

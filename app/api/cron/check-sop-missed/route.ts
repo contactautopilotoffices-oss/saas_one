@@ -32,6 +32,7 @@ export async function GET(request: NextRequest) {
                 template:sop_templates(
                     id, 
                     title, 
+                    frequency,
                     assigned_to, 
                     property_id, 
                     organization_id
@@ -52,6 +53,12 @@ export async function GET(request: NextRequest) {
             const template = completion.template as any;
             if (!template) continue;
 
+            const freq = (template.frequency || '').toLowerCase();
+            // Skip hourly checklist missed alerts to avoid repetitive spam; alert on daily, weekly, etc.
+            if (freq === 'hourly' || freq.startsWith('every_') || freq.includes('hour')) {
+                continue;
+            }
+
             const slotTime = completion.due_at;
 
             // ── 3. Deduplicate Alerts ──────────────────────────────────────────
@@ -64,30 +71,17 @@ export async function GET(request: NextRequest) {
 
             if (insertError) continue; // Already alerted
 
-            // ── 4. Build Recipient List ───────────────────────────────────────
-            const recipientIds = new Set<string>();
+            // ── 4. Build Recipient List via Omnichannel Matrix ────────────────
+            const assignedUsers = Array.isArray(template.assigned_to) ? template.assigned_to : [];
+            const { WhatsAppRecipientResolver } = await import('@/backend/services/WhatsAppRecipientResolver');
+            const { users: waUsers } = await WhatsAppRecipientResolver.resolveRecipients({
+                organizationId: template.organization_id || '',
+                propertyId: template.property_id,
+                featureKey: 'checklist_overdue_alert',
+                contextualUserIds: assignedUsers
+            });
 
-            if (Array.isArray(template.assigned_to)) {
-                template.assigned_to.forEach((uid: string) => recipientIds.add(uid));
-            }
-
-            const { data: propMembers } = await supabaseAdmin
-                .from('property_memberships')
-                .select('user_id')
-                .eq('property_id', template.property_id)
-                .in('role', ['property_admin', 'manager'])
-                .eq('is_active', true);
-            propMembers?.forEach(m => recipientIds.add(m.user_id));
-
-            if (template.organization_id) {
-                const { data: orgMembers } = await supabaseAdmin
-                    .from('organization_memberships')
-                    .select('user_id')
-                    .eq('organization_id', template.organization_id)
-                    .in('role', ['org_admin', 'org_super_admin', 'owner'])
-                    .eq('is_active', true);
-                orgMembers?.forEach(m => recipientIds.add(m.user_id));
-            }
+            const recipientIds = new Set<string>(waUsers.map(u => u.id));
 
             // ── 5. Send Notifications ─────────────────────────────────────────
             const slotLabel = new Date(slotTime).toLocaleString('en-IN', {
@@ -117,6 +111,24 @@ export async function GET(request: NextRequest) {
                 } catch (notifErr: any) {
                     console.error(`[SOP Missed] Failed to notify user ${userId}:`, notifErr);
                 }
+            }
+
+            // WhatsApp dispatch
+            try {
+                const { WhatsAppEventProcessor } = await import('@/backend/services/WhatsAppEventProcessor');
+                await WhatsAppEventProcessor.processEvent({
+                    event_type: 'SOP_OVERDUE',
+                    payload: {
+                        organization_id: template.organization_id,
+                        property_id: template.property_id,
+                        template_id: template.id,
+                        template_title: template.title,
+                        slot_time: slotLabel,
+                        assigned_to: assignedUsers[0] || null
+                    }
+                });
+            } catch (waErr) {
+                console.error('[SOP Missed] WhatsApp dispatch error:', waErr);
             }
         }
 

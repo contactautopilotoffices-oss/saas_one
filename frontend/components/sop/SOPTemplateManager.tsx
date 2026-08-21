@@ -1,12 +1,13 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Plus, Play, Trash2, Edit3, ClipboardList, Square, Sparkles, QrCode, LayoutGrid, History, FileText, ChevronDown, CheckCircle2, Clock } from 'lucide-react';
+import { Plus, Play, Trash2, Edit3, ClipboardList, Square, Sparkles, QrCode, LayoutGrid, History, FileText, ChevronDown, CheckCircle2, Clock, MapPin } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
 import Skeleton from '@/frontend/components/ui/Skeleton';
 import { Toast } from '@/frontend/components/ui/Toast';
 import SOPTemplateFormModal from './SOPTemplateFormModal';
+import SOPCADConfigModal from './SOPCADConfigModal';
 import { useDataCache } from '@/frontend/context/DataCacheContext';
 import SOPLayoutAnalyzerModal from './SOPLayoutAnalyzerModal';
 import { frequencyLabel, isDue, fmt12h } from './SOPCompletionHistory';
@@ -29,6 +30,7 @@ const SOPTemplateManager: React.FC<SOPTemplateManagerProps> = ({ propertyId, pro
     const [isLoading, setIsLoading] = useState(true);
     const [showFormModal, setShowFormModal] = useState(false);
     const [editingTemplate, setEditingTemplate] = useState<any>(null);
+    const [cadViewTemplate, setCadViewTemplate] = useState<any>(null);
     const [showLayoutAnalyzer, setShowLayoutAnalyzer] = useState(false);
     const [aiPrefill, setAiPrefill] = useState<any>(null);
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -502,9 +504,23 @@ const SOPTemplateManager: React.FC<SOPTemplateManagerProps> = ({ propertyId, pro
                                             )}
                                             {isAdmin && (
                                                 <>
+                                                    {(template.cad_converted_image_url || template.cad_areas?.length > 0) && (
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setCadViewTemplate(template);
+                                                            }}
+                                                            className="flex items-center gap-1 px-2.5 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-100 transition-all font-black uppercase tracking-widest text-[9px]"
+                                                            title="View / Configure CAD Floor Plan"
+                                                        >
+                                                            <MapPin size={11} />
+                                                            CAD
+                                                        </button>
+                                                    )}
                                                     <button
                                                         onClick={(e) => { e.stopPropagation(); setEditingTemplate(template); setShowFormModal(true); }}
                                                         className="p-1.5 text-slate-300 hover:text-primary hover:bg-primary/5 rounded-lg transition-all"
+                                                        title="Edit Template"
                                                     >
                                                         <Edit3 size={14} />
                                                     </button>
@@ -666,6 +682,21 @@ const SOPTemplateManager: React.FC<SOPTemplateManagerProps> = ({ propertyId, pro
                 initialData={aiPrefill ?? undefined}
                 onSuccess={handleFormSuccess}
             />
+
+            {cadViewTemplate && (
+                <SOPCADConfigModal
+                    isOpen={!!cadViewTemplate}
+                    onClose={() => setCadViewTemplate(null)}
+                    propertyId={propertyId || cadViewTemplate.property_id}
+                    templateId={cadViewTemplate.id}
+                    templateTitle={cadViewTemplate.title}
+                    items={(cadViewTemplate.items || []).map((it: any) => ({ id: it.id, title: it.title, order_index: it.order_index, reference_photo_url: it.reference_photo_url }))}
+                    onSuccess={() => {
+                        setToast({ message: 'CAD areas updated', type: 'success' });
+                        onRefresh?.();
+                    }}
+                />
+            )}
 
             <SOPLayoutAnalyzerModal
                 isOpen={showLayoutAnalyzer}

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { EventProcessor } from '@/backend/services/EventProcessor';
+import { WhatsAppEventProcessor } from '@/backend/services/WhatsAppEventProcessor';
 
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
 
@@ -47,7 +48,15 @@ export async function POST(request: NextRequest) {
 
         try {
             await EventProcessor.processEvent(event);
-            
+
+            // Parallel WhatsApp (AiSensy) pipeline — must never affect email processing
+            // or the outbox row's status handling, so errors are logged only.
+            try {
+                await WhatsAppEventProcessor.processEvent(event);
+            } catch (waErr) {
+                console.error(`[WhatsAppEventProcessor] Failed processing event ${event.id}:`, waErr);
+            }
+
             // Mark completed
             await supabaseAdmin
                 .from('event_outbox')

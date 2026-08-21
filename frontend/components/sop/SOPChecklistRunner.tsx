@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Camera, CheckCircle2, ChevronRight, Loader2, X, Paperclip, Circle, Eye, Video, Play, ArrowLeft, MoreVertical, Lock, Calendar, Clock, Repeat, Upload, AlertCircle, RefreshCw } from 'lucide-react';
+import { Camera, CheckCircle2, ChevronRight, Loader2, X, Paperclip, Circle, Eye, Video, Play, ArrowLeft, MoreVertical, Lock, Calendar, Clock, Repeat, Upload, AlertCircle, RefreshCw, MapPin } from 'lucide-react';
 
 
 import { motion, AnimatePresence } from 'framer-motion';
@@ -16,6 +16,7 @@ import { Toast } from '@/frontend/components/ui/Toast';
 import { playTickleSound } from '@/frontend/utils/sounds';
 import ImagePreviewModal from '@/frontend/components/shared/ImagePreviewModal';
 import VideoPreviewModal from '@/frontend/components/shared/VideoPreviewModal';
+import SOPCADOverlayView from '@/frontend/components/sop/SOPCADOverlayView';
 
 
 interface SOPChecklistRunnerProps {
@@ -59,6 +60,12 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
 
     // Upload tracking: local preview URL → { progress, error, retrying, compressing }
     const [uploadProgress, setUploadProgress] = useState<Record<string, { progress: number; error?: string; retrying?: boolean; compressing?: boolean }>>({});
+
+    // AI scoring in-progress tracking: completionItemId → true while analyzing
+    const [aiScoring, setAiScoring] = useState<Record<string, boolean>>({});
+
+    // CAD overlay visibility
+    const [showCADOverlay, setShowCADOverlay] = useState(false);
 
     // Store pending files for retry functionality
     const pendingFiles = useRef<Record<string, { file: File; type: 'photo' | 'video'; itemId: string }>>({});
@@ -499,6 +506,39 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
         if (file) handlePhotoCapture(file, itemId);
     };
 
+    // Fire-and-forget AI cleanliness scoring after a photo is saved.
+    // The result arrives via the realtime subscription on sop_completion_items.
+    const triggerAIScoring = (completionItemId: string) => {
+        const validPropId = (!propertyId || propertyId === 'undefined' || propertyId === 'null') ? null : propertyId;
+        const resolvedPropId = validPropId || completion?.property_id || template?.property_id;
+        if (!resolvedPropId || !completion?.id) return;
+
+        setAiScoring(prev => ({ ...prev, [completionItemId]: true }));
+        fetch(`/api/properties/${resolvedPropId}/sop/completions/${completion.id}/score-photo`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ completionItemId }),
+        })
+            .then(async (res) => {
+                const data = await res.json().catch(() => ({}));
+                if (res.ok) {
+                    // Optimistic local update (realtime will also deliver it)
+                    setCompletion((prev: any) => prev ? {
+                        ...prev,
+                        items: prev.items.map((i: any) =>
+                            i.id === completionItemId
+                                ? { ...i, ai_cleanliness_score: data.score, ai_cleanliness_reason: data.reason, ai_reference_used: data.referenceUsed, ai_analyzed_at: new Date().toISOString() }
+                                : i
+                        ),
+                    } : prev);
+                } else {
+                    console.warn('[AI Score] Scoring skipped:', data.error);
+                }
+            })
+            .catch((err) => console.warn('[AI Score] Request failed:', err))
+            .finally(() => setAiScoring(prev => ({ ...prev, [completionItemId]: false })));
+    };
+
     const handlePhotoCapture = async (file: File, itemId?: string) => {
         const targetItemId = itemId || activeCameraItemId;
         if (!completion || !targetItemId) return;
@@ -590,6 +630,7 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
                     setShowCameraModal(false);
                     setActiveCameraItemId(null);
                     setToast({ message: 'Photo uploaded successfully', type: 'success' });
+                    triggerAIScoring(String(item.id));
                     return; // Exit on success
 
                 } catch (err) {
@@ -872,9 +913,20 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
                     <ArrowLeft size={20} />
                 </button>
                 <h1 className="text-base font-black text-slate-900 tracking-tight truncate max-w-[55%] text-center">{template.title}</h1>
+                <div className="flex items-center gap-1">
+                    {template?.cad_converted_image_url && Array.isArray(template?.cad_areas) && template.cad_areas.length > 0 && (
+                        <button
+                            onClick={() => setShowCADOverlay(true)}
+                            className="w-9 h-9 flex items-center justify-center text-primary hover:bg-primary/10 rounded-full transition-all"
+                            title="View scores on CAD"
+                        >
+                            <MapPin size={20} />
+                        </button>
+                    )}
                     <button className="w-9 h-9 flex items-center justify-center text-slate-400 hover:bg-slate-100 rounded-full transition-all">
                         <MoreVertical size={20} />
                     </button>
+                </div>
             </div>
 
             {/* ── SESSION META ── */}
@@ -1196,6 +1248,45 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
                                 </div>
                             )}
 
+                            {/* AI Cleanliness Score */}
+                            {completionItem?.photo_url && !completionItem?._isLocalPreview && (() => {
+                                const isScoring = aiScoring[completionItem.id];
+                                const score = completionItem.ai_cleanliness_score;
+                                if (!isScoring && (score === null || score === undefined)) return null;
+
+                                const scoreColor = score >= 80
+                                    ? { bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-600', badge: 'bg-emerald-500' }
+                                    : score >= 50
+                                        ? { bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-600', badge: 'bg-amber-500' }
+                                        : { bg: 'bg-rose-50', border: 'border-rose-200', text: 'text-rose-600', badge: 'bg-rose-500' };
+
+                                return (
+                                    <div className={`mx-4 mb-3 px-3 py-2.5 rounded-2xl border ${isScoring ? 'bg-slate-50 border-slate-200' : `${scoreColor.bg} ${scoreColor.border}`} flex items-center gap-2.5`}>
+                                        {isScoring ? (
+                                            <>
+                                                <Loader2 size={14} className="text-primary animate-spin flex-shrink-0" />
+                                                <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">AI analyzing cleanliness...</span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <div className={`w-8 h-8 rounded-xl ${scoreColor.badge} flex items-center justify-center flex-shrink-0`}>
+                                                    <span className="text-xs font-black text-white">{score}</span>
+                                                </div>
+                                                <div className="flex-1 min-w-0">
+                                                    <p className={`text-[10px] font-black uppercase tracking-widest ${scoreColor.text}`}>
+                                                        AI Cleanliness Score
+                                                        {completionItem.ai_reference_used === 'cad' ? ' · vs CAD' : ' · vs Reference'}
+                                                    </p>
+                                                    {completionItem.ai_cleanliness_reason && (
+                                                        <p className="text-[10px] text-slate-500 font-medium leading-snug mt-0.5">{completionItem.ai_cleanliness_reason}</p>
+                                                    )}
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+                                );
+                            })()}
+
                             {/* Video preview — full width with upload progress */}
                             {completionItem?.video_url && (
                                 <div className="mx-4 mb-3 rounded-2xl overflow-hidden relative group">
@@ -1412,6 +1503,62 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
                 videoUrl={previewVideoUrl}
                 title="Video Proof"
             />
+
+            {/* CAD Score Overlay */}
+            {template?.cad_converted_image_url && (
+                <SOPCADOverlayView
+                    isOpen={showCADOverlay}
+                    onClose={() => setShowCADOverlay(false)}
+                    cadImageUrl={template.cad_converted_image_url}
+                    areas={template.cad_areas || []}
+                    templateTitle={template.title}
+                    items={(completion?.items || []).map((ci: any) => {
+                        const templateItem = (template.items || []).find((ti: any) => ti.id === ci.checklist_item_id);
+                        return {
+                            id: ci.id,
+                            completion_id: completion?.id,
+                            checklist_item_id: ci.checklist_item_id,
+                            title: templateItem?.title || 'Step',
+                            ai_cleanliness_score: ci.ai_cleanliness_score ?? null,
+                            ai_cleanliness_reason: ci.ai_cleanliness_reason ?? null,
+                            photo_url: ci.photo_url || null,
+                            reference_photo_url: templateItem?.reference_photo_url || null,
+                        };
+                    })}
+                    onScorePhoto={async (completionItemId: string) => {
+                        if (!completion?.id) return;
+                        const targetItem = (completion.items || []).find((ci: any) => ci.id === completionItemId || ci.checklist_item_id === completionItemId);
+                        const targetId = targetItem?.id || completionItemId;
+                        setAiScoring(prev => ({ ...prev, [completionItemId]: true, [targetId]: true }));
+                        try {
+                            const res = await fetch(`/api/properties/${propertyId}/sop/completions/${completion.id}/score-photo`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ completionItemId: targetId }),
+                            });
+                            const data = await res.json();
+                            if (res.ok) {
+                                setCompletion((prev: any) => prev ? ({
+                                    ...prev,
+                                    items: (prev.items || []).map((ci: any) =>
+                                        (ci.id === targetId || ci.checklist_item_id === targetItem?.checklist_item_id)
+                                            ? { ...ci, ai_cleanliness_score: data.score, ai_cleanliness_reason: data.reason }
+                                            : ci
+                                    ),
+                                }) : prev);
+                                setToast({ message: `AI Cleanliness Score: ${data.score}/100`, type: 'success' });
+                            } else {
+                                setToast({ message: data.error || 'Failed to score photo', type: 'error' });
+                            }
+                        } catch (err: any) {
+                            setToast({ message: err.message || 'Scoring request failed', type: 'error' });
+                        } finally {
+                            setAiScoring(prev => ({ ...prev, [completionItemId]: false, [targetId]: false }));
+                        }
+                    }}
+                    aiScoring={aiScoring}
+                />
+            )}
 
             {/* Toast */}
             {toast && (

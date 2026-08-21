@@ -50,6 +50,12 @@ export async function GET(request: NextRequest) {
         let notificationsSent = 0;
 
         for (const template of templates) {
+            const freq = (template.frequency || '').toLowerCase();
+            // Skip hourly checklist notifications to prevent hourly spam; notify for daily, weekly, monthly etc.
+            if (freq === 'hourly' || freq.startsWith('every_') || freq.includes('hour')) {
+                continue;
+            }
+
             const nextDue = getNextDueTime(template.frequency, lastCompletionMap[template.id] ?? null, now);
             if (!nextDue) continue;
 
@@ -62,20 +68,23 @@ export async function GET(request: NextRequest) {
                 ? template.assigned_to
                 : [];
 
-            let recipientIds: string[] = assignedUsers;
+            const { WhatsAppRecipientResolver } = await import('@/backend/services/WhatsAppRecipientResolver');
+            const { users: waUsers } = await WhatsAppRecipientResolver.resolveRecipients({
+                organizationId: template.organization_id || '',
+                propertyId: template.property_id,
+                featureKey: 'checklist_slot_reminder',
+                contextualUserIds: assignedUsers
+            });
 
-            // If no specific users assigned, notify active property staff only
-            if (recipientIds.length === 0) {
-                const { data: allMembers } = await supabaseAdmin
-                    .from('property_memberships')
-                    .select('user_id')
-                    .eq('property_id', template.property_id)
-                    .eq('is_active', true)
-                    .in('role', ['property_admin', 'staff', 'mst', 'security']);
-                recipientIds = (allMembers || []).map((m: any) => String(m.user_id));
-            }
-
+            const recipientIds = Array.from(new Set(waUsers.map(u => u.id)));
             if (recipientIds.length === 0) continue;
+
+            const dueTimeFormatted = nextDue.toLocaleTimeString('en-IN', {
+                timeZone: 'Asia/Kolkata',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: true
+            });
 
             try {
                 await NotificationService.sendToMany(recipientIds, {
@@ -83,11 +92,25 @@ export async function GET(request: NextRequest) {
                     organizationId: template.organization_id ?? undefined,
                     type: 'SOP_REMINDER',
                     title: 'Checklist Due Soon 📋',
-                    message: `"${template.title}" is due in 30 minutes.`,
+                    message: `"${template.title}" is due at ${dueTimeFormatted}.`,
                     deepLink: `/properties/${template.property_id}/sop?via=notification`,
                     priority: 'HIGH',
                 });
                 notificationsSent += recipientIds.length;
+
+                // Dispatch WhatsApp reminder
+                const { WhatsAppEventProcessor } = await import('@/backend/services/WhatsAppEventProcessor');
+                await WhatsAppEventProcessor.processEvent({
+                    event_type: 'CHECKLIST_SLOT_REMINDER',
+                    payload: {
+                        organization_id: template.organization_id,
+                        property_id: template.property_id,
+                        template_id: template.id,
+                        template_title: template.title,
+                        due_time: dueTimeFormatted,
+                        assigned_to: assignedUsers[0] || null
+                    }
+                });
             } catch (notifErr: any) {
                 console.error(`[SOP Reminders] Failed for template ${template.id}:`, notifErr.message);
             }

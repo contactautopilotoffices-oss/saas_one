@@ -38,14 +38,14 @@ export async function POST(
         const base64 = Buffer.from(arrayBuffer).toString('base64');
         const imageUrl = `data:${file.type};base64,${base64}`;
 
-        const apiKey = process.env.GROQ_LAYOUT_API_KEY;
+        const apiKey = process.env.GROQ_API_KEY || process.env.GROQ_LAYOUT_API_KEY;
         if (!apiKey) {
             return NextResponse.json({ error: 'Layout AI service not configured' }, { status: 503 });
         }
         const groq = new Groq({ apiKey });
 
         const completion = await groq.chat.completions.create({
-            model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+            model: 'qwen/qwen3.6-27b',
             messages: [
                 {
                     role: 'user',
@@ -96,7 +96,8 @@ Important rules:
             temperature: 0.3,
         });
 
-        const rawText = completion.choices[0]?.message?.content ?? '[]';
+        let rawText = completion.choices[0]?.message?.content ?? '[]';
+        rawText = rawText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
 
         // Extract JSON from response (handle cases where model wraps it)
         let suggestions: any[] = [];

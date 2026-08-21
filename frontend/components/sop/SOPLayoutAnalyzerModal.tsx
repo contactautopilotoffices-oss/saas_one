@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Upload, Sparkles, ChevronRight, MapPin, CheckSquare, RefreshCw, AlertCircle, FileText } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -82,6 +83,7 @@ const SOPLayoutAnalyzerModal: React.FC<SOPLayoutAnalyzerModalProps> = ({
     propertyId,
     onSelectTemplate,
 }) => {
+    const [mounted, setMounted] = useState(false);
     const [step, setStep] = useState<'upload' | 'converting' | 'loading' | 'results' | 'error'>('upload');
     const [preview, setPreview] = useState<string | null>(null);
     const [uploadBlob, setUploadBlob] = useState<Blob | null>(null);
@@ -92,6 +94,10 @@ const SOPLayoutAnalyzerModal: React.FC<SOPLayoutAnalyzerModalProps> = ({
     const [expandedArea, setExpandedArea] = useState<number | null>(null);
     const [errorMsg, setErrorMsg] = useState('');
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    useEffect(() => {
+        setMounted(true);
+    }, []);
 
     const processFile = async (file: File) => {
         if (file.type === 'application/pdf') {
@@ -178,11 +184,11 @@ const SOPLayoutAnalyzerModal: React.FC<SOPLayoutAnalyzerModalProps> = ({
         onClose();
     };
 
-    if (!isOpen) return null;
+    if (!isOpen || !mounted) return null;
 
-    return (
+    const modalContent = (
         <AnimatePresence>
-            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-[9999] flex items-center justify-center p-3 sm:p-6">
                 <motion.div
                     initial={{ opacity: 0, scale: 0.95, y: 20 }}
                     animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -449,6 +455,8 @@ const SOPLayoutAnalyzerModal: React.FC<SOPLayoutAnalyzerModalProps> = ({
             </div>
         </AnimatePresence>
     );
+
+    return createPortal(modalContent, document.body);
 };
 
 export default SOPLayoutAnalyzerModal;

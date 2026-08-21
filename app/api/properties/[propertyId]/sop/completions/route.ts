@@ -339,6 +339,11 @@ export async function POST(
             existingCompletion.started_at = new Date().toISOString();
             existingCompletion.completed_by = user.id;
             existingCompletion.is_late = isLate;
+
+            const { NotificationService } = await import('@/backend/services/NotificationService');
+            NotificationService.afterSOPStarted(existingCompletion.template_id, propertyId, property.organization_id).catch(err => {
+                console.error('[SOP Completions POST] afterSOPStarted notification error:', err);
+            });
         }
 
         return NextResponse.json({ success: true, completion: existingCompletion });

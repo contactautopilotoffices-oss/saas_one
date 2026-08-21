@@ -1,0 +1,175 @@
+{
+  "totalUniqueProducts": 24,
+  "matchedCount": 2,
+  "missingCount": 22,
+  "matchedItems": [
+    {
+      "sheetItemName": "Beverages",
+      "matchedDbCatalogName": "Beverages",
+      "unit": "pcs",
+      "presentInSites": "Sigma 2nd Floor, Sigma 7th Floor, MyGate, 3i, Kolkata, Delhi, ETPL, Mafatlal D-Wing"
+    },
+    {
+      "sheetItemName": "10",
+      "matchedDbCatalogName": "Carpet Shampooing Liquid (TR-101)",
+      "unit": "1",
+      "presentInSites": "AMR Tech Park"
+    }
+  ],
+  "missingItems": [
+    {
+      "sheetItemName": "Headings",
+      "brand": "Description",
+      "details": "Example",
+      "unit": "pcs",
+      "presentInSites": "MyGate, AMR Tech Park"
+    },
+    {
+      "sheetItemName": "Product",
+      "brand": "Item name",
+      "details": "",
+      "unit": "pcs",
+      "presentInSites": "MyGate, AMR Tech Park"
+    },
+    {
+      "sheetItemName": "Brand",
+      "brand": "Company Name",
+      "details": "(JK, Kangaroo, Flair, Doms, Camlin, Kores, etc.)",
+      "unit": "pcs",
+      "presentInSites": "MyGate, AMR Tech Park"
+    },
+    {
+      "sheetItemName": "Details",
+      "brand": "Color, Size, Unit",
+      "details": "(Yellow, 25mm, etc.)",
+      "unit": "pcs",
+      "presentInSites": "MyGate, AMR Tech Park"
+    },
+    {
+      "sheetItemName": "UOM",
+      "brand": "Unit of Measurement",
+      "details": "(box, pkt, pcs, nos, ltr, can, bottle, jar)",
+      "unit": "pcs",
+      "presentInSites": "MyGate, AMR Tech Park"
+    },
+    {
+      "sheetItemName": "Name:",
+      "brand": "Abhijeet",
+      "details": "",
+      "unit": "pcs",
+      "presentInSites": "MyGate, AMR Tech Park"
+    },
+    {
+      "sheetItemName": "We require the below material for the for the month of June-26",
+      "brand": "NA",
+      "details": "",
+      "unit": "pcs",
+      "presentInSites": "MyGate"
+    },
+    {
+      "sheetItemName": "Requisition Format - HK / Stationery / Paper Products",
+      "brand": "NA",
+      "details": "",
+      "unit": "pcs",
+      "presentInSites": "MyGate, AMR Tech Park"
+    },
+    {
+      "sheetItemName": "Mobile",
+      "brand": "9930368976",
+      "details": "",
+      "unit": "pcs",
+      "presentInSites": "MyGate"
+    },
+    {
+      "sheetItemName": "Coffeeday  Tetra Pack Milk - 1 box ( 12 Litre )",
+      "brand": "10",
+      "details": "350",
+      "unit": "pcs",
+      "presentInSites": "SK"
+    },
+    {
+      "sheetItemName": "Coffee Beens - 1Kg",
+      "brand": "10",
+      "details": "40",
+      "unit": "pcs",
+      "presentInSites": "SK"
+    },
+    {
+      "sheetItemName": "Sugar ( Sachets ) - 1PKT ( 200Pc )",
+      "brand": "10",
+      "details": "40",
+      "unit": "pcs",
+      "presentInSites": "SK"
+    },
+    {
+      "sheetItemName": "Green Tea - 1PKT ( 25 Dips. )",
+      "brand": "13",
+      "details": "20",
+      "unit": "pcs",
+      "presentInSites": "SK"
+    },
+    {
+      "sheetItemName": "Wooden Stirrers  - 1 PKT ( 500 Pc )",
+      "brand": "10",
+      "details": "12",
+      "unit": "pcs",
+      "presentInSites": "SK"
+    },
+    {
+      "sheetItemName": "Ginger Tea - 1PKT ( 100 Dips.)",
+      "brand": "9",
+      "details": "12",
+      "unit": "pcs",
+      "presentInSites": "SK"
+    },
+    {
+      "sheetItemName": "Plain Paper Cups - 1PKT (50 Pc )",
+      "brand": "10000",
+      "details": "15000",
+      "unit": "pcs",
+      "presentInSites": "SK"
+    },
+    {
+      "sheetItemName": "We require the below material for the for the month of    June / 2026",
+      "brand": "NA",
+      "details": "",
+      "unit": "pcs",
+      "presentInSites": "Kolkata, AMR Tech Park"
+    },
+    {
+      "sheetItemName": "11",
+      "brand": "Room Freshner (Big)",
+      "details": "",
+      "unit": "6",
+      "presentInSites": "AMR Tech Park"
+    },
+    {
+      "sheetItemName": "12",
+      "brand": "Wet mapStick",
+      "details": "",
+      "unit": "4",
+      "presentInSites": "AMR Tech Park"
+    },
+    {
+      "sheetItemName": "13",
+      "brand": "Floor wipher",
+      "details": "",
+      "unit": "2",
+      "presentInSites": "AMR Tech Park"
+    },
+    {
+      "sheetItemName": "14",
+      "brand": "Phenal",
+      "details": "",
+      "unit": "1",
+      "presentInSites": "AMR Tech Park"
+    },
+    {
+      "sheetItemName": "Mobile:",
+      "brand": "7738069357",
+      "details": "",
+      "unit": "pcs",
+      "presentInSites": "AMR Tech Park"
+    }
+  ]
+}

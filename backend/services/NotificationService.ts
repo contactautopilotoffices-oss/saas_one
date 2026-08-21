@@ -11,12 +11,12 @@ export interface NotificationPayload {
     userId: string;
     ticketId?: string;
     bookingId?: string;
-    propertyId: string;
+    propertyId?: string;
     organizationId?: string;
     type: string;
     title: string;
     message: string;
-    deepLink: string;
+    deepLink?: string;
     priority?: "LOW" | "NORMAL" | "HIGH" | "CRITICAL";
     /** Pre-built WhatsApp payload — skips ticket DB fetch inside send() entirely */
     whatsapp?: {
@@ -580,49 +580,34 @@ export class NotificationService {
         }
     }
 
-    static async afterRoomBooked(bookingId: string) {
+    static async afterRoomBooked(bookingIdOrPayload: any) {
         try {
-            const { data: booking, error: bookingError } = await supabaseAdmin
-                .from('meeting_room_bookings')
-                .select('*, meeting_room:meeting_rooms(name), booker:users!user_id(full_name)')
-                .eq('id', bookingId)
-                .single();
-
-            if (bookingError || !booking) {
-                console.error('[NotificationService] Error fetching booking:', bookingError);
-                return;
+            let booking = bookingIdOrPayload;
+            if (typeof bookingIdOrPayload === 'string') {
+                const { data } = await supabaseAdmin
+                    .from('meeting_room_bookings')
+                    .select('*, meeting_rooms(name), users(full_name, email, phone)')
+                    .eq('id', bookingIdOrPayload)
+                    .maybeSingle();
+                booking = data;
             }
+            if (!booking) return;
 
-            const bookerName = booking.booker?.full_name || 'A tenant';
-            const roomName = booking.meeting_room?.name || 'a meeting room';
-            const formatTimeAMPM = (timeStr: string) => {
-                const [hours, minutes] = timeStr.split(':');
-                let h = parseInt(hours, 10);
-                const ampm = h >= 12 ? 'PM' : 'AM';
-                h = h % 12 || 12;
-                return `${h}:${minutes} ${ampm}`;
-            };
+            // Note: Email and WhatsApp dispatch are handled asynchronously via event_outbox database trigger
+            // (tr_meeting_room_booking_outbox_insert_update_delete -> webhook -> EventProcessor / WhatsAppEventProcessor)
 
-            const date = booking.booking_date;
-            const startTime = formatTimeAMPM(booking.start_time);
-            const endTime = formatTimeAMPM(booking.end_time);
+            // In-App Notification dispatch
+            const bookerName = booking.users?.full_name || 'A tenant';
+            const roomName = booking.meeting_rooms?.name || 'a meeting room';
+            const message = `${bookerName} has booked "${roomName}" for ${booking.booking_date} (${booking.start_time} - ${booking.end_time}).`;
 
-            const message = `${bookerName} has booked "${roomName}" for ${date} from ${startTime} to ${endTime}.`;
-
-            // Get relevant recipients (Role based)
-            const { data: members, error: membersError } = await supabaseAdmin
+            const { data: members } = await supabaseAdmin
                 .from('property_memberships')
-                .select('user_id, role')
+                .select('user_id')
                 .eq('property_id', booking.property_id)
                 .in('role', ['property_admin']);
 
-            if (membersError) {
-                console.error('[NotificationService] Error fetching property members for booking notification:', membersError);
-                return;
-            }
-
-            const finalRecipients = (members || []).map(m => String(m.user_id));
-            const uniqueRecipients = Array.from(new Set(finalRecipients));
+            const uniqueRecipients = Array.from(new Set((members || []).map(m => String(m.user_id))));
 
             for (const userId of uniqueRecipients) {
                 await this.send({
@@ -632,28 +617,193 @@ export class NotificationService {
                     type: 'ROOM_BOOKED',
                     title: 'New Room Booking',
                     message,
-                    deepLink: `/property-admin/bookings?date=${date}`,
-                    whatsapp: {
-                        message: `*New Room Booking*\n\n${message}`
-                    }
+                    deepLink: `/property-admin/bookings?date=${booking.booking_date}`
+                });
+            }
+        } catch (error) {
+            console.error('[NotificationService] afterRoomBooked error:', error);
+        }
+    }
+
+    static async afterRoomCancelled(booking: any) {
+        // Handled asynchronously via database trigger on meeting_room_bookings -> event_outbox -> webhook
+        console.log(`[NotificationService] Meeting room cancellation queued via DB trigger for booking ${booking?.id || ''}`);
+    }
+
+    static async afterSOPStarted(templateId: string, propertyId: string, organizationId?: string) {
+        try {
+            const { data: template } = await supabaseAdmin
+                .from('sop_templates')
+                .select('id, title, frequency, start_time, assigned_to')
+                .eq('id', templateId)
+                .single();
+
+            if (!template) return;
+
+            // Skip notifications for hourly checklists to avoid message spam
+            const freq = (template.frequency || '').toLowerCase();
+            if (freq === 'hourly' || freq.startsWith('every_') || freq.includes('hour')) {
+                console.log(`[NotificationService] Skipping afterSOPStarted notification for hourly checklist ${templateId}`);
+                return;
+            }
+
+            const templateTitle = template.title || 'Checklist';
+            const startTime = template.start_time || 'Now';
+            const assignedUsers = Array.isArray(template.assigned_to) ? template.assigned_to : [];
+
+            const { WhatsAppRecipientResolver } = await import('./WhatsAppRecipientResolver');
+            const { users: waUsers } = await WhatsAppRecipientResolver.resolveRecipients({
+                organizationId: organizationId || '',
+                propertyId,
+                featureKey: 'checklist_started',
+                contextualUserIds: assignedUsers
+            });
+
+            for (const u of waUsers) {
+                await this.send({
+                    userId: u.id,
+                    propertyId,
+                    organizationId,
+                    type: 'SOP_STARTED',
+                    title: 'Checklist Shift Started 🚀',
+                    message: `"${templateTitle}" shift has started (${startTime}). Please begin your inspection.`,
+                    deepLink: `/properties/${propertyId}/sop?templateId=${templateId}`
                 });
             }
 
-            // Dispatch Email notification using EmailRecipientResolver & EventProcessor
-            await EventProcessor.processEvent({
-                event_type: 'ROOM_BOOKED',
+            const { WhatsAppEventProcessor } = await import('./WhatsAppEventProcessor');
+            await WhatsAppEventProcessor.processEvent({
+                event_type: 'SOP_STARTED',
                 payload: {
-                    property_id: booking.property_id,
-                    meeting_room_id: booking.meeting_room_id,
-                    user_id: booking.user_id,
-                    booking_date: booking.booking_date,
-                    start_time: booking.start_time,
-                    end_time: booking.end_time,
-                    comment: booking.comment
+                    organization_id: organizationId,
+                    property_id: propertyId,
+                    template_id: templateId,
+                    template_title: templateTitle,
+                    start_time: startTime,
+                    assigned_to: assignedUsers[0] || null
                 }
-            }).catch(err => console.error('[NotificationService] Room booking email dispatch error:', err));
-        } catch (error) {
-            console.error('[NotificationService] afterRoomBooked error:', error);
+            });
+        } catch (err) {
+            console.error('[NotificationService] afterSOPStarted error:', err);
+        }
+    }
+
+    static async afterSOPCompleted(completionId: string) {
+        try {
+            const { data: completion } = await supabaseAdmin
+                .from('sop_completions')
+                .select('id, property_id, organization_id, completed_by, template:sop_templates(title, frequency)')
+                .eq('id', completionId)
+                .single();
+
+            if (!completion) return;
+
+            // Skip notifications for hourly checklists to avoid message spam
+            const freq = ((completion.template as any)?.frequency || '').toLowerCase();
+            if (freq === 'hourly' || freq.startsWith('every_') || freq.includes('hour')) {
+                console.log(`[NotificationService] Skipping afterSOPCompleted notification for hourly checklist completion ${completionId}`);
+                return;
+            }
+
+            const { data: completer } = await supabaseAdmin
+                .from('users')
+                .select('full_name')
+                .eq('id', completion.completed_by)
+                .single();
+
+            const templateTitle = (completion.template as any)?.title || 'Checklist';
+            const completerName = completer?.full_name || 'Staff';
+
+            const { WhatsAppRecipientResolver } = await import('./WhatsAppRecipientResolver');
+            const { users: waUsers } = await WhatsAppRecipientResolver.resolveRecipients({
+                organizationId: completion.organization_id,
+                propertyId: completion.property_id,
+                featureKey: 'checklist_completed',
+                contextualUserIds: [completion.completed_by]
+            });
+
+            for (const u of waUsers) {
+                await this.send({
+                    userId: u.id,
+                    propertyId: completion.property_id,
+                    organizationId: completion.organization_id,
+                    type: 'SOP_COMPLETED',
+                    title: 'Checklist Completed ✅',
+                    message: `"${templateTitle}" was completed by ${completerName}.`,
+                    deepLink: `/properties/${completion.property_id}/sop?completionId=${completionId}`
+                });
+            }
+
+            const { WhatsAppEventProcessor } = await import('./WhatsAppEventProcessor');
+            await WhatsAppEventProcessor.processEvent({
+                event_type: 'SOP_COMPLETED',
+                payload: {
+                    organization_id: completion.organization_id,
+                    property_id: completion.property_id,
+                    completion_id: completionId,
+                    template_title: templateTitle,
+                    completed_by: completion.completed_by
+                }
+            });
+        } catch (err) {
+            console.error('[NotificationService] afterSOPCompleted error:', err);
+        }
+    }
+
+    static async afterSOPItemRated(completionId: string, completionItemId: string, rating: number, raterId: string) {
+        try {
+            const { data: completion } = await supabaseAdmin
+                .from('sop_completions')
+                .select('id, property_id, organization_id, completed_by, template:sop_templates(title)')
+                .eq('id', completionId)
+                .single();
+
+            if (!completion) return;
+
+            const { data: rater } = await supabaseAdmin
+                .from('users')
+                .select('full_name')
+                .eq('id', raterId)
+                .single();
+
+            const templateTitle = (completion.template as any)?.title || 'Checklist';
+            const raterName = rater?.full_name || 'Supervisor';
+
+            const { WhatsAppRecipientResolver } = await import('./WhatsAppRecipientResolver');
+            const { users: waUsers } = await WhatsAppRecipientResolver.resolveRecipients({
+                organizationId: completion.organization_id,
+                propertyId: completion.property_id,
+                featureKey: 'checklist_rated',
+                contextualUserIds: [completion.completed_by]
+            });
+
+            for (const u of waUsers) {
+                await this.send({
+                    userId: u.id,
+                    propertyId: completion.property_id,
+                    organizationId: completion.organization_id,
+                    type: 'SOP_RATED',
+                    title: 'Checklist Rated ⭐',
+                    message: `"${templateTitle}" was rated ${rating}/3 by ${raterName}.`,
+                    deepLink: `/properties/${completion.property_id}/sop?completionId=${completionId}`
+                });
+            }
+
+            const { WhatsAppEventProcessor } = await import('./WhatsAppEventProcessor');
+            await WhatsAppEventProcessor.processEvent({
+                event_type: 'SOP_RATED',
+                payload: {
+                    organization_id: completion.organization_id,
+                    property_id: completion.property_id,
+                    completion_id: completionId,
+                    template_title: templateTitle,
+                    completed_by: completion.completed_by,
+                    rated_by: raterId,
+                    rating
+                }
+            });
+        } catch (err) {
+            console.error('[NotificationService] afterSOPItemRated error:', err);
         }
     }
 
@@ -989,10 +1139,10 @@ export class NotificationService {
                 .from('notifications')
                 .insert({
                     user_id: payload.userId,
-                    ticket_id: payload.ticketId || null,
-                    booking_id: payload.bookingId || null,
-                    property_id: payload.propertyId,
-                    organization_id: payload.organizationId,
+                    ticket_id: (payload.ticketId && payload.ticketId.trim()) ? payload.ticketId.trim() : null,
+                    booking_id: (payload.bookingId && payload.bookingId.trim()) ? payload.bookingId.trim() : null,
+                    property_id: (payload.propertyId && payload.propertyId.trim()) ? payload.propertyId.trim() : null,
+                    organization_id: (payload.organizationId && payload.organizationId.trim()) ? payload.organizationId.trim() : null,
                     notification_type: payload.type,
                     title: payload.title,
                     message: payload.message,
@@ -1004,16 +1154,6 @@ export class NotificationService {
 
             if (notifError) {
                 console.error('[NS] DB insert failed:', notifError.message);
-                if (payload.type === 'ROOM_BOOKED') {
-                    WhatsAppQueueService.enqueue({
-                        ticketId: payload.ticketId ?? '',
-                        userIds: [payload.userId],
-                        message: payload.whatsapp?.message || `*${payload.title}*\n\n${payload.message}`,
-                        mediaUrl: payload.whatsapp?.mediaUrl,
-                        mediaType: payload.whatsapp?.mediaType,
-                        eventType: payload.type,
-                    }).catch(err => console.error('[NS] WhatsApp fallback error:', err));
-                }
                 return;
             }
 
@@ -1034,48 +1174,6 @@ export class NotificationService {
                     await this.dispatchPushNotification(t.token, notification, payload.priority);
                 }
             }
-
-            try {
-                let waMessage: string;
-                let waMediaUrl: string | undefined;
-                let waMediaType: 'image' | 'video' | undefined;
-
-                if (payload.whatsapp) {
-                    waMessage = payload.whatsapp.message;
-                    waMediaUrl = payload.whatsapp.mediaUrl;
-                    waMediaType = payload.whatsapp.mediaType;
-                } else if (payload.ticketId) {
-                    const { data: ticket } = await supabaseAdmin
-                        .from('tickets')
-                        .select('title, status, priority, ticket_number, photo_before_url, photo_after_url, video_before_url, video_after_url, properties(name), assignee:users!assigned_to(full_name, phone), raiser:users!raised_by(full_name)')
-                        .eq('id', payload.ticketId)
-                        .single();
-                    if (ticket) {
-                        const APP_URL = (process.env.APP_URL || '').replace(/\/$/, '');
-                        const waBody = this.buildWhatsAppBody(ticket);
-                        const link = APP_URL && payload.deepLink ? `\n\n🔗 ${APP_URL}${payload.deepLink}` : '';
-                        waMessage = `*${payload.title}*\n\n${waBody}${link}`;
-                        ({ mediaUrl: waMediaUrl, mediaType: waMediaType } = this.extractMedia(ticket));
-                    } else {
-                        waMessage = `*${payload.title}*\n\n${payload.message}`;
-                    }
-                } else {
-                    waMessage = `*${payload.title}*\n\n${payload.message}`;
-                }
-
-                if (payload.type === 'ROOM_BOOKED') {
-                    await WhatsAppQueueService.enqueue({
-                        ticketId: payload.ticketId ?? '',
-                        userIds: [payload.userId],
-                        message: waMessage,
-                        mediaUrl: waMediaUrl,
-                        mediaType: waMediaType,
-                        eventType: payload.type,
-                    });
-                }
-            } catch (err) {
-                console.error('[NS] WhatsApp queue error:', err);
-            }
         } catch (error) {
             console.error('[NS] Global send error:', error);
         }
@@ -1084,13 +1182,24 @@ export class NotificationService {
     static async sendToMany(userIds: string[], payload: Omit<NotificationPayload, 'userId'>) {
         if (!userIds.length) return;
         const unique = [...new Set(userIds)];
-        
+
+        let fallbackPropertyId = (payload.propertyId && payload.propertyId.trim()) ? payload.propertyId.trim() : null;
+        if (!fallbackPropertyId && payload.organizationId) {
+            const { data: defaultProp } = await supabaseAdmin
+                .from('properties')
+                .select('id')
+                .eq('organization_id', payload.organizationId)
+                .limit(1)
+                .maybeSingle();
+            if (defaultProp?.id) fallbackPropertyId = defaultProp.id;
+        }
+
         const rows = unique.map(userId => ({
             user_id: userId,
-            ticket_id: payload.ticketId || null,
-            booking_id: payload.bookingId || null,
-            property_id: payload.propertyId,
-            organization_id: payload.organizationId,
+            ticket_id: (payload.ticketId && payload.ticketId.trim()) ? payload.ticketId.trim() : null,
+            booking_id: (payload.bookingId && payload.bookingId.trim()) ? payload.bookingId.trim() : null,
+            property_id: fallbackPropertyId,
+            organization_id: (payload.organizationId && payload.organizationId.trim()) ? payload.organizationId.trim() : null,
             notification_type: payload.type,
             title: payload.title,
             message: payload.message,
@@ -1105,22 +1214,6 @@ export class NotificationService {
 
         if (insertErr) {
             console.error('[NS] sendToMany DB insert failed:', insertErr.message);
-            // Fallback to WhatsApp so bulk notifications don't silently vanish
-            try {
-                if (payload.type === 'ROOM_BOOKED') {
-                    const waMessage = payload.whatsapp?.message || `*${payload.title}*\n\n${payload.message}`;
-                    await WhatsAppQueueService.enqueue({
-                        ticketId: payload.ticketId ?? '',
-                        userIds: unique,
-                        message: waMessage,
-                        mediaUrl: payload.whatsapp?.mediaUrl,
-                        mediaType: payload.whatsapp?.mediaType,
-                        eventType: payload.type,
-                    });
-                }
-            } catch (waErr) {
-                console.error('[NS] sendToMany WhatsApp fallback error:', waErr);
-            }
             return;
         }
 
@@ -1142,22 +1235,6 @@ export class NotificationService {
 
             const notif = notifByUser[uid];
             if (notif) await this.dispatchPushNotification(t.token, notif, payload.priority);
-        }
-
-        try {
-            if (payload.type === 'ROOM_BOOKED') {
-                const waMessage = payload.whatsapp?.message || `*${payload.title}*\n\n${payload.message}`;
-                await WhatsAppQueueService.enqueue({
-                    ticketId: payload.ticketId ?? '',
-                    userIds: unique,
-                    message: waMessage,
-                    mediaUrl: payload.whatsapp?.mediaUrl,
-                    mediaType: payload.whatsapp?.mediaType,
-                    eventType: payload.type,
-                });
-            }
-        } catch (err) {
-            console.error('[NS] sendToMany WhatsApp queue error:', err);
         }
     }
 
@@ -1303,57 +1380,6 @@ export class NotificationService {
                     .update({ delivery_status: 'FAILED' })
                     .eq('id', delivery.id);
             }
-        }
-    }
-
-static async afterSOPItemRated(
-        completionId: string,
-        _completionItemId: string,
-        rating: 1 | 2 | 3,
-        ratedByUserId: string
-    ) {
-        try {
-            const RATING_LABELS: Record<number, string> = { 1: 'Needs Work', 2: 'Acceptable', 3: 'Excellent' };
-
-            // Fetch the completion (to get who did it and the property/org info)
-            const { data: completion, error: completionError } = await supabaseAdmin
-                .from('sop_completions')
-                .select('completed_by, property_id, organization_id, template:sop_templates(title)')
-                .eq('id', completionId)
-                .single();
-
-            if (completionError || !completion) {
-                console.error('[NotificationService] afterSOPItemRated: could not fetch completion', completionError);
-                return;
-            }
-
-            const completedBy = String(completion.completed_by);
-
-            // Don't notify the admin if they rated their own entry
-            if (completedBy === ratedByUserId) return;
-
-            // Fetch the admin's name
-            const { data: rater } = await supabaseAdmin
-                .from('users')
-                .select('full_name')
-                .eq('id', ratedByUserId)
-                .single();
-
-            const raterName = rater?.full_name || 'An admin';
-            const templateTitle = (completion.template as any)?.title || 'SOP Checklist';
-            const ratingLabel = RATING_LABELS[rating];
-
-            await this.send({
-                userId: completedBy,
-                propertyId: String(completion.property_id),
-                organizationId: completion.organization_id ? String(completion.organization_id) : undefined,
-                type: 'SOP_RATING',
-                title: `Your checklist was rated: ${ratingLabel}`,
-                message: `${raterName} rated your completion of "${templateTitle}" as "${ratingLabel}".`,
-                deepLink: `/properties/${completion.property_id}/sop?completion=${completionId}`,
-            });
-        } catch (err) {
-            console.error('[NotificationService] afterSOPItemRated error:', err);
         }
     }
     static async afterSOPReminderTriggered(templateId: string, propertyId: string, organizationId?: string, assignedUserIds: string[] = []) {

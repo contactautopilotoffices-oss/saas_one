@@ -90,7 +90,7 @@ export async function POST(request: NextRequest) {
 export async function GET(request: NextRequest) {
     try {
         const { searchParams } = new URL(request.url);
-        const organizationId = searchParams.get('organizationId');
+        const organizationId = searchParams.get('organizationId') || searchParams.get('organization_id');
 
         if (!organizationId) {
             return NextResponse.json({ error: 'Organization ID is required' }, { status: 400 });
