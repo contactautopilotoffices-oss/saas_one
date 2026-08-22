@@ -18,10 +18,11 @@ import ProcurementComparativeFlow from './ProcurementComparativeFlow';
 import ProcurementCatalogModal from '../procurement/ProcurementCatalogModal';
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
 import MonthlyRequisitionsTab from '../procurement/MonthlyRequisitionsTab';
+import SitePricingAdminTab from '../procurement/SitePricingAdminTab';
 import ProcurementVendorTicketsTab from '../procurement/ProcurementVendorTicketsTab';
 import { ProcurementSettingsTab } from '../procurement/ProcurementSettingsTab';
 import PaymentUrgencyTrackerTab from '../procurement/payment-urgency/PaymentUrgencyTrackerTab';
-import { Layers } from 'lucide-react';
+import { Layers, DollarSign } from 'lucide-react';
 
 // --- Types ---
 interface MaterialRequest {
@@ -56,7 +57,7 @@ interface MaterialRequest {
     };
 }
 
-type Tab = 'overview' | 'urgency-tracker' | 'task-sheet' | 'requests' | 'vendor_tickets' | 'history' | 'manage-items' | 'po-generator' | 'monthly-requisitions' | 'settings' | 'profile';
+type Tab = 'overview' | 'urgency-tracker' | 'task-sheet' | 'requests' | 'vendor_tickets' | 'monthly-requisitions' | 'site-pricing' | 'history' | 'manage-items' | 'po-generator' | 'settings' | 'profile';
 
 export default function ProcurementDashboard() {
     const supabase = createClient();
@@ -71,7 +72,7 @@ export default function ProcurementDashboard() {
 
     useEffect(() => {
         const tabParam = searchParams?.get('tab') as Tab | null;
-        if (tabParam && ['overview', 'urgency-tracker', 'task-sheet', 'requests', 'vendor_tickets', 'history', 'manage-items', 'po-generator', 'monthly-requisitions', 'settings', 'profile'].includes(tabParam)) {
+        if (tabParam && ['overview', 'urgency-tracker', 'task-sheet', 'requests', 'vendor_tickets', 'monthly-requisitions', 'site-pricing', 'history', 'manage-items', 'po-generator', 'settings', 'profile'].includes(tabParam)) {
             setActiveTab(tabParam);
         }
     }, [searchParams]);
@@ -483,6 +484,7 @@ export default function ProcurementDashboard() {
                                     { id: 'requests', icon: Package, label: 'Active Orders' },
                                     { id: 'vendor_tickets', icon: ShoppingBag, label: 'Vendor Requests' },
                                     { id: 'monthly-requisitions', icon: FileSpreadsheet, label: 'Monthly Requisitions' },
+                                    { id: 'site-pricing', icon: DollarSign, label: 'Site Pricing & Aliases' },
                                     { id: 'history', icon: CheckCircle2, label: 'Order History' },
                                     { id: 'manage-items', icon: ShoppingCart, label: 'Manage Items' },
                                     { id: 'po-generator', icon: FileText, label: 'PO Generator' },
@@ -677,6 +679,13 @@ export default function ProcurementDashboard() {
                                 user={user}
                                 organizationId={user?.user_metadata?.organization_id}
                                 userRole={user?.user_metadata?.role || 'procurement_user'}
+                            />
+                        )}
+                        {activeTab === 'site-pricing' && (
+                            <SitePricingAdminTab
+                                user={user}
+                                organizationId={user?.user_metadata?.organization_id}
+                                properties={allProperties}
                             />
                         )}
                         {activeTab === 'manage-items' && (

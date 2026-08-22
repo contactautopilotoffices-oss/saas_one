@@ -23,15 +23,15 @@ export default function ProcurementModule({ orgId: propOrgId, isAdmin: propIsAdm
     const params = useParams();
     const orgId = propOrgId || (params.orgId as string);
     const propertyId = params.propertyId as string;
-    const { user } = useAuth();
+    const { user, membership } = useAuth();
     const [activeTab, setActiveTab] = useState<TabType>('orders');
     const [properties, setProperties] = useState<any[]>(propProperties || []);
     const [isLoading, setIsLoading] = useState(true);
     const [counts, setCounts] = useState({ orders: 0, pending_quotation: 0 });
 
-    const userRole = (user?.user_metadata?.role || '').toLowerCase();
+    const userRole = (membership?.org_role || (user?.user_metadata?.role as string) || '').toLowerCase();
     const isSuperAdmin = propIsAdmin || userRole === 'org_super_admin' || userRole === 'master_admin';
-    const isProcurementUser = userRole.includes('procurement');
+    const isProcurementUser = userRole.includes('procurement') || userRole === 'org_admin' || isSuperAdmin;
     const canManageCatalogAndPricing = isSuperAdmin || isProcurementUser;
 
     useEffect(() => {
