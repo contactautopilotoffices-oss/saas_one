@@ -204,19 +204,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (data?.id) {
-        NotificationService.afterLeadCreated(data.id).catch(e => console.error('[CRM Lead CREATE] WA error:', e));
-        if (data.assigned_user?.email) {
-            EmailService.sendLeadAssignmentEmail({
-                emailTo: data.assigned_user.email,
-                assigneeName: data.assigned_user.full_name || data.assigned_user.email,
-                leadName: data.contact_person || '',
-                companyName: data.company_name || '',
-                contactNumber: data.contact_number || '',
-                requirement: data.requirement || '',
-                priority: data.priority || 'Medium',
-                leadId: data.id
-            }).catch(e => console.error('[CRM Lead CREATE] email error:', e));
-        }
+        NotificationService.afterLeadCreated(data.id).catch(e => console.error('[CRM Lead CREATE] Push error:', e));
     }
 
     // The 'created' activity is written by the crm_auto_activity DB trigger.
