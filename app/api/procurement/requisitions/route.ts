@@ -317,83 +317,11 @@ export async function POST(request: NextRequest) {
             console.warn('[Auto Sync Stock Error]:', syncStockErr);
         }
 
-        const propertyName = insertedRecord.property?.name || 'Site Property';
-        const uploaderName = insertedRecord.uploader?.full_name || insertedRecord.uploader?.email || 'Site Team';
-        const monthName = MONTH_NAMES[requisitionMonth - 1] || 'Month';
-
-        // 1. Insert into event_outbox for guaranteed webhook & omnichannel delivery
-        try {
-            await adminSupabase.from('event_outbox').insert({
-                organization_id: organizationId,
-                property_id: propertyId,
-                event_type: 'REQUISITION_UPLOADED',
-                payload: {
-                    requisition_id: insertedRecord.id,
-                    organization_id: organizationId,
-                    property_id: propertyId,
-                    floor_tag: floorTag,
-                    requisition_month: requisitionMonth,
-                    requisition_year: requisitionYear,
-                    file_name: uploadedFileName,
-                    file_url: publicUrl,
-                    total_amount: totalEstimatedAmount,
-                    uploaded_by: userId
-                },
-                status: 'pending'
-            });
-        } catch (outboxErr) {
-            console.warn('[Outbox Insert Note]:', outboxErr);
-        }
-
-        // 2. Send Email to Procurement Team via Dynamic Recipient Resolver (OmniChannel Notification Settings)
-        (async () => {
-            try {
-                const { enabled, emails } = await EmailRecipientResolver.resolveRecipients({
-                    organizationId,
-                    propertyId,
-                    featureKey: 'monthly_requisition_uploaded'
-                });
-
-                if (enabled && emails && emails.length > 0) {
-                    await EmailService.sendRequisitionUploadedEmail({
-                        emailTo: emails,
-                        propertyName: `${propertyName} (${floorTag})`,
-                        monthName,
-                        year: requisitionYear,
-                        fileName: uploadedFileName,
-                        uploaderName
-                    });
-                }
-            } catch (emailErr) {
-                console.error('[Requisition Procurement Email Error]:', emailErr);
-            }
-        })();
-
-        // 3. Dispatch WhatsApp Notification to Procurement Team
-        (async () => {
-            try {
-                await WhatsAppEventProcessor.processEvent({
-                    event_type: 'REQUISITION_UPLOADED',
-                    payload: {
-                        requisition_id: insertedRecord.id,
-                        organization_id: organizationId,
-                        property_id: propertyId,
-                        floor_tag: floorTag,
-                        requisition_month: requisitionMonth,
-                        requisition_year: requisitionYear,
-                        file_name: uploadedFileName,
-                        items_count: rawItems.length,
-                        total_amount: totalEstimatedAmount,
-                        total_estimated_amount: totalEstimatedAmount,
-                        uploaded_by: userId
-                    }
-                });
-            } catch (waErr) {
-                console.error('[Requisition Procurement WhatsApp Error]:', waErr);
-            }
-        })();
-
-        return NextResponse.json({ success: true, requisition: insertedRecord }, { status: 201 });
+        return NextResponse.json({
+            success: true,
+            requisition: insertedRecord,
+            file_url: publicUrl
+        });
     } catch (err: any) {
         console.error('[Requisitions POST Server Error]:', err);
         return NextResponse.json({ error: 'Internal server error', details: err.message }, { status: 500 });

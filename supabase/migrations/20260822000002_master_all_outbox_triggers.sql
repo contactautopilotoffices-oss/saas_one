@@ -209,3 +209,64 @@ DROP TRIGGER IF EXISTS trg_sop_completion_outbox ON public.sop_completions;
 CREATE TRIGGER trg_sop_completion_outbox
     AFTER INSERT ON public.sop_completions
     FOR EACH ROW EXECUTE FUNCTION public.fn_sop_completion_outbox();
+
+
+-- 6. MONTHLY REQUISITIONS TRIGGER
+CREATE OR REPLACE FUNCTION public.fn_monthly_requisition_outbox()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_payload JSONB;
+    v_org_id UUID;
+    v_notes JSONB;
+    v_items_count INT := 0;
+    v_total_amount NUMERIC := 0;
+BEGIN
+    v_org_id := NEW.organization_id;
+    IF v_org_id IS NULL AND NEW.property_id IS NOT NULL THEN
+        SELECT organization_id INTO v_org_id FROM public.properties WHERE id = NEW.property_id LIMIT 1;
+    END IF;
+
+    -- Try to parse notes JSON if present
+    BEGIN
+        IF NEW.notes IS NOT NULL AND NEW.notes ~ '^\s*\{' THEN
+            v_notes := NEW.notes::JSONB;
+            v_items_count := COALESCE((v_notes->>'total_items_count')::INT, jsonb_array_length(v_notes->'items'), 0);
+            v_total_amount := COALESCE((v_notes->>'total_estimated_amount')::NUMERIC, 0);
+        END IF;
+    EXCEPTION WHEN OTHERS THEN
+        v_items_count := 0;
+        v_total_amount := 0;
+    END;
+
+    IF TG_OP = 'INSERT' THEN
+        v_payload := jsonb_build_object(
+            'requisition_id', NEW.id,
+            'property_id', NEW.property_id,
+            'organization_id', v_org_id,
+            'floor_tag', COALESCE(NEW.floor_tag, 'All Floors'),
+            'requisition_month', NEW.requisition_month,
+            'requisition_year', NEW.requisition_year,
+            'file_name', NEW.file_name,
+            'file_url', NEW.file_url,
+            'items_count', v_items_count,
+            'total_amount', v_total_amount,
+            'total_estimated_amount', v_total_amount,
+            'uploaded_by', NEW.uploaded_by,
+            'status', NEW.status
+        );
+
+        INSERT INTO public.event_outbox (event_type, entity_id, payload)
+        VALUES ('REQUISITION_UPLOADED', NEW.id, v_payload);
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS trg_property_monthly_requisitions_outbox ON public.property_monthly_requisitions;
+DROP TRIGGER IF EXISTS tr_property_monthly_requisitions_outbox ON public.property_monthly_requisitions;
+DROP TRIGGER IF EXISTS trigger_requisition_uploaded ON public.property_monthly_requisitions;
+
+CREATE TRIGGER trg_property_monthly_requisitions_outbox
+    AFTER INSERT ON public.property_monthly_requisitions
+    FOR EACH ROW EXECUTE FUNCTION public.fn_monthly_requisition_outbox();

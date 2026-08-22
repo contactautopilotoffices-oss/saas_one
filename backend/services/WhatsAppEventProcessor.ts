@@ -908,8 +908,38 @@ export const WhatsAppEventProcessor = {
         const propertyName = await this.getPropertyName(property_id);
         const uploader = await this.getUserDetails(uploaded_by);
 
-        const floorTag = payload.floor_tag && payload.floor_tag !== 'All Floors' ? ` (${payload.floor_tag})` : '';
+        let floorTag = payload.floor_tag && payload.floor_tag !== 'All Floors' ? ` (${payload.floor_tag})` : '';
+        let itemsCount = payload.items_count || payload.items?.length;
+        let totalAmount = payload.total_amount || payload.total_estimated_amount;
+
+        // If itemsCount or totalAmount is missing / 0, query the record notes
+        if (payload.requisition_id && (!itemsCount || !totalAmount)) {
+            try {
+                const { data: req } = await supabaseAdmin
+                    .from('property_monthly_requisitions')
+                    .select('notes, floor_tag')
+                    .eq('id', payload.requisition_id)
+                    .maybeSingle();
+
+                if (req) {
+                    if (req.floor_tag && req.floor_tag !== 'All Floors' && !floorTag) {
+                        floorTag = ` (${req.floor_tag})`;
+                    }
+                    if (req.notes && typeof req.notes === 'string' && req.notes.trim().startsWith('{')) {
+                        const parsed = JSON.parse(req.notes);
+                        if (!itemsCount && parsed.total_items_count) itemsCount = parsed.total_items_count;
+                        if (!itemsCount && parsed.items) itemsCount = parsed.items.length;
+                        if (!totalAmount && parsed.total_estimated_amount) totalAmount = parsed.total_estimated_amount;
+                    }
+                }
+            } catch (err) {
+                console.warn('[Requisition Hydrate Error]:', err);
+            }
+        }
+
         const propertyDisplay = `${propertyName}${floorTag}`;
+        const itemsCountDisplay = itemsCount ? `${itemsCount} line items` : 'Multiple line items';
+        const totalAmountDisplay = totalAmount ? `₹${Number(totalAmount).toLocaleString('en-IN')}` : '₹0';
 
         await this.dispatch({
             featureKey: 'monthly_requisition_uploaded',
@@ -923,8 +953,8 @@ export const WhatsAppEventProcessor = {
                 property: propertyDisplay,
                 month: monthName,
                 year: String(requisition_year || new Date().getFullYear()),
-                items_count: String(payload.items_count || payload.items?.length || 'Multiple'),
-                total_amount: Number(payload.total_amount || payload.total_estimated_amount || 0).toLocaleString('en-IN'),
+                items_count: itemsCountDisplay,
+                total_amount: totalAmountDisplay,
                 requested_by: uploader.name || 'Site Admin',
                 file_name: file_name || 'Requisition_Sheet.xlsx',
                 uploaded_by: uploader.name
