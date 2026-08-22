@@ -124,7 +124,12 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                     query = query.eq('organization_id', organizationId);
                 }
                 const { data } = await query;
-                if (data) setProperties(data);
+                if (data && data.length > 0) {
+                    setProperties(data);
+                    if (propertyId && data.some(p => p.id === propertyId)) {
+                        setSelectedPropertyFilter(propertyId);
+                    }
+                }
             } else if (user?.id) {
                 const { data: memberships } = await supabase
                     .from('property_memberships')
@@ -138,6 +143,23 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                         .filter(Boolean);
                     const uniqueProps = Array.from(new Map(userProps.map(p => [p.id, p])).values());
                     setProperties(uniqueProps);
+                    
+                    // Set default selected property: prioritize current route propertyId if user has access to it, otherwise first assigned property
+                    if (propertyId && uniqueProps.some(p => p.id === propertyId)) {
+                        setSelectedPropertyFilter(propertyId);
+                    } else if (uniqueProps.length > 0) {
+                        setSelectedPropertyFilter(uniqueProps[0].id);
+                    }
+                } else if (propertyId) {
+                    const { data: propData } = await supabase
+                        .from('properties')
+                        .select('id, name, location')
+                        .eq('id', propertyId)
+                        .maybeSingle();
+                    if (propData) {
+                        setProperties([propData]);
+                        setSelectedPropertyFilter(propData.id);
+                    }
                 } else {
                     let query = supabase.from('properties').select('id, name, location').order('name');
                     if (organizationId) query = query.eq('organization_id', organizationId);
@@ -148,7 +170,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
         } catch (err) {
             console.error('Failed to fetch properties:', err);
         }
-    }, [supabase, organizationId, user, isSuperAdmin, isProcurementRole]);
+    }, [supabase, organizationId, propertyId, user, isSuperAdmin, isProcurementRole]);
 
     // Load Approvers (Admins & Directors)
     const fetchApprovers = useCallback(async () => {
@@ -180,7 +202,20 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
         try {
             const params = new URLSearchParams();
             if (organizationId) params.append('organization_id', organizationId);
-            if (selectedPropertyFilter !== 'all') params.append('property_id', selectedPropertyFilter);
+            
+            // Strict scoping for Property Admins so they never see other properties
+            if (selectedPropertyFilter !== 'all') {
+                params.append('property_id', selectedPropertyFilter);
+            } else if (propertyId) {
+                params.append('property_id', propertyId);
+            } else if (isPropertyAdmin && !isSuperAdmin && !isProcurementRole) {
+                if (properties.length === 1) {
+                    params.append('property_id', properties[0].id);
+                } else if (properties.length > 1) {
+                    params.append('property_ids', properties.map(p => p.id).join(','));
+                }
+            }
+
             if (selectedStatusFilter !== 'all') params.append('status', selectedStatusFilter);
             if (selectedMonthFilter !== 'all') params.append('requisition_month', selectedMonthFilter);
             if (selectedYearFilter !== 'all') params.append('requisition_year', selectedYearFilter);
@@ -195,7 +230,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
         } finally {
             setIsLoading(false);
         }
-    }, [organizationId, selectedPropertyFilter, selectedStatusFilter, selectedMonthFilter, selectedYearFilter]);
+    }, [organizationId, selectedPropertyFilter, propertyId, isPropertyAdmin, isSuperAdmin, isProcurementRole, properties, selectedStatusFilter, selectedMonthFilter, selectedYearFilter]);
 
     useEffect(() => {
         fetchProperties();
@@ -401,7 +436,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                 {(!isSuperAdmin && !isProcurementRole && properties.length <= 1) ? (
                     <div className="flex items-center gap-2 py-2 px-3.5 bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-bold text-slate-800 dark:text-slate-200 shadow-xs">
                         <Building2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                        <span className="truncate">{properties[0]?.name || 'My Property'}</span>
+                        <span className="truncate">{properties.find(p => p.id === (propertyId || selectedPropertyFilter))?.name || properties[0]?.name || 'Loading Property...'}</span>
                     </div>
                 ) : (
                     <select

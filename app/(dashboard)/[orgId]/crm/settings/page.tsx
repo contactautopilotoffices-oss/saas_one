@@ -1,13 +1,14 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { useParams } from 'next/navigation';
-import { Settings, Palette, MapPin, Building2, Bell, Link2, Plus, Edit, Trash2, Loader2, Check, Send, ChevronDown, Search, X, Filter, Calendar, GraduationCap, RotateCcw, Shuffle, ToggleLeft, ToggleRight, Info, PhoneCall, Image as ImageIcon } from 'lucide-react';
+import { useParams, useSearchParams } from 'next/navigation';
+import { Settings, Palette, MapPin, Building2, Bell, Link2, Plus, Edit, Trash2, Loader2, Check, Send, ChevronDown, Search, X, Filter, Calendar, GraduationCap, RotateCcw, Shuffle, ToggleLeft, ToggleRight, Info, PhoneCall, Image as ImageIcon, User } from 'lucide-react';
 import Link from 'next/link';
 import { LeadStatusConfig, LeadSource } from '@/frontend/types/crm';
 import { MetaIntegrationGuide, LinkedInIntegrationGuide } from '@/frontend/components/crm';
 import LeadDistributionManager from '@/frontend/components/crm/LeadDistributionManager';
 import WallpaperSettings from '@/frontend/components/dashboard/WallpaperSettings';
+import SettingsView from '@/frontend/components/dashboard/SettingsView';
 import { useAuth } from '@/frontend/context/AuthContext';
 import { isBdSuperAdmin } from '@/frontend/constants/bdSuperAdmins';
 
@@ -94,15 +95,17 @@ const LEAD_QUALIFICATION_INFO: Record<string, { label: string; color: string; cr
     },
 };
 
-type SettingsTab = 'statuses' | 'sources' | 'properties' | 'territories' | 'distribution' | 'integrations' | 'appearance';
+type SettingsTab = 'profile' | 'statuses' | 'sources' | 'properties' | 'territories' | 'distribution' | 'integrations' | 'appearance';
 
 export default function CRMSettingsPage() {
     const params = useParams();
+    const searchParams = useSearchParams();
     const orgId = params?.orgId as string;
+    const tabParam = searchParams?.get('tab') as SettingsTab | null;
     const { user, membership } = useAuth();
     // LinkedIn integration is restricted to BD super admins.
     const canSeeLinkedIn = isBdSuperAdmin(user?.email, membership?.org_role);
-    const [activeTab, setActiveTab] = useState<SettingsTab>('statuses');
+    const [activeTab, setActiveTab] = useState<SettingsTab>(tabParam || 'profile');
     const [statuses, setStatuses] = useState<LeadStatusConfig[]>([]);
     const [sources, setSources] = useState<LeadSource[]>([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -357,6 +360,7 @@ export default function CRMSettingsPage() {
     };
 
     const tabs = [
+        { id: 'profile' as SettingsTab, label: 'My Profile & Account', icon: User },
         { id: 'statuses' as SettingsTab, label: 'Lead Statuses', icon: Palette },
         { id: 'sources' as SettingsTab, label: 'Lead Sources', icon: Link2 },
         { id: 'properties' as SettingsTab, label: 'Property Mapping', icon: Building2 },
@@ -373,7 +377,7 @@ export default function CRMSettingsPage() {
                 <div>
                     <h1 className="text-2xl font-bold text-text-primary">CRM Settings</h1>
                     <p className="text-sm text-text-secondary mt-1">
-                        Configure lead statuses, sources, and integrations
+                        Configure your profile, lead statuses, sources, and integrations
                     </p>
                 </div>
                 <button
@@ -408,7 +412,7 @@ export default function CRMSettingsPage() {
 
             {/* Content */}
             <div className="bg-surface rounded-2xl border border-border p-6">
-                {isLoading ? (
+                {isLoading && activeTab !== 'profile' ? (
                     <div className="space-y-4">
                         {[...Array(5)].map((_, i) => (
                             <div key={i} className="h-12 bg-slate-100 rounded-lg animate-pulse" />
@@ -416,6 +420,10 @@ export default function CRMSettingsPage() {
                     </div>
                 ) : (
                     <>
+                        {activeTab === 'profile' && (
+                            <SettingsView />
+                        )}
+
                         {activeTab === 'statuses' && (
                             <div className="space-y-6">
                                 {/* Info Tooltip Toggle */}

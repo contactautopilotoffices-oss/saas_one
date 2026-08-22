@@ -313,7 +313,7 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
                         </div>
                         <div className="flex items-center gap-2">
                             <Link
-                                href={isBdSuperAdmin ? `/${orgId}/crm/settings` : `/${orgId}/settings`}
+                                href={(isCrmRoute || isBDRole || userRole === 'bd_admin' || userRole === 'bd_rep' || userRole === 'bd_super_admin' || isBdSuperAdmin) ? `/${orgId}/crm/settings?tab=profile` : `/${orgId}/settings`}
                                 onClick={handleLinkClick}
                                 className="flex-1 flex items-center gap-2 px-3 py-2.5 lg:py-2 rounded-[var(--radius-md)] text-text-secondary hover:text-text-primary hover:bg-surface-elevated transition-smooth"
                             >

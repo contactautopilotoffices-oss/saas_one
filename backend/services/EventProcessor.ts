@@ -15,10 +15,10 @@ export const EventProcessor = {
         } else if (['TICKET_COMPLETED', 'TICKET_RESOLVED'].includes(event_type)) {
             await this.handleTicketCompleted(payload);
         } else if (event_type === 'TICKET_UPDATED') {
-            if (payload.assigned_to && payload.assigned_to !== payload.old_assigned_to) {
+            if (payload.assigned_to && payload.old_assigned_to !== undefined && payload.assigned_to !== payload.old_assigned_to) {
                 await this.handleTicketAssigned(payload);
             }
-            if ((['resolved', 'closed', 'pending_validation'].includes(payload.status)) && payload.status !== payload.old_status) {
+            if ((['resolved', 'closed', 'pending_validation'].includes(payload.status)) && payload.old_status && payload.status !== payload.old_status) {
                 await this.handleTicketCompleted(payload);
             }
         } else if (event_type === 'MATERIAL_REQUEST_CREATED') {
@@ -609,20 +609,27 @@ export const EventProcessor = {
             organizationId: orgId,
             propertyId: propId,
             featureKey: 'ticket_created',
-            contextualEmails: [ticket.raised_by_user?.email, ticket.assigned_to_user?.email]
+            contextualEmails: [ticket.raised_by_user?.email]
         });
 
-        if (!enabled || emails.length === 0) return;
+        const assignedEmail = ticket.assigned_to_user?.email?.trim().toLowerCase();
+        const generalEmails = emails.filter(e => e.trim().toLowerCase() !== assignedEmail);
 
-        console.log(`[EventProcessor] Sending Ticket Created email for #${ticket.ticket_number} to ${emails.join(', ')}`);
+        if (enabled && generalEmails.length > 0) {
+            console.log(`[EventProcessor] Sending Ticket Created email for #${ticket.ticket_number} to ${generalEmails.join(', ')}`);
+            await EmailService.sendTicketCreatedEmail({
+                emailTo: generalEmails,
+                ticket,
+                property: ticket.property,
+                raisedBy: ticket.raised_by_user,
+                assignedTo: ticket.assigned_to_user
+            });
+        }
 
-        await EmailService.sendTicketCreatedEmail({
-            emailTo: emails,
-            ticket,
-            property: ticket.property,
-            raisedBy: ticket.raised_by_user,
-            assignedTo: ticket.assigned_to_user
-        });
+        // If ticket has an assigned person on creation, send dedicated assignment email to that person
+        if (ticket.assigned_to_user?.email) {
+            await this.handleTicketAssigned(payload);
+        }
     },
 
     async handleTicketAssigned(payload: any) {

@@ -35,8 +35,14 @@ export async function GET(request: NextRequest) {
         if (organizationId) {
             query = query.eq('organization_id', organizationId);
         }
+        const propertyIds = searchParams.get('property_ids');
         if (propertyId && propertyId !== 'all') {
             query = query.eq('property_id', propertyId);
+        } else if (propertyIds) {
+            const list = propertyIds.split(',').map(s => s.trim()).filter(Boolean);
+            if (list.length > 0) {
+                query = query.in('property_id', list);
+            }
         }
         if (requisitionMonth && requisitionMonth !== 'all') {
             query = query.eq('requisition_month', parseInt(requisitionMonth));

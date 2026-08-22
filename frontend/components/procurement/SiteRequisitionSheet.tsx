@@ -1,6 +1,5 @@
-'use client';
-
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { createClient } from '@/frontend/utils/supabase/client';
 import {
     FileSpreadsheet, Download, Save, Send, Plus, Trash2,
     CheckCircle2, AlertCircle, RefreshCw, Layers, Calendar,
@@ -95,9 +94,11 @@ export default function SiteRequisitionSheet({
     onSubmitted,
     onCancel
 }: SiteRequisitionSheetProps) {
+    const supabase = useMemo(() => createClient(), []);
     const [selectedPropertyId, setSelectedPropertyId] = useState<string>(
         initialPropertyId || (properties[0]?.id ?? '')
     );
+    const [fetchedPropertyName, setFetchedPropertyName] = useState<string>('');
     const [floorTag, setFloorTag] = useState<string>('All Floors');
     const [requisitionMonth, setRequisitionMonth] = useState<number>(new Date().getMonth() + 1);
     const [requisitionYear, setRequisitionYear] = useState<number>(new Date().getFullYear());
@@ -117,6 +118,26 @@ export default function SiteRequisitionSheet({
             setSelectedPropertyId(properties[0].id);
         }
     }, [initialPropertyId, properties]);
+
+    // Ensure property name is resolved from properties prop or directly from DB
+    useEffect(() => {
+        const pid = selectedPropertyId || initialPropertyId;
+        if (pid) {
+            const found = properties.find(p => p.id === pid);
+            if (found?.name) {
+                setFetchedPropertyName(found.name);
+            } else {
+                supabase
+                    .from('properties')
+                    .select('id, name')
+                    .eq('id', pid)
+                    .maybeSingle()
+                    .then(({ data }) => {
+                        if (data?.name) setFetchedPropertyName(data.name);
+                    });
+            }
+        }
+    }, [selectedPropertyId, initialPropertyId, properties, supabase]);
 
     const selectedProperty = useMemo(() => {
         return properties.find(p => p.id === selectedPropertyId) || properties[0];
@@ -419,7 +440,7 @@ export default function SiteRequisitionSheet({
                         {properties.length <= 1 ? (
                             <div className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-800 flex items-center gap-2">
                                 <Building2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                                <span className="truncate">{selectedProperty?.name || properties[0]?.name || 'Site Property'}</span>
+                                <span className="truncate">{fetchedPropertyName || selectedProperty?.name || properties[0]?.name || 'Loading Property...'}</span>
                             </div>
                         ) : (
                             <select

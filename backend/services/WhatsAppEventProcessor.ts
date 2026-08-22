@@ -17,6 +17,7 @@ interface DispatchOptions {
         requesterId?: string | null;
         approverId?: string | null;
     };
+    excludeUserIds?: string[];
 }
 
 const LOCAL_TIMEZONE = 'Asia/Kolkata';
@@ -96,11 +97,12 @@ export const WhatsAppEventProcessor = {
                 await this.handleTicketCompleted(payload);
                 break;
             case 'TICKET_UPDATED':
-                // Check if this update was an assignment or a completion
-                if (payload.assigned_to && payload.assigned_to !== payload.old_assigned_to) {
+                // Only dispatch reassignment if assigned_to actually changed to a new user
+                if (payload.assigned_to && payload.old_assigned_to !== undefined && payload.assigned_to !== payload.old_assigned_to) {
                     await this.handleTicketAssigned(payload);
                 }
-                if (payload.status === 'resolved' || payload.status === 'closed') {
+                // Only dispatch completion if status transitioned into resolved/closed
+                if ((payload.status === 'resolved' || payload.status === 'closed') && payload.old_status && payload.status !== payload.old_status) {
                     await this.handleTicketCompleted(payload);
                 }
                 break;
@@ -243,6 +245,7 @@ export const WhatsAppEventProcessor = {
         const seenPhones = new Set<string>();
         const recipients: ResolvedWhatsAppUser[] = [];
         for (const u of userMap.values()) {
+            if (options.excludeUserIds?.includes(u.id)) continue;
             const rawPhone = u.phone ? String(u.phone).replace(/[^0-9]/g, '') : '';
             const normalizedPhone = rawPhone.length > 10 && rawPhone.startsWith('91') ? rawPhone.slice(-10) : rawPhone;
             if (normalizedPhone && normalizedPhone.length >= 10 && !seenPhones.has(normalizedPhone)) {
@@ -463,110 +466,148 @@ export const WhatsAppEventProcessor = {
 
 
     async handleTicketCreated(payload: any): Promise<void> {
-        const propertyName = await this.getPropertyName(payload.property_id);
-        const raiser = await this.getUserDetails(payload.raised_by);
-        const assignee = await this.getUserDetails(payload.assigned_to);
+        const ticketId = payload.ticket_id || payload.id;
+        const { data: ticket } = await supabaseAdmin
+            .from('tickets')
+            .select('*, property:properties(id, name, organization_id), raised_by_user:users!tickets_raised_by_fkey(id, full_name, phone, email), assigned_to_user:users!tickets_assigned_to_fkey(id, full_name, phone, email)')
+            .eq('id', ticketId)
+            .maybeSingle();
 
-        let photoBeforeUrl = payload.photo_before_url;
-        if (!photoBeforeUrl && (payload.ticket_id || payload.id)) {
-            const { data: tkt } = await supabaseAdmin
-                .from('tickets')
-                .select('photo_before_url')
-                .eq('id', payload.ticket_id || payload.id)
-                .maybeSingle();
-            photoBeforeUrl = tkt?.photo_before_url;
-        }
+        const propertyName = ticket?.property?.name || await this.getPropertyName(payload.property_id);
+        const orgId = ticket?.property?.organization_id || payload.organization_id;
+        const propId = ticket?.property_id || payload.property_id;
 
+        const raiser = ticket?.raised_by_user?.full_name
+            ? { name: ticket.raised_by_user.full_name, phone: ticket.raised_by_user.phone }
+            : await this.getUserDetails(payload.raised_by);
+
+        const assignee = ticket?.assigned_to_user?.full_name
+            ? { name: ticket.assigned_to_user.full_name, phone: ticket.assigned_to_user.phone }
+            : await this.getUserDetails(payload.assigned_to);
+
+        const assigneeId = ticket?.assigned_to || payload.assigned_to;
+        const photoBeforeUrl = ticket?.photo_before_url || payload.photo_before_url || null;
+
+        // 1. Dispatch "ticket_created" to Admins & Requester (excluding the assigned person)
         await this.dispatch({
             featureKey: 'ticket_created',
             templateEventKey: 'ticket_created',
-            organizationId: payload.organization_id,
-            propertyId: payload.property_id,
-            entityId: payload.ticket_id || payload.id,
-            mediaUrl: photoBeforeUrl || null,
+            organizationId: orgId,
+            propertyId: propId,
+            entityId: ticketId,
+            mediaUrl: photoBeforeUrl,
             mediaType: photoBeforeUrl ? 'image' : undefined,
             paramValues: {
                 user_name: 'Team',
-                ticket_number: payload.ticket_number || 'N/A',
-                title: payload.title || 'Support Request',
+                ticket_number: ticket?.ticket_number || payload.ticket_number || 'N/A',
+                title: ticket?.title || payload.title || 'Support Request',
                 property: propertyName,
-                priority: payload.priority || 'Medium',
+                priority: ticket?.priority || payload.priority || 'Medium',
                 raised_by: raiser.name,
                 raised_by_phone: raiser.phone || 'N/A',
                 assigned_to: assignee.name || 'Unassigned',
                 assigned_to_phone: assignee.phone || 'N/A',
-                ticket_id: payload.ticket_id || payload.id || ''
+                ticket_id: ticketId || ''
             },
-            summaryMessage: `New ticket #${payload.ticket_number} (${payload.title}) at ${propertyName} — Raised by ${raiser.name} (${raiser.phone || 'N/A'})`,
-            contextualUserIds: { assigneeId: payload.assigned_to, requesterId: payload.raised_by }
+            summaryMessage: `New ticket #${ticket?.ticket_number || payload.ticket_number || 'N/A'} (${ticket?.title || payload.title}) at ${propertyName} — Raised by ${raiser.name} (${raiser.phone || 'N/A'})`,
+            contextualUserIds: { requesterId: ticket?.raised_by || payload.raised_by },
+            excludeUserIds: assigneeId ? [assigneeId] : []
         });
+
+        // 2. If ticket has an assigned person upon creation, send the dedicated "ticket_assigned_v1" template ONLY to the assigned technician
+        if (assigneeId) {
+            await this.handleTicketAssigned(payload);
+        }
     },
 
     async handleTicketAssigned(payload: any): Promise<void> {
-        if (!payload.assigned_to) return;
+        const ticketId = payload.ticket_id || payload.id;
+        const { data: ticket } = await supabaseAdmin
+            .from('tickets')
+            .select('*, property:properties(id, name, organization_id), raised_by_user:users!tickets_raised_by_fkey(id, full_name, phone, email), assigned_to_user:users!tickets_assigned_to_fkey(id, full_name, phone, email)')
+            .eq('id', ticketId)
+            .maybeSingle();
 
-        const propertyName = await this.getPropertyName(payload.property_id);
-        const raiser = await this.getUserDetails(payload.raised_by);
-        const assignee = await this.getUserDetails(payload.assigned_to);
+        const assignedToId = ticket?.assigned_to || payload.assigned_to;
+        if (!assignedToId) return;
+
+        const propertyName = ticket?.property?.name || await this.getPropertyName(payload.property_id);
+        const orgId = ticket?.property?.organization_id || payload.organization_id;
+        const propId = ticket?.property_id || payload.property_id;
+
+        const raiser = ticket?.raised_by_user?.full_name
+            ? { name: ticket.raised_by_user.full_name, phone: ticket.raised_by_user.phone }
+            : await this.getUserDetails(payload.raised_by);
+
+        const assignee = ticket?.assigned_to_user?.full_name
+            ? { name: ticket.assigned_to_user.full_name, phone: ticket.assigned_to_user.phone }
+            : await this.getUserDetails(assignedToId);
 
         await this.dispatch({
             featureKey: 'ticket_assigned',
             templateEventKey: 'ticket_assigned',
-            organizationId: payload.organization_id,
-            propertyId: payload.property_id,
-            entityId: payload.ticket_id || payload.id,
+            organizationId: orgId,
+            propertyId: propId,
+            entityId: ticketId,
             paramValues: {
-                user_name: assignee.name,
-                ticket_number: payload.ticket_number || 'N/A',
-                title: payload.title || 'Support Request',
+                user_name: assignee.name || 'Technician',
+                ticket_number: ticket?.ticket_number || payload.ticket_number || 'N/A',
+                title: ticket?.title || payload.title || 'Support Request',
                 property: propertyName,
-                priority: payload.priority || 'Medium',
+                priority: ticket?.priority || payload.priority || 'Medium',
                 raised_by: raiser.name,
                 raised_by_phone: raiser.phone || 'N/A',
                 requester: raiser.name,
                 requester_phone: raiser.phone || 'N/A',
-                target_sla: payload.sla_deadline ? formatWhatsAppDateTime(payload.sla_deadline) : 'Standard SLA',
-                ticket_id: payload.ticket_id || payload.id || ''
+                target_sla: (ticket?.sla_deadline || payload.sla_deadline) ? formatWhatsAppDateTime(ticket?.sla_deadline || payload.sla_deadline) : 'Standard SLA',
+                ticket_id: ticketId || ''
             },
-            summaryMessage: `Ticket #${payload.ticket_number} (${payload.title}) assigned to ${assignee.name}`,
-            contextualUserIds: { assigneeId: payload.assigned_to, requesterId: payload.raised_by }
+            summaryMessage: `Ticket #${ticket?.ticket_number || payload.ticket_number || 'N/A'} (${ticket?.title || payload.title}) assigned to ${assignee.name}`,
+            contextualUserIds: { assigneeId: assignedToId, requesterId: ticket?.raised_by || payload.raised_by }
         });
     },
 
     async handleTicketCompleted(payload: any): Promise<void> {
-        const propertyName = await this.getPropertyName(payload.property_id);
-        const completer = await this.getUserDetails(payload.assigned_to || payload.updated_by || payload.action_by);
+        const ticketId = payload.ticket_id || payload.id;
+        const { data: ticket } = await supabaseAdmin
+            .from('tickets')
+            .select('*, property:properties(id, name, organization_id), raised_by_user:users!tickets_raised_by_fkey(id, full_name, phone, email), assigned_to_user:users!tickets_assigned_to_fkey(id, full_name, phone, email)')
+            .eq('id', ticketId)
+            .maybeSingle();
 
-        let photoAfterUrl = payload.photo_after_url;
-        if (!photoAfterUrl && (payload.ticket_id || payload.id)) {
-            const { data: tkt } = await supabaseAdmin
-                .from('tickets')
-                .select('photo_after_url')
-                .eq('id', payload.ticket_id || payload.id)
-                .maybeSingle();
-            photoAfterUrl = tkt?.photo_after_url;
-        }
+        const propertyName = ticket?.property?.name || await this.getPropertyName(payload.property_id);
+        const orgId = ticket?.property?.organization_id || payload.organization_id;
+        const propId = ticket?.property_id || payload.property_id;
+
+        const raiser = ticket?.raised_by_user?.full_name
+            ? { name: ticket.raised_by_user.full_name, phone: ticket.raised_by_user.phone }
+            : await this.getUserDetails(payload.raised_by);
+
+        const completer = ticket?.assigned_to_user?.full_name
+            ? { name: ticket.assigned_to_user.full_name, phone: ticket.assigned_to_user.phone }
+            : await this.getUserDetails(payload.assigned_to || payload.updated_by || payload.action_by);
+
+        const photoAfterUrl = ticket?.photo_after_url || payload.photo_after_url || null;
 
         await this.dispatch({
             featureKey: 'ticket_completed',
             templateEventKey: 'ticket_completed',
-            organizationId: payload.organization_id,
-            propertyId: payload.property_id,
-            entityId: payload.ticket_id || payload.id,
-            mediaUrl: photoAfterUrl || null,
+            organizationId: orgId,
+            propertyId: propId,
+            entityId: ticketId,
+            mediaUrl: photoAfterUrl,
             mediaType: photoAfterUrl ? 'image' : undefined,
             paramValues: {
-                user_name: 'Requester',
-                ticket_number: payload.ticket_number || 'N/A',
-                title: payload.title || 'Support Request',
+                user_name: raiser.name || 'Requester',
+                ticket_number: ticket?.ticket_number || payload.ticket_number || 'N/A',
+                title: ticket?.title || payload.title || 'Support Request',
                 property: propertyName,
-                resolved_by: completer.name,
-                work_note: payload.resolution_note || payload.resolution_notes || payload.description || 'Service completed successfully.',
-                ticket_id: payload.ticket_id || payload.id || ''
+                resolved_by: completer.name || 'Technician',
+                work_note: payload.resolution_note || payload.resolution_notes || ticket?.resolution_notes || ticket?.description || 'Service completed successfully.',
+                ticket_id: ticketId || ''
             },
-
-            summaryMessage: `Ticket #${payload.ticket_number} (${payload.title}) resolved at ${propertyName} by ${completer.name}`,
-            contextualUserIds: { requesterId: payload.raised_by }
+            summaryMessage: `Ticket #${ticket?.ticket_number || payload.ticket_number || 'N/A'} (${ticket?.title || payload.title}) resolved at ${propertyName} by ${completer.name}`,
+            contextualUserIds: { requesterId: ticket?.raised_by || payload.raised_by }
         });
     },
 
