@@ -20,6 +20,8 @@ import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
 import MonthlyRequisitionsTab from '../procurement/MonthlyRequisitionsTab';
 import ProcurementVendorTicketsTab from '../procurement/ProcurementVendorTicketsTab';
 import { ProcurementSettingsTab } from '../procurement/ProcurementSettingsTab';
+import PaymentUrgencyTrackerTab from '../procurement/payment-urgency/PaymentUrgencyTrackerTab';
+import { Layers } from 'lucide-react';
 
 // --- Types ---
 interface MaterialRequest {
@@ -54,7 +56,7 @@ interface MaterialRequest {
     };
 }
 
-type Tab = 'overview' | 'requests' | 'vendor_tickets' | 'history' | 'manage-items' | 'po-generator' | 'monthly-requisitions' | 'settings' | 'profile';
+type Tab = 'overview' | 'urgency-tracker' | 'task-sheet' | 'requests' | 'vendor_tickets' | 'history' | 'manage-items' | 'po-generator' | 'monthly-requisitions' | 'settings' | 'profile';
 
 export default function ProcurementDashboard() {
     const supabase = createClient();
@@ -69,7 +71,7 @@ export default function ProcurementDashboard() {
 
     useEffect(() => {
         const tabParam = searchParams?.get('tab') as Tab | null;
-        if (tabParam && ['overview', 'requests', 'vendor_tickets', 'history', 'manage-items', 'po-generator', 'monthly-requisitions', 'settings', 'profile'].includes(tabParam)) {
+        if (tabParam && ['overview', 'urgency-tracker', 'task-sheet', 'requests', 'vendor_tickets', 'history', 'manage-items', 'po-generator', 'monthly-requisitions', 'settings', 'profile'].includes(tabParam)) {
             setActiveTab(tabParam);
         }
     }, [searchParams]);
@@ -477,6 +479,7 @@ export default function ProcurementDashboard() {
                             <div className="space-y-1">
                                 {[
                                     { id: 'overview', icon: LayoutDashboard, label: 'Dashboard' },
+                                    { id: 'urgency-tracker', icon: Layers, label: 'Payment Urgency Tracker' },
                                     { id: 'requests', icon: Package, label: 'Active Orders' },
                                     { id: 'vendor_tickets', icon: ShoppingBag, label: 'Vendor Requests' },
                                     { id: 'monthly-requisitions', icon: FileSpreadsheet, label: 'Monthly Requisitions' },
@@ -651,6 +654,20 @@ export default function ProcurementDashboard() {
                                 setSelectedRequestId={setSelectedRequestId}
                                 handleOpenStatusModal={handleOpenStatusModal}
                                 fetchRequests={fetchRequests}
+                            />
+                        )}
+                        {activeTab === 'urgency-tracker' && (
+                            <PaymentUrgencyTrackerTab
+                                user={user}
+                                organizationId={user?.user_metadata?.organization_id}
+                                isSuperAdmin={isAdmin}
+                            />
+                        )}
+                        {activeTab === 'task-sheet' && (
+                            <PaymentUrgencyTrackerTab
+                                user={user}
+                                organizationId={user?.user_metadata?.organization_id}
+                                isSuperAdmin={isAdmin}
                             />
                         )}
                         {activeTab === 'history' && <HistoryTab requests={requests} user={user} />}

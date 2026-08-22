@@ -13,9 +13,11 @@ import ProcurementPOProcessor from './ProcurementPOProcessor';
 import ProcurementCatalogModal from './ProcurementCatalogModal';
 import MonthlyRequisitionsTab from './MonthlyRequisitionsTab';
 import SitePricingAdminTab from './SitePricingAdminTab';
+import PaymentUrgencyTrackerTab from './payment-urgency/PaymentUrgencyTrackerTab';
 import { useAuth } from '@/frontend/context/AuthContext';
+import { Layers } from 'lucide-react';
 
-type TabType = 'orders' | 'requisitions' | 'site-pricing' | 'catalog' | 'po-generator' | 'settings';
+type TabType = 'orders' | 'urgency-tracker' | 'requisitions' | 'site-pricing' | 'catalog' | 'po-generator' | 'settings';
 
 export default function ProcurementModule({ orgId: propOrgId, isAdmin: propIsAdmin, properties: propProperties }: { orgId?: string, isAdmin?: boolean, properties?: any[] }) {
     const params = useParams();
@@ -87,6 +89,7 @@ export default function ProcurementModule({ orgId: propOrgId, isAdmin: propIsAdm
 
     const TABS = [
         { id: 'orders', label: 'All Orders', icon: List, show: true, count: counts.orders },
+        { id: 'urgency-tracker', label: 'Urgency Tracker (P1-P3)', icon: Layers, show: true, count: 0 },
         { id: 'requisitions', label: 'Monthly Requisitions', icon: FileSpreadsheet, show: true, count: 0 },
         { id: 'site-pricing', label: 'Site Pricing & Aliases', icon: DollarSign, show: canManageCatalogAndPricing, count: 0 },
         { id: 'catalog', label: 'Manage Items Master', icon: ShoppingCart, show: canManageCatalogAndPricing, count: 0 },
@@ -138,11 +141,20 @@ export default function ProcurementModule({ orgId: propOrgId, isAdmin: propIsAdm
                     <ProcurementRequestList organizationId={orgId} propertyId={propertyId} onAction={fetchCounts} />
                 )}
 
+                {activeTab === 'urgency-tracker' && (
+                    <PaymentUrgencyTrackerTab
+                        user={user}
+                        organizationId={orgId}
+                        propertyId={propertyId}
+                        isSuperAdmin={isSuperAdmin}
+                    />
+                )}
+
                 {activeTab === 'requisitions' && (
                     <MonthlyRequisitionsTab 
                         user={user} 
                         organizationId={orgId} 
-                        propertyId={propertyId}
+                        propertyId={propertyId} 
                         userRole={userRole || 'property_admin'} 
                     />
                 )}

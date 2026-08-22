@@ -28,25 +28,33 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'No record in payload' }, { status: 400 });
     }
 
-    // Only process pending rows — ignore if already sent/failed (safety guard)
-    if (row.status !== 'pending') {
-        console.log(`[WhatsAppQueue] Skipping row ${row.id} — status is already: ${row.status}`);
+    // Atomic Claim: Only process if status is still 'pending' in the database
+    const { data: claimedRow } = await supabaseAdmin
+        .from('whatsapp_queue')
+        .update({ status: 'processing', updated_at: new Date().toISOString() })
+        .eq('id', row.id)
+        .eq('status', 'pending')
+        .select('*')
+        .maybeSingle();
+
+    if (!claimedRow) {
+        console.log(`[WhatsAppQueue] Skipping row ${row.id} — already claimed/processed.`);
         return NextResponse.json({ ok: true, skipped: true });
     }
 
-    console.log(`[WhatsAppQueue] Processing row ${row.id} for event: ${row.event_type}, phone: ${row.phone}`);
+    console.log(`[WhatsAppQueue] Processing row ${claimedRow.id} for event: ${claimedRow.event_type}, phone: ${claimedRow.phone}`);
 
     try {
         let sent: boolean;
         let sendError: string | undefined;
 
-        if (row.template_name) {
+        if (claimedRow.template_name) {
             // Config-driven AiSensy template path
             const result = await AiSensyService.sendTemplate({
-                phone: row.phone,
-                campaignName: row.template_name,
-                templateParams: Array.isArray(row.template_params) ? row.template_params : [],
-                mediaUrl: row.media_url ?? undefined,
+                phone: claimedRow.phone,
+                campaignName: claimedRow.template_name,
+                templateParams: Array.isArray(claimedRow.template_params) ? claimedRow.template_params : [],
+                mediaUrl: claimedRow.media_url ?? undefined,
             });
 
             sent = result.success;

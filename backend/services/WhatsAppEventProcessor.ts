@@ -163,18 +163,33 @@ export const WhatsAppEventProcessor = {
                 break;
 
             // SOP Checklists
+            case 'CHECKLIST_SLOT_REMINDER':
+            case 'SOP_REMINDER':
+                await this.handleChecklistSlotReminder(payload);
+                break;
             case 'SOP_STARTED':
+            case 'CHECKLIST_STARTED':
                 await this.handleSOPStarted(payload);
                 break;
             case 'SOP_COMPLETED':
+            case 'CHECKLIST_COMPLETED':
                 await this.handleSOPCompleted(payload);
                 break;
             case 'SOP_OVERDUE':
             case 'SOP_MISSED':
+            case 'CHECKLIST_OVERDUE':
+            case 'CHECKLIST_MISSED':
                 await this.handleSOPOverdue(payload);
                 break;
             case 'SOP_RATED':
+            case 'CHECKLIST_RATED':
                 await this.handleSOPRated(payload);
+                break;
+
+            // PPM
+            case 'REMINDER_PPM':
+            case 'PPM_REMINDER':
+                await this.handlePpmReminder(payload);
                 break;
 
             default:
@@ -224,7 +239,18 @@ export const WhatsAppEventProcessor = {
                 });
         }
 
-        const recipients = Array.from(userMap.values());
+        // Strictly deduplicate by cleaned 10+ digit phone number so 1 phone number never receives multiple copies of the same alert
+        const seenPhones = new Set<string>();
+        const recipients: ResolvedWhatsAppUser[] = [];
+        for (const u of userMap.values()) {
+            const rawPhone = u.phone ? String(u.phone).replace(/[^0-9]/g, '') : '';
+            const normalizedPhone = rawPhone.length > 10 && rawPhone.startsWith('91') ? rawPhone.slice(-10) : rawPhone;
+            if (normalizedPhone && normalizedPhone.length >= 10 && !seenPhones.has(normalizedPhone)) {
+                seenPhones.add(normalizedPhone);
+                recipients.push(u);
+            }
+        }
+
         if (recipients.length === 0) {
             console.log(`[WhatsAppEventProcessor] ${templateEventKey}: no recipients for org ${organizationId}`);
             return;
@@ -265,6 +291,12 @@ export const WhatsAppEventProcessor = {
             comparative_approved: { campaign_name: 'comparative_approved_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'approved_by', 'total_cost', 'approver_comment', 'ticket_id'] },
             comparative_rejected: { campaign_name: 'comparative_rejected_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'total_cost', 'action_by', 'rejection_reason', 'ticket_id'] },
             material_delivered: { campaign_name: 'material_delivered_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'delivered_items', 'verified_by', 'ticket_id'] },
+            procurement_vendor_tag: { campaign_name: 'procurement_vendor_tag_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'tagged_by', 'note', 'assigned_procurement'] },
+            procurement_vendor_aligned: { campaign_name: 'procurement_vendor_aligned_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'vendor_details', 'arranged_by'] },
+            reminder_ppm: { campaign_name: 'reminder_ppm_v2', params: ['user_name', 'system_name', 'property', 'due_date', 'vendor_name', 'location'] },
+            ppm_reminder: { campaign_name: 'reminder_ppm_v2', params: ['user_name', 'system_name', 'property', 'due_date', 'vendor_name', 'location'] },
+            reminder_ticket_sla: { campaign_name: 'reminder_ticket_sla_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'sla_time', 'ticket_id'] },
+            reminder_lead_followup: { campaign_name: 'reminder_lead_followup_v1', params: ['user_name', 'company_name', 'contact_person', 'phone', 'followup_time', 'lead_id'] },
             checklist_slot_reminder: { campaign_name: 'checklist_slot_reminder_v1', params: ['user_name', 'checklist_name', 'property', 'due_time'] },
             checklist_started: { campaign_name: 'checklist_started_v1', params: ['user_name', 'checklist_name', 'property', 'start_time'] },
             checklist_completed: { campaign_name: 'checklist_completed_v1', params: ['user_name', 'checklist_name', 'property', 'completed_by', 'time'] },
@@ -346,6 +378,22 @@ export const WhatsAppEventProcessor = {
             'material_delivered_v1': ['user_name', 'ticket_number', 'title', 'property', 'delivered_items', 'verified_by', 'ticket_id'],
             'material_delivered_v': ['user_name', 'ticket_number', 'title', 'property', 'delivered_items', 'verified_by', 'ticket_id'],
             'material_delivered': ['user_name', 'ticket_number', 'title', 'property', 'delivered_items', 'verified_by', 'ticket_id'],
+
+            'procurement_vendor_tag_v1': ['user_name', 'ticket_number', 'title', 'property', 'tagged_by', 'note', 'assigned_procurement'],
+            'procurement_vendor_tag': ['user_name', 'ticket_number', 'title', 'property', 'tagged_by', 'note', 'assigned_procurement'],
+
+            'procurement_vendor_aligned_v1': ['user_name', 'ticket_number', 'title', 'property', 'vendor_details', 'arranged_by'],
+            'procurement_vendor_aligned': ['user_name', 'ticket_number', 'title', 'property', 'vendor_details', 'arranged_by'],
+
+            'reminder_ppm_v2': ['user_name', 'system_name', 'property', 'due_date', 'vendor_name', 'location'],
+            'reminder_ppm': ['user_name', 'system_name', 'property', 'due_date', 'vendor_name', 'location'],
+            'ppm_reminder': ['user_name', 'system_name', 'property', 'due_date', 'vendor_name', 'location'],
+
+            'reminder_ticket_sla_v1': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'sla_time', 'ticket_id'],
+            'reminder_ticket_sla': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'sla_time', 'ticket_id'],
+
+            'reminder_lead_followup_v1': ['user_name', 'company_name', 'contact_person', 'phone', 'followup_time', 'lead_id'],
+            'reminder_lead_followup': ['user_name', 'company_name', 'contact_person', 'phone', 'followup_time', 'lead_id'],
 
             'checklist_slot_reminder_v1': ['user_name', 'checklist_name', 'property', 'due_time'],
             'checklist_slot_reminder': ['user_name', 'checklist_name', 'property', 'due_time'],
@@ -473,13 +521,15 @@ export const WhatsAppEventProcessor = {
                 title: payload.title || 'Support Request',
                 property: propertyName,
                 priority: payload.priority || 'Medium',
+                raised_by: raiser.name,
+                raised_by_phone: raiser.phone || 'N/A',
                 requester: raiser.name,
                 requester_phone: raiser.phone || 'N/A',
                 target_sla: payload.sla_deadline ? formatWhatsAppDateTime(payload.sla_deadline) : 'Standard SLA',
                 ticket_id: payload.ticket_id || payload.id || ''
             },
             summaryMessage: `Ticket #${payload.ticket_number} (${payload.title}) assigned to ${assignee.name}`,
-            contextualUserIds: { assigneeId: payload.assigned_to }
+            contextualUserIds: { assigneeId: payload.assigned_to, requesterId: payload.raised_by }
         });
     },
 
@@ -980,56 +1030,106 @@ export const WhatsAppEventProcessor = {
     },
 
     async handleLeadCreated(payload: any): Promise<void> {
-        const organizationId = await this.resolveLeadOrganizationId(payload);
+        const leadId = payload.lead_id || payload.id;
+        const { data: lead } = await supabaseAdmin
+            .from('crm_leads')
+            .select('*, source_info:crm_lead_sources(id, name), property:properties(name), assignee:users!assigned_to(id, full_name, email, phone)')
+            .eq('id', leadId)
+            .maybeSingle();
+
+        const organizationId = lead?.organization_id || payload.organization_id || await this.resolveLeadOrganizationId(payload);
         if (!organizationId) return;
 
-        const sourceName = await this.getLeadSourceName(payload.lead_source);
-        const propertyName = await this.getPropertyName(payload.property_interest);
+        const sourceName = lead?.source_info?.name || lead?.lead_source || await this.getLeadSourceName(payload.lead_source);
+        const propName = lead?.property?.name || await this.getPropertyName(payload.property_interest);
+        
+        // Format requirement cleanly into the message parameters
+        const propertyWithReq = lead?.requirement 
+            ? `${propName ? propName + ' | ' : ''}Req: ${lead.requirement}` 
+            : (propName || lead?.location || 'Direct');
 
+        const leadData = lead || payload;
         await this.dispatch({
             featureKey: 'lead_created',
             templateEventKey: 'lead_created',
             organizationId,
-            propertyId: payload.property_interest,
-            entityId: payload.lead_id || payload.id,
+            propertyId: leadData.property_interest,
+            entityId: leadId,
             paramValues: {
                 user_name: 'Sales Team',
-                company_name: payload.company_name || 'New Company',
-                contact_person: payload.contact_person || 'N/A',
-                phone: payload.contact_number || 'N/A',
+                company_name: leadData.company_name || 'New Company',
+                contact_person: leadData.contact_person || 'N/A',
+                phone: leadData.contact_number || leadData.phone || 'N/A',
                 source: sourceName,
-                property_interest: propertyName
+                property_interest: propertyWithReq
             },
-            summaryMessage: `New CRM lead: ${payload.company_name} (${payload.contact_person || 'N/A'}) via ${sourceName}`
+            summaryMessage: `New CRM lead: ${leadData.company_name} (${leadData.contact_person || 'N/A'}) - Req: ${leadData.requirement || 'N/A'}`
         });
     },
 
     async handleLeadAssigned(payload: any): Promise<void> {
-        const organizationId = await this.resolveLeadOrganizationId(payload);
+        const leadId = payload.lead_id || payload.id;
+        const { data: lead } = await supabaseAdmin
+            .from('crm_leads')
+            .select('*, source_info:crm_lead_sources(id, name), property:properties(name), assignee:users!assigned_to(id, full_name, email, phone)')
+            .eq('id', leadId)
+            .maybeSingle();
+
+        const organizationId = lead?.organization_id || payload.organization_id || await this.resolveLeadOrganizationId(payload);
         if (!organizationId) return;
 
-        const assignee = await this.getUserDetails(payload.assigned_to);
-        const propertyName = await this.getPropertyName(payload.property_interest);
+        const assigneeId = lead?.assigned_to || payload.assigned_to;
+        const assignee = lead?.assignee?.full_name 
+            ? { name: lead.assignee.full_name, phone: lead.assignee.phone } 
+            : await this.getUserDetails(assigneeId);
 
-        const formattedFollowup = payload.next_followup_date
-            ? formatWhatsAppDateTime(payload.next_followup_date)
-            : 'Immediate Follow-up';
+        const propName = lead?.property?.name || await this.getPropertyName(payload.property_interest);
+        const propertyWithReq = lead?.requirement 
+            ? `${propName ? propName + ' | ' : ''}Req: ${lead.requirement}` 
+            : (propName || lead?.location || 'Direct');
 
+        const followupDate = lead?.next_followup_date || payload.next_followup_date;
+        const formattedFollowup = followupDate
+            ? formatWhatsAppDateTime(followupDate)
+            : (lead?.requirement ? `TAT: Immediate | Req: ${lead.requirement}` : 'Immediate Follow-up');
+
+        const leadData = lead || payload;
         await this.dispatch({
             featureKey: 'lead_assigned',
             templateEventKey: 'lead_assigned',
             organizationId,
-            propertyId: payload.property_interest,
-            entityId: payload.lead_id || payload.id,
+            propertyId: leadData.property_interest,
+            entityId: leadId,
             paramValues: {
-                user_name: assignee.name,
-                company_name: payload.company_name || 'Company',
-                contact_person: payload.contact_person || 'N/A',
-                phone: payload.contact_number || 'N/A',
-                property_interest: propertyName,
+                user_name: assignee.name || 'Sales Agent',
+                company_name: leadData.company_name || 'Company',
+                contact_person: leadData.contact_person || 'N/A',
+                phone: leadData.contact_number || leadData.phone || 'N/A',
+                property_interest: propertyWithReq,
                 next_followup: formattedFollowup
             },
-            summaryMessage: `Lead ${payload.company_name} assigned to ${assignee.name} (Follow-up: ${formattedFollowup})`,
+            summaryMessage: `Lead ${leadData.company_name} assigned to ${assignee.name} (Req: ${leadData.requirement || 'N/A'})`,
+            contextualUserIds: { assigneeId }
+        });
+    },
+
+    async handleChecklistSlotReminder(payload: any): Promise<void> {
+        const propertyName = await this.getPropertyName(payload.property_id);
+        const assignedUser = await this.getUserDetails(payload.assigned_to);
+
+        await this.dispatch({
+            featureKey: 'checklist_slot_reminder',
+            templateEventKey: 'checklist_slot_reminder',
+            organizationId: payload.organization_id,
+            propertyId: payload.property_id,
+            entityId: payload.template_id,
+            paramValues: {
+                user_name: assignedUser.name || 'Technician',
+                checklist_name: payload.template_title || 'SOP Checklist',
+                property: propertyName,
+                due_time: payload.due_time || '30 mins'
+            },
+            summaryMessage: `Checklist "${payload.template_title}" at ${propertyName} is due at ${payload.due_time || 'soon'}`,
             contextualUserIds: { assigneeId: payload.assigned_to }
         });
     },
@@ -1170,6 +1270,23 @@ export const WhatsAppEventProcessor = {
 
     async resolveLeadOrganizationId(payload: any): Promise<string | null> {
         if (payload.organization_id) return payload.organization_id;
+        const leadId = payload.lead_id || payload.id;
+        if (leadId) {
+            const { data: lead } = await supabaseAdmin
+                .from('crm_leads')
+                .select('organization_id, property_interest, created_by')
+                .eq('id', leadId)
+                .maybeSingle();
+            if (lead?.organization_id) return lead.organization_id;
+            if (lead?.property_interest) {
+                const { data: property } = await supabaseAdmin
+                    .from('properties')
+                    .select('organization_id')
+                    .eq('id', lead.property_interest)
+                    .maybeSingle();
+                if (property?.organization_id) return property.organization_id;
+            }
+        }
         if (payload.property_interest) {
             const { data: property } = await supabaseAdmin
                 .from('properties')
@@ -1190,6 +1307,37 @@ export const WhatsAppEventProcessor = {
             if (membership?.organization_id) return membership.organization_id;
         }
 
-        return null;
+        const { data: defaultOrg } = await supabaseAdmin
+            .from('organizations')
+            .select('id')
+            .limit(1)
+            .maybeSingle();
+        return defaultOrg?.id || null;
+    },
+
+    async handlePpmReminder(payload: any): Promise<void> {
+        const propertyName = await this.getPropertyName(payload.property_id);
+        const { data: vendor } = payload.vendor_id ? await supabaseAdmin
+            .from('vendors')
+            .select('name')
+            .eq('id', payload.vendor_id)
+            .maybeSingle() : { data: null };
+
+        await this.dispatch({
+            featureKey: 'reminder_ppm',
+            templateEventKey: 'reminder_ppm',
+            organizationId: payload.organization_id,
+            propertyId: payload.property_id,
+            entityId: payload.id,
+            paramValues: {
+                user_name: 'Property Team',
+                system_name: payload.system_name || 'System / Asset',
+                property: propertyName,
+                due_date: payload.planned_date || payload.due_date || 'Scheduled Date',
+                vendor_name: vendor?.name || payload.vendor_name || 'Assigned Vendor',
+                location: payload.location || 'Site Facility'
+            },
+            summaryMessage: `🔧 PPM Reminder: ${payload.system_name} at ${propertyName} is due on ${payload.planned_date || payload.due_date}`
+        });
     }
 };

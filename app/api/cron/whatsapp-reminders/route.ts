@@ -154,8 +154,10 @@ export async function GET(request: NextRequest) {
 }
 
 async function processTicketSlaReminders(ctx: OrgContext, reminderMinutes: number): Promise<number> {
-    const template = ctx.templates.reminder_ticket_sla;
-    if (!template?.campaign_name) return 0;
+    const template = ctx.templates.reminder_ticket_sla || {
+        campaign_name: 'reminder_ticket_sla_v1',
+        params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'sla_time', 'ticket_id']
+    };
 
     const now = new Date();
     const windowEnd = new Date(now.getTime() + reminderMinutes * 60 * 1000);
@@ -222,8 +224,10 @@ async function processTicketSlaReminders(ctx: OrgContext, reminderMinutes: numbe
 }
 
 async function processPpmReminders(ctx: OrgContext, reminderMinutes: number): Promise<number> {
-    const template = ctx.templates.reminder_ppm;
-    if (!template?.campaign_name) return 0;
+    const template = ctx.templates.reminder_ppm || {
+        campaign_name: 'reminder_ppm_v2',
+        params: ['user_name', 'system_name', 'property', 'due_date', 'vendor_name', 'location']
+    };
 
     const targetDate = new Date(Date.now() + reminderMinutes * 60 * 1000);
     const targetDateStr = istDateString(targetDate);

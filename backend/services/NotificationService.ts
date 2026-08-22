@@ -593,40 +593,10 @@ export class NotificationService {
             }
             if (!booking) return;
 
-            // 1. Mark corresponding outbox event as completed to prevent remote webhook double-firing
-            try {
-                await supabaseAdmin
-                    .from('event_outbox')
-                    .update({ status: 'completed', updated_at: new Date().toISOString() })
-                    .eq('entity_id', booking.id)
-                    .eq('event_type', 'MEETING_ROOM_BOOKED');
-            } catch (outboxErr) {
-                console.error('[NotificationService] Outbox update error:', outboxErr);
-            }
+            // Note: Email and WhatsApp dispatch are handled asynchronously via event_outbox database trigger
+            // (tr_meeting_room_booking_outbox_insert_update_delete -> webhook / sweep-outbox -> EventProcessor & WhatsAppEventProcessor)
 
-            // 2. Dispatch Omnichannel Email
-            try {
-                const { EventProcessor } = await import('./EventProcessor');
-                await EventProcessor.processEvent({
-                    event_type: 'MEETING_ROOM_BOOKED',
-                    payload: booking
-                });
-            } catch (emailErr) {
-                console.error('[NotificationService] Booking email dispatch error:', emailErr);
-            }
-
-            // 3. Dispatch Omnichannel WhatsApp (AiSensy)
-            try {
-                const { WhatsAppEventProcessor } = await import('./WhatsAppEventProcessor');
-                await WhatsAppEventProcessor.processEvent({
-                    event_type: 'MEETING_ROOM_BOOKED',
-                    payload: booking
-                });
-            } catch (waErr) {
-                console.error('[NotificationService] Booking WhatsApp dispatch error:', waErr);
-            }
-
-            // 4. In-App Notification dispatch
+            // In-App Notification dispatch
             const bookerName = booking.users?.full_name || 'A tenant';
             const roomName = booking.meeting_rooms?.name || 'a meeting room';
             const message = `${bookerName} has booked "${roomName}" for ${booking.booking_date} (${booking.start_time} - ${booking.end_time}).`;
@@ -668,40 +638,10 @@ export class NotificationService {
             }
             if (!booking) return;
 
-            // 1. Mark corresponding outbox event as completed to prevent remote webhook double-firing
-            try {
-                await supabaseAdmin
-                    .from('event_outbox')
-                    .update({ status: 'completed', updated_at: new Date().toISOString() })
-                    .eq('entity_id', booking.id)
-                    .eq('event_type', 'MEETING_ROOM_CANCELLED');
-            } catch (outboxErr) {
-                console.error('[NotificationService] Outbox update error:', outboxErr);
-            }
+            // Note: Email and WhatsApp dispatch are handled asynchronously via event_outbox database trigger
+            // (tr_meeting_room_booking_outbox_insert_update_delete -> webhook / sweep-outbox -> EventProcessor & WhatsAppEventProcessor)
 
-            // 2. Dispatch Omnichannel Email
-            try {
-                const { EventProcessor } = await import('./EventProcessor');
-                await EventProcessor.processEvent({
-                    event_type: 'MEETING_ROOM_CANCELLED',
-                    payload: booking
-                });
-            } catch (emailErr) {
-                console.error('[NotificationService] Cancellation email dispatch error:', emailErr);
-            }
-
-            // 3. Dispatch Omnichannel WhatsApp (AiSensy)
-            try {
-                const { WhatsAppEventProcessor } = await import('./WhatsAppEventProcessor');
-                await WhatsAppEventProcessor.processEvent({
-                    event_type: 'MEETING_ROOM_CANCELLED',
-                    payload: booking
-                });
-            } catch (waErr) {
-                console.error('[NotificationService] Cancellation WhatsApp dispatch error:', waErr);
-            }
-
-            // 4. In-App Notification dispatch
+            // In-App Notification dispatch
             const bookerName = booking.users?.full_name || 'A tenant';
             const roomName = booking.meeting_rooms?.name || 'a meeting room';
             const message = `${bookerName} has cancelled the booking for "${roomName}" on ${booking.booking_date}.`;
@@ -1283,6 +1223,38 @@ export class NotificationService {
         if (!userIds.length) return;
         const unique = [...new Set(userIds)];
 
+        // Check Omnichannel Matrix for push channel enablement
+        if (payload.organizationId) {
+            try {
+                const featureKey = payload.type.toLowerCase();
+                const { data: orgData } = await supabaseAdmin
+                    .from('organization_settings')
+                    .select('notification_matrix')
+                    .eq('organization_id', payload.organizationId)
+                    .maybeSingle();
+
+                const matrix = orgData?.notification_matrix || {};
+                let matrixRule: any = null;
+                for (const mod of Object.values(matrix)) {
+                    if (mod && typeof mod === 'object' && (mod as any)[featureKey]) {
+                        matrixRule = (mod as any)[featureKey];
+                        break;
+                    }
+                }
+
+                if (matrixRule) {
+                    const propOverride = (payload.propertyId && matrixRule.property_overrides) ? matrixRule.property_overrides[payload.propertyId] : null;
+                    const isPushEnabled = propOverride ? (propOverride.channels?.push !== false) : (matrixRule.channels?.push !== false);
+                    if (!isPushEnabled) {
+                        console.log(`[NotificationService] Push disabled via Omnichannel Matrix for ${featureKey}`);
+                        return;
+                    }
+                }
+            } catch (matrixErr) {
+                console.error('[NotificationService] Error checking push matrix:', matrixErr);
+            }
+        }
+
         let fallbackPropertyId = (payload.propertyId && payload.propertyId.trim()) ? payload.propertyId.trim() : null;
         if (!fallbackPropertyId && payload.organizationId) {
             const { data: defaultProp } = await supabaseAdmin
@@ -1553,85 +1525,18 @@ export class NotificationService {
                 .eq('email', 'saniel@worksquare.in');
             (sanielUsers || []).forEach(u => recipientIds.add(String(u.id)));
 
-            let assigneeName = 'Unassigned';
-            if (lead.assigned_to) {
-                const { data: u } = await supabaseAdmin.from('users').select('full_name').eq('id', lead.assigned_to).single();
-                if (u?.full_name) assigneeName = u.full_name;
-            }
+            if (recipientIds.size === 0) return;
 
             const sourceName = lead.source_info?.name || lead.lead_source || 'Manual/Other';
-            const campaignName = lead.campaign || 'Direct';
-            
-            const waMessage = [
-                `🚀 *New Inbound Lead!*`,
-                `*Source:* ${sourceName}`,
-                `*Campaign:* ${campaignName}`,
-                `*Name:* ${lead.contact_person || lead.company_name || 'Unknown'}`,
-                `*Phone:* ${lead.contact_number || 'Not provided'}`,
-                lead.requirement ? `*Requirement:* ${lead.requirement}` : null,
-                `*Assigned Rep:* ${assigneeName}`
-            ].filter(Boolean).join('\n');
-
-            await WhatsAppQueueService.enqueue({
-                userIds: Array.from(recipientIds),
-                message: waMessage,
-                eventType: 'CRM_NEW_LEAD',
-            });
-
-            const emails = new Set<string>();
-
-            // Resolve recipients dynamically via the UI settings configuration
-            const { enabled: isFeatureEnabled, emails: resolvedEmails } = await EmailRecipientResolver.resolveRecipients({
+            await this.sendToMany(Array.from(recipientIds), {
                 organizationId: orgId,
-                featureKey: 'crm_leads',
-                contextualEmails: []
+                propertyId: lead.property_interest,
+                type: 'LEAD_CREATED',
+                title: '🎯 New CRM Lead',
+                message: `New Lead: ${lead.contact_person || lead.company_name} via ${sourceName}${lead.requirement ? ' · ' + lead.requirement : ''}`,
+                deepLink: `/crm/leads`,
+                priority: 'NORMAL',
             });
-
-            if (isFeatureEnabled && resolvedEmails && resolvedEmails.length > 0) {
-                resolvedEmails.forEach(e => {
-                    if (e && typeof e === 'string' && e.trim()) {
-                        emails.add(e.trim().toLowerCase());
-                    }
-                });
-            }
-
-            // Exclude the assigned person's email from this general intake email
-            // to avoid sending them duplicate notifications (since they get the direct assignment email)
-            if (lead.assigned_to) {
-                const { data: assignedUser } = await supabaseAdmin
-                    .from('users')
-                    .select('email')
-                    .eq('id', lead.assigned_to)
-                    .maybeSingle();
-                if (assignedUser?.email) {
-                    const assignedUserEmail = assignedUser.email.trim().toLowerCase();
-                    emails.delete(assignedUserEmail);
-                }
-            }
-
-            if (emails.size > 0) {
-                const html = `
-                    <h2>New Lead Received</h2>
-                    <table style="border-collapse:collapse;font-family:sans-serif;">
-                        <tr><td style="padding:4px 12px 4px 0;font-weight:bold;">Name</td><td>${lead.contact_person || lead.company_name || 'Unknown'}</td></tr>
-                        <tr><td style="padding:4px 12px 4px 0;font-weight:bold;">Phone</td><td>${lead.contact_number || 'Not provided'}</td></tr>
-                        <tr><td style="padding:4px 12px 4px 0;font-weight:bold;">Requirement</td><td>${lead.requirement || 'N/A'}</td></tr>
-                        <tr><td style="padding:4px 12px 4px 0;font-weight:bold;">Source</td><td>${sourceName}</td></tr>
-                        <tr><td style="padding:4px 12px 4px 0;font-weight:bold;">Campaign</td><td>${campaignName}</td></tr>
-                        <tr><td style="padding:4px 12px 4px 0;font-weight:bold;">Assigned To</td><td>${assigneeName}</td></tr>
-                    </table>
-                    <p style="margin-top:16px;">Log in to <b>Autopilot CRM</b> to follow up.</p>
-                `;
-
-                for (const to of emails) {
-                    await EmailService.sendNewLeadEmail({
-                        emailTo: to,
-                        subject: `New Lead: ${lead.contact_person || lead.company_name || 'Unknown'}`,
-                        html
-                    });
-                }
-            }
-
         } catch (err) {
             console.error('[NS] afterLeadCreated error:', err);
         }

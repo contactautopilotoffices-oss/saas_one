@@ -23,23 +23,15 @@ export class WhatsAppQueueService {
     static async enqueue(payload: WhatsAppQueuePayload): Promise<void> {
         // Map eventType to moduleName
         let moduleName: string | null = null;
-        if (payload.eventType.startsWith('TICKET_') || payload.eventType === 'SLA_BREACH') {
+        if (payload.eventType.startsWith('TICKET_') || payload.eventType === 'SLA_BREACH' || payload.eventType === 'REMINDER_TICKET_SLA') {
             moduleName = 'ticketing';
-        } else if (payload.eventType.startsWith('ROOM_')) {
+        } else if (payload.eventType.startsWith('MEETING_ROOM_') || payload.eventType.startsWith('ROOM_') || payload.eventType === 'REMINDER_MEETING_ROOM') {
             moduleName = 'meeting_room';
-        } else if (payload.eventType.startsWith('MATERIAL_REQUEST_') || payload.eventType.startsWith('PROCUREMENT_')) {
+        } else if (payload.eventType.startsWith('MATERIAL_') || payload.eventType.startsWith('PROCUREMENT_') || payload.eventType.startsWith('REQUISITION_') || payload.eventType.startsWith('MONTHLY_') || payload.eventType.startsWith('COMPARATIVE_') || payload.eventType.startsWith('VENDOR_')) {
             moduleName = 'procurement';
-        } else if (payload.eventType.startsWith('SOP_') || payload.eventType.startsWith('PPM_')) {
+        } else if (payload.eventType.startsWith('SOP_') || payload.eventType.startsWith('PPM_') || payload.eventType.startsWith('CHECKLIST_') || payload.eventType === 'REMINDER_PPM' || payload.eventType.startsWith('DAILY_') || payload.eventType.startsWith('AI_')) {
             moduleName = 'ppm';
-        } else if (payload.eventType.startsWith('CRM_')) {
-            moduleName = 'crm';
-        } else if (payload.eventType === 'REMINDER_MEETING_ROOM') {
-            moduleName = 'meeting_room';
-        } else if (payload.eventType === 'REMINDER_PPM') {
-            moduleName = 'ppm';
-        } else if (payload.eventType === 'REMINDER_TICKET_SLA') {
-            moduleName = 'ticketing';
-        } else if (payload.eventType === 'REMINDER_LEAD_FOLLOWUP') {
+        } else if (payload.eventType.startsWith('CRM_') || payload.eventType.startsWith('LEAD_') || payload.eventType === 'REMINDER_LEAD_FOLLOWUP') {
             moduleName = 'crm';
         }
 
@@ -118,7 +110,7 @@ export class WhatsAppQueueService {
             } else {
                 console.log(`[WhatsAppQueue] Enqueued ${rows.length} messages for event: ${payload.eventType}`);
 
-                // Immediate async dispatch for instant delivery (under 1s)
+                // Immediate async dispatch for instant delivery with atomic lock
                 if (insertedRows && insertedRows.length > 0) {
                     (async () => {
                         const { AiSensyService } = await import('@/backend/services/AiSensyService');
@@ -126,6 +118,20 @@ export class WhatsAppQueueService {
 
                         for (const r of insertedRows) {
                             try {
+                                // Atomic Claim: Only proceed if status is still 'pending'
+                                const { data: claimed } = await supabaseAdmin
+                                    .from('whatsapp_queue')
+                                    .update({ status: 'processing', updated_at: new Date().toISOString() })
+                                    .eq('id', r.id)
+                                    .eq('status', 'pending')
+                                    .select('id')
+                                    .maybeSingle();
+
+                                if (!claimed) {
+                                    // Row was already claimed/processed by webhook
+                                    continue;
+                                }
+
                                 let sent = false;
                                 let sendError: string | undefined;
 

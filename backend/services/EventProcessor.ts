@@ -8,16 +8,41 @@ export const EventProcessor = {
 
         if (['MEETING_ROOM_BOOKED', 'MEETING_ROOM_CANCELLED', 'ROOM_BOOKED', 'ROOM_CANCELLED', 'ROOM_BOOKING_CANCELLED'].includes(event_type)) {
             await this.handleMeetingRoomEvent(event_type, payload);
+        } else if (event_type === 'TICKET_CREATED') {
+            await this.handleTicketCreated(payload);
+        } else if (event_type === 'TICKET_ASSIGNED') {
+            await this.handleTicketAssigned(payload);
+        } else if (['TICKET_COMPLETED', 'TICKET_RESOLVED'].includes(event_type)) {
+            await this.handleTicketCompleted(payload);
+        } else if (event_type === 'TICKET_UPDATED') {
+            if (payload.assigned_to && payload.assigned_to !== payload.old_assigned_to) {
+                await this.handleTicketAssigned(payload);
+            }
+            if ((['resolved', 'closed', 'pending_validation'].includes(payload.status)) && payload.status !== payload.old_status) {
+                await this.handleTicketCompleted(payload);
+            }
         } else if (event_type === 'MATERIAL_REQUEST_CREATED') {
             await this.handleMaterialRequestEvent(payload);
         } else if (['COMPARATIVE_UPLOADED', 'COMPARATIVE_APPROVED', 'COMPARATIVE_REJECTED', 'MATERIAL_DELIVERED'].includes(event_type)) {
             await this.handleProcurementWorkflowEvent(event_type, payload);
-        } else if (event_type === 'REQUISITION_UPLOADED') {
+        } else if (event_type === 'REQUISITION_UPLOADED' || event_type === 'MONTHLY_REQUISITION_UPLOADED') {
             await this.handleRequisitionUploadedEvent(payload);
         } else if (event_type === 'VENDOR_PROCUREMENT_REQUESTED') {
             await this.handleVendorProcurementRequestedEvent(payload);
         } else if (event_type === 'VENDOR_PROCUREMENT_ARRANGED') {
             await this.handleVendorProcurementArrangedEvent(payload);
+        } else if (['SOP_COMPLETED', 'CHECKLIST_COMPLETED'].includes(event_type)) {
+            await this.handleChecklistCompleted(payload);
+        } else if (['SOP_OVERDUE', 'SOP_MISSED', 'CHECKLIST_OVERDUE', 'CHECKLIST_MISSED'].includes(event_type)) {
+            await this.handleChecklistOverdue(payload);
+        } else if (['CHECKLIST_SLOT_REMINDER', 'SOP_REMINDER'].includes(event_type)) {
+            await this.handleChecklistSlotReminder(payload);
+        } else if (['REMINDER_PPM', 'PPM_REMINDER'].includes(event_type)) {
+            await this.handlePpmReminder(payload);
+        } else if (['LEAD_CREATED', 'CRM_LEAD_CREATED'].includes(event_type)) {
+            await this.handleLeadCreated(payload);
+        } else if (['LEAD_ASSIGNED', 'CRM_LEAD_ASSIGNED'].includes(event_type)) {
+            await this.handleLeadAssigned(payload);
         } else {
             console.warn(`[EventProcessor] Unknown event type: ${event_type}`);
         }
@@ -564,6 +589,337 @@ export const EventProcessor = {
             property: ticket.property,
             arrangedBy: arrangedByUser || { full_name: 'Procurement Team' },
             arrangedDetails: details
+        });
+    },
+
+    async handleTicketCreated(payload: any) {
+        const ticketId = payload.ticket_id || payload.id;
+        const { data: ticket } = await supabaseAdmin
+            .from('tickets')
+            .select('*, property:properties(id, name, organization_id), raised_by_user:users!tickets_raised_by_fkey(id, full_name, email, phone), assigned_to_user:users!tickets_assigned_to_fkey(id, full_name, email, phone)')
+            .eq('id', ticketId)
+            .maybeSingle();
+
+        if (!ticket) return;
+
+        const orgId = ticket.property?.organization_id || payload.organization_id;
+        const propId = ticket.property_id || payload.property_id;
+
+        const { enabled, emails } = await EmailRecipientResolver.resolveRecipients({
+            organizationId: orgId,
+            propertyId: propId,
+            featureKey: 'ticket_created',
+            contextualEmails: [ticket.raised_by_user?.email, ticket.assigned_to_user?.email]
+        });
+
+        if (!enabled || emails.length === 0) return;
+
+        console.log(`[EventProcessor] Sending Ticket Created email for #${ticket.ticket_number} to ${emails.join(', ')}`);
+
+        await EmailService.sendTicketCreatedEmail({
+            emailTo: emails,
+            ticket,
+            property: ticket.property,
+            raisedBy: ticket.raised_by_user,
+            assignedTo: ticket.assigned_to_user
+        });
+    },
+
+    async handleTicketAssigned(payload: any) {
+        const ticketId = payload.ticket_id || payload.id;
+        const { data: ticket } = await supabaseAdmin
+            .from('tickets')
+            .select('*, property:properties(id, name, organization_id), raised_by_user:users!tickets_raised_by_fkey(id, full_name, email, phone), assigned_to_user:users!tickets_assigned_to_fkey(id, full_name, email, phone)')
+            .eq('id', ticketId)
+            .maybeSingle();
+
+        if (!ticket) return;
+
+        const orgId = ticket.property?.organization_id || payload.organization_id;
+        const propId = ticket.property_id || payload.property_id;
+
+        const { enabled, emails } = await EmailRecipientResolver.resolveRecipients({
+            organizationId: orgId,
+            propertyId: propId,
+            featureKey: 'ticket_assigned',
+            contextualEmails: [ticket.assigned_to_user?.email]
+        });
+
+        if (!enabled || emails.length === 0) return;
+
+        console.log(`[EventProcessor] Sending Ticket Assigned email for #${ticket.ticket_number} to ${emails.join(', ')}`);
+
+        await EmailService.sendTicketAssignedEmail({
+            emailTo: emails,
+            ticket,
+            property: ticket.property,
+            assignedTo: ticket.assigned_to_user,
+            raisedBy: ticket.raised_by_user
+        });
+    },
+
+    async handleTicketCompleted(payload: any) {
+        const ticketId = payload.ticket_id || payload.id;
+        const { data: ticket } = await supabaseAdmin
+            .from('tickets')
+            .select('*, property:properties(id, name, organization_id), raised_by_user:users!tickets_raised_by_fkey(id, full_name, email, phone), assigned_to_user:users!tickets_assigned_to_fkey(id, full_name, email, phone)')
+            .eq('id', ticketId)
+            .maybeSingle();
+
+        if (!ticket) return;
+
+        const orgId = ticket.property?.organization_id || payload.organization_id;
+        const propId = ticket.property_id || payload.property_id;
+
+        const { enabled, emails } = await EmailRecipientResolver.resolveRecipients({
+            organizationId: orgId,
+            propertyId: propId,
+            featureKey: 'ticket_completed',
+            contextualEmails: [ticket.raised_by_user?.email]
+        });
+
+        if (!enabled || emails.length === 0) return;
+
+        console.log(`[EventProcessor] Sending Ticket Completed email for #${ticket.ticket_number} to ${emails.join(', ')}`);
+
+        await EmailService.sendTicketCompletedEmail({
+            emailTo: emails,
+            ticket,
+            property: ticket.property,
+            resolvedBy: ticket.assigned_to_user || { full_name: 'Technician' },
+            resolutionNotes: payload.resolution_notes || ticket.resolution_notes
+        });
+    },
+
+    async handleChecklistCompleted(payload: any) {
+        const orgId = payload.organization_id;
+        const propId = payload.property_id;
+        if (!orgId) return;
+
+        const { data: property } = await supabaseAdmin
+            .from('properties')
+            .select('id, name')
+            .eq('id', propId)
+            .maybeSingle();
+
+        const { data: user } = await supabaseAdmin
+            .from('users')
+            .select('id, full_name, email')
+            .eq('id', payload.completed_by)
+            .maybeSingle();
+
+        const { enabled, emails } = await EmailRecipientResolver.resolveRecipients({
+            organizationId: orgId,
+            propertyId: propId,
+            featureKey: 'checklist_completed',
+            contextualEmails: [user?.email]
+        });
+
+        if (!enabled || emails.length === 0) return;
+
+        await EmailService.sendChecklistCompletedEmail({
+            emailTo: emails,
+            checklistTitle: payload.template_title || 'SOP Checklist',
+            property: property || { name: 'Site Property' },
+            completedBy: user || { full_name: 'Staff' },
+            score: payload.compliance_score || payload.score,
+            notes: payload.notes
+        });
+    },
+
+    async handleChecklistOverdue(payload: any) {
+        const orgId = payload.organization_id;
+        const propId = payload.property_id;
+        if (!orgId) return;
+
+        const { data: property } = await supabaseAdmin
+            .from('properties')
+            .select('id, name')
+            .eq('id', propId)
+            .maybeSingle();
+
+        const { data: user } = await supabaseAdmin
+            .from('users')
+            .select('id, full_name, email')
+            .eq('id', payload.assigned_to)
+            .maybeSingle();
+
+        const { enabled, emails } = await EmailRecipientResolver.resolveRecipients({
+            organizationId: orgId,
+            propertyId: propId,
+            featureKey: 'checklist_overdue_alert',
+            contextualEmails: [user?.email]
+        });
+
+        if (!enabled || emails.length === 0) return;
+
+        await EmailService.sendChecklistOverdueEmail({
+            emailTo: emails,
+            checklistTitle: payload.template_title || 'SOP Checklist',
+            property: property || { name: 'Site Property' },
+            assignedTo: user,
+            slotTime: payload.slot_time
+        });
+    },
+
+    async handleChecklistSlotReminder(payload: any) {
+        const orgId = payload.organization_id;
+        const propId = payload.property_id;
+        if (!orgId) return;
+
+        const { data: property } = await supabaseAdmin
+            .from('properties')
+            .select('id, name')
+            .eq('id', propId)
+            .maybeSingle();
+
+        const { data: user } = payload.assigned_to ? await supabaseAdmin
+            .from('users')
+            .select('id, full_name, email')
+            .eq('id', payload.assigned_to)
+            .maybeSingle() : { data: null };
+
+        const { enabled, emails } = await EmailRecipientResolver.resolveRecipients({
+            organizationId: orgId,
+            propertyId: propId,
+            featureKey: 'checklist_slot_reminder',
+            contextualEmails: [user?.email]
+        });
+
+        if (!enabled || emails.length === 0) return;
+
+        await EmailService.sendChecklistReminderEmail({
+            emailTo: emails,
+            checklistTitle: payload.template_title || 'SOP Checklist',
+            property: property || { name: 'Site Property' },
+            assignedTo: user,
+            dueTime: payload.due_time
+        });
+    },
+
+    async handlePpmReminder(payload: any) {
+        const orgId = payload.organization_id;
+        const propId = payload.property_id;
+        if (!orgId) return;
+
+        const { data: property } = await supabaseAdmin
+            .from('properties')
+            .select('id, name')
+            .eq('id', propId)
+            .maybeSingle();
+
+        const { data: vendor } = payload.vendor_id ? await supabaseAdmin
+            .from('vendors')
+            .select('name')
+            .eq('id', payload.vendor_id)
+            .maybeSingle() : { data: null };
+
+        const { enabled, emails } = await EmailRecipientResolver.resolveRecipients({
+            organizationId: orgId,
+            propertyId: propId,
+            featureKey: 'reminder_ppm'
+        });
+
+        if (!enabled || emails.length === 0) return;
+
+        await EmailService.sendPpmReminderEmail({
+            emailTo: emails,
+            schedule: payload,
+            property: property || { name: 'Site Property' },
+            vendor
+        });
+    },
+
+    async handleLeadCreated(payload: any) {
+        const leadId = payload.lead_id || payload.id;
+        const { data: lead } = await supabaseAdmin
+            .from('crm_leads')
+            .select('*, source_info:crm_lead_sources(id, name), property:properties(id, name), assignee:users!assigned_to(id, full_name, email)')
+            .eq('id', leadId)
+            .maybeSingle();
+
+        const orgId = lead?.organization_id || payload.organization_id;
+        if (!orgId) return;
+
+        const propertyId = lead?.property_interest || payload.property_interest;
+        const { enabled, emails } = await EmailRecipientResolver.resolveRecipients({
+            organizationId: orgId,
+            propertyId: propertyId,
+            featureKey: 'lead_created'
+        });
+
+        if (!enabled || emails.length === 0) return;
+
+        const leadData = lead || payload;
+        const sourceName = lead?.source_info?.name || leadData.lead_source || 'Direct';
+        const contactName = leadData.contact_person || leadData.company_name || 'New Lead';
+        const subject = `[New CRM Lead] ${contactName} - ${leadData.company_name || 'Autopilot CRM'}`;
+        const html = `
+            <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; background-color: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
+                <div style="text-align: center; margin-bottom: 20px;">
+                    <h2 style="color: #6366f1; margin: 0; font-size: 20px;">🎯 New Lead Received</h2>
+                    <p style="color: #64748b; font-size: 14px; margin-top: 4px;">A new lead has been submitted to your CRM</p>
+                </div>
+                <div style="background-color: #f8fafc; border-left: 4px solid #6366f1; padding: 16px; border-radius: 6px; margin: 18px 0;">
+                    <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                        <tr><td style="padding: 4px 0; color: #64748b; width: 130px;"><b>Company:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: bold;">${leadData.company_name || 'N/A'}</td></tr>
+                        <tr><td style="padding: 4px 0; color: #64748b;"><b>Contact:</b></td><td style="padding: 4px 0; color: #0f172a;">${leadData.contact_person || 'N/A'}</td></tr>
+                        <tr><td style="padding: 4px 0; color: #64748b;"><b>Phone:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: 600;">${leadData.contact_number || leadData.phone || 'N/A'}</td></tr>
+                        ${leadData.requirement ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Requirement:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: bold; background-color: #fef08a; padding: 4px 8px; border-radius: 4px;">${leadData.requirement}</td></tr>` : ''}
+                        ${leadData.email ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Email:</b></td><td style="padding: 4px 0; color: #0f172a;">${leadData.email}</td></tr>` : ''}
+                        ${lead?.property?.name ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Property:</b></td><td style="padding: 4px 0; color: #0f172a;">${lead.property.name}</td></tr>` : ''}
+                        ${sourceName ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Source:</b></td><td style="padding: 4px 0; color: #0f172a;">${sourceName}</td></tr>` : ''}
+                        ${leadData.campaign ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Campaign:</b></td><td style="padding: 4px 0; color: #0f172a;">${leadData.campaign}</td></tr>` : ''}
+                        ${lead?.assignee?.full_name ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Assigned To:</b></td><td style="padding: 4px 0; color: #6366f1; font-weight: 600;">${lead.assignee.full_name}</td></tr>` : ''}
+                    </table>
+                </div>
+            </div>
+        `;
+
+        for (const to of emails) {
+            await EmailService.sendNewLeadEmail({ emailTo: to, subject, html });
+        }
+    },
+
+    async handleLeadAssigned(payload: any) {
+        const leadId = payload.lead_id || payload.id;
+        const { data: lead } = await supabaseAdmin
+            .from('crm_leads')
+            .select('*, source_info:crm_lead_sources(id, name), property:properties(id, name), assignee:users!assigned_to(id, full_name, email, phone)')
+            .eq('id', leadId)
+            .maybeSingle();
+
+        const orgId = lead?.organization_id || payload.organization_id;
+        if (!orgId) return;
+
+        const assigneeId = lead?.assigned_to || payload.assigned_to;
+        const assignee = lead?.assignee || (assigneeId ? (await supabaseAdmin
+            .from('users')
+            .select('id, full_name, email')
+            .eq('id', assigneeId)
+            .maybeSingle()).data : null);
+
+        const propertyId = lead?.property_interest || payload.property_interest;
+        const { enabled, emails } = await EmailRecipientResolver.resolveRecipients({
+            organizationId: orgId,
+            propertyId: propertyId,
+            featureKey: 'lead_assigned',
+            contextualEmails: [assignee?.email]
+        });
+
+        if (!enabled || emails.length === 0) return;
+
+        const leadData = lead || payload;
+        await EmailService.sendLeadAssignedEmail({
+            emailTo: emails,
+            lead: {
+                ...leadData,
+                source: lead?.source_info?.name || leadData.lead_source,
+                phone: leadData.contact_number || leadData.phone,
+                next_followup: leadData.next_followup_date || leadData.next_followup
+            },
+            assignedTo: assignee || { full_name: 'Sales Rep' },
+            propertyName: lead?.property?.name
         });
     }
 };

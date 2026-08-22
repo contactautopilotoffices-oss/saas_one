@@ -65,7 +65,8 @@ export const DEFAULT_EMAIL_SERVICE_CONFIG: Record<string, FeatureEmailConfig> = 
 };
 
 const ORG_SCOPED_ROLES = new Set([
-    'org_super_admin', 'master_admin', 'procurement', 'procurement_user', 'org_admin', 'owner'
+    'org_super_admin', 'master_admin', 'procurement', 'procurement_user', 'org_admin', 'owner', 'admin',
+    'bd_admin', 'bd_super_admin', 'bd_rep', 'sales', 'sales_executive', 'accounts'
 ]);
 
 export interface ResolveRecipientsOptions {

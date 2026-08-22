@@ -23,26 +23,21 @@ export async function POST(request: NextRequest) {
         }
 
         // 1. Atomic Claim (Locking)
-        // Check database for current status
-        const { data: existingEvent } = await supabaseAdmin
+        // Only claim if status is 'pending'
+        const { data: claimedEvent, error: claimErr } = await supabaseAdmin
             .from('event_outbox')
-            .select('*')
+            .update({ status: 'processing', updated_at: new Date().toISOString() })
             .eq('id', eventId)
+            .eq('status', 'pending')
+            .select('*')
             .maybeSingle();
 
-        if (existingEvent) {
-            // Use fresh data from DB
-            event = existingEvent;
-            if (event.status === 'completed') {
-                console.log(`[EventProcessor] Event ${eventId} already completed. Skipping.`);
-                return NextResponse.json({ message: 'Event already completed' });
-            }
-            // Mark processing
-            await supabaseAdmin
-                .from('event_outbox')
-                .update({ status: 'processing', updated_at: new Date().toISOString() })
-                .eq('id', eventId);
+        if (!claimedEvent) {
+            console.log(`[EventProcessor] Event ${eventId} already claimed, processing, or completed. Skipping duplicate webhook.`);
+            return NextResponse.json({ message: 'Event already claimed or completed' });
         }
+
+        event = claimedEvent;
 
         console.log(`[EventProcessor] Processing event ${event.id}: ${event.event_type}`);
 

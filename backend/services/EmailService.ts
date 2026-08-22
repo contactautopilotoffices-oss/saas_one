@@ -529,5 +529,472 @@ export const EmailService = {
             console.error('[EmailService] Failed to send vendor arranged email:', error);
             return false;
         }
+    },
+
+    async sendTicketCreatedEmail({
+        emailTo,
+        ticket,
+        property,
+        raisedBy,
+        assignedTo
+    }: {
+        emailTo: string | string[];
+        ticket: any;
+        property: any;
+        raisedBy: any;
+        assignedTo?: any;
+    }) {
+        if (!smtpUser || !emailTo) return false;
+        try {
+            const recipients = Array.isArray(emailTo) ? emailTo.join(', ') : emailTo;
+            const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fms.autopilotoffices.com';
+            const priorityColor = ticket.priority === 'Critical' ? '#dc2626' : (ticket.priority === 'High' ? '#ea580c' : '#2563eb');
+            const subject = `[New Ticket #${ticket.ticket_number}] ${ticket.title} - ${property?.name || 'Property'}`;
+
+            const html = `
+                <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; background-color: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <h2 style="color: #0f172a; margin: 0; font-size: 20px;">🎫 New Service Ticket Raised</h2>
+                        <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Ticket #${ticket.ticket_number} has been logged in Autopilot FMS</p>
+                    </div>
+
+                    <div style="background-color: #f8fafc; border-left: 4px solid ${priorityColor}; padding: 16px; border-radius: 6px; margin: 18px 0;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                            <tr><td style="padding: 4px 0; color: #64748b; width: 130px;"><b>Ticket #:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: bold;">#${ticket.ticket_number}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Subject:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: 600;">${ticket.title}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Property:</b></td><td style="padding: 4px 0; color: #0f172a;">${property?.name || 'Site Property'}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Priority:</b></td><td style="padding: 4px 0; color: ${priorityColor}; font-weight: bold;">${ticket.priority || 'Medium'}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Raised By:</b></td><td style="padding: 4px 0; color: #0f172a;">${raisedBy?.full_name || raisedBy?.email || 'Tenant'} ${raisedBy?.phone ? `(${raisedBy.phone})` : ''}</td></tr>
+                            ${assignedTo ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Assigned To:</b></td><td style="padding: 4px 0; color: #0f172a;">${assignedTo.full_name || assignedTo.email}</td></tr>` : ''}
+                        </table>
+                    </div>
+
+                    ${ticket.description ? `
+                    <h3 style="font-size: 15px; color: #0f172a; margin-top: 16px; margin-bottom: 6px;">Description / Issue Details:</h3>
+                    <div style="background-color: #f8fafc; padding: 12px 16px; border-radius: 6px; border: 1px solid #e2e8f0; font-size: 14px; color: #334155; white-space: pre-wrap;">
+                        ${ticket.description}
+                    </div>` : ''}
+
+                    <div style="text-align: center; margin-top: 28px;">
+                        <a href="${appUrl}/tickets/${ticket.id || ticket.ticket_id}" style="display: inline-block; background-color: #2563eb; color: #ffffff; text-decoration: none; font-weight: bold; padding: 12px 28px; border-radius: 8px; font-size: 14px;">View Ticket in Dashboard</a>
+                    </div>
+                </div>
+            `;
+
+            await transporter.sendMail({
+                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                to: recipients,
+                subject,
+                html,
+            });
+            console.log(`[EmailService] Ticket created email sent to ${recipients}`);
+            return true;
+        } catch (error) {
+            console.error('[EmailService] Failed to send ticket created email:', error);
+            return false;
+        }
+    },
+
+    async sendTicketAssignedEmail({
+        emailTo,
+        ticket,
+        property,
+        assignedTo,
+        raisedBy
+    }: {
+        emailTo: string | string[];
+        ticket: any;
+        property: any;
+        assignedTo: any;
+        raisedBy?: any;
+    }) {
+        if (!smtpUser || !emailTo) return false;
+        try {
+            const recipients = Array.isArray(emailTo) ? emailTo.join(', ') : emailTo;
+            const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fms.autopilotoffices.com';
+            const subject = `[Ticket Assigned #${ticket.ticket_number}] ${ticket.title} - ${property?.name || ''}`;
+
+            const html = `
+                <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; background-color: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <h2 style="color: #2563eb; margin: 0; font-size: 20px;">👷 Ticket Assigned</h2>
+                        <p style="color: #64748b; font-size: 14px; margin-top: 4px;">You have been assigned to Ticket #${ticket.ticket_number}</p>
+                    </div>
+
+                    <div style="background-color: #eff6ff; border-left: 4px solid #2563eb; padding: 16px; border-radius: 6px; margin: 18px 0;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                            <tr><td style="padding: 4px 0; color: #64748b; width: 130px;"><b>Ticket #:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: bold;">#${ticket.ticket_number}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Subject:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: 600;">${ticket.title}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Property:</b></td><td style="padding: 4px 0; color: #0f172a;">${property?.name || 'Site Property'}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Priority:</b></td><td style="padding: 4px 0; color: #2563eb; font-weight: bold;">${ticket.priority || 'Medium'}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Assigned To:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: 600;">${assignedTo?.full_name || assignedTo?.email || 'Technician'}</td></tr>
+                            ${raisedBy ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Requester:</b></td><td style="padding: 4px 0; color: #0f172a;">${raisedBy.full_name || raisedBy.email} ${raisedBy.phone ? `(${raisedBy.phone})` : ''}</td></tr>` : ''}
+                        </table>
+                    </div>
+
+                    <div style="text-align: center; margin-top: 28px;">
+                        <a href="${appUrl}/tickets/${ticket.id || ticket.ticket_id}" style="display: inline-block; background-color: #2563eb; color: #ffffff; text-decoration: none; font-weight: bold; padding: 12px 28px; border-radius: 8px; font-size: 14px;">Open Ticket & Update Status</a>
+                    </div>
+                </div>
+            `;
+
+            await transporter.sendMail({
+                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                to: recipients,
+                subject,
+                html,
+            });
+            console.log(`[EmailService] Ticket assigned email sent to ${recipients}`);
+            return true;
+        } catch (error) {
+            console.error('[EmailService] Failed to send ticket assigned email:', error);
+            return false;
+        }
+    },
+
+    async sendTicketCompletedEmail({
+        emailTo,
+        ticket,
+        property,
+        resolvedBy,
+        resolutionNotes
+    }: {
+        emailTo: string | string[];
+        ticket: any;
+        property: any;
+        resolvedBy: any;
+        resolutionNotes?: string;
+    }) {
+        if (!smtpUser || !emailTo) return false;
+        try {
+            const recipients = Array.isArray(emailTo) ? emailTo.join(', ') : emailTo;
+            const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fms.autopilotoffices.com';
+            const subject = `[Resolved] Ticket #${ticket.ticket_number} - ${ticket.title}`;
+
+            const html = `
+                <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; background-color: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <h2 style="color: #16a34a; margin: 0; font-size: 20px;">✅ Service Request Resolved</h2>
+                        <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Ticket #${ticket.ticket_number} has been completed</p>
+                    </div>
+
+                    <div style="background-color: #f0fdf4; border-left: 4px solid #16a34a; padding: 16px; border-radius: 6px; margin: 18px 0;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                            <tr><td style="padding: 4px 0; color: #64748b; width: 130px;"><b>Ticket #:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: bold;">#${ticket.ticket_number}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Subject:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: 600;">${ticket.title}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Property:</b></td><td style="padding: 4px 0; color: #0f172a;">${property?.name || 'Site Property'}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Resolved By:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: 600;">${resolvedBy?.full_name || resolvedBy?.email || 'Technician'}</td></tr>
+                        </table>
+                    </div>
+
+                    ${resolutionNotes ? `
+                    <h3 style="font-size: 15px; color: #0f172a; margin-top: 16px; margin-bottom: 6px;">Resolution Summary:</h3>
+                    <div style="background-color: #f8fafc; padding: 12px 16px; border-radius: 6px; border: 1px solid #e2e8f0; font-size: 14px; color: #334155; white-space: pre-wrap;">
+                        ${resolutionNotes}
+                    </div>` : ''}
+
+                    <div style="text-align: center; margin-top: 28px;">
+                        <a href="${appUrl}/tickets/${ticket.id || ticket.ticket_id}" style="display: inline-block; background-color: #16a34a; color: #ffffff; text-decoration: none; font-weight: bold; padding: 12px 28px; border-radius: 8px; font-size: 14px;">Verify & Rate Service Quality</a>
+                    </div>
+                </div>
+            `;
+
+            await transporter.sendMail({
+                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                to: recipients,
+                subject,
+                html,
+            });
+            console.log(`[EmailService] Ticket completed email sent to ${recipients}`);
+            return true;
+        } catch (error) {
+            console.error('[EmailService] Failed to send ticket completed email:', error);
+            return false;
+        }
+    },
+
+    async sendChecklistCompletedEmail({
+        emailTo,
+        checklistTitle,
+        property,
+        completedBy,
+        score,
+        notes
+    }: {
+        emailTo: string | string[];
+        checklistTitle: string;
+        property: any;
+        completedBy: any;
+        score?: number | string;
+        notes?: string;
+    }) {
+        if (!smtpUser || !emailTo) return false;
+        try {
+            const recipients = Array.isArray(emailTo) ? emailTo.join(', ') : emailTo;
+            const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fms.autopilotoffices.com';
+            const subject = `[Checklist Completed] ${checklistTitle} - ${property?.name || 'Property'}`;
+
+            const html = `
+                <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; background-color: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <h2 style="color: #059669; margin: 0; font-size: 20px;">📋 Checklist Completed</h2>
+                        <p style="color: #64748b; font-size: 14px; margin-top: 4px;">SOP execution has been logged in Autopilot FMS</p>
+                    </div>
+
+                    <div style="background-color: #f0fdf4; border-left: 4px solid #059669; padding: 16px; border-radius: 6px; margin: 18px 0;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                            <tr><td style="padding: 4px 0; color: #64748b; width: 130px;"><b>Checklist:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: bold;">${checklistTitle}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Property:</b></td><td style="padding: 4px 0; color: #0f172a;">${property?.name || 'Site Property'}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Completed By:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: 600;">${completedBy?.full_name || completedBy?.email || 'Staff'}</td></tr>
+                            ${score !== undefined ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Score / Compliance:</b></td><td style="padding: 4px 0; color: #059669; font-weight: bold;">${score}</td></tr>` : ''}
+                        </table>
+                    </div>
+
+                    ${notes ? `
+                    <h3 style="font-size: 15px; color: #0f172a; margin-top: 16px; margin-bottom: 6px;">Notes / Remarks:</h3>
+                    <div style="background-color: #f8fafc; padding: 12px 16px; border-radius: 6px; border: 1px solid #e2e8f0; font-size: 14px; color: #334155; white-space: pre-wrap;">
+                        ${notes}
+                    </div>` : ''}
+
+                    <div style="text-align: center; margin-top: 28px;">
+                        <a href="${appUrl}/property/${property?.id || ''}/soft-service-manager" style="display: inline-block; background-color: #059669; color: #ffffff; text-decoration: none; font-weight: bold; padding: 12px 28px; border-radius: 8px; font-size: 14px;">View Checklist Report</a>
+                    </div>
+                </div>
+            `;
+
+            await transporter.sendMail({
+                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                to: recipients,
+                subject,
+                html,
+            });
+            console.log(`[EmailService] Checklist completed email sent to ${recipients}`);
+            return true;
+        } catch (error) {
+            console.error('[EmailService] Failed to send checklist completed email:', error);
+            return false;
+        }
+    },
+
+    async sendChecklistReminderEmail({
+        emailTo,
+        checklistTitle,
+        property,
+        assignedTo,
+        dueTime
+    }: {
+        emailTo: string | string[];
+        checklistTitle: string;
+        property: any;
+        assignedTo?: any;
+        dueTime?: string;
+    }) {
+        if (!smtpUser || !emailTo) return false;
+        try {
+            const recipients = Array.isArray(emailTo) ? emailTo.join(', ') : emailTo;
+            const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fms.autopilotoffices.com';
+            const subject = `[📋 Reminder] Checklist Due Soon: ${checklistTitle} - ${property?.name || 'Property'}`;
+
+            const html = `
+                <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; background-color: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <h2 style="color: #6366f1; margin: 0; font-size: 20px;">📋 Checklist Due Soon</h2>
+                        <p style="color: #64748b; font-size: 14px; margin-top: 4px;">An upcoming SOP checklist is scheduled for execution</p>
+                    </div>
+
+                    <div style="background-color: #f8fafc; border-left: 4px solid #6366f1; padding: 16px; border-radius: 6px; margin: 18px 0;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                            <tr><td style="padding: 4px 0; color: #64748b; width: 130px;"><b>Checklist:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: bold;">${checklistTitle}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Property:</b></td><td style="padding: 4px 0; color: #0f172a;">${property?.name || 'Site Property'}</td></tr>
+                            ${assignedTo ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Assigned To:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: 600;">${assignedTo?.full_name || assignedTo?.email || 'Staff'}</td></tr>` : ''}
+                            ${dueTime ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Due Time:</b></td><td style="padding: 4px 0; color: #6366f1; font-weight: bold;">${dueTime}</td></tr>` : ''}
+                        </table>
+                    </div>
+
+                    <div style="text-align: center; margin-top: 28px;">
+                        <a href="${appUrl}/property/${property?.id || ''}/soft-service-manager" style="display: inline-block; background-color: #6366f1; color: #ffffff; text-decoration: none; font-weight: bold; padding: 12px 28px; border-radius: 8px; font-size: 14px;">Open Checklist in FMS</a>
+                    </div>
+                </div>
+            `;
+
+            await transporter.sendMail({
+                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                to: recipients,
+                subject,
+                html,
+            });
+            console.log(`[EmailService] Checklist reminder email sent to ${recipients}`);
+            return true;
+        } catch (error) {
+            console.error('[EmailService] Failed to send checklist reminder email:', error);
+            return false;
+        }
+    },
+
+    async sendChecklistOverdueEmail({
+        emailTo,
+        checklistTitle,
+        property,
+        assignedTo,
+        slotTime
+    }: {
+        emailTo: string | string[];
+        checklistTitle: string;
+        property: any;
+        assignedTo?: any;
+        slotTime?: string;
+    }) {
+        if (!smtpUser || !emailTo) return false;
+        try {
+            const recipients = Array.isArray(emailTo) ? emailTo.join(', ') : emailTo;
+            const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fms.autopilotoffices.com';
+            const subject = `[⚠️ Overdue Alert] Checklist Missed: ${checklistTitle} - ${property?.name || 'Property'}`;
+
+            const html = `
+                <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; background-color: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <h2 style="color: #dc2626; margin: 0; font-size: 20px;">⚠️ Checklist Slot Overdue</h2>
+                        <p style="color: #64748b; font-size: 14px; margin-top: 4px;">A scheduled checklist was not completed in the designated slot</p>
+                    </div>
+
+                    <div style="background-color: #fef2f2; border-left: 4px solid #dc2626; padding: 16px; border-radius: 6px; margin: 18px 0;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                            <tr><td style="padding: 4px 0; color: #64748b; width: 130px;"><b>Checklist:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: bold;">${checklistTitle}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Property:</b></td><td style="padding: 4px 0; color: #0f172a;">${property?.name || 'Site Property'}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Scheduled Slot:</b></td><td style="padding: 4px 0; color: #dc2626; font-weight: 600;">${slotTime || 'Scheduled Time'}</td></tr>
+                            ${assignedTo ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Assigned Staff:</b></td><td style="padding: 4px 0; color: #0f172a;">${assignedTo.full_name || assignedTo.email}</td></tr>` : ''}
+                        </table>
+                    </div>
+
+                    <div style="text-align: center; margin-top: 28px;">
+                        <a href="${appUrl}/property/${property?.id || ''}/soft-service-manager" style="display: inline-block; background-color: #dc2626; color: #ffffff; text-decoration: none; font-weight: bold; padding: 12px 28px; border-radius: 8px; font-size: 14px;">Review Missed Checklist</a>
+                    </div>
+                </div>
+            `;
+
+            await transporter.sendMail({
+                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                to: recipients,
+                subject,
+                html,
+            });
+            console.log(`[EmailService] Checklist overdue alert email sent to ${recipients}`);
+            return true;
+        } catch (error) {
+            console.error('[EmailService] Failed to send checklist overdue email:', error);
+            return false;
+        }
+    },
+
+    async sendPpmReminderEmail({
+        emailTo,
+        schedule,
+        property,
+        vendor
+    }: {
+        emailTo: string | string[];
+        schedule: any;
+        property: any;
+        vendor?: any;
+    }) {
+        if (!smtpUser || !emailTo) return false;
+        try {
+            const recipients = Array.isArray(emailTo) ? emailTo.join(', ') : emailTo;
+            const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fms.autopilotoffices.com';
+            const subject = `[🔧 PPM Reminder] ${schedule.system_name || 'Asset Maintenance'} Due - ${property?.name || ''}`;
+
+            const html = `
+                <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; background-color: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <h2 style="color: #d97706; margin: 0; font-size: 20px;">🔧 Planned Preventive Maintenance Reminder</h2>
+                        <p style="color: #64748b; font-size: 14px; margin-top: 4px;">PPM activity is scheduled for execution</p>
+                    </div>
+
+                    <div style="background-color: #fffbeb; border-left: 4px solid #d97706; padding: 16px; border-radius: 6px; margin: 18px 0;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                            <tr><td style="padding: 4px 0; color: #64748b; width: 130px;"><b>System / Asset:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: bold;">${schedule.system_name || 'System / Asset'}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Property:</b></td><td style="padding: 4px 0; color: #0f172a;">${property?.name || 'Site Property'}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Planned Date:</b></td><td style="padding: 4px 0; color: #d97706; font-weight: bold;">${schedule.planned_date}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Vendor / Team:</b></td><td style="padding: 4px 0; color: #0f172a;">${vendor?.name || schedule.vendor_name || 'Assigned Vendor'}</td></tr>
+                            ${schedule.location ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Location:</b></td><td style="padding: 4px 0; color: #0f172a;">${schedule.location}</td></tr>` : ''}
+                        </table>
+                    </div>
+
+                    <div style="text-align: center; margin-top: 28px;">
+                        <a href="${appUrl}/property/${property?.id || ''}/dashboard?tab=ppm" style="display: inline-block; background-color: #d97706; color: #ffffff; text-decoration: none; font-weight: bold; padding: 12px 28px; border-radius: 8px; font-size: 14px;">View PPM Schedule</a>
+                    </div>
+                </div>
+            `;
+
+            await transporter.sendMail({
+                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                to: recipients,
+                subject,
+                html,
+            });
+            console.log(`[EmailService] PPM reminder email sent to ${recipients}`);
+            return true;
+        } catch (error) {
+            console.error('[EmailService] Failed to send PPM reminder email:', error);
+            return false;
+        }
+    },
+
+    async sendLeadAssignedEmail({
+        emailTo,
+        lead,
+        assignedTo,
+        propertyName
+    }: {
+        emailTo: string | string[];
+        lead: any;
+        assignedTo: any;
+        propertyName?: string;
+    }) {
+        if (!smtpUser || !emailTo) return false;
+        try {
+            const recipients = Array.isArray(emailTo) ? emailTo.join(', ') : emailTo;
+            const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fms.autopilotoffices.com';
+            const subject = `[Lead Assigned] ${lead.company_name || 'New Lead'} - ${propertyName || 'CRM'}`;
+
+            const html = `
+                <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; background-color: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <h2 style="color: #6366f1; margin: 0; font-size: 20px;">🎯 CRM Lead Assigned</h2>
+                        <p style="color: #64748b; font-size: 14px; margin-top: 4px;">A new lead has been assigned to you</p>
+                    </div>
+
+                    <div style="background-color: #eef2ff; border-left: 4px solid #6366f1; padding: 16px; border-radius: 6px; margin: 18px 0;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                            <tr><td style="padding: 4px 0; color: #64748b; width: 130px;"><b>Company:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: bold;">${lead.company_name || 'Company'}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Contact Person:</b></td><td style="padding: 4px 0; color: #0f172a;">${lead.contact_person || 'N/A'}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Phone / Mobile:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: 600;">${lead.phone || lead.contact_number || 'N/A'}</td></tr>
+                            ${lead.requirement ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Requirement:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: bold;">${lead.requirement}</td></tr>` : ''}
+                            ${lead.email ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Email:</b></td><td style="padding: 4px 0; color: #0f172a;">${lead.email}</td></tr>` : ''}
+                            ${propertyName ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Property Interest:</b></td><td style="padding: 4px 0; color: #0f172a;">${propertyName}</td></tr>` : ''}
+                            ${lead.source ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Source:</b></td><td style="padding: 4px 0; color: #0f172a;">${lead.source}</td></tr>` : ''}
+                            ${lead.campaign ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Campaign:</b></td><td style="padding: 4px 0; color: #0f172a;">${lead.campaign}</td></tr>` : ''}
+                            ${lead.next_followup ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Next Follow-up:</b></td><td style="padding: 4px 0; color: #6366f1; font-weight: bold;">${lead.next_followup}</td></tr>` : ''}
+                        </table>
+                    </div>
+
+                    <div style="text-align: center; margin-top: 28px;">
+                        <a href="${appUrl}/crm/leads" style="display: inline-block; background-color: #6366f1; color: #ffffff; text-decoration: none; font-weight: bold; padding: 12px 28px; border-radius: 8px; font-size: 14px;">Open CRM Lead</a>
+                    </div>
+                </div>
+            `;
+
+            await transporter.sendMail({
+                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                to: recipients,
+                subject,
+                html,
+            });
+            console.log(`[EmailService] Lead assigned email sent to ${recipients}`);
+            return true;
+        } catch (error) {
+            console.error('[EmailService] Failed to send lead assigned email:', error);
+            return false;
+        }
     }
 };
