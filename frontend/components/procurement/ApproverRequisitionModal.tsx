@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import {
     X, CheckCircle2, XCircle, FileSpreadsheet, Download,
     Building2, Calendar, User, DollarSign, FileText, AlertCircle,
-    Loader2, ShieldCheck, MessageSquare
+    Loader2, ShieldCheck, MessageSquare, Search, Filter
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -32,6 +32,8 @@ export default function ApproverRequisitionModal({
     const [remarks, setRemarks] = useState<string>('');
     const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
+    const [filterMode, setFilterMode] = useState<'all' | 'requested'>('all');
+    const [searchQuery, setSearchQuery] = useState<string>('');
 
     if (!isOpen || !requisition) return null;
 
@@ -258,13 +260,51 @@ export default function ApproverRequisitionModal({
 
                         {/* Dual Table Display (Requisition vs Available Stock) */}
                         <div>
-                            <h3 className="text-xs font-black text-slate-500 uppercase tracking-wider mb-3">
-                                Dual-Table Comparison (Requested vs. Physical Stock on Site)
-                            </h3>
-                            <div className="border border-slate-200 rounded-2xl overflow-hidden max-h-[300px] overflow-y-auto">
+                            <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                                <div>
+                                    <h3 className="text-xs font-black text-slate-700 uppercase tracking-wider">
+                                        Dual-Table Comparison (Requested vs. Physical Stock on Site)
+                                    </h3>
+                                    <p className="text-[11px] text-slate-500">
+                                        Showing {items.filter((i: any) => (i.requested_qty || 0) > 0).length} requested items ({items.length} total catalog line items)
+                                    </p>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    {/* Search input */}
+                                    <div className="relative">
+                                        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                                        <input
+                                            type="text"
+                                            placeholder="Search product..."
+                                            value={searchQuery}
+                                            onChange={e => setSearchQuery(e.target.value)}
+                                            className="pl-8 pr-3 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 placeholder:text-slate-400 focus:outline-hidden focus:ring-1 focus:ring-emerald-500 w-36 sm:w-48"
+                                        />
+                                    </div>
+                                    {/* Filter Toggle */}
+                                    <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs">
+                                        <button
+                                            type="button"
+                                            onClick={() => setFilterMode('all')}
+                                            className={`px-2.5 py-1 rounded-md font-bold transition-all cursor-pointer ${filterMode === 'all' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-800'}`}
+                                        >
+                                            All ({items.length})
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setFilterMode('requested')}
+                                            className={`px-2.5 py-1 rounded-md font-bold transition-all cursor-pointer ${filterMode === 'requested' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'}`}
+                                        >
+                                            Requested Only ({items.filter((i: any) => (i.requested_qty || 0) > 0).length})
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="border border-slate-200 rounded-2xl overflow-hidden max-h-[350px] overflow-y-auto">
                                 <table className="w-full text-xs border-collapse">
                                     <thead>
-                                        <tr className="bg-slate-100 font-black text-slate-800 border-b border-slate-200">
+                                        <tr className="bg-slate-100 font-black text-slate-800 border-b border-slate-200 sticky top-0 z-10">
                                             <th className="py-2 px-2 bg-slate-200 border border-slate-300 w-8">#</th>
                                             <th className="py-2 px-3 bg-[#00a2ed] text-white border border-[#00a2ed]">Product</th>
                                             <th className="py-2 px-3 bg-[#48c774] text-slate-950 border border-[#48c774]">Brand</th>
@@ -275,17 +315,33 @@ export default function ApproverRequisitionModal({
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {items.map((item: any, idx: number) => (
-                                            <tr key={idx} className="hover:bg-slate-50 border-b border-slate-100">
-                                                <td className="py-1.5 px-2 text-center text-slate-500 font-semibold bg-slate-50 border-r border-slate-200">{idx + 1}</td>
-                                                <td className="py-1.5 px-3 font-bold text-slate-900 border-r border-slate-200 bg-[#00a2ed]/5">{item.name}</td>
-                                                <td className="py-1.5 px-3 text-slate-700 border-r border-slate-200 bg-[#48c774]/5">{item.brand || 'NA'}</td>
-                                                <td className="py-1.5 px-3 text-slate-700 border-r border-slate-200 bg-[#ffeb3b]/5">{item.details || '-'}</td>
-                                                <td className="py-1.5 px-2 text-center font-black text-emerald-700 bg-emerald-50/30 border-r border-slate-200">{item.requested_qty || 0}</td>
-                                                <td className="py-1.5 px-2 text-center font-bold text-slate-700 bg-slate-50 border-r border-slate-200">{item.available_stock_qty || 0}</td>
-                                                <td className="py-1.5 px-2 text-center font-semibold text-slate-700 bg-[#ffccbc]/10">{item.unit || 'pcs'}</td>
-                                            </tr>
-                                        ))}
+                                        {items
+                                            .filter((item: any) => {
+                                                if (filterMode === 'requested' && !(item.requested_qty > 0)) return false;
+                                                if (searchQuery.trim()) {
+                                                    const q = searchQuery.toLowerCase();
+                                                    return (item.name || '').toLowerCase().includes(q) ||
+                                                           (item.brand || '').toLowerCase().includes(q) ||
+                                                           (item.details || '').toLowerCase().includes(q);
+                                                }
+                                                return true;
+                                            })
+                                            .map((item: any, idx: number) => {
+                                                const isRequested = (item.requested_qty || 0) > 0;
+                                                return (
+                                                    <tr key={idx} className={`hover:bg-slate-50 border-b border-slate-100 ${isRequested ? 'bg-emerald-50/20' : ''}`}>
+                                                        <td className="py-1.5 px-2 text-center text-slate-500 font-semibold bg-slate-50 border-r border-slate-200">{idx + 1}</td>
+                                                        <td className="py-1.5 px-3 font-bold text-slate-900 border-r border-slate-200 bg-[#00a2ed]/5">{item.name}</td>
+                                                        <td className="py-1.5 px-3 text-slate-700 border-r border-slate-200 bg-[#48c774]/5">{item.brand || 'NA'}</td>
+                                                        <td className="py-1.5 px-3 text-slate-700 border-r border-slate-200 bg-[#ffeb3b]/5">{item.details || '-'}</td>
+                                                        <td className={`py-1.5 px-2 text-center font-black border-r border-slate-200 ${isRequested ? 'text-emerald-700 bg-emerald-100/50 text-sm' : 'text-slate-400 bg-slate-50/30'}`}>
+                                                            {item.requested_qty || 0}
+                                                        </td>
+                                                        <td className="py-1.5 px-2 text-center font-bold text-slate-700 bg-slate-50 border-r border-slate-200">{item.available_stock_qty || 0}</td>
+                                                        <td className="py-1.5 px-2 text-center font-semibold text-slate-700 bg-[#ffccbc]/10">{item.unit || 'pcs'}</td>
+                                                    </tr>
+                                                );
+                                            })}
                                     </tbody>
                                 </table>
                             </div>

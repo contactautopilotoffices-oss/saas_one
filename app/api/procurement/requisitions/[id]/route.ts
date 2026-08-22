@@ -24,23 +24,32 @@ export async function GET(
 
         const { data: req, error } = await adminSupabase
             .from('property_monthly_requisitions')
-            .select(`
-                *,
-                property:properties!property_id(id, name, address, city),
-                uploader:users!uploaded_by(id, full_name, email, phone),
-                acknowledger:users!acknowledged_by(id, full_name, email)
-            `)
+            .select('*')
             .eq('id', id)
-            .single();
+            .maybeSingle();
 
         if (error || !req) {
             return NextResponse.json({ error: 'Requisition not found' }, { status: 404 });
+        }
+
+        let propertyObj: any = null;
+        if (req.property_id) {
+            const { data: prop } = await adminSupabase.from('properties').select('id, name, address, city').eq('id', req.property_id).maybeSingle();
+            if (prop) propertyObj = prop;
+        }
+
+        let uploaderObj: any = null;
+        if (req.uploaded_by) {
+            const { data: u } = await adminSupabase.from('users').select('id, full_name, email, phone').eq('id', req.uploaded_by).maybeSingle();
+            if (u) uploaderObj = u;
         }
 
         let parsedData: any = {};
         try {
             if (req.notes && typeof req.notes === 'string' && req.notes.trim().startsWith('{')) {
                 parsedData = JSON.parse(req.notes);
+            } else if (typeof req.notes === 'object' && req.notes !== null) {
+                parsedData = req.notes;
             }
         } catch {
             parsedData = {};
@@ -49,11 +58,13 @@ export async function GET(
         return NextResponse.json({
             requisition: {
                 ...req,
+                property: propertyObj,
+                uploader: uploaderObj,
                 items: parsedData.items || [],
                 categories: parsedData.categories || [],
-                total_estimated_amount: parsedData.total_estimated_amount || 0,
+                total_estimated_amount: parsedData.total_estimated_amount || req.total_estimated_amount || 0,
                 total_items_count: parsedData.items?.length || 0,
-                site_notes: parsedData.site_notes || req.notes || '',
+                site_notes: parsedData.site_notes || (typeof req.notes === 'string' ? req.notes : ''),
                 vendor_quotation: parsedData.vendor_quotation || null,
                 approver_info: parsedData.approver_info || null,
                 po_info: parsedData.po_info || null
@@ -78,28 +89,38 @@ export async function PATCH(
         const adminSupabase = createAdminClient();
         const contentType = request.headers.get('content-type') || '';
 
-        // Fetch existing record
+        // Fetch existing record without strict joins
         const { data: existing, error: fetchErr } = await adminSupabase
             .from('property_monthly_requisitions')
-            .select(`
-                *,
-                property:properties!property_id(id, name),
-                uploader:users!uploaded_by(id, full_name, email)
-            `)
+            .select('*')
             .eq('id', id)
-            .single();
+            .maybeSingle();
 
         if (fetchErr || !existing) {
             return NextResponse.json({ error: 'Requisition not found' }, { status: 404 });
         }
 
+        let propertyObj: any = null;
+        if (existing.property_id) {
+            const { data: prop } = await adminSupabase.from('properties').select('id, name, address, city').eq('id', existing.property_id).maybeSingle();
+            if (prop) propertyObj = prop;
+        }
+
+        let uploaderObj: any = null;
+        if (existing.uploaded_by) {
+            const { data: u } = await adminSupabase.from('users').select('id, full_name, email, phone').eq('id', existing.uploaded_by).maybeSingle();
+            if (u) uploaderObj = u;
+        }
+
         let existingNotesObj: any = {};
         try {
-            if (existing.notes && existing.notes.trim().startsWith('{')) {
+            if (existing.notes && typeof existing.notes === 'string' && existing.notes.trim().startsWith('{')) {
                 existingNotesObj = JSON.parse(existing.notes);
+            } else if (typeof existing.notes === 'object' && existing.notes !== null) {
+                existingNotesObj = existing.notes;
             }
         } catch {
-            existingNotesObj = { site_notes: existing.notes || '' };
+            existingNotesObj = { site_notes: typeof existing.notes === 'string' ? existing.notes : '' };
         }
 
         let updateStatus = existing.status;
@@ -223,22 +244,18 @@ export async function PATCH(
                 updated_at: new Date().toISOString()
             })
             .eq('id', id)
-            .select(`
-                *,
-                property:properties!property_id(id, name),
-                uploader:users!uploaded_by(id, full_name, email)
-            `)
-            .single();
+            .select('*')
+            .maybeSingle();
 
-        if (updateError) {
-            return NextResponse.json({ error: 'Failed to update requisition', details: updateError.message }, { status: 500 });
+        if (updateError || !updatedRecord) {
+            return NextResponse.json({ error: 'Failed to update requisition', details: updateError?.message }, { status: 500 });
         }
 
         // If status moved to pending_approval, notify Approver via Email & WhatsApp
         if (updateStatus === 'pending_approval' && approverInfoData?.id) {
             const monthName = MONTH_NAMES[(existing.requisition_month || 1) - 1];
-            const propertyName = existing.property?.name || 'Site Property';
-            const totalAmount = vendorQuotationData?.total_quoted_amount || existingNotesObj.total_estimated_amount || 0;
+            const propertyName = propertyObj?.name || 'Site Property';
+            const totalAmount = vendorQuotationData?.total_quoted_amount || existingNotesObj.total_estimated_amount || existing.total_estimated_amount || 0;
 
             (async () => {
                 try {
@@ -295,14 +312,14 @@ export async function PATCH(
         // If status moved to ordered (PO Issued), notify Site Admin & Requester via Email & WhatsApp (Template 13D)
         if (updateStatus === 'ordered' && poInfoData) {
             const monthName = MONTH_NAMES[(existing.requisition_month || 1) - 1];
-            const propertyName = existing.property?.name || 'Site Property';
+            const propertyName = propertyObj?.name || 'Site Property';
             const floorTag = existing.floor_tag && existing.floor_tag !== 'All Floors' ? ` (${existing.floor_tag})` : '';
             const propertyDisplay = `${propertyName}${floorTag}`;
 
             (async () => {
                 try {
                     const contextualEmails: string[] = [];
-                    if (existing.uploader?.email) contextualEmails.push(existing.uploader.email);
+                    if (uploaderObj?.email) contextualEmails.push(uploaderObj.email);
 
                     const emailResolution = await EmailRecipientResolver.resolveRecipients({
                         organizationId: existing.organization_id,
@@ -339,7 +356,7 @@ export async function PATCH(
                         entityId: existing.id,
                         contextualUserIds: { requesterId: existing.uploaded_by },
                         paramValues: {
-                            user_name: existing.uploader?.full_name || 'Site Admin',
+                            user_name: uploaderObj?.full_name || 'Site Admin',
                             month: monthName,
                             year: String(existing.requisition_year || new Date().getFullYear()),
                             property: propertyDisplay,
@@ -349,13 +366,23 @@ export async function PATCH(
                         },
                         summaryMessage: `PO #${poInfoData.po_number} issued to ${poInfoData.vendor_name} for ${propertyDisplay}`
                     });
-                } catch (err) {
-                    console.error('[PO Issued Notification Dispatch Error]:', err);
+                } catch (notifErr) {
+                    console.error('[PO Notification Dispatch Error]:', notifErr);
                 }
             })();
         }
 
-        return NextResponse.json({ success: true, requisition: updatedRecord });
+        return NextResponse.json({
+            success: true,
+            requisition: {
+                ...updatedRecord,
+                property: propertyObj,
+                uploader: uploaderObj,
+                vendor_quotation: vendorQuotationData,
+                approver_info: approverInfoData,
+                po_info: poInfoData
+            }
+        });
     } catch (err: any) {
         console.error('[Requisition PATCH Server Error]:', err);
         return NextResponse.json({ error: 'Internal server error', details: err.message }, { status: 500 });
@@ -386,19 +413,51 @@ export async function DELETE(
             .from('property_monthly_requisitions')
             .select('id, organization_id, property_id, uploaded_by, status, file_url')
             .eq('id', id)
-            .single();
+            .maybeSingle();
 
         if (fetchErr || !existing) {
             return NextResponse.json({ error: 'Requisition not found' }, { status: 404 });
         }
 
-        // 2. Permission check: Must be the requester (uploaded_by) OR Super Admin / Procurement
-        const userRole = (user.user_metadata?.role || '').toLowerCase();
-        const isRequester = existing.uploaded_by === user.id;
-        const isSuperAdmin = userRole === 'org_super_admin' || userRole === 'master_admin';
-        const isProcurement = userRole.includes('procurement');
+        // 2. Robust Permission check: Requester OR Org Role OR Property Role
+        let isAuthorized = existing.uploaded_by === user.id;
 
-        if (!isRequester && !isSuperAdmin && !isProcurement) {
+        if (!isAuthorized) {
+            const userMetaRole = (user.user_metadata?.role || '').toLowerCase();
+            if (userMetaRole === 'org_super_admin' || userMetaRole === 'master_admin' || userMetaRole.includes('procurement') || userMetaRole.includes('admin')) {
+                isAuthorized = true;
+            }
+        }
+
+        if (!isAuthorized && existing.organization_id) {
+            const { data: orgMem } = await adminSupabase
+                .from('organization_memberships')
+                .select('role')
+                .eq('organization_id', existing.organization_id)
+                .eq('user_id', user.id)
+                .maybeSingle();
+
+            const orgRole = (orgMem?.role || '').toLowerCase();
+            if (orgRole === 'org_super_admin' || orgRole === 'master_admin' || orgRole.includes('procurement') || orgRole.includes('admin')) {
+                isAuthorized = true;
+            }
+        }
+
+        if (!isAuthorized && existing.property_id) {
+            const { data: propMem } = await adminSupabase
+                .from('property_memberships')
+                .select('role')
+                .eq('property_id', existing.property_id)
+                .eq('user_id', user.id)
+                .maybeSingle();
+
+            const propRole = (propMem?.role || '').toLowerCase();
+            if (propRole.includes('admin') || propRole.includes('manager')) {
+                isAuthorized = true;
+            }
+        }
+
+        if (!isAuthorized) {
             return NextResponse.json({
                 error: 'Forbidden: Only the original requester or administrators can delete this requisition.'
             }, { status: 403 });

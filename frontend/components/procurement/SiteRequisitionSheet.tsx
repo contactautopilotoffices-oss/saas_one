@@ -345,12 +345,15 @@ export default function SiteRequisitionSheet({
             return;
         }
 
-        const validItems = items.filter(i => (i.requested_qty || 0) > 0);
-        if (validItems.length === 0) {
-            if (!confirm('You have not entered requested quantities (> 0) for any items. Do you still want to submit?')) {
+        const requestedCount = items.filter(i => (i.requested_qty || 0) > 0).length;
+        if (requestedCount === 0) {
+            if (!confirm('You have not entered requested quantities (> 0) for any items. Do you still want to submit the complete sheet?')) {
                 return;
             }
         }
+
+        // Clean items list ensuring valid item objects
+        const submitItems = items.filter(i => i.name && i.name.trim().length > 0);
 
         setIsSubmitting(true);
         try {
@@ -365,7 +368,7 @@ export default function SiteRequisitionSheet({
                     requisition_year: requisitionYear,
                     user_id: user?.id,
                     site_notes: siteNotes,
-                    items: validItems
+                    items: submitItems
                 })
             });
 

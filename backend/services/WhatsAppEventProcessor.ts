@@ -687,14 +687,29 @@ export const WhatsAppEventProcessor = {
             || (Array.isArray((ticket as any)?.property) ? (ticket as any).property[0]?.name : null)
             || await this.getPropertyName(propertyId);
 
-        const { data: items } = await supabaseAdmin
-            .from('material_request_items')
-            .select('name, quantity')
-            .eq('request_id', requestId);
+        let itemsList: any[] = [];
+        if (Array.isArray(payload.items) && payload.items.length > 0) {
+            itemsList = payload.items;
+        } else if (requestId) {
+            const { data: mr } = await supabaseAdmin
+                .from('material_requests')
+                .select('items')
+                .eq('id', requestId)
+                .maybeSingle();
+            if (mr && Array.isArray(mr.items)) {
+                itemsList = mr.items;
+            } else {
+                const { data: separateItems } = await supabaseAdmin
+                    .from('material_request_items')
+                    .select('name, quantity')
+                    .eq('request_id', requestId);
+                if (separateItems) itemsList = separateItems;
+            }
+        }
 
-        const itemsSummary = (items || []).length > 0
-            ? (items || []).map((i: any) => `${i.name} x${i.quantity}`).join(', ')
-            : 'N/A';
+        const itemsSummary = (itemsList || []).length > 0
+            ? (itemsList || []).map((i: any) => `${i.name} x${i.quantity || 1}`).join(', ')
+            : 'Requested items';
 
         const requester = await this.getUserDetails(payload.requested_by);
 
@@ -912,12 +927,12 @@ export const WhatsAppEventProcessor = {
         let itemsCount = payload.items_count || payload.items?.length;
         let totalAmount = payload.total_amount || payload.total_estimated_amount;
 
-        // If itemsCount or totalAmount is missing / 0, query the record notes
+        // If itemsCount or totalAmount is missing / 0, query the record
         if (payload.requisition_id && (!itemsCount || !totalAmount)) {
             try {
                 const { data: req } = await supabaseAdmin
                     .from('property_monthly_requisitions')
-                    .select('notes, floor_tag')
+                    .select('notes, floor_tag, total_estimated_amount')
                     .eq('id', payload.requisition_id)
                     .maybeSingle();
 
@@ -925,11 +940,31 @@ export const WhatsAppEventProcessor = {
                     if (req.floor_tag && req.floor_tag !== 'All Floors' && !floorTag) {
                         floorTag = ` (${req.floor_tag})`;
                     }
-                    if (req.notes && typeof req.notes === 'string' && req.notes.trim().startsWith('{')) {
-                        const parsed = JSON.parse(req.notes);
-                        if (!itemsCount && parsed.total_items_count) itemsCount = parsed.total_items_count;
-                        if (!itemsCount && parsed.items) itemsCount = parsed.items.length;
-                        if (!totalAmount && parsed.total_estimated_amount) totalAmount = parsed.total_estimated_amount;
+                    if (req.total_estimated_amount && !totalAmount) {
+                        totalAmount = Number(req.total_estimated_amount);
+                    }
+
+                    let parsedNotes: any = null;
+                    if (typeof req.notes === 'object' && req.notes !== null) {
+                        parsedNotes = req.notes;
+                    } else if (typeof req.notes === 'string' && req.notes.trim().length > 0) {
+                        try {
+                            parsedNotes = JSON.parse(req.notes);
+                        } catch {}
+                    }
+
+                    if (parsedNotes) {
+                        if (!itemsCount && parsedNotes.requested_items_count) {
+                            itemsCount = parsedNotes.requested_items_count;
+                        } else if (!itemsCount && parsedNotes.total_items_count) {
+                            itemsCount = parsedNotes.total_items_count;
+                        } else if (!itemsCount && Array.isArray(parsedNotes.items)) {
+                            const reqCount = parsedNotes.items.filter((i: any) => (i.requested_qty || 0) > 0).length;
+                            itemsCount = reqCount > 0 ? reqCount : parsedNotes.items.length;
+                        }
+                        if (!totalAmount && parsedNotes.total_estimated_amount) {
+                            totalAmount = Number(parsedNotes.total_estimated_amount);
+                        }
                     }
                 }
             } catch (err) {

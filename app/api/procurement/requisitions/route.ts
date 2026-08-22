@@ -225,6 +225,7 @@ export async function POST(request: NextRequest) {
 
         // Calculate total cost using locked price snapshots
         const totalEstimatedAmount = rawItems.reduce((acc, curr) => acc + ((curr.requested_qty || 0) * (curr.unit_price || 0)), 0);
+        const requestedItemsCount = rawItems.filter(i => (i.requested_qty || 0) > 0).length;
 
         // Store structured JSON inside notes column for rich persistence
         const notesPayload = JSON.stringify({
@@ -232,6 +233,7 @@ export async function POST(request: NextRequest) {
             site_notes: siteNotes,
             total_estimated_amount: totalEstimatedAmount,
             total_items_count: rawItems.length,
+            requested_items_count: requestedItemsCount > 0 ? requestedItemsCount : rawItems.length,
             categories: Array.from(new Set(rawItems.map(i => i.category || 'HK'))),
             items: rawItems,
             submitted_at: new Date().toISOString()
@@ -249,6 +251,7 @@ export async function POST(request: NextRequest) {
                 file_url: publicUrl,
                 file_name: uploadedFileName,
                 file_size_bytes: uploadedFileBuffer.length,
+                total_estimated_amount: totalEstimatedAmount,
                 notes: notesPayload,
                 status: 'submitted',
                 uploaded_by: userId,
