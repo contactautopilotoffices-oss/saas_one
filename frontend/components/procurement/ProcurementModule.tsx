@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation';
 import { 
     Settings, List, ShoppingCart, 
     Loader2, FileText, FileSpreadsheet,
-    DollarSign
+    DollarSign, IndianRupee, Layers
 } from 'lucide-react';
 import ProcurementAdminSettings from './ProcurementAdminSettings';
 import ProcurementRequestList from './ProcurementRequestList';
@@ -13,11 +13,11 @@ import ProcurementPOProcessor from './ProcurementPOProcessor';
 import ProcurementCatalogModal from './ProcurementCatalogModal';
 import MonthlyRequisitionsTab from './MonthlyRequisitionsTab';
 import SitePricingAdminTab from './SitePricingAdminTab';
+import PropertyBudgetsTab from './PropertyBudgetsTab';
 import PaymentUrgencyTrackerTab from './payment-urgency/PaymentUrgencyTrackerTab';
 import { useAuth } from '@/frontend/context/AuthContext';
-import { Layers } from 'lucide-react';
 
-type TabType = 'orders' | 'urgency-tracker' | 'requisitions' | 'site-pricing' | 'catalog' | 'po-generator' | 'settings';
+type TabType = 'orders' | 'urgency-tracker' | 'requisitions' | 'site-budgets' | 'site-pricing' | 'catalog' | 'po-generator' | 'settings';
 
 export default function ProcurementModule({ orgId: propOrgId, isAdmin: propIsAdmin, properties: propProperties }: { orgId?: string, isAdmin?: boolean, properties?: any[] }) {
     const params = useParams();
@@ -30,9 +30,13 @@ export default function ProcurementModule({ orgId: propOrgId, isAdmin: propIsAdm
     const [counts, setCounts] = useState({ orders: 0, pending_quotation: 0 });
 
     const userRole = (membership?.org_role || (user?.user_metadata?.role as string) || '').toLowerCase();
-    const isSuperAdmin = propIsAdmin || userRole === 'org_super_admin' || userRole === 'master_admin';
-    const isProcurementUser = userRole.includes('procurement') || userRole === 'org_admin' || isSuperAdmin;
+    const propRole = (membership?.properties?.find(p => p.id === propertyId)?.role || '').toLowerCase();
+    const isPropertyAdmin = propIsAdmin === false || propRole === 'property_admin' || propRole === 'property_manager' || userRole === 'property_admin' || userRole === 'property_manager';
+
+    const isSuperAdmin = (propIsAdmin === true || userRole === 'org_super_admin' || userRole === 'master_admin') && !isPropertyAdmin;
+    const isProcurementUser = (userRole.includes('procurement') || userRole === 'org_admin') && !isPropertyAdmin;
     const canManageCatalogAndPricing = isSuperAdmin || isProcurementUser;
+    const canViewUrgencyTracker = (isSuperAdmin || isProcurementUser) && !isPropertyAdmin;
 
     useEffect(() => {
         const initialize = async () => {
@@ -47,6 +51,16 @@ export default function ProcurementModule({ orgId: propOrgId, isAdmin: propIsAdm
         };
         initialize();
     }, [orgId, propProperties]);
+
+    useEffect(() => {
+        if (typeof window !== 'undefined') {
+            const urlParams = new URLSearchParams(window.location.search);
+            const tabParam = urlParams.get('procurement_tab') || urlParams.get('subtab');
+            if (tabParam && ['orders', 'urgency-tracker', 'requisitions', 'site-budgets', 'site-pricing', 'catalog', 'po-generator', 'settings'].includes(tabParam)) {
+                setActiveTab(tabParam as TabType);
+            }
+        }
+    }, []);
 
     const fetchCounts = async () => {
         if (!user?.id || !orgId) return;
@@ -89,8 +103,9 @@ export default function ProcurementModule({ orgId: propOrgId, isAdmin: propIsAdm
 
     const TABS = [
         { id: 'orders', label: 'All Orders', icon: List, show: true, count: counts.orders },
-        { id: 'urgency-tracker', label: 'Urgency Tracker (P1-P3)', icon: Layers, show: true, count: 0 },
+        { id: 'urgency-tracker', label: 'Urgency Tracker (P1-P3)', icon: Layers, show: canViewUrgencyTracker, count: 0 },
         { id: 'requisitions', label: 'Monthly Requisitions', icon: FileSpreadsheet, show: true, count: 0 },
+        { id: 'site-budgets', label: 'Property Budgets', icon: IndianRupee, show: canManageCatalogAndPricing, count: 0 },
         { id: 'site-pricing', label: 'Site Pricing & Aliases', icon: DollarSign, show: canManageCatalogAndPricing, count: 0 },
         { id: 'catalog', label: 'Manage Items Master', icon: ShoppingCart, show: canManageCatalogAndPricing, count: 0 },
         { id: 'po-generator', label: 'PO Generator', icon: FileText, show: canManageCatalogAndPricing || userRole === 'org_admin', count: 0 },
@@ -141,7 +156,7 @@ export default function ProcurementModule({ orgId: propOrgId, isAdmin: propIsAdm
                     <ProcurementRequestList organizationId={orgId} propertyId={propertyId} onAction={fetchCounts} />
                 )}
 
-                {activeTab === 'urgency-tracker' && (
+                {activeTab === 'urgency-tracker' && canViewUrgencyTracker && (
                     <PaymentUrgencyTrackerTab
                         user={user}
                         organizationId={orgId}
@@ -155,8 +170,13 @@ export default function ProcurementModule({ orgId: propOrgId, isAdmin: propIsAdm
                         user={user} 
                         organizationId={orgId} 
                         propertyId={propertyId} 
-                        userRole={userRole || 'property_admin'} 
+                        userRole={userRole || 'property_admin'}
+                        onNavigateToBudgets={() => setActiveTab('site-budgets')}
                     />
+                )}
+
+                {activeTab === 'site-budgets' && canManageCatalogAndPricing && (
+                    <PropertyBudgetsTab user={user} organizationId={orgId || ''} properties={properties} />
                 )}
 
                 {activeTab === 'site-pricing' && canManageCatalogAndPricing && (

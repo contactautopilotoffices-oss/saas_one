@@ -169,6 +169,61 @@ export default function ApproverRequisitionModal({
                             </div>
                         </div>
 
+                        {/* Budget Audit Card */}
+                        <div className={`p-4 rounded-2xl border ${
+                            requisition.is_over_budget 
+                                ? 'bg-rose-50/80 border-rose-200' 
+                                : 'bg-slate-50 border-slate-200'
+                        }`}>
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                                <div className="flex items-center gap-2.5">
+                                    <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${
+                                        requisition.is_over_budget ? 'bg-rose-500 text-white' : 'bg-emerald-600 text-white'
+                                    }`}>
+                                        {requisition.is_over_budget ? <AlertCircle className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
+                                    </div>
+                                    <div>
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-xs font-black uppercase tracking-wider text-slate-800">
+                                                Monthly Budget Audit
+                                            </span>
+                                            {requisition.is_over_budget ? (
+                                                <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase bg-rose-200 text-rose-900 border border-rose-300">
+                                                    Over Budget (+₹{(requisition.over_budget_amount || 0).toLocaleString('en-IN')})
+                                                </span>
+                                            ) : (
+                                                <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase bg-emerald-100 text-emerald-800">
+                                                    Within Budget
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div className="text-xs text-slate-500 mt-0.5 flex flex-wrap items-center gap-3">
+                                            {requisition.budget_limit && requisition.budget_limit > 0 ? (
+                                                <span>Allocated Limit: <b>₹{requisition.budget_limit.toLocaleString('en-IN')}</b></span>
+                                            ) : (
+                                                <span>Allocated Limit: <i>No fixed limit set</i></span>
+                                            )}
+                                            {requisition.budget_breakdown?.hk_spent !== undefined && (
+                                                <span>· HK Spent: <b>₹{(requisition.budget_breakdown.hk_spent || 0).toLocaleString('en-IN')}</b></span>
+                                            )}
+                                            {requisition.budget_breakdown?.beverage_spent !== undefined && (
+                                                <span>· Beverage Spent: <b>₹{(requisition.budget_breakdown.beverage_spent || 0).toLocaleString('en-IN')}</b></span>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {requisition.is_over_budget && (
+                                    <div className="text-right">
+                                        <span className="text-[10px] font-bold uppercase tracking-wider text-rose-600 block">Excess Amount</span>
+                                        <span className="text-sm font-black text-rose-700">
+                                            +₹{(requisition.over_budget_amount || 0).toLocaleString('en-IN')}
+                                        </span>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
                         {/* Vendor Quotation Box (If Uploaded by Procurement) */}
                         {vendorQuotation && (
                             <div className="bg-sky-50/70 border border-sky-200 rounded-2xl p-4">
@@ -309,9 +364,9 @@ export default function ApproverRequisitionModal({
                                             <th className="py-2 px-3 bg-[#00a2ed] text-white border border-[#00a2ed]">Product</th>
                                             <th className="py-2 px-3 bg-[#48c774] text-slate-950 border border-[#48c774]">Brand</th>
                                             <th className="py-2 px-3 bg-[#ffeb3b] text-slate-950 border border-[#ffeb3b]">Details</th>
-                                            <th className="py-2 px-2 bg-emerald-100 text-emerald-950 border border-slate-300">Requested Qty</th>
-                                            <th className="py-2 px-2 bg-slate-100 text-slate-800 border border-slate-300">Available Stock</th>
-                                            <th className="py-2 px-2 bg-[#ffccbc] text-slate-950 border border-[#ffccbc]">UOM</th>
+                                            <th className="py-2 px-2 bg-emerald-100 text-emerald-950 border border-slate-300 min-w-[80px]">Requested Qty</th>
+                                            <th className="py-2 px-2 bg-slate-100 text-slate-800 border border-slate-300 min-w-[80px]">Available Stock</th>
+                                            <th className="py-2 px-2 bg-[#ffccbc] text-slate-950 border border-[#ffccbc] min-w-[55px]">UOM</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -334,11 +389,11 @@ export default function ApproverRequisitionModal({
                                                         <td className="py-1.5 px-3 font-bold text-slate-900 border-r border-slate-200 bg-[#00a2ed]/5">{item.name}</td>
                                                         <td className="py-1.5 px-3 text-slate-700 border-r border-slate-200 bg-[#48c774]/5">{item.brand || 'NA'}</td>
                                                         <td className="py-1.5 px-3 text-slate-700 border-r border-slate-200 bg-[#ffeb3b]/5">{item.details || '-'}</td>
-                                                        <td className={`py-1.5 px-2 text-center font-black border-r border-slate-200 ${isRequested ? 'text-emerald-700 bg-emerald-100/50 text-sm' : 'text-slate-400 bg-slate-50/30'}`}>
+                                                        <td className={`py-1.5 px-2 text-center font-black border-r border-slate-200 min-w-[80px] tabular-nums ${isRequested ? 'text-emerald-700 bg-emerald-100/50 text-sm' : 'text-slate-400 bg-slate-50/30'}`}>
                                                             {item.requested_qty || 0}
                                                         </td>
-                                                        <td className="py-1.5 px-2 text-center font-bold text-slate-700 bg-slate-50 border-r border-slate-200">{item.available_stock_qty || 0}</td>
-                                                        <td className="py-1.5 px-2 text-center font-semibold text-slate-700 bg-[#ffccbc]/10">{item.unit || 'pcs'}</td>
+                                                        <td className="py-1.5 px-2 text-center font-bold text-slate-700 bg-slate-50 border-r border-slate-200 min-w-[80px] tabular-nums">{item.available_stock_qty || 0}</td>
+                                                        <td className="py-1.5 px-2 text-center font-semibold text-slate-700 bg-[#ffccbc]/10 min-w-[55px]">{item.unit || 'pcs'}</td>
                                                     </tr>
                                                 );
                                             })}

@@ -22,6 +22,7 @@ import SitePricingAdminTab from '../procurement/SitePricingAdminTab';
 import ProcurementVendorTicketsTab from '../procurement/ProcurementVendorTicketsTab';
 import { ProcurementSettingsTab } from '../procurement/ProcurementSettingsTab';
 import PaymentUrgencyTrackerTab from '../procurement/payment-urgency/PaymentUrgencyTrackerTab';
+import { INITIAL_TEST_TASKS } from '../procurement/payment-urgency/mockData';
 import { Layers, DollarSign } from 'lucide-react';
 
 // --- Types ---
@@ -76,6 +77,30 @@ export default function ProcurementDashboard() {
             setActiveTab(tabParam);
         }
     }, [searchParams]);
+    const [sidebarCounts, setSidebarCounts] = useState<{
+        vendorTickets: number;
+        monthlyRequisitions: number;
+        sitePricing: number;
+        manageItems: number;
+    }>({
+        vendorTickets: 0,
+        monthlyRequisitions: 0,
+        sitePricing: 0,
+        manageItems: 0,
+    });
+
+    const activeOrdersCount = useMemo(() => {
+        return requests.filter(r => !['completed', 'cancelled', 'rejected', 'delivered'].includes(r.status)).length;
+    }, [requests]);
+
+    const orderHistoryCount = useMemo(() => {
+        return requests.filter(r => ['completed', 'delivered'].includes(r.status)).length;
+    }, [requests]);
+
+    const urgentPaymentsCount = useMemo(() => {
+        return INITIAL_TEST_TASKS.filter(t => t.payment_status !== 'paid' && (t.urgency_tier === 'P1' || t.urgency_tier === 'P2')).length;
+    }, []);
+
     const [statusFilter, setStatusFilter] = useState('all');
     const [propertyFilter, setPropertyFilter] = useState('all');
     const [timeRange, setTimeRange] = useState<'today' | 'month' | 'all'>('all');
@@ -113,6 +138,53 @@ export default function ProcurementDashboard() {
     }, [requests]);
 
     // --- Fetching Logic ---
+    const fetchSidebarCounts = useCallback(async () => {
+        try {
+            const orgId = user?.user_metadata?.organization_id;
+
+            // 1. Pending Vendor Requirement Tickets count
+            const vendorQuery = supabase
+                .from('tickets')
+                .select('id', { count: 'exact', head: true })
+                .eq('needs_vendor_procurement', true)
+                .or('vendor_procurement_status.eq.pending_vendor_arrangement,vendor_procurement_status.is.null');
+
+            // 2. Pending Monthly Requisitions count (submitted / pending_approval)
+            let requisitionsQuery = supabase
+                .from('property_monthly_requisitions')
+                .select('id', { count: 'exact', head: true })
+                .in('status', ['submitted', 'pending_approval']);
+            if (orgId) requisitionsQuery = requisitionsQuery.eq('organization_id', orgId);
+
+            // 3. Aliases count
+            let aliasesQuery = supabase
+                .from('procurement_item_aliases')
+                .select('id', { count: 'exact', head: true });
+            if (orgId) aliasesQuery = aliasesQuery.eq('organization_id', orgId);
+
+            // 4. Catalog items count
+            const catalogQuery = supabase
+                .from('procurement_item_catalog')
+                .select('id', { count: 'exact', head: true });
+
+            const [vendorRes, reqRes, aliasesRes, catalogRes] = await Promise.allSettled([
+                vendorQuery,
+                requisitionsQuery,
+                aliasesQuery,
+                catalogQuery
+            ]);
+
+            setSidebarCounts({
+                vendorTickets: vendorRes.status === 'fulfilled' ? (vendorRes.value.count || 0) : 0,
+                monthlyRequisitions: reqRes.status === 'fulfilled' ? (reqRes.value.count || 0) : 0,
+                sitePricing: aliasesRes.status === 'fulfilled' ? (aliasesRes.value.count || 0) : 0,
+                manageItems: catalogRes.status === 'fulfilled' ? (catalogRes.value.count || 0) : 0,
+            });
+        } catch (err) {
+            console.error('Failed to fetch sidebar counts:', err);
+        }
+    }, [supabase, user]);
+
     const fetchRequests = useCallback(async () => {
         setIsLoading(true);
         try {
@@ -185,7 +257,8 @@ export default function ProcurementDashboard() {
         fetchActivities();
         fetchProcurementUsers();
         fetchProperties();
-    }, [fetchRequests, fetchActivities, fetchProcurementUsers, fetchProperties]);
+        fetchSidebarCounts();
+    }, [fetchRequests, fetchActivities, fetchProcurementUsers, fetchProperties, fetchSidebarCounts]);
 
     // --- Handlers ---
     const handleDeleteRequest = async (requestId: string, requesterId: string) => {
@@ -479,30 +552,85 @@ export default function ProcurementDashboard() {
                             </p>
                             <div className="space-y-1">
                                 {[
-                                    { id: 'overview', icon: LayoutDashboard, label: 'Dashboard' },
-                                    { id: 'urgency-tracker', icon: Layers, label: 'Payment Urgency Tracker' },
-                                    { id: 'requests', icon: Package, label: 'Active Orders' },
-                                    { id: 'vendor_tickets', icon: ShoppingBag, label: 'Vendor Requests' },
-                                    { id: 'monthly-requisitions', icon: FileSpreadsheet, label: 'Monthly Requisitions' },
-                                    { id: 'site-pricing', icon: DollarSign, label: 'Site Pricing & Aliases' },
-                                    { id: 'history', icon: CheckCircle2, label: 'Order History' },
-                                    { id: 'manage-items', icon: ShoppingCart, label: 'Manage Items' },
-                                    { id: 'po-generator', icon: FileText, label: 'PO Generator' },
-                                ].map((item) => (
+                                    { 
+                                        id: 'overview', 
+                                        icon: LayoutDashboard, 
+                                        label: 'Dashboard' 
+                                    },
+                                    { 
+                                        id: 'urgency-tracker', 
+                                        icon: Layers, 
+                                        label: 'Payment Urgency Tracker',
+                                        count: urgentPaymentsCount
+                                    },
+                                    { 
+                                        id: 'requests', 
+                                        icon: Package, 
+                                        label: 'Active Orders',
+                                        count: activeOrdersCount
+                                    },
+                                    { 
+                                        id: 'vendor_tickets', 
+                                        icon: ShoppingBag, 
+                                        label: 'Vendor Requests',
+                                        count: sidebarCounts.vendorTickets
+                                    },
+                                    { 
+                                        id: 'monthly-requisitions', 
+                                        icon: FileSpreadsheet, 
+                                        label: 'Monthly Requisitions',
+                                        count: sidebarCounts.monthlyRequisitions
+                                    },
+                                    { 
+                                        id: 'site-pricing', 
+                                        icon: DollarSign, 
+                                        label: 'Site Pricing & Aliases',
+                                        count: sidebarCounts.sitePricing > 0 ? sidebarCounts.sitePricing : undefined
+                                    },
+                                    { 
+                                        id: 'history', 
+                                        icon: CheckCircle2, 
+                                        label: 'Order History',
+                                        count: orderHistoryCount > 0 ? orderHistoryCount : undefined
+                                    },
+                                    { 
+                                        id: 'manage-items', 
+                                        icon: ShoppingCart, 
+                                        label: 'Manage Items',
+                                        count: sidebarCounts.manageItems > 0 ? sidebarCounts.manageItems : undefined
+                                    },
+                                    { 
+                                        id: 'po-generator', 
+                                        icon: FileText, 
+                                        label: 'PO Generator',
+                                        isComingSoon: true
+                                    },
+                                ].map((item: any) => (
                                     <button
                                         key={item.id}
                                         onClick={() => { setActiveTab(item.id as Tab); setSidebarOpen(false); }}
-                                        className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-sm transition-all ${activeTab === item.id 
+                                        className={`w-full flex items-center justify-between px-4 py-3 rounded-xl font-bold text-sm transition-all ${activeTab === item.id 
                                             ? 'bg-primary text-white shadow-md' 
                                             : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'}`}
                                     >
-                                        <item.icon className="w-4 h-4" />
-                                        {item.label}
-                                        {item.id === 'po-generator' && (
-                                            <span className="ml-auto px-1.5 py-0.5 rounded-full text-[9px] font-black bg-amber-100 text-amber-600 uppercase tracking-wider">
+                                        <div className="flex items-center gap-3 min-w-0">
+                                            <item.icon className="w-4 h-4 flex-shrink-0" />
+                                            <span className="truncate">{item.label}</span>
+                                        </div>
+
+                                        {item.isComingSoon ? (
+                                            <span className="ml-auto px-1.5 py-0.5 rounded-full text-[9px] font-black bg-slate-100 text-slate-500 uppercase tracking-wider">
                                                 Coming Soon
                                             </span>
-                                        )}
+                                        ) : item.count !== undefined && item.count !== null ? (
+                                            <span className={`ml-auto px-2 py-0.5 rounded-full text-xs font-semibold transition-all ${
+                                                activeTab === item.id 
+                                                    ? 'bg-white/20 text-white font-bold' 
+                                                    : 'bg-slate-100 text-slate-500'
+                                            }`}>
+                                                {item.count}
+                                            </span>
+                                        ) : null}
                                     </button>
                                 ))}
                             </div>

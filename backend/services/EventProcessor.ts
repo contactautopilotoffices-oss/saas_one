@@ -576,6 +576,11 @@ export const EventProcessor = {
             users?.forEach(u => { if (u.email) finalEmails.add(u.email); });
         }
 
+        // Exclude the user who arranged the vendor from receiving notification of their own action
+        if (arrangedByUser?.email) {
+            finalEmails.delete(arrangedByUser.email);
+        }
+
         if (!enabled || finalEmails.size === 0) {
             console.warn(`[EventProcessor] No recipient emails found for vendor arranged event on ticket #${ticket.ticket_number}`);
             return;

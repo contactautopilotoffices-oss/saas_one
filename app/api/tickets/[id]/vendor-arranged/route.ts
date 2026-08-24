@@ -71,39 +71,7 @@ export async function POST(
             notes: isEdit ? `Updated vendor details: "${arrangedNote}"` : `Vendor arranged by Procurement: "${arrangedNote}"`
         });
 
-        // 4. Send notification email via Email Service Settings
-        const orgId = ticket.property?.organization_id || ticket.organization_id;
-
-        const { enabled, emails: resolvedEmails } = await EmailRecipientResolver.resolveRecipients({
-            organizationId: orgId,
-            propertyId: ticket.property_id,
-            featureKey: 'procurement_vendor_aligned',
-            contextualEmails: [
-                ticket.raised_by_user?.email,
-                ticket.tagged_by_user?.email
-            ]
-        });
-
-        const finalEmails = new Set<string>(resolvedEmails);
-        if (ticket.raised_by_user?.email) finalEmails.add(ticket.raised_by_user.email);
-        if (ticket.tagged_by_user?.email) finalEmails.add(ticket.tagged_by_user.email);
-
-        if (enabled && finalEmails.size > 0) {
-            const { data: currentUser } = await adminSupabase
-                .from('users')
-                .select('id, full_name, email')
-                .eq('id', user.id)
-                .single();
-
-            await EmailService.sendVendorArrangedEmail({
-                emailTo: Array.from(finalEmails),
-                ticket,
-                property: ticket.property,
-                arrangedBy: currentUser || { full_name: user.email },
-                arrangedDetails: arrangedNote
-            });
-        }
-
+        // 4. Return success response (Notifications are handled asynchronously via event_outbox trigger)
         return NextResponse.json({
             success: true,
             message: isEdit ? 'Vendor details updated successfully.' : 'Ticket status updated to Vendor Arranged and requester notified.'

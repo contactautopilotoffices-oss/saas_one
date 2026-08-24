@@ -4,7 +4,7 @@ import {
     FileSpreadsheet, Download, Save, Send, Plus, Trash2,
     CheckCircle2, AlertCircle, RefreshCw, Layers, Calendar,
     Building2, User, Phone, Sparkles, Loader2, ArrowRight,
-    MapPin
+    MapPin, IndianRupee, ShieldAlert, Coffee, X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -107,6 +107,17 @@ export default function SiteRequisitionSheet({
     const [activeTab, setActiveTab] = useState<'all' | 'HK' | 'Beverages' | 'Technical'>('all');
     const [catalogItems, setCatalogItems] = useState<any[]>([]);
 
+    // Monthly Requisition Budget State
+    const [allocatedBudget, setAllocatedBudget] = useState<{
+        hk_budget: number;
+        beverage_budget: number;
+        total_budget: number;
+        site_name?: string;
+        floor_tag?: string;
+    } | null>(null);
+    const [isLoadingBudget, setIsLoadingBudget] = useState<boolean>(false);
+    const [showOverBudgetModal, setShowOverBudgetModal] = useState<boolean>(false);
+
     // Initialize rows
     const [items, setItems] = useState<RequisitionRow[]>([]);
 
@@ -158,6 +169,46 @@ export default function SiteRequisitionSheet({
         if (!s || /^\d+$/.test(s)) return 'Piece';
         return s;
     };
+
+    // Fetch active budget for selected property and floor tag
+    useEffect(() => {
+        const fetchBudget = async () => {
+            if (!organizationId || !selectedPropertyId) return;
+            setIsLoadingBudget(true);
+            try {
+                const res = await fetch(`/api/procurement/requisitions/budgets?organization_id=${organizationId}&property_id=${selectedPropertyId}`);
+                const data = await res.json();
+                const budgetsList: any[] = data.budgets || [];
+
+                if (budgetsList.length > 0) {
+                    const floorMatch = budgetsList.find((b: any) => b.floor_tag?.toLowerCase() === floorTag?.toLowerCase() && b.is_active !== false);
+                    const allFloorsMatch = budgetsList.find((b: any) => b.floor_tag?.toLowerCase() === 'all floors' && b.is_active !== false);
+                    const matched = floorMatch || allFloorsMatch || budgetsList[0];
+
+                    if (matched) {
+                        setAllocatedBudget({
+                            hk_budget: Number(matched.hk_budget) || 0,
+                            beverage_budget: Number(matched.beverage_budget) || 0,
+                            total_budget: Number(matched.total_budget) || ((Number(matched.hk_budget) || 0) + (Number(matched.beverage_budget) || 0)),
+                            site_name: matched.site_name,
+                            floor_tag: matched.floor_tag
+                        });
+                    } else {
+                        setAllocatedBudget(null);
+                    }
+                } else {
+                    setAllocatedBudget(null);
+                }
+            } catch (err) {
+                console.warn('Failed to load property budget:', err);
+                setAllocatedBudget(null);
+            } finally {
+                setIsLoadingBudget(false);
+            }
+        };
+
+        fetchBudget();
+    }, [organizationId, selectedPropertyId, floorTag]);
 
     // Fetch site-specific item pricing and on-site stock counts whenever property changes
     useEffect(() => {
@@ -256,6 +307,41 @@ export default function SiteRequisitionSheet({
         return items.reduce((acc, row) => acc + ((Number(row.requested_qty) || 0) * (Number(row.unit_price) || 0)), 0);
     }, [items]);
 
+    const hkTotalEstimated = useMemo(() => {
+        return items.reduce((acc, row) => {
+            const cat = (row.category || '').toLowerCase();
+            if (cat.includes('hk') || cat.includes('housekeeping') || cat.includes('tissue') || cat.includes('stationery') || cat.includes('paper') || !cat) {
+                return acc + ((Number(row.requested_qty) || 0) * (Number(row.unit_price) || 0));
+            }
+            return acc;
+        }, 0);
+    }, [items]);
+
+    const beverageTotalEstimated = useMemo(() => {
+        return items.reduce((acc, row) => {
+            const cat = (row.category || '').toLowerCase();
+            if (cat.includes('bev') || cat.includes('pantry') || cat.includes('tea') || cat.includes('coffee') || cat.includes('ccd')) {
+                return acc + ((Number(row.requested_qty) || 0) * (Number(row.unit_price) || 0));
+            }
+            return acc;
+        }, 0);
+    }, [items]);
+
+    const isOverBudget = useMemo(() => {
+        if (!allocatedBudget || allocatedBudget.total_budget <= 0) return false;
+        return grandTotalEstimated > allocatedBudget.total_budget;
+    }, [allocatedBudget, grandTotalEstimated]);
+
+    const excessBudgetAmount = useMemo(() => {
+        if (!allocatedBudget || allocatedBudget.total_budget <= 0) return 0;
+        return Math.max(0, grandTotalEstimated - allocatedBudget.total_budget);
+    }, [allocatedBudget, grandTotalEstimated]);
+
+    const budgetUtilizationPercent = useMemo(() => {
+        if (!allocatedBudget || allocatedBudget.total_budget <= 0) return 0;
+        return Math.min(200, Math.round((grandTotalEstimated / allocatedBudget.total_budget) * 100));
+    }, [allocatedBudget, grandTotalEstimated]);
+
     const totalRequestedUnits = useMemo(() => {
         return items.reduce((acc, row) => acc + (Number(row.requested_qty) || 0), 0);
     }, [items]);
@@ -339,7 +425,7 @@ export default function SiteRequisitionSheet({
         }
     };
 
-    const handleSubmitRequisition = async () => {
+    const handleSubmitRequisition = async (bypassBudgetCheck: boolean = false) => {
         if (!selectedPropertyId) {
             alert('Please select a Center / Property.');
             return;
@@ -352,10 +438,17 @@ export default function SiteRequisitionSheet({
             }
         }
 
+        // If over budget and not explicitly confirmed yet, prompt the user with the non-blocking warning modal
+        if (isOverBudget && !bypassBudgetCheck) {
+            setShowOverBudgetModal(true);
+            return;
+        }
+
         // Clean items list ensuring valid item objects
         const submitItems = items.filter(i => i.name && i.name.trim().length > 0);
 
         setIsSubmitting(true);
+        setShowOverBudgetModal(false);
         try {
             const res = await fetch('/api/procurement/requisitions', {
                 method: 'POST',
@@ -377,7 +470,12 @@ export default function SiteRequisitionSheet({
                 throw new Error(data.error || 'Failed to submit requisition');
             }
 
-            alert(`✅ Requisition for ${selectedProperty?.name || 'Property'} (${floorTag}) submitted successfully! Procurement team has been notified via WhatsApp and Email.`);
+            if (isOverBudget) {
+                alert(`⚠️ Requisition for ${selectedProperty?.name || 'Property'} (${floorTag}) submitted with Over-Budget Flag (+₹${excessBudgetAmount.toLocaleString('en-IN')}). Procurement & Approvers have been notified.`);
+            } else {
+                alert(`✅ Requisition for ${selectedProperty?.name || 'Property'} (${floorTag}) submitted successfully! Procurement team has been notified.`);
+            }
+
             if (onSubmitted) {
                 onSubmitted(data.requisition);
             }
@@ -421,7 +519,7 @@ export default function SiteRequisitionSheet({
                             Download .xlsx
                         </button>
                         <button
-                            onClick={handleSubmitRequisition}
+                            onClick={() => handleSubmitRequisition(false)}
                             disabled={isSubmitting}
                             className="flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-black text-white bg-emerald-600 hover:bg-emerald-700 shadow-md shadow-emerald-600/20 transition-all disabled:opacity-50 cursor-pointer"
                         >
@@ -545,6 +643,91 @@ export default function SiteRequisitionSheet({
                     </div>
                 </div>
 
+                {/* Monthly Requisition Budget Live Tracker Card */}
+                {allocatedBudget && allocatedBudget.total_budget > 0 && (
+                    <div className={`rounded-2xl border p-4 shadow-xs transition-all ${
+                        isOverBudget 
+                            ? 'bg-rose-50/80 border-rose-200 dark:bg-rose-950/30 dark:border-rose-800' 
+                            : budgetUtilizationPercent > 85 
+                            ? 'bg-amber-50/80 border-amber-200 dark:bg-amber-950/30 dark:border-amber-800'
+                            : 'bg-emerald-50/80 border-emerald-200 dark:bg-emerald-950/30 dark:border-emerald-800'
+                    }`}>
+                        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                            <div className="flex items-center gap-2.5">
+                                <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${
+                                    isOverBudget 
+                                        ? 'bg-rose-500 text-white' 
+                                        : 'bg-emerald-600 text-white'
+                                }`}>
+                                    {isOverBudget ? <ShieldAlert className="w-5 h-5" /> : <IndianRupee className="w-5 h-5" />}
+                                </div>
+                                <div>
+                                    <div className="flex items-center gap-2">
+                                        <h3 className="text-sm font-black text-slate-900 dark:text-white">
+                                            Monthly Requisition Budget: {allocatedBudget.site_name || selectedProperty?.name}
+                                        </h3>
+                                        <span className="text-xs font-bold text-slate-500">
+                                            ({allocatedBudget.floor_tag || floorTag})
+                                        </span>
+                                    </div>
+                                    <p className="text-xs text-slate-500">
+                                        Allocated Monthly Limit: <b>₹{allocatedBudget.total_budget.toLocaleString('en-IN')}</b>
+                                        {allocatedBudget.hk_budget > 0 && ` (HK: ₹${allocatedBudget.hk_budget.toLocaleString('en-IN')})`}
+                                        {allocatedBudget.beverage_budget > 0 && ` (Beverage: ₹${allocatedBudget.beverage_budget.toLocaleString('en-IN')})`}
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                                {isOverBudget ? (
+                                    <div className="px-3 py-1.5 rounded-xl bg-rose-500 text-white text-xs font-black flex items-center gap-1.5 shadow-sm animate-pulse">
+                                        <AlertCircle className="w-4 h-4" />
+                                        <span>OVER BUDGET BY ₹{excessBudgetAmount.toLocaleString('en-IN')} ({budgetUtilizationPercent}%)</span>
+                                    </div>
+                                ) : (
+                                    <div className="px-3 py-1.5 rounded-xl bg-emerald-600 text-white text-xs font-black flex items-center gap-1.5 shadow-sm">
+                                        <CheckCircle2 className="w-4 h-4" />
+                                        <span>Within Budget ({budgetUtilizationPercent}% Used)</span>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Progress Bar */}
+                        <div className="w-full bg-slate-200 dark:bg-slate-700 h-2.5 rounded-full overflow-hidden mb-2.5">
+                            <div
+                                className={`h-full transition-all duration-300 rounded-full ${
+                                    isOverBudget 
+                                        ? 'bg-rose-500' 
+                                        : budgetUtilizationPercent > 85 
+                                        ? 'bg-amber-500' 
+                                        : 'bg-emerald-500'
+                                }`}
+                                style={{ width: `${Math.min(100, budgetUtilizationPercent)}%` }}
+                            />
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-between text-xs text-slate-600 dark:text-slate-300 font-medium">
+                            <div className="flex items-center gap-4">
+                                <span>HK Cost: <b>₹{hkTotalEstimated.toLocaleString('en-IN')}</b> {allocatedBudget.hk_budget > 0 ? `/ ₹${allocatedBudget.hk_budget.toLocaleString('en-IN')}` : ''}</span>
+                                <span>Beverage Cost: <b>₹{beverageTotalEstimated.toLocaleString('en-IN')}</b> {allocatedBudget.beverage_budget > 0 ? `/ ₹${allocatedBudget.beverage_budget.toLocaleString('en-IN')}` : ''}</span>
+                            </div>
+                            <div className="font-bold">
+                                Current Requisition Total: <span className={isOverBudget ? 'text-rose-600 dark:text-rose-400 font-black' : 'text-emerald-700 dark:text-emerald-400 font-black'}>₹{grandTotalEstimated.toLocaleString('en-IN')}</span>
+                            </div>
+                        </div>
+
+                        {isOverBudget && (
+                            <div className="mt-3 p-2.5 rounded-xl bg-rose-100/80 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-900 text-xs text-rose-900 dark:text-rose-200 font-semibold flex items-center gap-2">
+                                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                                <span>
+                                    Note: You can still submit this requisition. It will be flagged for review by the procurement & approver teams.
+                                </span>
+                            </div>
+                        )}
+                    </div>
+                )}
+
                 <div className="flex flex-wrap items-center justify-between gap-4">
                     <div className="flex items-center gap-1 bg-white p-1 rounded-2xl border border-slate-200 shadow-xs">
                         {[
@@ -575,7 +758,9 @@ export default function SiteRequisitionSheet({
                         <div className="h-6 w-px bg-slate-200" />
                         <div>
                             <span className="text-slate-400 text-xs block font-bold">Est. Total Amount ({selectedProperty?.name})</span>
-                            <span className="font-black text-emerald-600">₹{grandTotalEstimated.toLocaleString('en-IN')}</span>
+                            <span className={`font-black ${isOverBudget ? 'text-rose-600' : 'text-emerald-600'}`}>
+                                ₹{grandTotalEstimated.toLocaleString('en-IN')}
+                            </span>
                         </div>
                     </div>
                 </div>
@@ -594,20 +779,20 @@ export default function SiteRequisitionSheet({
                                 </tr>
                                 <tr className="text-slate-900 font-black text-center select-none">
                                     <th className="py-2 px-2 bg-slate-200 border border-slate-300 w-10">#</th>
-                                    <th className="py-2 px-3 bg-[#00a2ed] text-white border border-[#00a2ed] min-w-[180px]">Product Name/Type</th>
-                                    <th className="py-2 px-3 bg-[#48c774] text-slate-950 border border-[#48c774] min-w-[140px]">Specific Brand if any</th>
-                                    <th className="py-2 px-3 bg-[#ffeb3b] text-slate-950 border border-[#ffeb3b] min-w-[120px]">Color, Size</th>
-                                    <th className="py-2 px-2 bg-slate-100 border border-slate-300 w-16 text-slate-900">Qty</th>
-                                    <th className="py-2 px-2 bg-[#ffccbc] text-slate-950 border border-[#ffccbc] w-16">UOM</th>
-                                    <th className="py-2 px-2 bg-emerald-50 text-emerald-950 border border-slate-300 w-24">Site Price (₹)</th>
+                                    <th className="py-2 px-3 bg-[#00a2ed] text-white border border-[#00a2ed] min-w-[170px]">Product Name/Type</th>
+                                    <th className="py-2 px-3 bg-[#48c774] text-slate-950 border border-[#48c774] min-w-[130px]">Specific Brand if any</th>
+                                    <th className="py-2 px-3 bg-[#ffeb3b] text-slate-950 border border-[#ffeb3b] min-w-[110px]">Color, Size</th>
+                                    <th className="py-2 px-1 bg-slate-100 border border-slate-300 min-w-[80px] w-20 text-slate-900">Qty</th>
+                                    <th className="py-2 px-2 bg-[#ffccbc] text-slate-950 border border-[#ffccbc] min-w-[55px] w-14">UOM</th>
+                                    <th className="py-2 px-2 bg-emerald-50 text-emerald-950 border border-slate-300 min-w-[80px] w-24">Site Price (₹)</th>
                                     <th className="py-2 px-2 bg-slate-100 border-r-2 border-slate-300 w-10 text-slate-500">Del</th>
 
                                     <th className="py-2 px-2 bg-slate-200 border border-slate-300 w-10">#</th>
-                                    <th className="py-2 px-3 bg-[#00a2ed] text-white border border-[#00a2ed] min-w-[180px]">Product Name/Type</th>
-                                    <th className="py-2 px-3 bg-[#48c774] text-slate-950 border border-[#48c774] min-w-[140px]">Specific Brand if any</th>
-                                    <th className="py-2 px-3 bg-[#ffeb3b] text-slate-950 border border-[#ffeb3b] min-w-[120px]">Color, Size</th>
-                                    <th className="py-2 px-2 bg-slate-100 border border-slate-300 w-16 text-slate-900">Avail. Qty</th>
-                                    <th className="py-2 px-2 bg-[#ffccbc] text-slate-950 border border-[#ffccbc] w-16">UOM</th>
+                                    <th className="py-2 px-3 bg-[#00a2ed] text-white border border-[#00a2ed] min-w-[170px]">Product Name/Type</th>
+                                    <th className="py-2 px-3 bg-[#48c774] text-slate-950 border border-[#48c774] min-w-[130px]">Specific Brand if any</th>
+                                    <th className="py-2 px-3 bg-[#ffeb3b] text-slate-950 border border-[#ffeb3b] min-w-[110px]">Color, Size</th>
+                                    <th className="py-2 px-1 bg-slate-100 border border-slate-300 min-w-[80px] w-20 text-slate-900">Avail. Qty</th>
+                                    <th className="py-2 px-2 bg-[#ffccbc] text-slate-950 border border-[#ffccbc] min-w-[55px] w-14">UOM</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -653,7 +838,7 @@ export default function SiteRequisitionSheet({
                                                     const val = e.target.value === '' ? 0 : Math.max(0, parseInt(e.target.value, 10) || 0);
                                                     handleRowChange(row.id, 'requested_qty', val);
                                                 }}
-                                                className="w-full px-2 py-1.5 text-center font-black text-emerald-700 bg-emerald-50/30 focus:bg-white focus:outline-hidden"
+                                                className="w-full px-1.5 py-1.5 text-center font-black text-emerald-700 bg-emerald-50/30 focus:bg-white focus:outline-hidden [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none tabular-nums text-xs md:text-sm"
                                             />
                                         </td>
                                         <td className="p-0 border border-slate-200 bg-[#ffccbc]/15">
@@ -661,7 +846,7 @@ export default function SiteRequisitionSheet({
                                                 type="text"
                                                 value={cleanUom(row.unit)}
                                                 onChange={e => handleRowChange(row.id, 'unit', e.target.value)}
-                                                className="w-full px-2 py-1.5 text-center font-semibold text-slate-800 focus:outline-hidden focus:bg-white"
+                                                className="w-full px-1.5 py-1.5 text-center font-semibold text-slate-800 focus:outline-hidden focus:bg-white"
                                                 placeholder="Piece"
                                             />
                                         </td>
@@ -702,7 +887,7 @@ export default function SiteRequisitionSheet({
                                                     const val = e.target.value === '' ? 0 : Math.max(0, parseInt(e.target.value, 10) || 0);
                                                     handleRowChange(row.id, 'available_stock_qty', val);
                                                 }}
-                                                className="w-full px-2 py-1.5 text-center font-bold text-slate-800 bg-slate-50/50 focus:bg-white focus:outline-hidden"
+                                                className="w-full px-1.5 py-1.5 text-center font-bold text-slate-800 bg-slate-50/50 focus:bg-white focus:outline-hidden [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none tabular-nums text-xs md:text-sm"
                                             />
                                         </td>
                                         <td className="py-1.5 px-2 text-center border border-slate-200 bg-[#ffccbc]/10 text-slate-700 font-semibold">
@@ -745,6 +930,95 @@ export default function SiteRequisitionSheet({
                     />
                 </div>
             </div>
+
+            {/* Over-Budget Submit Confirmation Modal (Non-Blocking) */}
+            <AnimatePresence>
+                {showOverBudgetModal && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto">
+                        <motion.div
+                            initial={{ opacity: 0, scale: 0.95, y: 15 }}
+                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                            exit={{ opacity: 0, scale: 0.95, y: 15 }}
+                            className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 w-full max-w-lg overflow-hidden flex flex-col"
+                        >
+                            <div className="bg-rose-600 text-white p-5 flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 rounded-2xl bg-white/20 flex items-center justify-center text-white">
+                                        <ShieldAlert className="w-6 h-6" />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-base font-black">Monthly Budget Exceeded</h3>
+                                        <p className="text-xs text-rose-100 font-medium">
+                                            {selectedProperty?.name || 'Property'} • {floorTag}
+                                        </p>
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={() => setShowOverBudgetModal(false)}
+                                    className="p-1.5 rounded-xl text-white/80 hover:text-white hover:bg-white/10 transition-colors"
+                                >
+                                    <X className="w-5 h-5" />
+                                </button>
+                            </div>
+
+                            <div className="p-6 space-y-4">
+                                <p className="text-xs text-slate-600 dark:text-slate-300">
+                                    This monthly requisition exceeds the allocated budget limit configured by Org Super Admin.
+                                </p>
+
+                                <div className="bg-slate-50 dark:bg-slate-800/60 rounded-2xl p-4 border border-slate-200 dark:border-slate-700 space-y-2 text-xs">
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-slate-500">Allocated Monthly Limit:</span>
+                                        <span className="font-bold text-slate-800 dark:text-white">
+                                            ₹{(allocatedBudget?.total_budget || 0).toLocaleString('en-IN')}
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-slate-500">Current Requisition Total:</span>
+                                        <span className="font-black text-rose-600 dark:text-rose-400">
+                                            ₹{grandTotalEstimated.toLocaleString('en-IN')}
+                                        </span>
+                                    </div>
+                                    <div className="pt-2 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between font-bold">
+                                        <span className="text-rose-700 dark:text-rose-300">Over-Budget Amount:</span>
+                                        <span className="font-black text-rose-600 dark:text-rose-400 text-sm">
+                                            +₹{excessBudgetAmount.toLocaleString('en-IN')} ({budgetUtilizationPercent}%)
+                                        </span>
+                                    </div>
+                                </div>
+
+                                <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 text-[11px] text-amber-900 dark:text-amber-200 flex items-start gap-2">
+                                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                                    <span>
+                                        <b>You can still proceed and submit this requisition.</b> It will be automatically tagged with the <b>Over-Budget Flag</b> for procurement & management review.
+                                    </span>
+                                </div>
+                            </div>
+
+                            <div className="p-4 bg-slate-50 dark:bg-slate-800/40 border-t border-slate-200 dark:border-slate-800 flex items-center justify-end gap-3">
+                                <button
+                                    onClick={() => setShowOverBudgetModal(false)}
+                                    className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors"
+                                >
+                                    Adjust Quantities
+                                </button>
+                                <button
+                                    onClick={() => handleSubmitRequisition(true)}
+                                    disabled={isSubmitting}
+                                    className="flex items-center gap-1.5 px-5 py-2 rounded-xl text-xs font-black text-white bg-rose-600 hover:bg-rose-700 shadow-md shadow-rose-600/20 transition-all disabled:opacity-50"
+                                >
+                                    {isSubmitting ? (
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                    ) : (
+                                        <Send className="w-4 h-4" />
+                                    )}
+                                    <span>Submit With Over-Budget Flag</span>
+                                </button>
+                            </div>
+                        </motion.div>
+                    </div>
+                )}
+            </AnimatePresence>
         </div>
     );
 }

@@ -72,16 +72,30 @@ export async function GET(request: NextRequest) {
                 parsedData = {};
             }
 
+            const isOverBudget = req.is_over_budget !== undefined 
+                ? req.is_over_budget 
+                : (parsedData.is_over_budget || false);
+            const budgetLimit = req.budget_limit !== undefined 
+                ? req.budget_limit 
+                : (parsedData.budget_limit || 0);
+            const overBudgetAmount = req.over_budget_amount !== undefined 
+                ? req.over_budget_amount 
+                : (parsedData.over_budget_amount || 0);
+
             return {
                 ...req,
                 floor_tag: req.floor_tag || parsedData.floor_tag || 'All Floors',
                 items: parsedData.items || [],
                 categories: parsedData.categories || [],
-                total_estimated_amount: parsedData.total_estimated_amount || 0,
+                total_estimated_amount: parsedData.total_estimated_amount || req.total_estimated_amount || 0,
                 total_items_count: parsedData.items?.length || 0,
                 site_notes: parsedData.site_notes || req.notes || '',
                 vendor_quotation: parsedData.vendor_quotation || null,
-                approver_info: parsedData.approver_info || null
+                approver_info: parsedData.approver_info || null,
+                is_over_budget: Boolean(isOverBudget),
+                budget_limit: Number(budgetLimit) || 0,
+                over_budget_amount: Number(overBudgetAmount) || 0,
+                budget_breakdown: parsedData.budget_breakdown || null
             };
         });
 
@@ -227,6 +241,56 @@ export async function POST(request: NextRequest) {
         const totalEstimatedAmount = rawItems.reduce((acc, curr) => acc + ((curr.requested_qty || 0) * (curr.unit_price || 0)), 0);
         const requestedItemsCount = rawItems.filter(i => (i.requested_qty || 0) > 0).length;
 
+        // Category breakdown calculation
+        let hkSpent = 0;
+        let beverageSpent = 0;
+        let otherSpent = 0;
+
+        rawItems.forEach(item => {
+            const cost = (Number(item.requested_qty) || 0) * (Number(item.unit_price) || 0);
+            const cat = (item.category || '').toLowerCase();
+            if (cat.includes('bev') || cat.includes('pantry') || cat.includes('tea') || cat.includes('coffee') || cat.includes('ccd')) {
+                beverageSpent += cost;
+            } else if (cat.includes('hk') || cat.includes('housekeeping') || cat.includes('tissue') || cat.includes('stationery') || cat.includes('paper')) {
+                hkSpent += cost;
+            } else {
+                otherSpent += cost;
+            }
+        });
+
+        // Query property monthly requisition budget (floor-specific first, then fallback to All Floors)
+        let allocatedBudgetLimit = 0;
+        let hkBudgetLimit = 0;
+        let beverageBudgetLimit = 0;
+        let budgetFound = false;
+
+        try {
+            const { data: budgetData } = await adminSupabase
+                .from('property_monthly_requisition_budgets')
+                .select('*')
+                .eq('organization_id', organizationId)
+                .eq('property_id', propertyId)
+                .eq('is_active', true);
+
+            if (budgetData && budgetData.length > 0) {
+                const floorMatch = budgetData.find((b: any) => b.floor_tag === floorTag);
+                const allFloorsMatch = budgetData.find((b: any) => b.floor_tag === 'All Floors');
+                const matchedBudget = floorMatch || allFloorsMatch || budgetData[0];
+
+                if (matchedBudget) {
+                    budgetFound = true;
+                    allocatedBudgetLimit = Number(matchedBudget.total_budget) || (Number(matchedBudget.hk_budget) + Number(matchedBudget.beverage_budget)) || 0;
+                    hkBudgetLimit = Number(matchedBudget.hk_budget) || 0;
+                    beverageBudgetLimit = Number(matchedBudget.beverage_budget) || 0;
+                }
+            }
+        } catch (bErr) {
+            console.warn('[Requisition Budget Lookup Warning]:', bErr);
+        }
+
+        const isOverBudget = budgetFound && allocatedBudgetLimit > 0 && totalEstimatedAmount > allocatedBudgetLimit;
+        const overBudgetAmount = isOverBudget ? Math.max(0, totalEstimatedAmount - allocatedBudgetLimit) : 0;
+
         // Store structured JSON inside notes column for rich persistence
         const notesPayload = JSON.stringify({
             floor_tag: floorTag,
@@ -236,27 +300,44 @@ export async function POST(request: NextRequest) {
             requested_items_count: requestedItemsCount > 0 ? requestedItemsCount : rawItems.length,
             categories: Array.from(new Set(rawItems.map(i => i.category || 'HK'))),
             items: rawItems,
-            submitted_at: new Date().toISOString()
+            submitted_at: new Date().toISOString(),
+            is_over_budget: isOverBudget,
+            budget_limit: allocatedBudgetLimit,
+            over_budget_amount: overBudgetAmount,
+            budget_breakdown: {
+                total_budget: allocatedBudgetLimit,
+                hk_budget: hkBudgetLimit,
+                beverage_budget: beverageBudgetLimit,
+                total_spent: totalEstimatedAmount,
+                hk_spent: hkSpent,
+                beverage_spent: beverageSpent,
+                other_spent: otherSpent
+            }
         });
 
-        // Insert / Update into property_monthly_requisitions
+        // Insert into property_monthly_requisitions
+        const insertPayload: any = {
+            organization_id: organizationId,
+            property_id: propertyId,
+            requisition_month: requisitionMonth,
+            requisition_year: requisitionYear,
+            floor_tag: floorTag,
+            file_url: publicUrl,
+            file_name: uploadedFileName,
+            file_size_bytes: uploadedFileBuffer.length,
+            total_estimated_amount: totalEstimatedAmount,
+            notes: notesPayload,
+            status: 'submitted',
+            uploaded_by: userId,
+            updated_at: new Date().toISOString(),
+            is_over_budget: isOverBudget,
+            budget_limit: allocatedBudgetLimit,
+            over_budget_amount: overBudgetAmount
+        };
+
         const { data: insertedRecord, error: insertError } = await adminSupabase
             .from('property_monthly_requisitions')
-            .insert({
-                organization_id: organizationId,
-                property_id: propertyId,
-                requisition_month: requisitionMonth,
-                requisition_year: requisitionYear,
-                floor_tag: floorTag,
-                file_url: publicUrl,
-                file_name: uploadedFileName,
-                file_size_bytes: uploadedFileBuffer.length,
-                total_estimated_amount: totalEstimatedAmount,
-                notes: notesPayload,
-                status: 'submitted',
-                uploaded_by: userId,
-                updated_at: new Date().toISOString()
-            })
+            .insert(insertPayload)
             .select(`
                 *,
                 property:properties!property_id(id, name),

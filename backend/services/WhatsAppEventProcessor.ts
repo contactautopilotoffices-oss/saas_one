@@ -926,13 +926,16 @@ export const WhatsAppEventProcessor = {
         let floorTag = payload.floor_tag && payload.floor_tag !== 'All Floors' ? ` (${payload.floor_tag})` : '';
         let itemsCount = payload.items_count || payload.items?.length;
         let totalAmount = payload.total_amount || payload.total_estimated_amount;
+        let isOverBudget = !!payload.is_over_budget;
+        let overBudgetAmount = Number(payload.over_budget_amount) || 0;
+        let budgetLimit = Number(payload.budget_limit) || 0;
 
-        // If itemsCount or totalAmount is missing / 0, query the record
-        if (payload.requisition_id && (!itemsCount || !totalAmount)) {
+        // If itemsCount, totalAmount, or budget info is missing, query the record
+        if (payload.requisition_id && (!itemsCount || !totalAmount || !isOverBudget)) {
             try {
                 const { data: req } = await supabaseAdmin
                     .from('property_monthly_requisitions')
-                    .select('notes, floor_tag, total_estimated_amount')
+                    .select('notes, floor_tag, total_estimated_amount, is_over_budget, budget_limit, over_budget_amount')
                     .eq('id', payload.requisition_id)
                     .maybeSingle();
 
@@ -943,6 +946,9 @@ export const WhatsAppEventProcessor = {
                     if (req.total_estimated_amount && !totalAmount) {
                         totalAmount = Number(req.total_estimated_amount);
                     }
+                    if (req.is_over_budget) isOverBudget = true;
+                    if (req.over_budget_amount && !overBudgetAmount) overBudgetAmount = Number(req.over_budget_amount);
+                    if (req.budget_limit && !budgetLimit) budgetLimit = Number(req.budget_limit);
 
                     let parsedNotes: any = null;
                     if (typeof req.notes === 'object' && req.notes !== null) {
@@ -965,6 +971,15 @@ export const WhatsAppEventProcessor = {
                         if (!totalAmount && parsedNotes.total_estimated_amount) {
                             totalAmount = Number(parsedNotes.total_estimated_amount);
                         }
+                        if (!isOverBudget && parsedNotes.is_over_budget) {
+                            isOverBudget = true;
+                        }
+                        if (!overBudgetAmount && parsedNotes.over_budget_amount) {
+                            overBudgetAmount = Number(parsedNotes.over_budget_amount);
+                        }
+                        if (!budgetLimit && parsedNotes.budget_limit) {
+                            budgetLimit = Number(parsedNotes.budget_limit);
+                        }
                     }
                 }
             } catch (err) {
@@ -972,9 +987,18 @@ export const WhatsAppEventProcessor = {
             }
         }
 
-        const propertyDisplay = `${propertyName}${floorTag}`;
+        const propertyDisplay = isOverBudget
+            ? `${propertyName}${floorTag} [⚠️ OVER BUDGET]`
+            : `${propertyName}${floorTag}`;
+
         const itemsCountDisplay = itemsCount ? `${itemsCount} line items` : 'Multiple line items';
-        const totalAmountDisplay = totalAmount ? `₹${Number(totalAmount).toLocaleString('en-IN')}` : '₹0';
+        
+        let totalAmountDisplay = totalAmount ? `${Number(totalAmount).toLocaleString('en-IN')}` : '0';
+        if (isOverBudget && overBudgetAmount > 0) {
+            totalAmountDisplay = `${totalAmountDisplay} (⚠️ Over Budget +₹${overBudgetAmount.toLocaleString('en-IN')})`;
+        } else if (isOverBudget) {
+            totalAmountDisplay = `${totalAmountDisplay} (⚠️ Over Budget)`;
+        }
 
         await this.dispatch({
             featureKey: 'monthly_requisition_uploaded',
@@ -994,18 +1018,76 @@ export const WhatsAppEventProcessor = {
                 file_name: file_name || 'Requisition_Sheet.xlsx',
                 uploaded_by: uploader.name
             },
-            summaryMessage: `Monthly requisition sheet uploaded for ${propertyDisplay} (${monthName} ${requisition_year})`
+            summaryMessage: `Monthly requisition sheet uploaded for ${propertyDisplay} (${monthName} ${requisition_year})${isOverBudget ? ` ⚠️ OVER BUDGET: Total ₹${totalAmount ? Number(totalAmount).toLocaleString('en-IN') : '0'} exceeds limit by +₹${overBudgetAmount.toLocaleString('en-IN')}` : ''}`
         });
     },
 
     async handleRequisitionApprovalRequested(payload: any): Promise<void> {
-        const { organization_id, property_id, requisition_month, requisition_year, target_approver_id, vendor_name, total_final_amount, vendor_notes } = payload;
+        let { organization_id, property_id, requisition_month, requisition_year, target_approver_id, vendor_name, total_final_amount, vendor_notes } = payload;
+        let isOverBudget = !!payload.is_over_budget;
+        let overBudgetAmount = Number(payload.over_budget_amount) || 0;
+        let budgetLimit = Number(payload.budget_limit) || 0;
+
+        if (payload.requisition_id) {
+            try {
+                const { data: req } = await supabaseAdmin
+                    .from('property_monthly_requisitions')
+                    .select('notes, floor_tag, property_id, organization_id, requisition_month, requisition_year, is_over_budget, budget_limit, over_budget_amount')
+                    .eq('id', payload.requisition_id)
+                    .maybeSingle();
+
+                if (req) {
+                    if (!organization_id) organization_id = req.organization_id;
+                    if (!property_id) property_id = req.property_id;
+                    if (!requisition_month) requisition_month = req.requisition_month;
+                    if (!requisition_year) requisition_year = req.requisition_year;
+                    if (req.is_over_budget) isOverBudget = true;
+                    if (req.over_budget_amount && !overBudgetAmount) overBudgetAmount = Number(req.over_budget_amount);
+                    if (req.budget_limit && !budgetLimit) budgetLimit = Number(req.budget_limit);
+
+                    let parsedNotes: any = null;
+                    if (typeof req.notes === 'object' && req.notes !== null) {
+                        parsedNotes = req.notes;
+                    } else if (typeof req.notes === 'string' && req.notes.trim().length > 0) {
+                        try {
+                            parsedNotes = JSON.parse(req.notes);
+                        } catch {}
+                    }
+
+                    if (parsedNotes?.vendor_quotation) {
+                        if (!vendor_name) vendor_name = parsedNotes.vendor_quotation.vendor_name;
+                        if (!total_final_amount) total_final_amount = parsedNotes.vendor_quotation.total_quoted_amount;
+                        if (!vendor_notes) vendor_notes = parsedNotes.vendor_quotation.notes;
+                    }
+                    if (parsedNotes?.approver_info && !target_approver_id) {
+                        target_approver_id = parsedNotes.approver_info.id;
+                    }
+                    if (!isOverBudget && parsedNotes?.is_over_budget) isOverBudget = true;
+                    if (!overBudgetAmount && parsedNotes?.over_budget_amount) overBudgetAmount = Number(parsedNotes.over_budget_amount);
+                }
+            } catch (err) {
+                console.warn('[Requisition Approval Hydrate Error]:', err);
+            }
+        }
+
         const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
         const monthName = months[(requisition_month || 1) - 1] || 'Month';
         const propertyName = await this.getPropertyName(property_id);
         const floorTag = payload.floor_tag && payload.floor_tag !== 'All Floors' ? ` (${payload.floor_tag})` : '';
-        const propertyDisplay = `${propertyName}${floorTag}`;
+        const propertyDisplay = isOverBudget
+            ? `${propertyName}${floorTag} [⚠️ OVER BUDGET]`
+            : `${propertyName}${floorTag}`;
         const approver = await this.getUserDetails(target_approver_id);
+
+        let totalAmountDisplay = Number(total_final_amount || 0).toLocaleString('en-IN');
+        if (isOverBudget && overBudgetAmount > 0) {
+            totalAmountDisplay = `${totalAmountDisplay} (⚠️ Over Budget +₹${overBudgetAmount.toLocaleString('en-IN')})`;
+        }
+
+        let notesDisplay = vendor_notes || 'Vendor quotes attached for approval';
+        if (isOverBudget && overBudgetAmount > 0) {
+            notesDisplay = `⚠️ Note: Exceeds monthly budget limit by +₹${overBudgetAmount.toLocaleString('en-IN')}. ${notesDisplay}`;
+        }
 
         await this.dispatch({
             featureKey: 'requisition_approval_requested',
@@ -1020,8 +1102,8 @@ export const WhatsAppEventProcessor = {
                 month: monthName,
                 year: String(requisition_year || new Date().getFullYear()),
                 vendor_name: vendor_name || 'Selected Vendor',
-                total_amount: Number(total_final_amount || 0).toLocaleString('en-IN'),
-                notes: vendor_notes || 'Vendor quotes attached for approval'
+                total_amount: totalAmountDisplay,
+                notes: notesDisplay
             },
             summaryMessage: `Approval requested for ${propertyDisplay} requisition (${monthName} ${requisition_year})`
         });
@@ -1033,7 +1115,22 @@ export const WhatsAppEventProcessor = {
         const monthName = months[(requisition_month || 1) - 1] || 'Month';
         const propertyName = await this.getPropertyName(property_id);
         const floorTag = payload.floor_tag && payload.floor_tag !== 'All Floors' ? ` (${payload.floor_tag})` : '';
-        const propertyDisplay = `${propertyName}${floorTag}`;
+        
+        let isOverBudget = !!payload.is_over_budget;
+        if (payload.requisition_id && !isOverBudget) {
+            try {
+                const { data: req } = await supabaseAdmin
+                    .from('property_monthly_requisitions')
+                    .select('is_over_budget')
+                    .eq('id', payload.requisition_id)
+                    .maybeSingle();
+                if (req?.is_over_budget) isOverBudget = true;
+            } catch {}
+        }
+
+        const propertyDisplay = isOverBudget
+            ? `${propertyName}${floorTag} [⚠️ OVER BUDGET]`
+            : `${propertyName}${floorTag}`;
         const actorId = approved_by || rejected_by;
         const actor = await this.getUserDetails(actorId);
 
@@ -1115,6 +1212,7 @@ export const WhatsAppEventProcessor = {
     async handleVendorProcurementArranged(payload: any): Promise<void> {
         const propertyName = await this.getPropertyName(payload.property_id);
         const arranger = await this.getUserDetails(payload.arranged_by);
+        const requesterId = payload.tagged_by || payload.raised_by;
 
         await this.dispatch({
             featureKey: 'procurement_vendor_aligned',
@@ -1128,10 +1226,11 @@ export const WhatsAppEventProcessor = {
                 title: payload.title || 'Site Issue',
                 property: propertyName,
                 vendor_details: payload.details || 'Vendor visit aligned',
-                arranged_by: arranger.name
+                arranged_by: arranger.name || 'Procurement Team'
             },
             summaryMessage: `Vendor arranged for Ticket #${payload.ticket_number} at ${propertyName}`,
-            contextualUserIds: { requesterId: payload.raised_by, assigneeId: payload.assigned_to }
+            contextualUserIds: { requesterId, assigneeId: payload.assigned_to },
+            excludeUserIds: payload.arranged_by ? [payload.arranged_by] : []
         });
     },
 

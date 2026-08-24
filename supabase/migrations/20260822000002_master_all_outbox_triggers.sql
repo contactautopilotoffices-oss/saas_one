@@ -263,6 +263,10 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+DROP TRIGGER IF EXISTS trg_requisition_outbox_event ON public.property_monthly_requisitions;
+DROP TRIGGER IF EXISTS trg_fn_requisition_outbox_notifier ON public.property_monthly_requisitions;
+DROP TRIGGER IF EXISTS tr_requisition_outbox_update ON public.property_monthly_requisitions;
+DROP TRIGGER IF EXISTS trg_requisition_outbox_notifier ON public.property_monthly_requisitions;
 DROP TRIGGER IF EXISTS trg_property_monthly_requisitions_outbox ON public.property_monthly_requisitions;
 DROP TRIGGER IF EXISTS tr_property_monthly_requisitions_outbox ON public.property_monthly_requisitions;
 DROP TRIGGER IF EXISTS trigger_requisition_uploaded ON public.property_monthly_requisitions;
