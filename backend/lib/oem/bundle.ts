@@ -40,14 +40,22 @@ export function isTableAllowed(
 }
 
 /**
- * The single gate for agent reads. Throws on any table outside the bundle —
- * the caller should surface that as an agent error, not silently widen scope.
+ * The single gate for agent reads.
+ *
+ * Containment is enforced on three axes, because the table name alone is not
+ * enough: PostgREST embedded-resource syntax (`select=id,ticket:tickets(*)`)
+ * would let a caller traverse foreign keys out of the bundle while the table
+ * name still looked allowed.
+ *   1. the table must be in the active bundle
+ *   2. the select string may not embed related resources
+ *   3. the query is org-scoped inside the guard, not by the caller
  */
 export async function readBundleTable<T = Record<string, unknown>>(
     organizationId: string,
     agentKey: string,
     table: string,
-    build: (q: ReturnType<typeof supabaseAdmin.from>) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>
+    select: string,
+    refine?: (q: BundleQuery) => BundleQuery
 ): Promise<T[]> {
     const active = await getActiveBundle(organizationId, agentKey);
     if (!active) {
@@ -58,9 +66,72 @@ export async function readBundleTable<T = Record<string, unknown>>(
             `Bundle violation: agent '${agentKey}' (bundle v${active.version}) attempted to read '${table}', which is not in its bundle.`
         );
     }
-    const { data, error } = await build(supabaseAdmin.from(table));
+    assertNoEmbeddedResources(agentKey, table, select);
+    assertColumnsAllowed(active.bundle, agentKey, table, select);
+
+    const base = supabaseAdmin
+        .from(table)
+        .select(select)
+        .eq('organization_id', organizationId) as unknown as BundleQuery;
+
+    const { data, error } = await (refine ? refine(base) : base);
     if (error) throw new Error(`Bundle read failed on '${table}': ${error.message}`);
-    return data ?? [];
+    return (data ?? []) as T[];
+}
+
+/**
+ * Minimal query surface handed to a bundle caller. Deliberately narrow: only
+ * row-level filters, ordering and limits. No select(), so the column set
+ * validated above cannot be widened after the check.
+ */
+export interface BundleQuery extends PromiseLike<{ data: unknown[] | null; error: { message: string } | null }> {
+    eq(column: string, value: unknown): BundleQuery;
+    neq(column: string, value: unknown): BundleQuery;
+    in(column: string, values: readonly unknown[]): BundleQuery;
+    gte(column: string, value: unknown): BundleQuery;
+    lte(column: string, value: unknown): BundleQuery;
+    is(column: string, value: unknown): BundleQuery;
+    not(column: string, operator: string, value: unknown): BundleQuery;
+    order(column: string, opts?: { ascending?: boolean }): BundleQuery;
+    limit(count: number): BundleQuery;
+}
+
+/**
+ * PostgREST treats `alias:related(...)` in a select as a join. Any parenthesis
+ * in a select string is therefore a potential escape from the bundle.
+ */
+export function assertNoEmbeddedResources(agentKey: string, table: string, select: string): void {
+    if (select.includes('(') || select.includes(')')) {
+        throw new Error(
+            `Bundle violation: agent '${agentKey}' used embedded-resource syntax in its select on '${table}'. ` +
+            `Joins traverse out of the bundle and are not permitted. Select plain columns only.`
+        );
+    }
+    if (select.trim() === '*') {
+        throw new Error(
+            `Bundle violation: agent '${agentKey}' used 'select *' on '${table}'. List columns explicitly.`
+        );
+    }
+}
+
+/** If the bundle entry pins columns, the select may not exceed them. */
+export function assertColumnsAllowed(
+    bundle: OemBundle,
+    agentKey: string,
+    table: string,
+    select: string
+): void {
+    const entry = bundle.tables.find((t) => t.name === table);
+    if (!entry?.columns?.length) return;
+    const allowed = new Set(entry.columns);
+    const requested = select.split(',').map((c) => c.trim()).filter(Boolean);
+    const outside = requested.filter((c) => !allowed.has(c));
+    if (outside.length) {
+        throw new Error(
+            `Bundle violation: agent '${agentKey}' requested column(s) [${outside.join(', ')}] on '${table}', ` +
+            `outside its bundled columns [${entry.columns.join(', ')}].`
+        );
+    }
 }
 
 /** Human/agent-readable description of a bundle, embedded in generated prompts. */
