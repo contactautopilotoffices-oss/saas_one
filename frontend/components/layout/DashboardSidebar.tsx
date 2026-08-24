@@ -65,6 +65,7 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
 
         if (userRole === 'org_super_admin') {
             items.push({ label: 'Water Analytics', href: `/${orgId}/dashboard?tab=water`, icon: Droplets, domain: 'dashboards' as const });
+            items.push({ label: 'Org Efficiency', href: `/${orgId}/org-efficiency`, icon: TrendingUp, domain: 'dashboards' as const });
         }
 
         return items;
