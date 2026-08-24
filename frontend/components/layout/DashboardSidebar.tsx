@@ -8,7 +8,7 @@ import {
     Menu, X, GitMerge, Calendar, ShoppingCart, UsersRound, BarChart3,
     FileUp, Bot, Building2, Send, CalendarDays, Droplets, Coffee,
     Sparkles, DollarSign, ClipboardList, Target, TrendingUp,
-    BellRing, HelpCircle, Megaphone, Radio, BookOpen, Smartphone, MessageSquarePlus, ShieldCheck
+    BellRing, HelpCircle, Megaphone, Radio, BookOpen, Smartphone, MessageSquarePlus, ShieldCheck, Gauge
 } from 'lucide-react';
 import CapabilityWrapper from '../auth/CapabilityWrapper';
 import { useAuth } from '@/frontend/context/AuthContext';
@@ -65,6 +65,7 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
 
         if (userRole === 'org_super_admin') {
             items.push({ label: 'Water Analytics', href: `/${orgId}/dashboard?tab=water`, icon: Droplets, domain: 'dashboards' as const });
+            items.push({ label: 'Org Progress Meter', href: `/${orgId}/org-progress`, icon: Gauge, domain: 'dashboards' as const });
             items.push({ label: 'Org Efficiency', href: `/${orgId}/org-efficiency`, icon: TrendingUp, domain: 'dashboards' as const });
         }
 

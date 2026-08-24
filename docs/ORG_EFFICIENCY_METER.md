@@ -69,3 +69,45 @@ regenerate, and the agent evolves with the org: that is the agnostic layer.
    manually at first, from agent crons later. The meter moves on the first one.
 4. Register Ira and Pratiksha with bundles, keep them in `shadow` until their
    output has been reviewed in the council log.
+
+---
+
+## Organization Progress Meter (UI)
+
+Route `/{orgId}/org-progress` (sidebar: **Org Progress Meter**, org_super_admin only).
+Also mounted as the Meter tab of the Org Efficiency module — one component, two mounts.
+
+| File | Role |
+|---|---|
+| `frontend/components/org-efficiency/ConcentricDial.tsx` | The instrument: 5 nested semicircular rings, pointer arms from a shared hub, linkage polyline, graduated bezel |
+| `frontend/components/org-efficiency/OrgProgressTracker.tsx` | Module shell: filters, weights, simulate mode, legend, drill-through table |
+
+### What it does
+
+- **Five nested dials**, agent innermost to org outermost, each with its own pointer and value chip.
+- **Contribution weights** — sliders per level with Equal / Inside-out / Outcome presets. Normalised
+  across visible levels, stored in `localStorage` only. Each legend card shows that level's actual
+  points contributed to the org number.
+- **Simulate mode** — drag any ring and watch the org needle move. Nothing is persisted; a
+  "simulated" badge appears and a Reset button clears it.
+- **Filters** — level, department, cadence, agent. Hovering a ring or legend card focuses it.
+- **Table view** — drill-through to the goals behind every level, for accessibility and for disputes.
+
+### Two rules the UI keeps
+
+1. **A level with no fresh measurement is excluded, never counted as zero.** A silent zero would hide
+   exactly the problem the meter exists to surface. Unmeasured goals are reported in the red
+   "not in the chain" strip and in each card's `measured/total` count.
+2. **Weights change how the org number is composed; they never change a measured value.**
+
+### Palette
+
+Reference categorical slots 1-5 in reversed order, so blue lands on the outermost org ring. Validated
+with `dataviz/scripts/validate_palette.js` in both modes — all checks pass (dark: worst adjacent CVD
+dE 8.4, normal-vision 19.3; light: 9.1 / 19.6). Every ring carries an icon, name and value chip, so
+identity is never colour alone. The dial surface is a fixed dark instrument bezel in both app themes.
+
+### Data
+
+Reads `/api/org-efficiency/meter` and `/goals`. Until the migrations are run and goals exist it falls
+back to a clearly badged **sample dataset**, so the instrument is reviewable today.
