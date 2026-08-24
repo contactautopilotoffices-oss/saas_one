@@ -12,6 +12,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'next/navigation';
+import OrgProgressTracker from './OrgProgressTracker';
 import {
     Gauge, Target, CalendarDays, Bot, RefreshCw, AlertTriangle,
     CheckCircle2, XCircle, Link2Off, TrendingUp, TrendingDown,
@@ -20,13 +21,6 @@ import {
 type Level = 'agent' | 'employee' | 'department' | 'tech' | 'org';
 type Cadence = 'weekly' | 'monthly' | 'quarterly';
 
-const LEVEL_LABELS: Record<Level, string> = {
-    agent: 'Agent Level',
-    employee: 'Employee Level',
-    department: 'Department Level',
-    tech: 'Tech Level',
-    org: 'Organization Level',
-};
 const LEVEL_COLORS: Record<Level, string> = {
     agent: 'bg-red-500',
     employee: 'bg-amber-500',
@@ -236,7 +230,7 @@ export default function OrgEfficiencyMeter() {
                 ))}
             </div>
 
-            {tab === 'meter' && <MeterTab meter={meter} loading={loading} onDrill={(f) => { setPaceFilter(f); setTab('goals'); }} />}
+            {tab === 'meter' && <OrgProgressTracker />}
 
             {tab === 'goals' && (
                 <GoalsTab
@@ -253,74 +247,6 @@ export default function OrgEfficiencyMeter() {
             {tab === 'agents' && (
                 <AgentsTab agents={agents} bundles={bundles} council={council} onRegenerate={regeneratePrompt} />
             )}
-        </div>
-    );
-}
-
-/* ------------------------------- METER TAB ------------------------------- */
-
-function MeterTab({
-    meter, loading, onDrill,
-}: {
-    meter: MeterData | null;
-    loading: boolean;
-    onDrill: (f: 'completing' | 'behind' | 'not_in_chain') => void;
-}) {
-    if (loading && !meter) return <div className="py-16 text-center text-gray-400">Loading meter…</div>;
-    if (!meter || meter.counts.total_goals === 0) {
-        return (
-            <div className="py-16 text-center space-y-2">
-                <Gauge className="w-12 h-12 mx-auto text-gray-300" />
-                <p className="text-gray-500">No active goals yet. Create the first goal in the Goal Tracker tab — the meter starts moving with the first measurement.</p>
-            </div>
-        );
-    }
-
-    return (
-        <div className="space-y-6">
-            <div className="flex flex-wrap gap-4 items-center">
-                <div className="p-5 rounded-2xl border border-gray-200 dark:border-gray-700 min-w-[180px]">
-                    <div className="text-xs uppercase tracking-wide text-gray-500">Overall Progress</div>
-                    <div className="text-4xl font-bold text-blue-600">
-                        {meter.overall_progress != null ? `${meter.overall_progress}%` : '—'}
-                    </div>
-                    <div className="text-xs text-gray-400 mt-1">{meter.counts.total_goals} active goals</div>
-                </div>
-
-                <button onClick={() => onDrill('completing')} className="p-4 rounded-xl border border-green-200 dark:border-green-900 hover:bg-green-50 dark:hover:bg-green-950 text-left">
-                    <div className="flex items-center gap-2 text-green-600"><CheckCircle2 className="w-4 h-4" /><span className="text-2xl font-bold">{meter.counts.completing}</span></div>
-                    <div className="text-xs text-gray-500">On expected pace</div>
-                </button>
-                <button onClick={() => onDrill('behind')} className="p-4 rounded-xl border border-amber-200 dark:border-amber-900 hover:bg-amber-50 dark:hover:bg-amber-950 text-left">
-                    <div className="flex items-center gap-2 text-amber-600"><TrendingDown className="w-4 h-4" /><span className="text-2xl font-bold">{meter.counts.behind}</span></div>
-                    <div className="text-xs text-gray-500">Behind expected pace</div>
-                </button>
-                <button onClick={() => onDrill('not_in_chain')} className="p-4 rounded-xl border border-red-200 dark:border-red-900 hover:bg-red-50 dark:hover:bg-red-950 text-left">
-                    <div className="flex items-center gap-2 text-red-600"><Link2Off className="w-4 h-4" /><span className="text-2xl font-bold">{meter.counts.not_in_chain}</span></div>
-                    <div className="text-xs text-gray-500">Data not in the chain</div>
-                </button>
-            </div>
-
-            <div className="space-y-3">
-                {meter.levels.map((l) => (
-                    <div key={l.level} className="flex items-center gap-4">
-                        <div className="w-44 shrink-0 text-sm font-medium">{LEVEL_LABELS[l.level]}</div>
-                        <div className="flex-1 h-6 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
-                            <div
-                                className={`h-full rounded-full transition-all ${LEVEL_COLORS[l.level]}`}
-                                style={{ width: `${l.progress_pct ?? 0}%` }}
-                            />
-                        </div>
-                        <div className="w-24 shrink-0 text-right text-sm tabular-nums">
-                            {l.progress_pct != null ? `${l.progress_pct}%` : 'no data'}
-                            <span className="text-gray-400"> · {l.measured_count}/{l.goal_count}</span>
-                        </div>
-                    </div>
-                ))}
-            </div>
-            <p className="text-xs text-gray-400">
-                Each bar is the average progress of measured goals at that level (baseline → target). Goals without a fresh measurement are counted in &quot;Data not in the chain&quot;, never averaged in as zero.
-            </p>
         </div>
     );
 }
