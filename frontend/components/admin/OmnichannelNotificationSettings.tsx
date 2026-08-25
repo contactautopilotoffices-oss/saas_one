@@ -7,7 +7,8 @@ import {
     CheckCircle2, AlertCircle, ShoppingCart, Calendar,
     UserCheck, X, Building, Search, UserPlus, ChevronDown,
     User, Ticket, Wrench, Clock, FileText, Truck, Layers,
-    ClipboardCheck, BarChart3, ShoppingBag, Eye, Copy
+    ClipboardCheck, BarChart3, ShoppingBag, Eye, Copy,
+    Phone, PhoneCall, Volume2, Sparkles, Play
 } from 'lucide-react';
 import { createClient } from '@/frontend/utils/supabase/client';
 
@@ -15,6 +16,7 @@ export interface ChannelConfig {
     email: boolean;
     whatsapp: boolean;
     push: boolean;
+    voice?: boolean;
 }
 
 export interface EventNotificationRule {
@@ -26,6 +28,7 @@ export interface EventNotificationRule {
     notify_requester?: boolean;
     notify_approver?: boolean;
     reminder_minutes?: number | null;
+    voice_template?: string;
     schedule_time?: string;
     frequency?: 'daily' | 'weekly';
     property_overrides?: Record<string, EventNotificationRule>;
@@ -487,13 +490,22 @@ const minutesToReminderParts = (minutes: number | null | undefined): { value: st
     return { value: String(minutes), unit: 'minutes' };
 };
 
+const DEFAULT_VOICE_TEMPLATES: Record<string, string> = {
+    checklist_slot_reminder: "Hi {{user_name}}, this is Pratiksha from the Operations team. A quick reminder that your checklist '{{checklist_title}}' at {{property_name}} is due soon. Please ensure all items are completed on time.",
+    checklist_started: "Hi {{user_name}}, this is Pratiksha from the Operations team. Your scheduled checklist '{{checklist_title}}' at {{property_name}} has started. Please begin your inspection rounds and upload verification photos in the app.",
+    checklist_overdue_alert: "Hi {{user_name}}, this is Pratiksha from the Operations team with an urgent update. The checklist '{{checklist_title}}' at {{property_name}} was not completed during its scheduled shift. Please review and complete it right away.",
+    reminder_ppm: "Hi {{user_name}}, this is Pratiksha from the Operations team. Preventive maintenance for {{system_name}} at {{property_name}} is scheduled for {{due_date}}. Please coordinate with the vendor and arrange site clearance.",
+    reminder_ticket_sla: "Hi {{user_name}}, this is Pratiksha from Operations. Service ticket #{{ticket_number}} at {{property_name}} is approaching its resolution SLA deadline. Please take immediate action.",
+    test_call: "Hi {{user_name}}, this is Pratiksha from the Operations team. This is a quick test call to confirm that your phone notifications and voice alerts are working properly."
+};
+
 interface OmnichannelNotificationSettingsProps {
     organizationId: string;
 }
 
 export default function OmnichannelNotificationSettings({ organizationId }: OmnichannelNotificationSettingsProps) {
-    const [isLoading, setIsLoading] = useState(true);
-    const [isSaving, setIsSaving] = useState(false);
+    const [isLoading, setIsLoading] = useState<boolean>(true);
+    const [isSaving, setIsSaving] = useState<boolean>(false);
     const [matrix, setMatrix] = useState<NotificationMatrix>(DEFAULT_NOTIFICATION_MATRIX);
     const [orgMembers, setOrgMembers] = useState<UserItem[]>([]);
     const [allUsersMap, setAllUsersMap] = useState<Record<string, UserItem>>({});
@@ -503,7 +515,9 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
     const [propertiesList, setPropertiesList] = useState<{ id: string; name: string }[]>([]);
     const [selectedPropertyScope, setSelectedPropertyScope] = useState<string>('global');
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
-    const [isBroadcasting, setIsBroadcasting] = useState(false);
+    const [activeModuleTab, setActiveModuleTab] = useState<string>('tickets');
+
+    // Broadcast Welcome Modal State
     const [showBroadcastModal, setShowBroadcastModal] = useState(false);
     const [broadcastScope, setBroadcastScope] = useState<string>('global');
     const [broadcastAudienceType, setBroadcastAudienceType] = useState<'all' | 'property' | 'users'>('all');
@@ -511,11 +525,24 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
     const [broadcastUserSearch, setBroadcastUserSearch] = useState<string>('');
     const [broadcastRoles, setBroadcastRoles] = useState<string[]>([]);
     const [helpdeskContact, setHelpdeskContact] = useState<string>('contact.autopilotoffices@gmail.com');
+    const [isBroadcasting, setIsBroadcasting] = useState(false);
+
+    // AI Voice Calling & Test Call Modal State
+    const [showTestCallModal, setShowTestCallModal] = useState(false);
+    const [testPhone, setTestPhone] = useState('');
+    const [testUserName, setTestUserName] = useState('Harsh Patil');
+    const [testScript, setTestScript] = useState(DEFAULT_VOICE_TEMPLATES.test_call);
+    const [isTestingCall, setIsTestingCall] = useState(false);
+    const [recentCallLogs, setRecentCallLogs] = useState<any[]>([]);
+    const [isLoadingLogs, setIsLoadingLogs] = useState(false);
+    const [showCallLogs, setShowCallLogs] = useState(false);
+
     const supabase = createClient();
 
     useEffect(() => {
         if (organizationId) {
             fetchData();
+            fetchCallLogs();
         }
     }, [organizationId]);
 
@@ -746,7 +773,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
         });
     };
 
-    const toggleChannel = (moduleId: string, eventKey: string, channel: 'email' | 'whatsapp' | 'push') => {
+    const toggleChannel = (moduleId: string, eventKey: string, channel: 'email' | 'whatsapp' | 'push' | 'voice') => {
         updateRule(moduleId, eventKey, current => ({
             ...current,
             channels: {
@@ -754,6 +781,63 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                 [channel]: !current.channels[channel]
             }
         }));
+    };
+
+    const setVoiceTemplate = (moduleId: string, eventKey: string, template: string) => {
+        updateRule(moduleId, eventKey, current => ({
+            ...current,
+            voice_template: template
+        }));
+    };
+
+    const handleTriggerTestCall = async () => {
+        if (!testPhone.trim()) {
+            showToast('Please enter a valid phone number', 'error');
+            return;
+        }
+
+        setIsTestingCall(true);
+        try {
+            const res = await fetch('/api/voice/test-call', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    phone: testPhone.trim(),
+                    organizationId,
+                    userName: testUserName.trim() || 'Admin',
+                    customScript: testScript.trim()
+                })
+            });
+
+            const data = await res.json();
+            if (res.ok) {
+                showToast(`📞 Test call placed to ${testPhone}! Spoken: "${data.spokenScript?.slice(0, 40)}..."`);
+                setShowTestCallModal(false);
+                fetchCallLogs();
+            } else {
+                showToast(data.error || 'Failed to place test call', 'error');
+            }
+        } catch (err: any) {
+            console.error('Test call error:', err);
+            showToast('Failed to trigger test call', 'error');
+        } finally {
+            setIsTestingCall(false);
+        }
+    };
+
+    const fetchCallLogs = async () => {
+        setIsLoadingLogs(true);
+        try {
+            const res = await fetch(`/api/voice/logs?organizationId=${organizationId}`);
+            if (res.ok) {
+                const data = await res.json();
+                setRecentCallLogs(data.logs || []);
+            }
+        } catch (err) {
+            console.error('Error fetching call logs:', err);
+        } finally {
+            setIsLoadingLogs(false);
+        }
     };
 
     const toggleRole = (moduleId: string, eventKey: string, roleId: string) => {
@@ -928,21 +1012,30 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                         Configure WhatsApp (AiSensy), Email, and Push notification rules or broadcast FMS onboarding messages to all users.
                     </p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2.5">
+                    <button
+                        type="button"
+                        onClick={() => setShowTestCallModal(true)}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200 text-xs font-bold rounded-xl transition-all shadow-2xs cursor-pointer whitespace-nowrap"
+                    >
+                        <PhoneCall className="w-3.5 h-3.5" />
+                        <span>Test Voice Call</span>
+                    </button>
                     <button
                         type="button"
                         onClick={() => setShowBroadcastModal(true)}
-                        className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold rounded-xl hover:opacity-95 transition-opacity shadow-sm text-xs"
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 text-xs font-bold rounded-xl transition-all shadow-2xs cursor-pointer whitespace-nowrap"
                     >
-                        <span>🏢</span> Send FMS Welcome Broadcast
+                        <MessageSquare className="w-3.5 h-3.5" />
+                        <span>Welcome Broadcast</span>
                     </button>
                     <button
                         onClick={handleSave}
                         disabled={isSaving}
-                        className="flex items-center gap-2 px-5 py-2.5 bg-primary text-primary-foreground font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-50 shadow-sm text-xs"
+                        className="inline-flex items-center gap-1.5 px-4 py-2 bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50 text-xs font-bold rounded-xl transition-all shadow-xs cursor-pointer whitespace-nowrap"
                     >
-                        {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                        Save Settings
+                        {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                        <span>Save Settings</span>
                     </button>
                 </div>
             </div>
@@ -1006,7 +1099,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                 {module.events.map(ev => {
                                     const rule = getRule(module.id, ev.key);
                                     const reminderParts = minutesToReminderParts(rule.reminder_minutes);
-                                    const isAnyChannelOn = rule.channels.email || rule.channels.whatsapp || rule.channels.push;
+                                    const isAnyChannelOn = rule.channels.email || rule.channels.whatsapp || rule.channels.push || rule.channels.voice;
 
                                     return (
                                         <div key={ev.key} className="p-4 rounded-xl hover:bg-slate-50/50 transition-colors space-y-3">
@@ -1073,6 +1166,20 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                                     >
                                                         <Bell className="w-3 h-3" />
                                                         <span>Push</span>
+                                                    </button>
+                                                    
+                                                    {/* Voice Toggle */}
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => toggleChannel(module.id, ev.key, 'voice')}
+                                                        className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                                                            rule.channels.voice
+                                                                ? 'bg-purple-600 text-white shadow-xs'
+                                                                : 'bg-white text-slate-400 hover:text-slate-600'
+                                                        }`}
+                                                    >
+                                                        <PhoneCall className="w-3 h-3" />
+                                                        <span>Voice</span>
                                                     </button>
                                                 </div>
                                             </div>
@@ -1264,6 +1371,44 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                                             </div>
                                                         </div>
                                                     )}
+
+                                                    {/* Voice Script Customization (when Voice Channel is ON) */}
+                                                    {rule.channels.voice && (
+                                                        <div className="pt-3 border-t border-purple-100/80 bg-purple-50/40 p-3 rounded-xl space-y-2">
+                                                            <div className="flex items-center justify-between">
+                                                                <div className="flex items-center gap-1.5 text-xs font-bold text-purple-900">
+                                                                    <Volume2 className="w-3.5 h-3.5 text-purple-600" />
+                                                                    <span>AI Voice Spoken Script / Template:</span>
+                                                                </div>
+                                                                <span className="text-[10px] text-purple-600 font-semibold bg-purple-100/60 px-2 py-0.5 rounded-md">
+                                                                    Operations Voice Prompt
+                                                                </span>
+                                                            </div>
+                                                            <textarea
+                                                                rows={2}
+                                                                value={rule.voice_template || DEFAULT_VOICE_TEMPLATES[ev.key] || `Hello {{user_name}}, this is an alert regarding ${ev.name} at {{property_name}}.`}
+                                                                onChange={(e) => setVoiceTemplate(module.id, ev.key, e.target.value)}
+                                                                className="w-full text-xs font-medium bg-white border border-purple-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-purple-400 shadow-2xs resize-none"
+                                                                placeholder="Type custom voice message..."
+                                                            />
+                                                            <div className="flex flex-wrap items-center gap-1.5">
+                                                                <span className="text-[10px] text-slate-500 font-semibold">Dynamic Variables:</span>
+                                                                {['{{user_name}}', '{{checklist_title}}', '{{property_name}}', '{{shift_time}}', '{{due_date}}'].map(v => (
+                                                                    <button
+                                                                        key={v}
+                                                                        type="button"
+                                                                        onClick={() => {
+                                                                            const current = rule.voice_template || DEFAULT_VOICE_TEMPLATES[ev.key] || '';
+                                                                            setVoiceTemplate(module.id, ev.key, current + ' ' + v);
+                                                                        }}
+                                                                        className="px-1.5 py-0.5 text-[10px] font-mono bg-white text-purple-700 border border-purple-200 rounded-md hover:bg-purple-100 transition-colors shadow-2xs"
+                                                                    >
+                                                                        {v}
+                                                                    </button>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
                                                 </div>
                                             )}
                                         </div>
@@ -1273,6 +1418,113 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                         </div>
                     );
                 })}
+            </div>
+
+            {/* AI Voice Calling & Telephony Overview Section */}
+            <div className="p-5 bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white rounded-3xl border border-indigo-800/40 shadow-xl space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-2xl bg-purple-500/20 border border-purple-400/30 flex items-center justify-center text-purple-300">
+                            <PhoneCall className="w-5 h-5" />
+                        </div>
+                        <div>
+                            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                                Operations Voice Telephony Engine (Plivo)
+                                <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 text-[10px] font-bold rounded-full border border-emerald-500/30">
+                                    LIVE 🟢
+                                </span>
+                            </h3>
+                            <p className="text-xs text-slate-300 mt-0.5">
+                                Automated outbound phone calls for shift start reminders, SLA escalations, and overdue checklist alerts.
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setShowCallLogs(!showCallLogs);
+                                if (!showCallLogs) fetchCallLogs();
+                            }}
+                            className="px-3.5 py-2 bg-white/10 hover:bg-white/20 text-white text-xs font-bold rounded-xl transition-colors border border-white/10"
+                        >
+                            {showCallLogs ? 'Hide Call Logs' : 'View Call Logs'}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setShowTestCallModal(true)}
+                            className="px-4 py-2 bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 text-white text-xs font-bold rounded-xl transition-all shadow-md flex items-center gap-1.5"
+                        >
+                            <Play className="w-3.5 h-3.5 fill-current" />
+                            <span>Test Live Call</span>
+                        </button>
+                    </div>
+                </div>
+
+                {/* Recent Call Logs Table (Expandable) */}
+                {showCallLogs && (
+                    <div className="pt-3 border-t border-white/10 space-y-2">
+                        <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-purple-200">Recent AI Voice Dispatches</span>
+                            <button
+                                type="button"
+                                onClick={fetchCallLogs}
+                                className="text-[11px] text-slate-400 hover:text-white underline"
+                            >
+                                Refresh
+                            </button>
+                        </div>
+                        {isLoadingLogs ? (
+                            <div className="py-4 text-center text-xs text-slate-400">Loading call records...</div>
+                        ) : recentCallLogs.length === 0 ? (
+                            <div className="py-4 text-center text-xs text-slate-400 bg-white/5 rounded-xl border border-white/5">
+                                No voice calls placed yet. Click "Test Live Call" to place your first test call!
+                            </div>
+                        ) : (
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-left text-xs text-slate-300">
+                                    <thead>
+                                        <tr className="border-b border-white/10 text-[10px] uppercase font-bold text-slate-400">
+                                            <th className="pb-2">Time</th>
+                                            <th className="pb-2">Recipient</th>
+                                            <th className="pb-2">Event</th>
+                                            <th className="pb-2">Status</th>
+                                            <th className="pb-2">Spoken Script</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-white/5">
+                                        {recentCallLogs.map((log: any) => (
+                                            <tr key={log.id} className="hover:bg-white/5">
+                                                <td className="py-2 text-[11px] text-slate-400 font-mono">
+                                                    {new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                </td>
+                                                <td className="py-2 font-bold text-white font-mono">{log.recipient_phone}</td>
+                                                <td className="py-2">
+                                                    <span className="px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded text-[10px] font-bold">
+                                                        {log.event_type}
+                                                    </span>
+                                                </td>
+                                                <td className="py-2">
+                                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                                        log.call_status === 'completed' || log.call_status === 'in_progress'
+                                                            ? 'bg-emerald-500/20 text-emerald-300'
+                                                            : 'bg-rose-500/20 text-rose-300'
+                                                    }`}>
+                                                        {log.call_status}
+                                                    </span>
+                                                </td>
+                                                <td className="py-2 text-[11px] text-slate-300 max-w-xs truncate" title={log.spoken_script}>
+                                                    {log.spoken_script}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
 
             {/* Bottom Save Button */}
@@ -1585,6 +1837,125 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                         <>
                                             <span>🚀</span>
                                             <span>Broadcast FMS Welcome Now</span>
+                                        </>
+                                    )}
+                                </button>
+                            </div>
+                        </motion.div>
+                    </div>
+                )}
+            </AnimatePresence>
+
+            {/* Test Voice Call Modal */}
+            <AnimatePresence>
+                {showTestCallModal && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                        <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            onClick={() => setShowTestCallModal(false)}
+                            className="absolute inset-0 bg-slate-900/60 backdrop-blur-xs"
+                        />
+                        <motion.div
+                            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                            exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                            className="relative w-full max-w-lg bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden z-10"
+                        >
+                            {/* Modal Header */}
+                            <div className="p-6 bg-gradient-to-r from-purple-900 via-indigo-900 to-slate-900 text-white flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 rounded-2xl bg-purple-500/20 border border-purple-400/30 flex items-center justify-center text-purple-300">
+                                        <PhoneCall className="w-5 h-5" />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-base font-bold text-white">Test Live Voice Call</h3>
+                                        <p className="text-xs text-purple-200 mt-0.5">Plivo Telephony System</p>
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowTestCallModal(false)}
+                                    className="p-2 text-slate-300 hover:text-white rounded-xl hover:bg-white/10 transition-colors"
+                                >
+                                    <X className="w-5 h-5" />
+                                </button>
+                            </div>
+
+                            {/* Modal Body */}
+                            <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 mb-1.5">Recipient Mobile Number (with Country Code)</label>
+                                    <input
+                                        type="tel"
+                                        value={testPhone}
+                                        onChange={(e) => setTestPhone(e.target.value)}
+                                        placeholder="e.g. +91 98765 43210"
+                                        className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-xs font-bold text-slate-900 outline-hidden focus:ring-2 focus:ring-purple-400"
+                                    />
+                                    <p className="text-[11px] text-slate-500 mt-1">Enter the mobile phone that should receive the incoming phone call.</p>
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 mb-1.5">Recipient Name</label>
+                                    <input
+                                        type="text"
+                                        value={testUserName}
+                                        onChange={(e) => setTestUserName(e.target.value)}
+                                        placeholder="e.g. Harsh Patil"
+                                        className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-xs font-semibold text-slate-900 outline-hidden focus:ring-2 focus:ring-purple-400"
+                                    />
+                                </div>
+
+                                <div>
+                                    <div className="flex items-center justify-between mb-1.5">
+                                        <label className="block text-xs font-bold text-slate-700">Spoken Voice Prompt / Script</label>
+                                        <span className="text-[10px] font-semibold text-purple-600">Operations Voice Engine</span>
+                                    </div>
+                                    <textarea
+                                        rows={3}
+                                        value={testScript}
+                                        onChange={(e) => setTestScript(e.target.value)}
+                                        className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-xs font-medium text-slate-900 outline-hidden focus:ring-2 focus:ring-purple-400 resize-none shadow-2xs"
+                                        placeholder="Type text for voice call to speak..."
+                                    />
+                                </div>
+
+                                <div className="p-3.5 bg-purple-50 rounded-2xl border border-purple-200 text-xs text-purple-900 space-y-1">
+                                    <div className="flex items-center gap-1.5 font-bold text-purple-800">
+                                        <Sparkles className="w-3.5 h-3.5" /> Plivo Virtual Number Connected
+                                    </div>
+                                    <p className="text-[11px] text-purple-700">
+                                        When you click "Place Call Now", Plivo will dial your mobile number from your configured virtual caller ID and speak the exact script above.
+                                    </p>
+                                </div>
+                            </div>
+
+                            {/* Modal Footer */}
+                            <div className="p-6 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowTestCallModal(false)}
+                                    className="px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-200/60 rounded-xl transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleTriggerTestCall}
+                                    disabled={isTestingCall || !testPhone.trim()}
+                                    className="flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-purple-600 via-indigo-600 to-slate-900 text-white font-bold rounded-xl hover:opacity-95 transition-opacity disabled:opacity-50 shadow-md text-xs"
+                                >
+                                    {isTestingCall ? (
+                                        <>
+                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                            <span>Calling Your Phone...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <PhoneCall className="w-4 h-4" />
+                                            <span>Place Test Call Now</span>
                                         </>
                                     )}
                                 </button>

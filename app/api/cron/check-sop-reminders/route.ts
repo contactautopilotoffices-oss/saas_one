@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { NotificationService } from '@/backend/services/NotificationService';
 import { WhatsAppEventProcessor } from '@/backend/services/WhatsAppEventProcessor';
+import { WhatsAppRecipientResolver } from '@/backend/services/WhatsAppRecipientResolver';
+import { VoiceCallingService } from '@/backend/services/VoiceCallingService';
 
 const LOCAL_TIMEZONE = 'Asia/Kolkata';
 
@@ -20,7 +22,7 @@ function format12h(timeStr?: string | null): string {
 /**
  * GET /api/cron/check-sop-reminders
  * Runs every 1-5 minutes via Vercel Cron.
- * Manages the automated SOP Checklist notification lifecycle:
+ * Manages the automated SOP Checklist notification lifecycle with group consolidation:
  * 1. Pre-start reminder (X mins before start_time, dynamically configured in Omnichannel settings)
  * 2. Shift started alert (at start_time)
  * 3. Overdue / Missed alert (after end_time if incomplete)
@@ -28,6 +30,9 @@ function format12h(timeStr?: string | null): string {
  * Rules:
  * - Active for Daily, Weekly, and Monthly checklists.
  * - Hourly checklists ('hourly', 'every_1_hour', etc.) and on_demand are strictly EXCLUDED to avoid spam.
+ * - Consolidated Grouping: Checklists on the same property with the same shift time are consolidated into 1 message.
+ * - Dynamic Recipient Resolution: Resolves target roles & specific users configured in Omnichannel settings.
+ * - Plivo Voice Calling: Plivo dials configured recipients directly with natural operational voice prompts.
  * - Deduplication: Uses whatsapp_queue lookback for today's date in IST to guarantee 0 duplicates.
  */
 export async function GET(request: NextRequest) {
@@ -102,7 +107,7 @@ export async function GET(request: NextRequest) {
                 .gte('created_at', startOfTodayIST),
             supabaseAdmin
                 .from('sop_completions')
-                .select('template_id, status, completed_at')
+                .select('template_id, status, completed_at, completion_date')
                 .in('template_id', templateIds)
                 .gte('created_at', startOfTodayIST),
             supabaseAdmin
@@ -139,19 +144,33 @@ export async function GET(request: NextRequest) {
             }
         });
 
+        // 4. GROUP TEMPLATES by (property_id, rawStartTime, rawEndTime) for Consolidated Messaging
+        const groupedTemplates = new Map<string, typeof validTemplates>();
+        for (const template of validTemplates) {
+            const propId = template.property_id || 'global';
+            const rawStartTime = (template.start_time || '09:00:00').slice(0, 5);
+            const rawEndTime = (template.end_time || '18:00:00').slice(0, 5);
+            const groupKey = `${propId}__${rawStartTime}__${rawEndTime}`;
+            if (!groupedTemplates.has(groupKey)) {
+                groupedTemplates.set(groupKey, []);
+            }
+            groupedTemplates.get(groupKey)!.push(template);
+        }
+
         let remindersDispatched = 0;
         let startAlertsDispatched = 0;
         let overdueAlertsDispatched = 0;
 
-        for (const template of validTemplates) {
-            const orgId = template.organization_id || '';
-            const propId = template.property_id || '';
-            const assignedUsers = Array.isArray(template.assigned_to) ? template.assigned_to : [];
-            const alreadySentTypes = enqueuedEventsMap.get(template.id) || new Set();
+        for (const [, group] of groupedTemplates.entries()) {
+            if (group.length === 0) continue;
 
-            // Default times if not set on template
-            const rawStartTime = (template.start_time || '09:00:00').slice(0, 5); // "09:00"
-            const rawEndTime = (template.end_time || '18:00:00').slice(0, 5);     // "18:00"
+            const firstTemplate = group[0];
+            const orgId = firstTemplate.organization_id || '';
+            const propId = firstTemplate.property_id || '';
+
+            // Default times for the group
+            const rawStartTime = (firstTemplate.start_time || '09:00:00').slice(0, 5);
+            const rawEndTime = (firstTemplate.end_time || '18:00:00').slice(0, 5);
 
             const [sH, sM] = rawStartTime.split(':').map(Number);
             const [eH, eM] = rawEndTime.split(':').map(Number);
@@ -162,152 +181,326 @@ export async function GET(request: NextRequest) {
             // Dynamic configured reminder lead time from Omnichannel settings (default 10 mins)
             const configuredLeadMins = orgReminderMinutesMap.get(orgId) || 10;
             const preStartMins = startMins - configuredLeadMins;
-
             const isOvernight = endMins <= startMins;
 
+            // Fetch property name for friendly voice/text dispatch
+            const { data: propData } = await supabaseAdmin.from('properties').select('name').eq('id', propId).maybeSingle();
+            const propertyName = propData?.name || 'Site Facility';
+
+            // Format consolidated checklist title
+            const count = group.length;
+            let groupTitle = '';
+            if (count === 1) {
+                groupTitle = group[0].title;
+            } else if (count === 2) {
+                groupTitle = `${group[0].title}, ${group[1].title} (2 Checklists)`;
+            } else {
+                groupTitle = `${group[0].title}, ${group[1].title} & ${count - 2} more (${count} Checklists)`;
+            }
+
+            // Check deduplication across all templates in this group
+            const hasSentPreStart = group.some(t => {
+                const sent = enqueuedEventsMap.get(t.id);
+                return sent && (sent.has('CHECKLIST_SLOT_REMINDER') || sent.has('SOP_REMINDER'));
+            });
+
+            const hasSentStarted = group.some(t => {
+                const sent = enqueuedEventsMap.get(t.id);
+                return sent && (sent.has('CHECKLIST_STARTED') || sent.has('SOP_STARTED'));
+            });
+
             // ─────────────────────────────────────────────────────────────────
-            // STAGE 1: PRE-START REMINDER (e.g. 10 mins before start_time)
+            // STAGE 1: PRE-START REMINDER (Consolidated for the shift group)
             // ─────────────────────────────────────────────────────────────────
             const isInPreStartWindow = currentMins >= preStartMins && currentMins < startMins;
-            const hasSentPreStart = alreadySentTypes.has('CHECKLIST_SLOT_REMINDER') || alreadySentTypes.has('SOP_REMINDER');
 
             if (isInPreStartWindow && !hasSentPreStart) {
                 const formattedStartTime = format12h(rawStartTime);
                 const leadTimeText = `${configuredLeadMins} mins`;
 
                 try {
+                    // Resolve dynamic recipients from Omnichannel Matrix
+                    const { users: reminderRecipients } = await WhatsAppRecipientResolver.resolveRecipients({
+                        organizationId: orgId,
+                        propertyId: propId,
+                        featureKey: 'checklist_slot_reminder'
+                    });
+
+                    const recipientIds = Array.from(new Set(reminderRecipients.map(u => u.id)));
+
                     // 1. Dispatch in-app notifications
-                    if (assignedUsers.length > 0) {
-                        await NotificationService.sendToMany(assignedUsers, {
+                    if (recipientIds.length > 0) {
+                        await NotificationService.sendToMany(recipientIds, {
                             propertyId: propId,
                             organizationId: orgId,
                             type: 'SOP_REMINDER',
-                            title: 'Checklist Starting Soon 📋',
-                            message: `"${template.title}" shift starts in ${leadTimeText} at ${formattedStartTime}.`,
-                            deepLink: `/properties/${propId}/sop?templateId=${template.id}`,
+                            title: count > 1 ? `Checklists Starting Soon (${count}) 📋` : 'Checklist Starting Soon 📋',
+                            message: `"${groupTitle}" shift starts in ${leadTimeText} at ${formattedStartTime}.`,
+                            deepLink: `/properties/${propId}/sop`,
                             priority: 'HIGH',
                         });
                     }
 
-                    // 2. Dispatch WhatsApp notification
+                    // 2. Dispatch WhatsApp notification (1 consolidated message)
                     await WhatsAppEventProcessor.processEvent({
                         event_type: 'CHECKLIST_SLOT_REMINDER',
                         payload: {
                             organization_id: orgId,
                             property_id: propId,
-                            template_id: template.id,
-                            template_title: template.title,
+                            template_id: firstTemplate.id,
+                            template_title: groupTitle,
                             due_time: `${formattedStartTime} (in ${leadTimeText})`,
-                            assigned_to: assignedUsers[0] || null
+                            assigned_to: recipientIds[0] || null
                         }
                     });
 
-                    alreadySentTypes.add('CHECKLIST_SLOT_REMINDER');
+                    // 3. Dispatch Voice Call if voice channel is enabled in Omnichannel matrix
+                    try {
+                        const orgMatrix = (orgSettingsRes.data || []).find(os => os.organization_id === orgId)?.notification_matrix || {};
+                        const reminderRule = orgMatrix?.checklists?.checklist_slot_reminder;
+                        const isVoiceEnabled = reminderRule?.channels?.voice === true;
+
+                        if (isVoiceEnabled && reminderRecipients.length > 0) {
+                            for (const u of reminderRecipients) {
+                                if (u.phone) {
+                                    await VoiceCallingService.triggerCall({
+                                        organizationId: orgId,
+                                        propertyId: propId,
+                                        recipientPhone: u.phone,
+                                        recipientUserId: u.id,
+                                        eventType: 'CHECKLIST_SLOT_REMINDER',
+                                        customTemplate: reminderRule?.voice_template,
+                                        variables: {
+                                            userName: u.name || 'Staff',
+                                            checklistTitle: groupTitle,
+                                            propertyName: propertyName,
+                                            shiftTime: formattedStartTime
+                                        }
+                                    });
+                                }
+                            }
+                        }
+                    } catch (voiceErr: any) {
+                        console.error('[SOP Reminders] Pre-start voice call error:', voiceErr.message);
+                    }
+
+                    // Mark all templates in group as sent
+                    group.forEach(t => {
+                        if (!enqueuedEventsMap.has(t.id)) enqueuedEventsMap.set(t.id, new Set());
+                        enqueuedEventsMap.get(t.id)!.add('CHECKLIST_SLOT_REMINDER');
+                    });
+
                     remindersDispatched++;
-                    console.log(`[SOP Reminders] Sent pre-start reminder for "${template.title}" (starts in ${leadTimeText} at ${formattedStartTime})`);
+                    console.log(`[SOP Reminders] Sent consolidated pre-start reminder for "${groupTitle}" (starts in ${leadTimeText} at ${formattedStartTime})`);
                 } catch (err: any) {
-                    console.error(`[SOP Reminders] Pre-start error for template ${template.id}:`, err.message);
+                    console.error(`[SOP Reminders] Pre-start error for group ${groupTitle}:`, err.message);
                 }
             }
 
             // ─────────────────────────────────────────────────────────────────
-            // STAGE 2: EXACT START TIME ALERT (at start_time)
+            // STAGE 2: EXACT START TIME ALERT (Consolidated for the shift group)
             // ─────────────────────────────────────────────────────────────────
             const isInStartedWindow = isOvernight 
                 ? (currentMins >= startMins || currentMins < endMins)
                 : (currentMins >= startMins && currentMins < endMins);
-            const hasSentStarted = alreadySentTypes.has('CHECKLIST_STARTED') || alreadySentTypes.has('SOP_STARTED');
 
             if (isInStartedWindow && !hasSentStarted) {
                 const formattedStartTime = format12h(rawStartTime);
 
                 try {
+                    // Resolve dynamic recipients from Omnichannel Matrix
+                    const { users: startedRecipients } = await WhatsAppRecipientResolver.resolveRecipients({
+                        organizationId: orgId,
+                        propertyId: propId,
+                        featureKey: 'checklist_started'
+                    });
+
+                    const recipientIds = Array.from(new Set(startedRecipients.map(u => u.id)));
+
                     // 1. Dispatch in-app notifications
-                    if (assignedUsers.length > 0) {
-                        await NotificationService.sendToMany(assignedUsers, {
+                    if (recipientIds.length > 0) {
+                        await NotificationService.sendToMany(recipientIds, {
                             propertyId: propId,
                             organizationId: orgId,
                             type: 'SOP_STARTED',
-                            title: 'Checklist Shift Started 🚀',
-                            message: `"${template.title}" shift has started (${formattedStartTime}). Please begin your inspection.`,
-                            deepLink: `/properties/${propId}/sop?templateId=${template.id}`,
+                            title: count > 1 ? `Checklists Shift Started (${count}) 🚀` : 'Checklist Shift Started 🚀',
+                            message: `"${groupTitle}" shift has started (${formattedStartTime}). Please begin your inspection rounds.`,
+                            deepLink: `/properties/${propId}/sop`,
                             priority: 'HIGH',
                         });
                     }
 
-                    // 2. Dispatch WhatsApp notification
+                    // 2. Dispatch WhatsApp notification (1 consolidated message)
                     await WhatsAppEventProcessor.processEvent({
                         event_type: 'CHECKLIST_STARTED',
                         payload: {
                             organization_id: orgId,
                             property_id: propId,
-                            template_id: template.id,
-                            template_title: template.title,
+                            template_id: firstTemplate.id,
+                            template_title: groupTitle,
                             start_time: formattedStartTime,
-                            assigned_to: assignedUsers[0] || null
+                            assigned_to: recipientIds[0] || null
                         }
                     });
 
-                    alreadySentTypes.add('CHECKLIST_STARTED');
+                    // 3. Dispatch Voice Call if voice channel is enabled in Omnichannel matrix
+                    try {
+                        const orgMatrix = (orgSettingsRes.data || []).find(os => os.organization_id === orgId)?.notification_matrix || {};
+                        const startedRule = orgMatrix?.checklists?.checklist_started;
+                        const isVoiceEnabled = startedRule?.channels?.voice === true;
+
+                        if (isVoiceEnabled && startedRecipients.length > 0) {
+                            for (const u of startedRecipients) {
+                                if (u.phone) {
+                                    await VoiceCallingService.triggerCall({
+                                        organizationId: orgId,
+                                        propertyId: propId,
+                                        recipientPhone: u.phone,
+                                        recipientUserId: u.id,
+                                        eventType: 'CHECKLIST_STARTED',
+                                        customTemplate: startedRule?.voice_template,
+                                        variables: {
+                                            userName: u.name || 'Staff',
+                                            checklistTitle: groupTitle,
+                                            propertyName: propertyName,
+                                            shiftTime: formattedStartTime
+                                        }
+                                    });
+                                }
+                            }
+                        }
+                    } catch (voiceErr: any) {
+                        console.error('[SOP Reminders] Started voice call error:', voiceErr.message);
+                    }
+
+                    // Mark all templates in group as sent
+                    group.forEach(t => {
+                        if (!enqueuedEventsMap.has(t.id)) enqueuedEventsMap.set(t.id, new Set());
+                        enqueuedEventsMap.get(t.id)!.add('CHECKLIST_STARTED');
+                    });
+
                     startAlertsDispatched++;
-                    console.log(`[SOP Reminders] Sent shift started alert for "${template.title}" at ${formattedStartTime}`);
+                    console.log(`[SOP Reminders] Sent consolidated shift started alert for "${groupTitle}" at ${formattedStartTime}`);
                 } catch (err: any) {
-                    console.error(`[SOP Reminders] Started alert error for template ${template.id}:`, err.message);
+                    console.error(`[SOP Reminders] Started alert error for group ${groupTitle}:`, err.message);
                 }
             }
 
             // ─────────────────────────────────────────────────────────────────
-            // STAGE 3: OVERDUE / MISSED ALERT (after end_time if incomplete)
+            // STAGE 3: OVERDUE / MISSED ALERT (Consolidated for incomplete items)
             // ─────────────────────────────────────────────────────────────────
             const isAfterEndTime = isOvernight
                 ? (currentMins >= endMins && currentMins < startMins)
                 : (currentMins >= endMins);
 
-            const isCompletedToday = completedTemplateIds.has(template.id);
-            const hasSentOverdue = alreadySentTypes.has('CHECKLIST_OVERDUE') || alreadySentTypes.has('SOP_OVERDUE') || alreadySentTypes.has('SOP_MISSED');
+            if (isAfterEndTime) {
+                const incompleteTemplates = group.filter(t => !completedTemplateIds.has(t.id));
 
-            if (isAfterEndTime && !isCompletedToday && !hasSentOverdue) {
-                const slotWindowLabel = `${format12h(rawStartTime)} – ${format12h(rawEndTime)}`;
-
-                try {
-                    // 1. Dispatch in-app notifications
-                    if (assignedUsers.length > 0) {
-                        await NotificationService.sendToMany(assignedUsers, {
-                            propertyId: propId,
-                            organizationId: orgId,
-                            type: 'SOP_MISSED',
-                            title: '⚠️ Missed Checklist Alert',
-                            message: `"${template.title}" scheduled for ${slotWindowLabel} was NOT completed on time.`,
-                            deepLink: `/properties/${propId}/sop?templateId=${template.id}`,
-                            priority: 'HIGH',
-                        });
-                    }
-
-                    // 2. Dispatch WhatsApp notification
-                    await WhatsAppEventProcessor.processEvent({
-                        event_type: 'CHECKLIST_OVERDUE',
-                        payload: {
-                            organization_id: orgId,
-                            property_id: propId,
-                            template_id: template.id,
-                            template_title: template.title,
-                            slot_time: slotWindowLabel,
-                            assigned_to: assignedUsers[0] || null
-                        }
+                if (incompleteTemplates.length > 0) {
+                    const hasSentOverdue = incompleteTemplates.some(t => {
+                        const sent = enqueuedEventsMap.get(t.id);
+                        return sent && (sent.has('CHECKLIST_OVERDUE') || sent.has('CHECKLIST_OVERDUE_ALERT') || sent.has('SOP_OVERDUE') || sent.has('SOP_MISSED'));
                     });
 
-                    alreadySentTypes.add('CHECKLIST_OVERDUE');
-                    overdueAlertsDispatched++;
-                    console.log(`[SOP Reminders] Sent overdue alert for incomplete checklist "${template.title}" (slot: ${slotWindowLabel})`);
-                } catch (err: any) {
-                    console.error(`[SOP Reminders] Overdue alert error for template ${template.id}:`, err.message);
+                    if (!hasSentOverdue) {
+                        const slotWindowLabel = `${format12h(rawStartTime)} – ${format12h(rawEndTime)}`;
+                        const incCount = incompleteTemplates.length;
+                        let overdueTitle = '';
+                        if (incCount === 1) {
+                            overdueTitle = incompleteTemplates[0].title;
+                        } else if (incCount === 2) {
+                            overdueTitle = `${incompleteTemplates[0].title}, ${incompleteTemplates[1].title} (2 Checklists)`;
+                        } else {
+                            overdueTitle = `${incompleteTemplates[0].title}, ${incompleteTemplates[1].title} & ${incCount - 2} more (${incCount} Checklists)`;
+                        }
+
+                        try {
+                            // Resolve dynamic recipients from Omnichannel Matrix (roles + assigned managers)
+                            const { users: overdueRecipients } = await WhatsAppRecipientResolver.resolveRecipients({
+                                organizationId: orgId,
+                                propertyId: propId,
+                                featureKey: 'checklist_overdue_alert'
+                            });
+
+                            const recipientIds = Array.from(new Set(overdueRecipients.map(u => u.id)));
+
+                            // 1. Dispatch in-app notifications
+                            if (recipientIds.length > 0) {
+                                await NotificationService.sendToMany(recipientIds, {
+                                    propertyId: propId,
+                                    organizationId: orgId,
+                                    type: 'SOP_MISSED',
+                                    title: incCount > 1 ? `⚠️ Incomplete Checklists Alert (${incCount})` : '⚠️ Missed Checklist Alert',
+                                    message: `"${overdueTitle}" scheduled for ${slotWindowLabel} was NOT completed on time.`,
+                                    deepLink: `/properties/${propId}/sop`,
+                                    priority: 'HIGH',
+                                });
+                            }
+
+                            // 2. Dispatch WhatsApp notification (1 consolidated message)
+                            await WhatsAppEventProcessor.processEvent({
+                                event_type: 'CHECKLIST_OVERDUE',
+                                payload: {
+                                    organization_id: orgId,
+                                    property_id: propId,
+                                    template_id: incompleteTemplates[0].id,
+                                    template_title: overdueTitle,
+                                    slot_time: slotWindowLabel,
+                                    assigned_to: recipientIds[0] || null
+                                }
+                            });
+
+                            // 3. Dispatch Voice Call if voice channel is enabled in Omnichannel matrix
+                            try {
+                                const orgMatrix = (orgSettingsRes.data || []).find(os => os.organization_id === orgId)?.notification_matrix || {};
+                                const overdueRule = orgMatrix?.checklists?.checklist_overdue_alert;
+                                const isVoiceEnabled = overdueRule?.channels?.voice === true;
+
+                                if (isVoiceEnabled && overdueRecipients.length > 0) {
+                                    for (const u of overdueRecipients) {
+                                        if (u.phone) {
+                                            await VoiceCallingService.triggerCall({
+                                                organizationId: orgId,
+                                                propertyId: propId,
+                                                recipientPhone: u.phone,
+                                                recipientUserId: u.id,
+                                                eventType: 'CHECKLIST_OVERDUE',
+                                                customTemplate: overdueRule?.voice_template,
+                                                variables: {
+                                                    userName: u.name || 'Staff',
+                                                    checklistTitle: overdueTitle,
+                                                    propertyName: propertyName,
+                                                    shiftTime: slotWindowLabel
+                                                }
+                                            });
+                                        }
+                                    }
+                                }
+                            } catch (voiceErr: any) {
+                                console.error('[SOP Reminders] Overdue voice call error:', voiceErr.message);
+                            }
+
+                            // Mark all incomplete templates in group as sent
+                            incompleteTemplates.forEach(t => {
+                                if (!enqueuedEventsMap.has(t.id)) enqueuedEventsMap.set(t.id, new Set());
+                                enqueuedEventsMap.get(t.id)!.add('CHECKLIST_OVERDUE');
+                                enqueuedEventsMap.get(t.id)!.add('CHECKLIST_OVERDUE_ALERT');
+                            });
+
+                            overdueAlertsDispatched++;
+                            console.log(`[SOP Reminders] Sent consolidated overdue alert for "${overdueTitle}" (slot: ${slotWindowLabel})`);
+                        } catch (err: any) {
+                            console.error(`[SOP Reminders] Overdue alert error for group ${overdueTitle}:`, err.message);
+                        }
+                    }
                 }
             }
         }
 
         return NextResponse.json({
             success: true,
-            checked: validTemplates.length,
+            totalTemplates: validTemplates.length,
+            shiftGroupsChecked: groupedTemplates.size,
             dispatched: {
                 pre_start_reminders: remindersDispatched,
                 shift_started_alerts: startAlertsDispatched,

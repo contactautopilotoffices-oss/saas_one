@@ -399,6 +399,7 @@ export const WhatsAppEventProcessor = {
             'reminder_lead_followup': ['user_name', 'company_name', 'contact_person', 'phone', 'followup_time', 'lead_id'],
 
             'checklist_slot_reminder_v1': ['user_name', 'checklist_name', 'property', 'due_time'],
+            'checklist_slot_reminder_v2': ['user_name', 'checklist_name', 'property', 'due_time'],
             'checklist_slot_reminder': ['user_name', 'checklist_name', 'property', 'due_time'],
 
             'checklist_started_v1': ['user_name', 'checklist_name', 'property', 'start_time'],
@@ -408,6 +409,7 @@ export const WhatsAppEventProcessor = {
             'checklist_completed': ['user_name', 'checklist_name', 'property', 'completed_by', 'time'],
 
             'checklist_overdue_alert_v1': ['user_name', 'checklist_name', 'property', 'slot_time'],
+            'checklist_overdue_alert_v2': ['user_name', 'checklist_name', 'property', 'slot_time'],
             'checklist_overdue_alert': ['user_name', 'checklist_name', 'property', 'slot_time'],
 
             'checklist_rated_v1': ['user_name', 'checklist_name', 'property', 'rating', 'rater_name'],
@@ -1494,6 +1496,28 @@ export const WhatsAppEventProcessor = {
         });
     },
 
+    async handlePpmReminder(payload: any): Promise<void> {
+        const propertyName = await this.getPropertyName(payload.property_id);
+
+        await this.dispatch({
+            featureKey: 'reminder_ppm',
+            templateEventKey: 'reminder_ppm',
+            organizationId: payload.organization_id,
+            propertyId: payload.property_id,
+            entityId: payload.entity_id || payload.schedule_id,
+            paramValues: {
+                user_name: payload.user_name || 'Operations Team',
+                system_name: payload.system_name || 'Facility Equipment',
+                property: propertyName,
+                due_date: payload.due_date || 'Upcoming Date',
+                vendor_name: payload.vendor_name || 'Assigned Vendor',
+                location: payload.location || 'Site Plant Room'
+            },
+            summaryMessage: `🔧 PPM Reminder: ${payload.system_name} maintenance due on ${payload.due_date} at ${propertyName}`,
+            contextualUserIds: payload.assigned_to ? { assigneeId: payload.assigned_to } : {}
+        });
+    },
+
     async getPropertyName(propertyId?: string | null): Promise<string> {
         if (!propertyId) return 'N/A';
         const { data: property } = await supabaseAdmin
@@ -1586,31 +1610,5 @@ export const WhatsAppEventProcessor = {
             .limit(1)
             .maybeSingle();
         return defaultOrg?.id || null;
-    },
-
-    async handlePpmReminder(payload: any): Promise<void> {
-        const propertyName = await this.getPropertyName(payload.property_id);
-        const { data: vendor } = payload.vendor_id ? await supabaseAdmin
-            .from('vendors')
-            .select('name')
-            .eq('id', payload.vendor_id)
-            .maybeSingle() : { data: null };
-
-        await this.dispatch({
-            featureKey: 'reminder_ppm',
-            templateEventKey: 'reminder_ppm',
-            organizationId: payload.organization_id,
-            propertyId: payload.property_id,
-            entityId: payload.id,
-            paramValues: {
-                user_name: 'Property Team',
-                system_name: payload.system_name || 'System / Asset',
-                property: propertyName,
-                due_date: payload.planned_date || payload.due_date || 'Scheduled Date',
-                vendor_name: vendor?.name || payload.vendor_name || 'Assigned Vendor',
-                location: payload.location || 'Site Facility'
-            },
-            summaryMessage: `🔧 PPM Reminder: ${payload.system_name} at ${propertyName} is due on ${payload.planned_date || payload.due_date}`
-        });
     }
 };
