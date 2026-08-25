@@ -779,6 +779,13 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
         }));
     };
 
+    const setReminderMinutes = (moduleId: string, eventKey: string, minutes: number) => {
+        updateRule(moduleId, eventKey, current => ({
+            ...current,
+            reminder_minutes: Math.max(1, isNaN(minutes) ? 10 : minutes)
+        }));
+    };
+
     const toggleContextual = (moduleId: string, eventKey: string, key: 'notify_assignee' | 'notify_requester' | 'notify_approver') => {
         updateRule(moduleId, eventKey, current => ({
             ...current,
@@ -1234,6 +1241,27 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                                                     <span className="text-xs font-semibold text-slate-700">Notify Assigned Approver</span>
                                                                 </label>
                                                             )}
+                                                        </div>
+                                                    )}
+
+                                                    {/* Reminder Lead Time Configuration Input */}
+                                                    {ev.isReminder && (
+                                                        <div className="pt-2 border-t border-slate-200 flex items-center gap-3">
+                                                            <Clock className="w-3.5 h-3.5 text-primary shrink-0" />
+                                                            <span className="text-xs font-semibold text-slate-700">
+                                                                {ev.reminderLabel || 'Reminder Lead Time'}:
+                                                            </span>
+                                                            <div className="flex items-center gap-1.5">
+                                                                <input
+                                                                    type="number"
+                                                                    min="1"
+                                                                    max="1440"
+                                                                    value={rule.reminder_minutes ?? 10}
+                                                                    onChange={(e) => setReminderMinutes(module.id, ev.key, parseInt(e.target.value, 10))}
+                                                                    className="w-16 px-2 py-1 text-xs font-black bg-slate-50 border border-slate-300 rounded-lg text-center text-slate-900 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-primary/20"
+                                                                />
+                                                                <span className="text-xs text-slate-500 font-bold">minutes before</span>
+                                                            </div>
                                                         </div>
                                                     )}
                                                 </div>
