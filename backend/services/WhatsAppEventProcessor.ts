@@ -1245,15 +1245,50 @@ export const WhatsAppEventProcessor = {
         const organizationId = lead?.organization_id || payload.organization_id || await this.resolveLeadOrganizationId(payload);
         if (!organizationId) return;
 
-        const sourceName = lead?.source_info?.name || lead?.lead_source || await this.getLeadSourceName(payload.lead_source);
+        const leadData = lead || payload;
+        const sourceName = lead?.source_info?.name || leadData.lead_source || await this.getLeadSourceName(payload.lead_source);
         const propName = lead?.property?.name || await this.getPropertyName(payload.property_interest);
         
-        // Format requirement cleanly into the message parameters
-        const propertyWithReq = lead?.requirement 
-            ? `${propName ? propName + ' | ' : ''}Req: ${lead.requirement}` 
-            : (propName || lead?.location || 'Direct');
+        // Resolve location, campaign, and market for clear tracking in WhatsApp
+        const location = (leadData.location || payload.location || '').trim();
+        const campaign = (leadData.campaign || payload.campaign || '').trim();
+        const city = (leadData.city || payload.city || '').trim();
+        const requirement = (leadData.requirement || payload.requirement || '').trim();
 
-        const leadData = lead || payload;
+        let locationLabel = '';
+        if (propName) {
+            locationLabel = propName;
+            if (location && !propName.toLowerCase().includes(location.toLowerCase())) {
+                locationLabel += ` (${location})`;
+            } else if (campaign && !propName.toLowerCase().includes(campaign.toLowerCase())) {
+                locationLabel += ` (${campaign})`;
+            }
+        } else if (location) {
+            locationLabel = location;
+            if (campaign && !location.toLowerCase().includes(campaign.toLowerCase())) {
+                locationLabel += ` • ${campaign}`;
+            } else if (city && !location.toLowerCase().includes(city.toLowerCase())) {
+                locationLabel += ` (${city})`;
+            }
+        } else if (campaign) {
+            locationLabel = campaign;
+            if (city && !campaign.toLowerCase().includes(city.toLowerCase())) {
+                locationLabel += ` (${city})`;
+            }
+        } else if (city) {
+            locationLabel = city;
+        } else {
+            locationLabel = 'Direct / All';
+        }
+
+        const propertyInterestWithReq = requirement 
+            ? `${locationLabel} | Req: ${requirement}` 
+            : locationLabel;
+
+        const enrichedSource = (campaign && sourceName && !sourceName.toLowerCase().includes(campaign.toLowerCase()))
+            ? `${sourceName} (${campaign})`
+            : (sourceName || campaign || 'Direct');
+
         await this.dispatch({
             featureKey: 'lead_created',
             templateEventKey: 'lead_created',
@@ -1265,10 +1300,10 @@ export const WhatsAppEventProcessor = {
                 company_name: leadData.company_name || 'New Company',
                 contact_person: leadData.contact_person || 'N/A',
                 phone: leadData.contact_number || leadData.phone || 'N/A',
-                source: sourceName,
-                property_interest: propertyWithReq
+                source: enrichedSource,
+                property_interest: propertyInterestWithReq
             },
-            summaryMessage: `New CRM lead: ${leadData.company_name} (${leadData.contact_person || 'N/A'}) - Req: ${leadData.requirement || 'N/A'}`
+            summaryMessage: `New CRM lead: ${leadData.company_name} (${leadData.contact_person || 'N/A'}) [📍 ${locationLabel}${requirement ? ` | Req: ${requirement}` : ''}]`
         });
     },
 
@@ -1288,17 +1323,50 @@ export const WhatsAppEventProcessor = {
             ? { name: lead.assignee.full_name, phone: lead.assignee.phone } 
             : await this.getUserDetails(assigneeId);
 
+        const leadData = lead || payload;
         const propName = lead?.property?.name || await this.getPropertyName(payload.property_interest);
-        const propertyWithReq = lead?.requirement 
-            ? `${propName ? propName + ' | ' : ''}Req: ${lead.requirement}` 
-            : (propName || lead?.location || 'Direct');
+        
+        // Resolve location, campaign, and market for clear tracking in WhatsApp
+        const location = (leadData.location || payload.location || '').trim();
+        const campaign = (leadData.campaign || payload.campaign || '').trim();
+        const city = (leadData.city || payload.city || '').trim();
+        const requirement = (leadData.requirement || payload.requirement || '').trim();
+
+        let locationLabel = '';
+        if (propName) {
+            locationLabel = propName;
+            if (location && !propName.toLowerCase().includes(location.toLowerCase())) {
+                locationLabel += ` (${location})`;
+            } else if (campaign && !propName.toLowerCase().includes(campaign.toLowerCase())) {
+                locationLabel += ` (${campaign})`;
+            }
+        } else if (location) {
+            locationLabel = location;
+            if (campaign && !location.toLowerCase().includes(campaign.toLowerCase())) {
+                locationLabel += ` • ${campaign}`;
+            } else if (city && !location.toLowerCase().includes(city.toLowerCase())) {
+                locationLabel += ` (${city})`;
+            }
+        } else if (campaign) {
+            locationLabel = campaign;
+            if (city && !campaign.toLowerCase().includes(city.toLowerCase())) {
+                locationLabel += ` (${city})`;
+            }
+        } else if (city) {
+            locationLabel = city;
+        } else {
+            locationLabel = 'Direct / All';
+        }
+
+        const propertyInterestWithReq = requirement 
+            ? `${locationLabel} | Req: ${requirement}` 
+            : locationLabel;
 
         const followupDate = lead?.next_followup_date || payload.next_followup_date;
         const formattedFollowup = followupDate
             ? formatWhatsAppDateTime(followupDate)
-            : (lead?.requirement ? `TAT: Immediate | Req: ${lead.requirement}` : 'Immediate Follow-up');
+            : (requirement ? `TAT: Immediate | Req: ${requirement}` : 'Immediate Follow-up');
 
-        const leadData = lead || payload;
         await this.dispatch({
             featureKey: 'lead_assigned',
             templateEventKey: 'lead_assigned',
@@ -1310,10 +1378,10 @@ export const WhatsAppEventProcessor = {
                 company_name: leadData.company_name || 'Company',
                 contact_person: leadData.contact_person || 'N/A',
                 phone: leadData.contact_number || leadData.phone || 'N/A',
-                property_interest: propertyWithReq,
+                property_interest: propertyInterestWithReq,
                 next_followup: formattedFollowup
             },
-            summaryMessage: `Lead ${leadData.company_name} assigned to ${assignee.name} (Req: ${leadData.requirement || 'N/A'})`,
+            summaryMessage: `Lead ${leadData.company_name} assigned to ${assignee.name} [📍 ${locationLabel}${requirement ? ` | Req: ${requirement}` : ''}]`,
             contextualUserIds: { assigneeId }
         });
     },

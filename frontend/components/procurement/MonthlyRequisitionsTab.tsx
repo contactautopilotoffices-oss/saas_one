@@ -13,6 +13,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import SiteRequisitionSheet from './SiteRequisitionSheet';
 import ApproverRequisitionModal from './ApproverRequisitionModal';
 import PropertyBudgetManagerModal from './PropertyBudgetManagerModal';
+import BulkApproverUploadModal from './BulkApproverUploadModal';
 
 interface Property {
     id: string;
@@ -123,6 +124,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
     const [selectedYearFilter, setSelectedYearFilter] = useState<string>('all');
     const [searchQuery, setSearchQuery] = useState<string>('');
     const [isExportingAll, setIsExportingAll] = useState<boolean>(false);
+    const [showBulkApprovalModal, setShowBulkApprovalModal] = useState<boolean>(false);
 
     const handleDownloadAllPropertiesExcel = () => {
         const effectiveOrgId = organizationId || user?.user_metadata?.organization_id || properties[0]?.id;
@@ -314,8 +316,8 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
         setIsSubmittingVendorQuote(true);
         try {
             const formData = new FormData();
-            formData.append('vendor_name', vendorName);
-            formData.append('total_quoted_amount', vendorQuotedAmount);
+            formData.append('vendor_name', 'Vendor Quote');
+            formData.append('total_quoted_amount', String(vendorQuoteModalReq.total_estimated_amount || 0));
             formData.append('vendor_notes', vendorNotes);
             formData.append('target_approver_id', selectedApproverId);
             formData.append('action', 'submit_for_approval');
@@ -467,7 +469,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                 <div className="flex items-center gap-2 shrink-0 flex-wrap">
                     <button
                         onClick={fetchRequisitions}
-                        className="p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors cursor-pointer shrink-0"
+                        className="h-9 w-9 inline-flex items-center justify-center rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors cursor-pointer shrink-0"
                         title="Refresh List"
                     >
                         <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
@@ -476,15 +478,24 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                     {(isProcurementRole || isSuperAdmin) && (
                         <>
                             <button
+                                onClick={() => setShowBulkApprovalModal(true)}
+                                className="h-9 px-3.5 inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-sky-600 to-blue-700 hover:from-sky-700 hover:to-blue-800 text-white font-bold text-xs whitespace-nowrap transition-all shadow-xs cursor-pointer shrink-0"
+                                title="Upload vendor quote and assign approver for multiple properties in 1 click"
+                            >
+                                <Upload className="w-3.5 h-3.5 text-white shrink-0" />
+                                <span>Upload Quote & Approver (Multi-Site)</span>
+                            </button>
+
+                            <button
                                 onClick={handleDownloadAllPropertiesExcel}
                                 disabled={isExportingAll}
-                                className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-xl font-semibold text-xs whitespace-nowrap transition-all shadow-xs cursor-pointer disabled:opacity-60 shrink-0"
+                                className="h-9 px-3.5 inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs whitespace-nowrap transition-all shadow-xs cursor-pointer disabled:opacity-60 shrink-0"
                                 title="Download 1 consolidated Excel file containing all properties with a separate page for each site"
                             >
                                 {isExportingAll ? (
-                                    <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin text-white shrink-0" />
                                 ) : (
-                                    <Download className="w-3.5 h-3.5 text-white" />
+                                    <Download className="w-3.5 h-3.5 text-white shrink-0" />
                                 )}
                                 <span>Download All Sites Excel</span>
                             </button>
@@ -500,10 +511,10 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                         window.location.href = url.pathname + '?' + url.searchParams.toString();
                                     }
                                 }}
-                                className="inline-flex items-center gap-1.5 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 text-emerald-800 dark:text-emerald-300 border border-emerald-200/80 dark:border-emerald-800/80 px-3.5 py-2 rounded-xl font-semibold text-xs whitespace-nowrap transition-all cursor-pointer shadow-xs shrink-0"
+                                className="h-9 px-3.5 inline-flex items-center gap-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 text-emerald-800 dark:text-emerald-300 border border-emerald-200/80 dark:border-emerald-800/80 font-bold text-xs whitespace-nowrap transition-all cursor-pointer shadow-xs shrink-0"
                                 title="Configure monthly requisition budgets per site/floor"
                             >
-                                <IndianRupee className="w-3.5 h-3.5 text-emerald-600" />
+                                <IndianRupee className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                                 <span>Manage Budgets</span>
                             </button>
 
@@ -513,10 +524,10 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                     url.searchParams.set('tab', 'site-pricing');
                                     window.location.href = url.pathname + '?' + url.searchParams.toString();
                                 }}
-                                className="inline-flex items-center gap-1.5 bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-600 px-3.5 py-2 rounded-xl font-semibold text-xs whitespace-nowrap transition-all cursor-pointer shrink-0"
+                                className="h-9 px-3.5 inline-flex items-center gap-1.5 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-600 font-bold text-xs whitespace-nowrap transition-all cursor-pointer shrink-0"
                                 title="Configure contracted site-specific rates"
                             >
-                                <DollarSign className="w-3.5 h-3.5 text-emerald-600" />
+                                <DollarSign className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                                 <span>Site Prices</span>
                             </button>
                         </>
@@ -525,9 +536,9 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                     {canCreateRequisition && (
                         <button
                             onClick={() => setViewMode('create_sheet')}
-                            className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-xl font-semibold text-xs whitespace-nowrap transition-all shadow-xs cursor-pointer shrink-0"
+                            className="h-9 px-3.5 inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs whitespace-nowrap transition-all shadow-xs cursor-pointer shrink-0"
                         >
-                            <Plus className="w-3.5 h-3.5" />
+                            <Plus className="w-3.5 h-3.5 shrink-0" />
                             <span>+ Create Sheet</span>
                         </button>
                     )}
@@ -543,12 +554,12 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                         placeholder="Search property, user..."
                         value={searchQuery}
                         onChange={e => setSearchQuery(e.target.value)}
-                        className="w-full pl-9 pr-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-slate-200 placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                        className="w-full pl-9 pr-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs sm:text-sm text-slate-800 dark:text-slate-200 placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 font-medium"
                     />
                 </div>
 
                 {(!isSuperAdmin && !isProcurementRole && properties.length <= 1) ? (
-                    <div className="flex items-center gap-2 py-2 px-3.5 bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-bold text-slate-800 dark:text-slate-200 shadow-xs">
+                    <div className="flex items-center gap-2 py-2 px-3.5 bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-700 rounded-xl text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-200 shadow-xs">
                         <Building2 className="w-4 h-4 text-emerald-600 shrink-0" />
                         <span className="truncate">{properties.find(p => p.id === (propertyId || selectedPropertyFilter))?.name || properties[0]?.name || 'Loading Property...'}</span>
                     </div>
@@ -556,7 +567,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                     <select
                         value={selectedPropertyFilter}
                         onChange={e => setSelectedPropertyFilter(e.target.value)}
-                        className="py-2 px-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 font-medium"
+                        className="py-2 px-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs sm:text-sm text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 font-medium"
                     >
                         {(isSuperAdmin || isProcurementRole) && (
                             <option value="all">All Properties</option>
@@ -573,7 +584,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                 <select
                     value={selectedMonthFilter}
                     onChange={e => setSelectedMonthFilter(e.target.value)}
-                    className="py-2 px-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                    className="py-2 px-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs sm:text-sm text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 font-medium"
                 >
                     <option value="all">All Months</option>
                     {MONTH_NAMES.map((month, idx) => (
@@ -584,7 +595,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                 <select
                     value={selectedYearFilter}
                     onChange={e => setSelectedYearFilter(e.target.value)}
-                    className="py-2 px-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                    className="py-2 px-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs sm:text-sm text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 font-medium"
                 >
                     <option value="all">All Years</option>
                     <option value="2025">2025</option>
@@ -595,7 +606,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                 <select
                     value={selectedStatusFilter}
                     onChange={e => setSelectedStatusFilter(e.target.value)}
-                    className="py-2 px-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                    className="py-2 px-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs sm:text-sm text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 font-medium"
                 >
                     <option value="all">All Statuses</option>
                     <option value="submitted">Submitted (Site)</option>
@@ -623,9 +634,9 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                 <button
                                     onClick={handleDownloadAllPropertiesExcel}
                                     disabled={isExportingAll}
-                                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md shadow-emerald-600/20 transition-all cursor-pointer disabled:opacity-60"
+                                    className="h-9 px-4 inline-flex items-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md shadow-emerald-600/20 transition-all cursor-pointer disabled:opacity-60"
                                 >
-                                    {isExportingAll ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                                    {isExportingAll ? <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" /> : <Download className="w-3.5 h-3.5 shrink-0" />}
                                     <span>Download All Sites Master Sheet (.xlsx)</span>
                                 </button>
                             </div>
@@ -634,14 +645,14 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                 ) : (
                     <div className="overflow-x-auto">
                         <table className="w-full text-left text-sm text-slate-600 dark:text-slate-300">
-                            <thead className="bg-slate-50 dark:bg-slate-900/60 text-slate-500 dark:text-slate-400 uppercase text-[11px] tracking-wider font-semibold border-b border-slate-200 dark:border-slate-700">
+                            <thead className="bg-slate-50/90 dark:bg-slate-900/80 text-slate-500 dark:text-slate-400 uppercase text-[11px] tracking-wider font-bold border-b border-slate-200 dark:border-slate-700">
                                 <tr>
-                                    <th className="py-3.5 px-4">Center / Property</th>
-                                    <th className="py-3.5 px-4">Period</th>
-                                    <th className="py-3.5 px-4">Items & Estimated Amount</th>
-                                    <th className="py-3.5 px-4">Requested By</th>
-                                    <th className="py-3.5 px-4">Status</th>
-                                    <th className="py-3.5 px-4 text-right">Actions</th>
+                                    <th className="py-3.5 px-4 whitespace-nowrap">Center / Property</th>
+                                    <th className="py-3.5 px-4 whitespace-nowrap">Period</th>
+                                    <th className="py-3.5 px-4 whitespace-nowrap">Items & Estimated Amount</th>
+                                    <th className="py-3.5 px-4 whitespace-nowrap">Requested By</th>
+                                    <th className="py-3.5 px-4 whitespace-nowrap">Status</th>
+                                    <th className="py-3.5 px-4 text-right whitespace-nowrap">Actions</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
@@ -652,7 +663,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
 
                                     return (
                                         <tr key={req.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-700/30 transition-colors">
-                                            <td className="py-4 px-4 font-semibold text-slate-900 dark:text-white">
+                                            <td className="py-4 px-4 font-semibold text-slate-900 dark:text-white align-middle">
                                                 <div className="flex items-center gap-2">
                                                     <Building2 className="w-4 h-4 text-slate-400 shrink-0" />
                                                     <div>
@@ -666,21 +677,21 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                                 </div>
                                             </td>
 
-                                            <td className="py-4 px-4">
+                                            <td className="py-4 px-4 align-middle whitespace-nowrap">
                                                 <div className="flex items-center gap-1.5 font-medium text-slate-800 dark:text-slate-200">
-                                                    <Calendar className="w-4 h-4 text-emerald-600" />
+                                                    <Calendar className="w-4 h-4 text-emerald-600 shrink-0" />
                                                     <span>{monthName} {req.requisition_year}</span>
                                                 </div>
                                             </td>
 
-                                            <td className="py-4 px-4">
+                                            <td className="py-4 px-4 align-middle whitespace-nowrap">
                                                 <div className="space-y-0.5">
                                                     <div className="flex items-center gap-2">
                                                         <span className="font-bold text-slate-900 dark:text-white">
                                                             ₹{totalAmount.toLocaleString('en-IN')}
                                                         </span>
                                                         {req.is_over_budget && (
-                                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black bg-rose-100 text-rose-800 border border-rose-200 dark:bg-rose-950 dark:text-rose-300 dark:border-rose-800 animate-pulse">
+                                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black uppercase whitespace-nowrap bg-rose-100 text-rose-800 border border-rose-200 dark:bg-rose-950 dark:text-rose-300 dark:border-rose-800 animate-pulse">
                                                                 <AlertCircle className="w-3 h-3 text-rose-600 shrink-0" />
                                                                 Over Budget (+₹{(req.over_budget_amount || 0).toLocaleString('en-IN')})
                                                             </span>
@@ -697,7 +708,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                                 </div>
                                             </td>
 
-                                            <td className="py-4 px-4">
+                                            <td className="py-4 px-4 align-middle whitespace-nowrap">
                                                 <div className="space-y-0.5">
                                                     <div className="text-xs font-semibold text-slate-800 dark:text-slate-200">
                                                         {req.uploader?.full_name || req.uploader?.email || 'Site Admin'}
@@ -708,43 +719,52 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                                 </div>
                                             </td>
 
-                                            <td className="py-4 px-4">
-                                                <div className="space-y-1">
-                                                    <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-black uppercase ${
-                                                        req.status === 'approved' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' :
-                                                        req.status === 'ordered' ? 'bg-indigo-100 text-indigo-800 border border-indigo-200' :
-                                                        req.status === 'rejected' ? 'bg-red-100 text-red-800 border border-red-200' :
-                                                        req.status === 'pending_approval' ? 'bg-sky-100 text-sky-800 border border-sky-200' :
-                                                        'bg-amber-100 text-amber-800 border border-amber-200'
+                                            <td className="py-4 px-4 align-middle whitespace-nowrap">
+                                                <div className="flex flex-col items-start gap-1">
+                                                    <span className={`inline-flex items-center gap-1.5 h-6 px-2.5 rounded-lg text-[11px] font-black uppercase tracking-wider whitespace-nowrap shrink-0 ${
+                                                        req.status === 'approved' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/80 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800/80' :
+                                                        req.status === 'ordered' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200/80 dark:bg-indigo-950/40 dark:text-indigo-300 dark:border-indigo-800/80' :
+                                                        req.status === 'rejected' ? 'bg-rose-50 text-rose-700 border border-rose-200/80 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800/80' :
+                                                        req.status === 'pending_approval' ? 'bg-sky-50 text-sky-700 border border-sky-200/80 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-800/80' :
+                                                        'bg-amber-50 text-amber-700 border border-amber-200/80 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800/80'
                                                     }`}>
-                                                        {req.status === 'ordered' ? 'PO Issued' :
-                                                         req.status === 'pending_approval' ? 'Pending Approval' : req.status}
+                                                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                                                            req.status === 'approved' ? 'bg-emerald-500' :
+                                                            req.status === 'ordered' ? 'bg-indigo-500' :
+                                                            req.status === 'rejected' ? 'bg-rose-500' :
+                                                            req.status === 'pending_approval' ? 'bg-sky-500' :
+                                                            'bg-amber-500'
+                                                        }`} />
+                                                        <span>
+                                                            {req.status === 'ordered' ? 'PO Issued' :
+                                                             req.status === 'pending_approval' ? 'Pending Approval' : req.status}
+                                                        </span>
                                                     </span>
                                                     {req.status === 'pending_approval' && req.approver_info?.name && (
-                                                        <span className="block text-[10px] font-semibold text-slate-400 dark:text-slate-500">
-                                                            Approver: <b>{req.approver_info.name}</b>
+                                                        <span className="text-[10px] font-medium text-slate-400 dark:text-slate-500 whitespace-nowrap truncate max-w-[140px]" title={req.approver_info.name}>
+                                                            Approver: <strong className="text-slate-600 dark:text-slate-300 font-semibold">{req.approver_info.name}</strong>
                                                         </span>
                                                     )}
                                                     {req.status === 'ordered' && req.po_info?.po_number && (
-                                                        <span className="block text-[10px] font-semibold text-indigo-600 dark:text-indigo-400">
+                                                        <span className="text-[10px] font-semibold text-indigo-600 dark:text-indigo-400 whitespace-nowrap">
                                                             #{req.po_info.po_number}
                                                         </span>
                                                     )}
                                                 </div>
                                             </td>
 
-                                            <td className="py-4 px-4 text-right">
-                                                <div className="flex items-center justify-end gap-2">
+                                            <td className="py-4 px-4 text-right align-middle whitespace-nowrap">
+                                                <div className="inline-flex items-center justify-end gap-2">
                                                     {/* Download Formatted Excel */}
                                                     <a
                                                         href={`/api/procurement/requisitions/${req.id}/export`}
                                                         target="_blank"
                                                         rel="noopener noreferrer"
                                                         download
-                                                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold transition-all cursor-pointer"
+                                                        className="inline-flex items-center gap-1.5 h-8 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold whitespace-nowrap transition-all shadow-2xs shrink-0 cursor-pointer"
                                                         title="Download color-coded Excel spreadsheet matching site format"
                                                     >
-                                                        <Download className="w-3.5 h-3.5 text-emerald-600" />
+                                                        <Download className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
                                                         <span>Download .xlsx</span>
                                                     </a>
 
@@ -756,9 +776,9 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                                                 setVendorName(req.vendor_quotation?.vendor_name || '');
                                                                 setVendorQuotedAmount(req.vendor_quotation?.total_quoted_amount?.toString() || req.total_estimated_amount?.toString() || '');
                                                             }}
-                                                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
+                                                            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold whitespace-nowrap transition-all shadow-xs shrink-0 cursor-pointer"
                                                         >
-                                                            <Upload className="w-3.5 h-3.5" />
+                                                            <Upload className="w-3.5 h-3.5 text-white shrink-0" />
                                                             <span>Upload Quote & Approver</span>
                                                         </button>
                                                     )}
@@ -775,10 +795,10 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                                                 setPoNotes('');
                                                                 setPoFile(null);
                                                             }}
-                                                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
+                                                            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold whitespace-nowrap transition-all shadow-xs shrink-0 cursor-pointer"
                                                             title="Issue formal Purchase Order to vendor and alert site team"
                                                         >
-                                                            <ShoppingCart className="w-3.5 h-3.5" />
+                                                            <ShoppingCart className="w-3.5 h-3.5 text-white shrink-0" />
                                                             <span>Issue PO</span>
                                                         </button>
                                                     )}
@@ -792,20 +812,20 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                                         return (
                                                             <button
                                                                 onClick={() => setApproverModalReq(req)}
-                                                                className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer ${
+                                                                className={`inline-flex items-center gap-1.5 h-8 px-3.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shadow-xs shrink-0 cursor-pointer ${
                                                                     canApproveThisReq
                                                                         ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                                                                        : 'border border-slate-200 dark:border-slate-700 bg-slate-900 hover:bg-slate-800 text-white'
+                                                                        : 'border border-slate-800 dark:border-slate-700 bg-slate-900 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 text-white'
                                                                 }`}
                                                             >
                                                                 {canApproveThisReq ? (
                                                                     <>
-                                                                        <ShieldCheck className="w-3.5 h-3.5 text-white" />
+                                                                        <ShieldCheck className="w-3.5 h-3.5 text-white shrink-0" />
                                                                         <span>Review & Approve</span>
                                                                     </>
                                                                 ) : (
                                                                     <>
-                                                                        <Eye className="w-3.5 h-3.5 text-slate-300" />
+                                                                        <Eye className="w-3.5 h-3.5 text-slate-300 shrink-0" />
                                                                         <span>View Details</span>
                                                                     </>
                                                                 )}
@@ -823,7 +843,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                                         return (
                                                             <button
                                                                 onClick={() => handleDeleteRequisition(req)}
-                                                                className="inline-flex items-center justify-center p-2 rounded-xl text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-all cursor-pointer"
+                                                                className="inline-flex items-center justify-center h-8 w-8 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-all shrink-0 cursor-pointer"
                                                                 title="Delete Requisition"
                                                             >
                                                                 <Trash2 className="w-3.5 h-3.5" />
@@ -832,7 +852,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                                     })()}
                                                 </div>
                                             </td>
-                                        </tr>
+                                </tr>
                                     );
                                 })}
                             </tbody>
@@ -865,36 +885,6 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                             </div>
 
                             <form onSubmit={handleVendorQuotationSubmit} className="p-6 space-y-4">
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                                        Selected Vendor Name <span className="text-red-500">*</span>
-                                    </label>
-                                    <input
-                                        type="text"
-                                        required
-                                        value={vendorName}
-                                        onChange={e => setVendorName(e.target.value)}
-                                        placeholder="e.g. Reliable Spares & Supplies"
-                                        className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-sky-500"
-                                    />
-                                </div>
-
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                                        Total Final Quoted Amount (₹) <span className="text-red-500">*</span>
-                                    </label>
-                                    <input
-                                        type="number"
-                                        required
-                                        min="0"
-                                        step="0.01"
-                                        value={vendorQuotedAmount}
-                                        onChange={e => setVendorQuotedAmount(e.target.value)}
-                                        placeholder="Final Negotiated Amount"
-                                        className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-emerald-700 focus:outline-hidden focus:ring-2 focus:ring-sky-500"
-                                    />
-                                </div>
-
                                 <div>
                                     <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                                         Select Designated Approver <span className="text-red-500">*</span>
@@ -942,19 +932,19 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                     <button
                                         type="button"
                                         onClick={() => setVendorQuoteModalReq(null)}
-                                        className="px-4 py-2 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-100"
+                                        className="h-9 px-4 inline-flex items-center justify-center rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                                     >
                                         Cancel
                                     </button>
                                     <button
                                         type="submit"
                                         disabled={isSubmittingVendorQuote}
-                                        className="flex items-center gap-1.5 px-5 py-2 rounded-xl text-sm font-black text-white bg-sky-600 hover:bg-sky-700 shadow-md shadow-sky-600/20 disabled:opacity-50"
+                                        className="h-9 px-4.5 inline-flex items-center gap-1.5 rounded-xl text-xs font-black text-white bg-sky-600 hover:bg-sky-700 shadow-md shadow-sky-600/20 transition-all disabled:opacity-50 cursor-pointer"
                                     >
                                         {isSubmittingVendorQuote ? (
-                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
                                         ) : (
-                                            <Send className="w-4 h-4" />
+                                            <Send className="w-3.5 h-3.5" />
                                         )}
                                         Send for In-App Approval
                                     </button>
@@ -1090,19 +1080,19 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                     <button
                                         type="button"
                                         onClick={() => setIssuePoModalReq(null)}
-                                        className="px-4 py-2 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-700"
+                                        className="h-9 px-4 inline-flex items-center justify-center rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-700 transition-colors cursor-pointer"
                                     >
                                         Cancel
                                     </button>
                                     <button
                                         type="submit"
                                         disabled={isSubmittingPo}
-                                        className="flex items-center gap-1.5 px-5 py-2 rounded-xl text-sm font-black text-white bg-emerald-600 hover:bg-emerald-700 shadow-md shadow-emerald-600/20 disabled:opacity-50 cursor-pointer"
+                                        className="h-9 px-4.5 inline-flex items-center gap-1.5 rounded-xl text-xs font-black text-white bg-emerald-600 hover:bg-emerald-700 shadow-md shadow-emerald-600/20 transition-all disabled:opacity-50 cursor-pointer"
                                     >
                                         {isSubmittingPo ? (
-                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
                                         ) : (
-                                            <ShoppingCart className="w-4 h-4" />
+                                            <ShoppingCart className="w-3.5 h-3.5" />
                                         )}
                                         Issue PO & Notify Site
                                     </button>
@@ -1118,6 +1108,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                 isOpen={!!approverModalReq}
                 onClose={() => setApproverModalReq(null)}
                 requisition={approverModalReq}
+                allRequisitions={requisitions}
                 currentUser={user}
                 onStatusUpdated={() => {
                     fetchRequisitions();
@@ -1132,6 +1123,19 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                 organizationId={organizationId || ''}
                 properties={properties}
                 onBudgetsUpdated={() => {
+                    fetchRequisitions();
+                }}
+            />
+
+            {/* Multi-Site Bulk Quote Upload & Approver Assignment Modal */}
+            <BulkApproverUploadModal
+                isOpen={showBulkApprovalModal}
+                onClose={() => setShowBulkApprovalModal(false)}
+                requisitions={requisitions}
+                approvers={approverUsers}
+                organizationId={organizationId || ''}
+                currentUser={user}
+                onSuccess={() => {
                     fetchRequisitions();
                 }}
             />

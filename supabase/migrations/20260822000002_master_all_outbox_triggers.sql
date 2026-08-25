@@ -259,7 +259,484 @@ BEGIN
         VALUES ('REQUISITION_UPLOADED', NEW.id, v_payload);
     END IF;
 
-    RETURN NEW;
+    RETURN NEW;[
+  {
+    "table_name": "crm_calls",
+    "trigger_name": "trg_crm_calls_touch",
+    "event": "UPDATE",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION crm_calls_touch_updated_at()"
+  },
+  {
+    "table_name": "crm_campaign_metrics",
+    "trigger_name": "crm_campaign_metrics_updated_at",
+    "event": "UPDATE",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION update_updated_at()"
+  },
+  {
+    "table_name": "crm_campaign_spend",
+    "trigger_name": "trg_crm_campaign_spend_touch",
+    "event": "UPDATE",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION crm_campaign_spend_touch_updated_at()"
+  },
+  {
+    "table_name": "crm_campaigns",
+    "trigger_name": "crm_campaigns_updated_at",
+    "event": "UPDATE",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION update_updated_at()"
+  },
+  {
+    "table_name": "crm_events",
+    "trigger_name": "crm_events_updated_at",
+    "event": "UPDATE",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION update_updated_at()"
+  },
+  {
+    "table_name": "crm_leads",
+    "trigger_name": "crm_leads_auto_activity",
+    "event": "INSERT",
+    "timing": "AFTER",
+    "action": "EXECUTE FUNCTION crm_auto_activity()"
+  },
+  {
+    "table_name": "crm_leads",
+    "trigger_name": "crm_leads_auto_activity",
+    "event": "UPDATE",
+    "timing": "AFTER",
+    "action": "EXECUTE FUNCTION crm_auto_activity()"
+  },
+  {
+    "table_name": "crm_leads",
+    "trigger_name": "crm_leads_closed_at",
+    "event": "UPDATE",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION crm_maintain_closed_at()"
+  },
+  {
+    "table_name": "crm_leads",
+    "trigger_name": "crm_leads_updated_at",
+    "event": "UPDATE",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION update_updated_at()"
+  },
+  {
+    "table_name": "crm_leads",
+    "trigger_name": "trg_crm_leads_outbox",
+    "event": "UPDATE",
+    "timing": "AFTER",
+    "action": "EXECUTE FUNCTION fn_crm_leads_outbox()"
+  },
+  {
+    "table_name": "crm_leads",
+    "trigger_name": "trg_crm_leads_outbox",
+    "event": "INSERT",
+    "timing": "AFTER",
+    "action": "EXECUTE FUNCTION fn_crm_leads_outbox()"
+  },
+  {
+    "table_name": "crm_meta_config",
+    "trigger_name": "crm_meta_config_updated_at",
+    "event": "UPDATE",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION update_updated_at()"
+  },
+  {
+    "table_name": "dg_tariffs",
+    "trigger_name": "trg_check_dg_tariff_overlap",
+    "event": "UPDATE",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION check_dg_tariff_overlap()"
+  },
+  {
+    "table_name": "dg_tariffs",
+    "trigger_name": "trg_check_dg_tariff_overlap",
+    "event": "INSERT",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION check_dg_tariff_overlap()"
+  },
+  {
+    "table_name": "electricity_bill_events",
+    "trigger_name": "trg_elec_bill_events_no_update",
+    "event": "DELETE",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION electricity_bill_events_immutable()"
+  },
+  {
+    "table_name": "electricity_bill_events",
+    "trigger_name": "trg_elec_bill_events_no_update",
+    "event": "UPDATE",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION electricity_bill_events_immutable()"
+  },
+  {
+    "table_name": "electricity_bills",
+    "trigger_name": "trg_elec_bills_record_event",
+    "event": "INSERT",
+    "timing": "AFTER",
+    "action": "EXECUTE FUNCTION electricity_bills_record_event()"
+  },
+  {
+    "table_name": "electricity_bills",
+    "trigger_name": "trg_elec_bills_record_event",
+    "event": "UPDATE",
+    "timing": "AFTER",
+    "action": "EXECUTE FUNCTION electricity_bills_record_event()"
+  },
+  {
+    "table_name": "event_outbox",
+    "trigger_name": "Event Outbox Processor",
+    "event": "INSERT",
+    "timing": "AFTER",
+    "action": "EXECUTE FUNCTION supabase_functions.http_request('https://fms-dev-saas-one.vercel.app/api/webhooks/process-event', 'POST', '{\"Content-type\":\"application/json\",\"x-webhook-secret\":\"whsec_f8934ae837190cbb41de7a9c8f18d7f2\"}', '{}', '5000')"
+  },
+  {
+    "table_name": "event_outbox",
+    "trigger_name": "outbox_updated_at",
+    "event": "UPDATE",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION handle_updated_at_outbox()"
+  },
+  {
+    "table_name": "grid_tariffs",
+    "trigger_name": "trg_check_grid_tariff_overlap",
+    "event": "UPDATE",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION check_grid_tariff_overlap()"
+  },
+  {
+    "table_name": "grid_tariffs",
+    "trigger_name": "trg_check_grid_tariff_overlap",
+    "event": "INSERT",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION check_grid_tariff_overlap()"
+  },
+  {
+    "table_name": "guest_requests",
+    "trigger_name": "trg_generate_guest_request_ticket_number",
+    "event": "INSERT",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION generate_guest_request_ticket_number()"
+  },
+  {
+    "table_name": "issue_logs",
+    "trigger_name": "update_issue_logs_updated_at",
+    "event": "UPDATE",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION update_updated_at()"
+  },
+  {
+    "table_name": "material_request_comparatives",
+    "trigger_name": "comparatives_updated_at",
+    "event": "UPDATE",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION handle_updated_at_outbox()"
+  },
+  {
+    "table_name": "material_request_comparatives",
+    "trigger_name": "tr_material_comparatives_outbox",
+    "event": "UPDATE",
+    "timing": "AFTER",
+    "action": "EXECUTE FUNCTION create_outbox_event()"
+  },
+  {
+    "table_name": "material_request_comparatives",
+    "trigger_name": "tr_material_comparatives_outbox",
+    "event": "INSERT",
+    "timing": "AFTER",
+    "action": "EXECUTE FUNCTION create_outbox_event()"
+  },
+  {
+    "table_name": "material_requests",
+    "trigger_name": "tr_material_request_outbox_insert_update",
+    "event": "UPDATE",
+    "timing": "AFTER",
+    "action": "EXECUTE FUNCTION create_outbox_event()"
+  },
+  {
+    "table_name": "material_requests",
+    "trigger_name": "tr_material_request_outbox_insert_update",
+    "event": "INSERT",
+    "timing": "AFTER",
+    "action": "EXECUTE FUNCTION create_outbox_event()"
+  },
+  {
+    "table_name": "material_requests",
+    "trigger_name": "trg_material_requests_outbox",
+    "event": "INSERT",
+    "timing": "AFTER",
+    "action": "EXECUTE FUNCTION fn_material_requests_outbox()"
+  },
+  {
+    "table_name": "meeting_room_bookings",
+    "trigger_name": "trg_meeting_room_bookings_outbox",
+    "event": "INSERT",
+    "timing": "AFTER",
+    "action": "EXECUTE FUNCTION fn_meeting_room_bookings_outbox()"
+  },
+  {
+    "table_name": "meeting_room_bookings",
+    "trigger_name": "trg_meeting_room_bookings_outbox",
+    "event": "DELETE",
+    "timing": "AFTER",
+    "action": "EXECUTE FUNCTION fn_meeting_room_bookings_outbox()"
+  },
+  {
+    "table_name": "meeting_room_bookings",
+    "trigger_name": "trg_meeting_room_bookings_outbox",
+    "event": "UPDATE",
+    "timing": "AFTER",
+    "action": "EXECUTE FUNCTION fn_meeting_room_bookings_outbox()"
+  },
+  {
+    "table_name": "meeting_rooms",
+    "trigger_name": "set_meeting_room_org_id",
+    "event": "INSERT",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION trg_set_meeting_room_org_id()"
+  },
+  {
+    "table_name": "meeting_rooms",
+    "trigger_name": "set_meeting_room_org_id",
+    "event": "UPDATE",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION trg_set_meeting_room_org_id()"
+  },
+  {
+    "table_name": "organizations",
+    "trigger_name": "on_organization_created",
+    "event": "INSERT",
+    "timing": "AFTER",
+    "action": "EXECUTE FUNCTION handle_new_organization()"
+  },
+  {
+    "table_name": "organizations",
+    "trigger_name": "on_organization_soft_delete",
+    "event": "UPDATE",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION handle_organization_soft_delete()"
+  },
+  {
+    "table_name": "organizations",
+    "trigger_name": "on_organization_updated",
+    "event": "UPDATE",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION handle_organization_update()"
+  },
+  {
+    "table_name": "petty_cash_requests",
+    "trigger_name": "trg_pc_request_no",
+    "event": "INSERT",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION set_petty_cash_request_no()"
+  },
+  {
+    "table_name": "properties",
+    "trigger_name": "on_property_create_ticket_sequence",
+    "event": "INSERT",
+    "timing": "AFTER",
+    "action": "EXECUTE FUNCTION ensure_ticket_sequence()"
+  },
+  {
+    "table_name": "properties",
+    "trigger_name": "trim_properties_before_save",
+    "event": "UPDATE",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION trim_text_fields()"
+  },
+  {
+    "table_name": "properties",
+    "trigger_name": "trim_properties_before_save",
+    "event": "INSERT",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION trim_text_fields()"
+  },
+  {
+    "table_name": "property_features",
+    "trigger_name": "trigger_update_property_features_updated_at",
+    "event": "UPDATE",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION update_property_features_updated_at()"
+  },
+  {
+    "table_name": "property_monthly_requisitions",
+    "trigger_name": "trg_requisition_outbox_event",
+    "event": "UPDATE",
+    "timing": "AFTER",
+    "action": "EXECUTE FUNCTION trg_requisition_outbox_notifier()"
+  },
+  {
+    "table_name": "property_monthly_requisitions",
+    "trigger_name": "trg_requisition_outbox_event",
+    "event": "INSERT",
+    "timing": "AFTER",
+    "action": "EXECUTE FUNCTION trg_requisition_outbox_notifier()"
+  },
+  {
+    "table_name": "sop_completion_items",
+    "trigger_name": "trig_sop_completion_items_updated_at",
+    "event": "UPDATE",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION handle_updated_at()"
+  },
+  {
+    "table_name": "sop_completions",
+    "trigger_name": "trg_sop_completion_outbox",
+    "event": "INSERT",
+    "timing": "AFTER",
+    "action": "EXECUTE FUNCTION fn_sop_completion_outbox()"
+  },
+  {
+    "table_name": "sop_completions",
+    "trigger_name": "trg_sop_completions_outbox",
+    "event": "UPDATE",
+    "timing": "AFTER",
+    "action": "EXECUTE FUNCTION trg_sop_completion_outbox()"
+  },
+  {
+    "table_name": "sop_completions",
+    "trigger_name": "trg_sop_completions_outbox",
+    "event": "INSERT",
+    "timing": "AFTER",
+    "action": "EXECUTE FUNCTION trg_sop_completion_outbox()"
+  },
+  {
+    "table_name": "sop_completions",
+    "trigger_name": "trig_clone_sop_checklist_items",
+    "event": "INSERT",
+    "timing": "AFTER",
+    "action": "EXECUTE FUNCTION fn_clone_sop_checklist_items()"
+  },
+  {
+    "table_name": "sop_completions",
+    "trigger_name": "trig_sop_completions_updated_at",
+    "event": "UPDATE",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION handle_updated_at()"
+  },
+  {
+    "table_name": "stock_items",
+    "trigger_name": "trigger_generate_stock_barcode",
+    "event": "INSERT",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION generate_stock_barcode()"
+  },
+  {
+    "table_name": "ticket_comments",
+    "trigger_name": "ticket_comments_update_timestamp",
+    "event": "UPDATE",
+    "timing": "AFTER",
+    "action": "EXECUTE FUNCTION update_ticket_timestamp()"
+  },
+  {
+    "table_name": "ticket_comments",
+    "trigger_name": "ticket_comments_update_timestamp",
+    "event": "INSERT",
+    "timing": "AFTER",
+    "action": "EXECUTE FUNCTION update_ticket_timestamp()"
+  },
+  {
+    "table_name": "tickets",
+    "trigger_name": "ticket_auto_classify",
+    "event": "INSERT",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION auto_classify_ticket_department()"
+  },
+  {
+    "table_name": "tickets",
+    "trigger_name": "trg_award_ticket_resolution_points",
+    "event": "UPDATE",
+    "timing": "AFTER",
+    "action": "EXECUTE FUNCTION award_ticket_resolution_points()"
+  },
+  {
+    "table_name": "tickets",
+    "trigger_name": "trg_set_ticket_accepted_at",
+    "event": "UPDATE",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION set_ticket_accepted_at()"
+  },
+  {
+    "table_name": "tickets",
+    "trigger_name": "trg_set_ticket_assigned_at",
+    "event": "UPDATE",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION set_ticket_assigned_at()"
+  },
+  {
+    "table_name": "tickets",
+    "trigger_name": "trg_tickets_outbox",
+    "event": "UPDATE",
+    "timing": "AFTER",
+    "action": "EXECUTE FUNCTION fn_tickets_outbox()"
+  },
+  {
+    "table_name": "tickets",
+    "trigger_name": "trg_tickets_outbox",
+    "event": "INSERT",
+    "timing": "AFTER",
+    "action": "EXECUTE FUNCTION fn_tickets_outbox()"
+  },
+  {
+    "table_name": "tickets",
+    "trigger_name": "trg_tickets_vendor_procurement_outbox",
+    "event": "UPDATE",
+    "timing": "AFTER",
+    "action": "EXECUTE FUNCTION trg_ticket_vendor_procurement_outbox()"
+  },
+  {
+    "table_name": "tickets",
+    "trigger_name": "trigger_auto_assign_ticket",
+    "event": "INSERT",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION auto_assign_ticket()"
+  },
+  {
+    "table_name": "users",
+    "trigger_name": "trigger_update_user_activity",
+    "event": "UPDATE",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION update_user_activity()"
+  },
+  {
+    "table_name": "whatsapp_queue",
+    "trigger_name": "whatsapp insert ",
+    "event": "INSERT",
+    "timing": "AFTER",
+    "action": "EXECUTE FUNCTION supabase_functions.http_request('https://fms-dev-saas-one.vercel.app/api/webhooks/whatsapp-queue', 'POST', '{\"Content-type\":\"application/json\",\"Authorization\":\"Bearer escalation_secret_2026\"}', '{}', '5000')"
+  },
+  {
+    "table_name": "zoho_po_entity_master",
+    "trigger_name": "update_zoho_po_entity_master_updated_at",
+    "event": "UPDATE",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION update_updated_at_column()"
+  },
+  {
+    "table_name": "zoho_po_settings",
+    "trigger_name": "update_zoho_po_settings_updated_at",
+    "event": "UPDATE",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION update_updated_at_column()"
+  },
+  {
+    "table_name": "zoho_po_tokens",
+    "trigger_name": "update_zoho_po_tokens_updated_at",
+    "event": "UPDATE",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION update_updated_at_column()"
+  },
+  {
+    "table_name": "zoho_po_vendor_cache",
+    "trigger_name": "update_zoho_po_vendor_cache_updated_at",
+    "event": "UPDATE",
+    "timing": "BEFORE",
+    "action": "EXECUTE FUNCTION update_updated_at_column()"
+  }
+]
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 

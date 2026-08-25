@@ -604,7 +604,7 @@ export default function ProcurementRequestList({
                                         <div className="flex items-center gap-4">
                                             <div className="text-right">
                                                 <p className="text-sm font-black text-slate-900">
-                                                    {shouldShowPrice && req.total_amount !== null && req.total_amount > 0 ? `₹${req.total_amount.toLocaleString()}` : ''}
+                                                    {shouldShowPrice && req.total_amount != null && req.total_amount > 0 ? `₹${Number(req.total_amount).toLocaleString()}` : ''}
                                                 </p>
                                                 <p className="text-[10px] text-slate-400 font-medium">
                                                     {formatDistanceToNow(new Date(req.created_at), { addSuffix: true })}
@@ -672,7 +672,7 @@ export default function ProcurementRequestList({
                                                 </p>
                                                 </div>
                                                 <p className="text-[9px] font-black text-primary uppercase tracking-widest">
-                                                    {shouldShowPrice && req.total_amount !== null && req.total_amount > 0 ? `Total ₹${req.total_amount.toLocaleString()}` : ''}
+                                                    {shouldShowPrice && req.total_amount != null && req.total_amount > 0 ? `Total ₹${Number(req.total_amount).toLocaleString()}` : ''}
                                                 </p>
                                             </div>
                                         </div>
@@ -705,7 +705,7 @@ export default function ProcurementRequestList({
                                             <User className="w-3 h-3 text-primary" />
                                         </div>
                                         <span className="text-xs font-black text-slate-800 break-words whitespace-normal leading-normal">
-                                            {selectedRequest.requester.full_name}
+                                            {selectedRequest.requester?.full_name || 'Unknown'}
                                         </span>
                                     </div>
                                 </div>
@@ -882,7 +882,9 @@ export default function ProcurementRequestList({
                                                         <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${getStatusBadgeClass(comp.status)}`}>
                                                             {comp.status}
                                                         </span>
-                                                        <p className="text-xs font-bold text-slate-800 mt-2">Total Cost: ₹{comp.total_cost.toLocaleString()}</p>
+                                                        <p className="text-xs font-bold text-slate-800 mt-2">
+                                                            {comp.total_cost != null ? `Total Cost: ₹${Number(comp.total_cost).toLocaleString()}` : 'Total Cost: Not specified'}
+                                                        </p>
                                                     </div>
                                                     <a href={comp.file_url} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[10px] font-bold text-primary hover:underline bg-primary/10 px-2 py-1 rounded-md">
                                                         <FileText className="w-3 h-3" /> View File
@@ -1097,7 +1099,8 @@ export default function ProcurementRequestList({
                             {selectedRequest.ticket_id && (
                                 <button 
                                     onClick={() => {
-                                        window.location.href = `/tickets/${selectedRequest.ticket_id}`;
+                                        const currentPath = typeof window !== 'undefined' ? window.location.pathname + window.location.search : '';
+                                        window.location.href = `/tickets/${selectedRequest.ticket_id}${currentPath ? `?from=${encodeURIComponent(currentPath)}` : ''}`;
                                     }}
                                     className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-slate-900 text-white hover:bg-slate-800 transition-all font-black text-xs uppercase tracking-widest"
                                 >

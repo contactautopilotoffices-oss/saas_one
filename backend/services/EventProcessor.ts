@@ -878,7 +878,7 @@ export const EventProcessor = {
                         <tr><td style="padding: 4px 0; color: #64748b;"><b>Contact:</b></td><td style="padding: 4px 0; color: #0f172a;">${leadData.contact_person || 'N/A'}</td></tr>
                         <tr><td style="padding: 4px 0; color: #64748b;"><b>Phone:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: 600;">${leadData.contact_number || leadData.phone || 'N/A'}</td></tr>
                         ${leadData.requirement ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Requirement:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: bold; background-color: #fef08a; padding: 4px 8px; border-radius: 4px;">${leadData.requirement}</td></tr>` : ''}
-                        ${leadData.email ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Email:</b></td><td style="padding: 4px 0; color: #0f172a;">${leadData.email}</td></tr>` : ''}
+                        ${leadData.location ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Location:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: bold;">${leadData.location}</td></tr>` : ''}
                         ${lead?.property?.name ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Property:</b></td><td style="padding: 4px 0; color: #0f172a;">${lead.property.name}</td></tr>` : ''}
                         ${sourceName ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Source:</b></td><td style="padding: 4px 0; color: #0f172a;">${sourceName}</td></tr>` : ''}
                         ${leadData.campaign ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Campaign:</b></td><td style="padding: 4px 0; color: #0f172a;">${leadData.campaign}</td></tr>` : ''}

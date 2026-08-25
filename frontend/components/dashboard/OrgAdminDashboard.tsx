@@ -2579,9 +2579,9 @@ const OverviewTab = memo(function OverviewTab({
                             <div className="text-slate-400 text-xs font-bold mb-2">
                                 {timePeriod === 'today' ? 'Today' : timePeriod === 'month' ? 'This Month' : 'All Time'}
                             </div>
-                            <div className="text-3xl font-black text-slate-900">₹ {displayVendorStats.total_revenue.toLocaleString()}</div>
+                            <div className="text-3xl font-black text-slate-900">₹ {(Number(displayVendorStats?.total_revenue) || 0).toLocaleString()}</div>
                             <div className="text-xs text-slate-500 mt-2">
-                                Commission: ₹ {displayVendorStats.total_commission.toLocaleString()} from {displayVendorStats.total_vendors} vendors
+                                Commission: ₹ {(Number(displayVendorStats?.total_commission) || 0).toLocaleString()} from {displayVendorStats?.total_vendors || 0} vendors
                             </div>
                         </motion.div>
                     </div>
@@ -3433,9 +3433,9 @@ const RevenueTab = ({ properties, selectedPropertyId }: { properties: any[], sel
                                             <td className="px-8 py-5 text-center">
                                                 <span className="px-3 py-1 bg-slate-100 rounded-lg text-[10px] font-black text-slate-500 uppercase tracking-wider">{v.commission_rate}%</span>
                                             </td>
-                                            <td className="px-8 py-5 text-right font-black text-sm text-slate-900">₹{rev.toLocaleString()}</td>
+                                            <td className="px-8 py-5 text-right font-black text-sm text-slate-900">₹{(Number(rev) || 0).toLocaleString()}</td>
                                             <td className="px-8 py-5 text-center text-xs font-bold text-slate-500">{lastEntryDisplay}</td>
-                                            <td className="px-8 py-5 text-right font-black text-sm text-emerald-600">₹{comm.toLocaleString()}</td>
+                                            <td className="px-8 py-5 text-right font-black text-sm text-emerald-600">₹{(Number(comm) || 0).toLocaleString()}</td>
                                             <td className="px-8 py-5 text-right">
                                                 <div className="flex items-center justify-end gap-2">
                                                     <button
