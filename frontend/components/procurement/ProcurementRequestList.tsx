@@ -562,7 +562,24 @@ export default function ProcurementRequestList({
 
             {/* List Column */}
             <div className={`lg:col-span-2 space-y-4 ${selectedRequest ? 'hidden lg:block' : ''}`}>
-                {requests.length === 0 ? (
+                {isLoading ? (
+                    <div className="space-y-4 animate-pulse">
+                        {[1, 2, 3, 4].map(i => (
+                            <div key={`req-skeleton-${i}`} className="bg-white rounded-2xl border border-slate-200/80 p-5 space-y-4">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-4">
+                                        <div className="w-12 h-12 rounded-xl bg-slate-100 dark:bg-slate-800" />
+                                        <div className="space-y-2">
+                                            <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded-md w-32" />
+                                            <div className="h-3 bg-slate-100 dark:bg-slate-800 rounded-md w-48" />
+                                        </div>
+                                    </div>
+                                    <div className="h-5 bg-slate-100 dark:bg-slate-800 rounded-md w-24" />
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                ) : requests.length === 0 ? (
                     <div className="bg-white p-12 rounded-3xl border border-slate-200 text-center space-y-4">
                         <ShoppingBag className="w-16 h-16 text-slate-100 mx-auto" />
                         <p className="text-slate-400 font-bold uppercase tracking-widest text-sm">No orders found</p>

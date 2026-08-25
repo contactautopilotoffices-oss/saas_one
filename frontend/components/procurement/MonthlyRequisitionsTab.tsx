@@ -620,9 +620,21 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
             {/* Requisitions List Table */}
             <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700 shadow-xs overflow-hidden">
                 {isLoading ? (
-                    <div className="py-16 text-center text-slate-500 dark:text-slate-400">
-                        <Loader2 className="w-8 h-8 animate-spin mx-auto mb-3 text-emerald-500" />
-                        <p className="text-sm">Loading requisitions...</p>
+                    <div className="p-4 space-y-3 animate-pulse">
+                        <div className="h-10 bg-slate-100 dark:bg-slate-700/50 rounded-xl w-full mb-4" />
+                        {[1, 2, 3, 4, 5].map((i) => (
+                            <div key={`req-tbl-skeleton-${i}`} className="flex items-center justify-between py-3 px-4 border-b border-slate-100 dark:border-slate-700/40 last:border-0">
+                                <div className="space-y-2 w-1/4">
+                                    <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded-md w-3/4" />
+                                    <div className="h-3 bg-slate-100 dark:bg-slate-800 rounded-md w-1/2" />
+                                </div>
+                                <div className="h-4 bg-slate-100 dark:bg-slate-800 rounded-md w-24" />
+                                <div className="h-5 bg-slate-200 dark:bg-slate-700 rounded-md w-32" />
+                                <div className="h-4 bg-slate-100 dark:bg-slate-800 rounded-md w-24" />
+                                <div className="h-6 bg-slate-200 dark:bg-slate-700 rounded-full w-20" />
+                                <div className="h-8 bg-slate-100 dark:bg-slate-800 rounded-xl w-24" />
+                            </div>
+                        ))}
                     </div>
                 ) : filteredRequisitions.length === 0 ? (
                     <div className="py-16 text-center text-slate-500 dark:text-slate-400">
