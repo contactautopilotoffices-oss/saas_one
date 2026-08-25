@@ -121,6 +121,9 @@ export class VoiceCallingService {
                     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fms-dev-saas-one.vercel.app';
                     const answerUrl = `${baseUrl}/api/voice/plivo-answer?text=${encodeURIComponent(spokenScript)}`;
 
+                    const fromNumber = config.plivo_virtual_number ? config.plivo_virtual_number.replace(/[^0-9]/g, '') : 'AutoPilot';
+                    const toNumber = formattedPhone.replace(/[^0-9]/g, '');
+
                     const plivoResponse = await fetch(`https://api.plivo.com/v1/Account/${config.plivo_auth_id}/Call/`, {
                         method: 'POST',
                         headers: {
@@ -128,8 +131,8 @@ export class VoiceCallingService {
                             'Content-Type': 'application/json'
                         },
                         body: JSON.stringify({
-                            from: config.plivo_virtual_number || 'AutoPilot',
-                            to: formattedPhone.replace('+', ''),
+                            from: fromNumber,
+                            to: toNumber,
                             answer_url: answerUrl,
                             answer_method: 'GET'
                         })
@@ -139,7 +142,7 @@ export class VoiceCallingService {
                         const resData = await plivoResponse.json();
                         callId = resData.request_uuid || resData.call_uuid || `plivo_${Date.now()}`;
                         callStatus = 'in_progress';
-                        console.log(`[VoiceCallingService] Plivo call initiated to ${formattedPhone}, UUID: ${callId}`);
+                        console.log(`[VoiceCallingService] Plivo call initiated from ${fromNumber} to ${toNumber}, UUID: ${callId}`);
                     } else {
                         const errText = await plivoResponse.text();
                         console.error('[VoiceCallingService] Plivo API error:', errText);
@@ -233,16 +236,41 @@ export class VoiceCallingService {
     }): Promise<{ success: boolean; callId?: string; spokenScript?: string; error?: string }> {
         const { phone, organizationId, userName = 'Admin', customScript } = options;
 
+        // Automatically resolve user if phone exists in users table
+        const cleanPhone = this.formatPhone(phone);
+        const last10Digits = cleanPhone.replace(/[^0-9]/g, '').slice(-10);
+        let resolvedUserId: string | null = null;
+        let resolvedUserName = userName;
+
+        try {
+            const { data: userMatch } = await supabaseAdmin
+                .from('users')
+                .select('id, full_name, phone')
+                .or(`phone.eq.${cleanPhone},phone.ilike.%${last10Digits}`)
+                .limit(1)
+                .maybeSingle();
+
+            if (userMatch) {
+                resolvedUserId = userMatch.id;
+                if (!userName || userName === 'Admin') {
+                    resolvedUserName = userMatch.full_name || userName;
+                }
+            }
+        } catch (uErr: any) {
+            console.warn('[VoiceCallingService] User lookup error for test call:', uErr.message);
+        }
+
         const rawTemplate = customScript || DEFAULT_VOICE_TEMPLATES.test_call;
-        const spokenScript = this.renderTemplate(rawTemplate, { userName });
+        const spokenScript = this.renderTemplate(rawTemplate, { userName: resolvedUserName });
 
         const result = await this.triggerCall({
             organizationId,
             recipientPhone: phone,
+            recipientUserId: resolvedUserId || undefined,
             eventType: 'TEST_CALL',
             customTemplate: rawTemplate,
             variables: {
-                userName
+                userName: resolvedUserName
             }
         });
 
