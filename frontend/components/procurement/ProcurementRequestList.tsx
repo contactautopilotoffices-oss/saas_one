@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
     Clock, CheckCircle2, XCircle, ChevronRight, 
     ShoppingBag, User, Building2, Wallet, 
@@ -115,6 +115,22 @@ export default function ProcurementRequestList({
     const requests = propRequests !== undefined ? propRequests : internalRequests;
     const floorFilter = propFloorFilter !== undefined ? propFloorFilter : internalFloorFilter;
     const setFloorFilter = propSetFloorFilter !== undefined ? propSetFloorFilter : setInternalFloorFilter;
+
+    const detailsContentRef = useRef<HTMLDivElement>(null);
+
+    const handleSelectRequest = (req: ProcurementRequest) => {
+        setSelectedRequest(req);
+        // Reset scroll position of details body so user starts at the top
+        setTimeout(() => {
+            if (detailsContentRef.current) {
+                detailsContentRef.current.scrollTop = 0;
+            }
+        }, 30);
+        // If on smaller viewport (< 1024px), scroll window smoothly to top
+        if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+    };
 
     const handleMarkDeliveredWithPhotos = async (requestId: string) => {
         let uploadedUrls: string[] = [];
@@ -561,7 +577,7 @@ export default function ProcurementRequestList({
             </div>
 
             {/* List Column */}
-            <div className={`lg:col-span-2 space-y-4 ${selectedRequest ? 'hidden lg:block' : ''}`}>
+            <div className={`lg:col-span-2 space-y-4 lg:max-h-[calc(100vh-13rem)] lg:overflow-y-auto lg:pr-2 custom-scrollbar ${selectedRequest ? 'hidden lg:block' : ''}`}>
                 {isLoading ? (
                     <div className="space-y-4 animate-pulse">
                         {[1, 2, 3, 4].map(i => (
@@ -596,7 +612,7 @@ export default function ProcurementRequestList({
                                     ${selectedRequest?.id === req.id 
                                         ? 'border-primary ring-2 ring-primary/10 shadow-lg' 
                                         : 'border-slate-200 hover:border-primary/30 hover:shadow-md'}`}
-                                onClick={() => setSelectedRequest(req)}
+                                onClick={() => handleSelectRequest(req)}
                             >
                                 <div className="p-5">
                                     <div className="flex items-center justify-between gap-4">
@@ -704,15 +720,20 @@ export default function ProcurementRequestList({
             {/* Detail Column */}
             <div className={`lg:col-span-1 ${!selectedRequest ? 'hidden lg:block' : ''}`}>
                 {selectedRequest ? (
-                    <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden sticky top-6 max-h-[90vh] overflow-y-auto">
-                        <div className="bg-slate-50 p-6 border-b border-slate-200 flex items-center justify-between">
-                            <h3 className="font-black text-slate-800 uppercase tracking-wider text-sm">Order Details</h3>
-                            <button onClick={() => setSelectedRequest(null)} className="lg:hidden p-2 rounded-lg hover:bg-slate-200">
-                                <XCircle className="w-5 h-5 text-slate-400" />
+                    <div className="bg-white rounded-3xl border border-slate-200 shadow-md overflow-hidden flex flex-col h-[calc(100vh-13rem)] min-h-[500px]">
+                        <div className="bg-slate-50 px-6 py-4 border-b border-slate-200 flex items-center justify-between shrink-0">
+                            <div className="flex items-center gap-2">
+                                <h3 className="font-black text-slate-800 uppercase tracking-wider text-sm">Order Details</h3>
+                                <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${getStatusBadgeClass(selectedRequest.status)}`}>
+                                    {getStatusLabel(selectedRequest.status)}
+                                </span>
+                            </div>
+                            <button onClick={() => setSelectedRequest(null)} className="p-1 rounded-lg hover:bg-slate-200 text-slate-400 hover:text-slate-600 transition-colors" title="Close details">
+                                <XCircle className="w-5 h-5" />
                             </button>
                         </div>
                         
-                        <div className="p-6 space-y-6">
+                        <div ref={detailsContentRef} className="p-6 space-y-6 overflow-y-auto custom-scrollbar flex-1">
                             {/* Summary Section */}
                             <div className="flex flex-col gap-3 pb-6 border-b border-slate-100">
                                 <div className="bg-slate-50/50 p-3.5 rounded-2xl border border-slate-100/50 flex flex-col justify-center min-w-0">
@@ -1112,14 +1133,17 @@ export default function ProcurementRequestList({
                                         : ''}
                                 </span>
                             </div>
+                        </div>
 
+                        {/* Sticky Bottom Actions */}
+                        <div className="p-4 bg-slate-50/90 backdrop-blur-xs border-t border-slate-200 flex flex-col gap-2 shrink-0">
                             {selectedRequest.ticket_id && (
                                 <button 
                                     onClick={() => {
                                         const currentPath = typeof window !== 'undefined' ? window.location.pathname + window.location.search : '';
                                         window.location.href = `/tickets/${selectedRequest.ticket_id}${currentPath ? `?from=${encodeURIComponent(currentPath)}` : ''}`;
                                     }}
-                                    className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-slate-900 text-white hover:bg-slate-800 transition-all font-black text-xs uppercase tracking-widest"
+                                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-slate-900 text-white hover:bg-slate-800 transition-all font-black text-xs uppercase tracking-widest cursor-pointer shadow-sm"
                                 >
                                     <Eye className="w-4 h-4" />
                                     View Ticket
@@ -1130,7 +1154,7 @@ export default function ProcurementRequestList({
                             {(selectedRequest.status === 'pending_quotation' || selectedRequest.status === 'rejected') && (
                                 <button 
                                     onClick={() => handleDelete(selectedRequest.id)}
-                                    className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border border-rose-100 text-rose-500 hover:bg-rose-50 transition-all font-black text-[10px] uppercase tracking-widest mt-2"
+                                    className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl border border-rose-100 text-rose-500 hover:bg-rose-50 transition-all font-black text-[10px] uppercase tracking-widest cursor-pointer"
                                 >
                                     <Trash2 className="w-3.5 h-3.5" />
                                     Delete Request
@@ -1139,7 +1163,7 @@ export default function ProcurementRequestList({
                         </div>
                     </div>
                 ) : (
-                    <div className="bg-slate-50 rounded-3xl border-2 border-dashed border-slate-200 p-12 text-center h-[400px] flex flex-col items-center justify-center space-y-4">
+                    <div className="bg-slate-50 rounded-3xl border-2 border-dashed border-slate-200 p-12 text-center h-[calc(100vh-13rem)] min-h-[500px] flex flex-col items-center justify-center space-y-4">
                         <ArrowRight className="w-12 h-12 text-slate-300 animate-pulse" />
                         <p className="text-slate-400 font-bold uppercase tracking-widest text-[10px]">Choose an order to see details</p>
                     </div>
