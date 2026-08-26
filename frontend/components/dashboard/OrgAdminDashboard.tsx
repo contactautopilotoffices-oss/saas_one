@@ -6,7 +6,7 @@ import {
     Search, Plus, Filter, LogOut, ChevronRight, MapPin, Edit, Trash2, X, Check, UsersRound,
     Coffee, IndianRupee, FileDown, ChevronDown, Fuel, Menu, Upload, FileBarChart, Zap, Package, ClipboardCheck, Scan, Key,
     AlertCircle, CheckCircle2, Clock, GitBranch, DoorOpen, MessageCircle, Send, Loader2, CalendarDays, Calendar, Wrench, ShoppingCart, Sun, Moon, Droplets, TrendingUp, Smartphone,
-    MessageSquarePlus, Bot
+    MessageSquarePlus, Bot, Gauge
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
@@ -50,9 +50,11 @@ import AITicketsDashboard from '@/frontend/components/ai-tickets/AITicketsDashbo
 
 import { BDQuickStats } from './UnifiedDashboard';
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
+import OrgProgressTracker from '@/frontend/components/org-efficiency/OrgProgressTracker';
+import OrgEfficiencyMeter from '@/frontend/components/org-efficiency/OrgEfficiencyMeter';
 
 // Types
-type Tab = 'overview' | 'properties' | 'requests' | 'reports' | 'visitors' | 'settings' | 'profile' | 'revenue' | 'users' | 'diesel_logger' | 'diesel' | 'electricity_logger' | 'electricity' | 'stock_reports' | 'checklist' | 'super_tenants' | 'escalation' | 'rooms' | 'ppm' | 'vendors' | 'procurement' | 'roster' | 'water_logger' | 'water' | 'guest_experience' | 'ai_tickets';
+type Tab = 'overview' | 'properties' | 'requests' | 'reports' | 'visitors' | 'settings' | 'profile' | 'revenue' | 'users' | 'diesel_logger' | 'diesel' | 'electricity_logger' | 'electricity' | 'stock_reports' | 'checklist' | 'super_tenants' | 'escalation' | 'rooms' | 'ppm' | 'vendors' | 'procurement' | 'roster' | 'water_logger' | 'water' | 'guest_experience' | 'ai_tickets' | 'org_progress' | 'org_efficiency';
 
 interface Property {
     id: string;
@@ -962,6 +964,26 @@ const OrgAdminDashboard = () => {
                                 Dashboard
                             </button>
                             <button
+                                onClick={() => handleTabChange('org_progress')}
+                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'org_progress'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                    }`}
+                            >
+                                <Gauge className="w-4 h-4" />
+                                Organization Progress
+                            </button>
+                            <button
+                                onClick={() => handleTabChange('org_efficiency')}
+                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'org_efficiency'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                    }`}
+                            >
+                                <TrendingUp className="w-4 h-4" />
+                                Org Efficiency
+                            </button>
+                            <button
                                 onClick={() => handleTabChange('requests')}
                                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'requests'
                                     ? 'bg-primary text-text-inverse shadow-sm'
@@ -1490,6 +1512,8 @@ const OrgAdminDashboard = () => {
                                 properties={properties}
                             />
                         )}
+                        {activeTab === 'org_progress' && <OrgProgressTracker key="org-progress-tab" />}
+                        {activeTab === 'org_efficiency' && <OrgEfficiencyMeter key="org-efficiency-tab" />}
                         {activeTab === 'ai_tickets' && <AITicketsDashboard propertyId={selectedPropertyId === 'all' ? undefined : selectedPropertyId} />}
                         {activeTab === 'revenue' && <RevenueTab key="revenue-tab" properties={properties} selectedPropertyId={selectedPropertyId} />}
                         {activeTab === 'properties' && (
