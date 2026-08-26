@@ -1,12 +1,18 @@
 /**
- * Bolna — outbound voice for Ira.
+ * Bolna — AGENT LIFECYCLE ONLY.
  *
- * Three calls we need: create/update her agent, place a call, read the result.
- * Post-call data arrives on our webhook (app/api/webhooks/bolna/route.ts);
- * getExecution() is the polling fallback when the webhook is missed.
+ * Scope boundary, deliberately narrow:
+ *   - This file creates, reads and updates Bolna *agents* (identity, prompt,
+ *     voice, telephony). VoiceCallingService does not do this.
+ *   - It does NOT place calls. `VoiceCallingService.triggerCall()` owns that,
+ *     because it also writes the audit row to omnichannel_call_logs — the
+ *     aggregator across WhatsApp, Plivo direct and Bolna. A second call path
+ *     would mean calls that never appear in the log.
+ *   - Post-call data lands on /api/voice/webhook (already wired to the
+ *     aggregator via bolna_call_id). getExecution() is the polling fallback.
  *
- * Voice deliberately reuses the ElevenLabs voice already configured for this
- * org, so Ira sounds the same on a call as anywhere else.
+ * Voice reuses the ElevenLabs voice already proven in this Bolna account, so
+ * Ira sounds the same on a call as anywhere else.
  *
  * The in-call LLM is Bolna-hosted on purpose. Routing conversation turns
  * through our own LLM router adds a network hop to every utterance, and in
@@ -14,12 +20,6 @@
  */
 
 const BOLNA_BASE = 'https://api.bolna.ai';
-
-export interface BolnaCallResult {
-    execution_id: string | null;
-    status: 'queued' | 'failed' | 'unconfigured';
-    error?: string;
-}
 
 function apiKey(): string | null {
     return process.env.BOLNA_API_KEY || null;
@@ -110,40 +110,12 @@ export async function createAgent(systemPrompt: string, welcome: string, webhook
 }
 
 /**
- * Place one outbound call. `userData` keys become {placeholders} inside the
- * system prompt and welcome message — this is how each vendor call carries
- * its own context without a new agent per vendor.
+ * Placing calls lives in VoiceCallingService.triggerCall(), which also writes
+ * the omnichannel_call_logs audit row. Import it there, not here.
+ *
+ *   import { VoiceCallingService } from '@/backend/services/VoiceCallingService';
+ *   await VoiceCallingService.triggerCall({ ... });
  */
-export async function placeCall(
-    recipient: string,
-    userData: Record<string, string>,
-): Promise<BolnaCallResult> {
-    if (!apiKey()) {
-        console.log(`[bolna] not configured — would call ${recipient}`);
-        return { execution_id: null, status: 'unconfigured' };
-    }
-    const agentId = process.env.BOLNA_AGENT_ID;
-    if (!agentId) return { execution_id: null, status: 'failed', error: 'BOLNA_AGENT_ID not set' };
-
-    try {
-        const res = await bolnaFetch('/call', {
-            method: 'POST',
-            body: JSON.stringify({
-                agent_id: agentId,
-                recipient_phone_number: recipient,
-                ...(process.env.BOLNA_FROM_NUMBER ? { from_phone_number: process.env.BOLNA_FROM_NUMBER } : {}),
-                user_data: userData,
-            }),
-        });
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) {
-            return { execution_id: null, status: 'failed', error: `${res.status}: ${JSON.stringify(body).slice(0, 300)}` };
-        }
-        return { execution_id: body.execution_id ?? null, status: 'queued' };
-    } catch (e) {
-        return { execution_id: null, status: 'failed', error: (e as Error).message };
-    }
-}
 
 /** Polling fallback when the webhook doesn't arrive. */
 export async function getExecution(executionId: string) {
