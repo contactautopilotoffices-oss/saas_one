@@ -125,8 +125,12 @@ function SearchableUserPicker({
     const [isOpen, setIsOpen] = useState(false);
     const [query, setQuery] = useState('');
 
-    // Combine available users with all users fallback to ensure everyone is searchable
-    const userPool = availableUsers.length > 0 ? availableUsers : (allUsers || []);
+    // Merge property-scoped users with all organization users & super admins to ensure everyone is searchable
+    const userMap = new Map<string, UserItem>();
+    (availableUsers || []).forEach(u => { if (u?.id) userMap.set(u.id, u); });
+    (allUsers || []).forEach(u => { if (u?.id && !userMap.has(u.id)) userMap.set(u.id, u); });
+
+    const userPool = Array.from(userMap.values());
     const unselectedUsers = userPool.filter(u => !selectedUserIds.includes(u.id));
     const filteredUsers = unselectedUsers.filter(u =>
         (u.full_name || '').toLowerCase().includes(query.toLowerCase()) ||

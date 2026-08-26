@@ -300,11 +300,11 @@ export const WhatsAppEventProcessor = {
             ppm_reminder: { campaign_name: 'reminder_ppm_v2', params: ['user_name', 'system_name', 'property', 'due_date', 'vendor_name', 'location'] },
             reminder_ticket_sla: { campaign_name: 'reminder_ticket_sla_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'sla_time', 'ticket_id'] },
             reminder_lead_followup: { campaign_name: 'reminder_lead_followup_v1', params: ['user_name', 'company_name', 'contact_person', 'phone', 'followup_time', 'lead_id'] },
-            checklist_slot_reminder: { campaign_name: 'checklist_slot_reminder_v1', params: ['user_name', 'checklist_name', 'property', 'due_time'] },
-            checklist_started: { campaign_name: 'checklist_started_v1', params: ['user_name', 'checklist_name', 'property', 'start_time'] },
-            checklist_completed: { campaign_name: 'checklist_completed_v1', params: ['user_name', 'checklist_name', 'property', 'completed_by', 'time'] },
-            checklist_overdue_alert: { campaign_name: 'checklist_overdue_alert_v1', params: ['user_name', 'checklist_name', 'property', 'slot_time'] },
-            checklist_rated: { campaign_name: 'checklist_rated_v1', params: ['user_name', 'checklist_name', 'property', 'rating', 'rater_name'] }
+            checklist_slot_reminder: { campaign_name: 'checklist_slot_reminder_v2', params: ['user_name', 'checklist_name', 'property', 'due_time'] },
+            checklist_started: { campaign_name: 'checklist_started', params: ['user_name', 'checklist_name', 'property', 'start_time'] },
+            checklist_completed: { campaign_name: 'checklist_completed', params: ['user_name', 'checklist_name', 'property', 'completed_by', 'time'] },
+            checklist_overdue_alert: { campaign_name: 'checklist_overdue_alert', params: ['user_name', 'checklist_name', 'property', 'slot_time'] },
+            checklist_rated: { campaign_name: 'checklist_rated', params: ['user_name', 'checklist_name', 'property', 'rating', 'rater_name'] }
         };
 
         // Intelligent routing: if media exists and org or system default has a media-specific template, use it; otherwise standard template

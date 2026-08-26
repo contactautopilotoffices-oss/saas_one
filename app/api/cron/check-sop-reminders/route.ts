@@ -264,7 +264,8 @@ export async function GET(request: NextRequest) {
                     try {
                         const orgMatrix = (orgSettingsRes.data || []).find(os => os.organization_id === orgId)?.notification_matrix || {};
                         const reminderRule = orgMatrix?.checklists?.checklist_slot_reminder;
-                        const isVoiceEnabled = reminderRule?.channels?.voice === true;
+                        const activeReminderRule = reminderRule?.property_overrides?.[propId] || reminderRule;
+                        const isVoiceEnabled = activeReminderRule?.channels?.voice === true;
 
                         if (isVoiceEnabled && reminderRecipients.length > 0) {
                             for (const u of reminderRecipients) {
@@ -275,9 +276,9 @@ export async function GET(request: NextRequest) {
                                         recipientPhone: u.phone,
                                         recipientUserId: u.id,
                                         eventType: 'CHECKLIST_SLOT_REMINDER',
-                                        customTemplate: reminderRule?.voice_template,
-                                        voiceId: reminderRule?.voice_id,
-                                        speechSpeed: reminderRule?.speech_speed,
+                                        customTemplate: activeReminderRule?.voice_template,
+                                        voiceId: activeReminderRule?.voice_id,
+                                        speechSpeed: activeReminderRule?.speech_speed,
                                         variables: {
                                             userName: u.name || 'Staff',
                                             checklistTitle: groupTitle,
@@ -358,7 +359,8 @@ export async function GET(request: NextRequest) {
                     try {
                         const orgMatrix = (orgSettingsRes.data || []).find(os => os.organization_id === orgId)?.notification_matrix || {};
                         const startedRule = orgMatrix?.checklists?.checklist_started;
-                        const isVoiceEnabled = startedRule?.channels?.voice === true;
+                        const activeStartedRule = startedRule?.property_overrides?.[propId] || startedRule;
+                        const isVoiceEnabled = activeStartedRule?.channels?.voice === true;
 
                         if (isVoiceEnabled && startedRecipients.length > 0) {
                             for (const u of startedRecipients) {
@@ -369,9 +371,9 @@ export async function GET(request: NextRequest) {
                                         recipientPhone: u.phone,
                                         recipientUserId: u.id,
                                         eventType: 'CHECKLIST_STARTED',
-                                        customTemplate: startedRule?.voice_template,
-                                        voiceId: startedRule?.voice_id,
-                                        speechSpeed: startedRule?.speech_speed,
+                                        customTemplate: activeStartedRule?.voice_template,
+                                        voiceId: activeStartedRule?.voice_id,
+                                        speechSpeed: activeStartedRule?.speech_speed,
                                         variables: {
                                             userName: u.name || 'Staff',
                                             checklistTitle: groupTitle,
@@ -468,7 +470,8 @@ export async function GET(request: NextRequest) {
                             try {
                                 const orgMatrix = (orgSettingsRes.data || []).find(os => os.organization_id === orgId)?.notification_matrix || {};
                                 const overdueRule = orgMatrix?.checklists?.checklist_overdue_alert;
-                                const isVoiceEnabled = overdueRule?.channels?.voice === true;
+                                const activeOverdueRule = overdueRule?.property_overrides?.[propId] || overdueRule;
+                                const isVoiceEnabled = activeOverdueRule?.channels?.voice === true;
 
                                 if (isVoiceEnabled && overdueRecipients.length > 0) {
                                     for (const u of overdueRecipients) {
@@ -479,9 +482,9 @@ export async function GET(request: NextRequest) {
                                                 recipientPhone: u.phone,
                                                 recipientUserId: u.id,
                                                 eventType: 'CHECKLIST_OVERDUE',
-                                                customTemplate: overdueRule?.voice_template,
-                                                voiceId: overdueRule?.voice_id,
-                                                speechSpeed: overdueRule?.speech_speed,
+                                                customTemplate: activeOverdueRule?.voice_template,
+                                                voiceId: activeOverdueRule?.voice_id,
+                                                speechSpeed: activeOverdueRule?.speech_speed,
                                                 variables: {
                                                     userName: u.name || 'Staff',
                                                     checklistTitle: overdueTitle,
