@@ -37,9 +37,8 @@ export interface EventNotificationRule {
 }
 
 export const AVAILABLE_VOICES = [
-    { id: 'Polly.Kajal-Neural', name: 'Kajal (Neural Indian Female)', accent: 'Indian English', badge: 'Ultra-Realistic (Recommended)', gender: 'female' },
-    { id: 'Polly.Aditi', name: 'Aditi (Bilingual Indian Female)', accent: 'Indian English', badge: 'Crisp & Clear', gender: 'female' },
-    { id: 'Polly.Raveena', name: 'Raveena (Indian Female)', accent: 'Indian English', badge: 'Standard', gender: 'female' },
+    { id: 'Polly.Aditi', name: 'Aditi (Neural Indian Female)', accent: 'Indian English', badge: 'Ultra-Realistic (Recommended)', gender: 'female' },
+    { id: 'Polly.Raveena', name: 'Raveena (Indian Female)', accent: 'Indian English', badge: 'Crisp & Clear', gender: 'female' },
     { id: 'Polly.Joanna-Neural', name: 'Joanna (Neural Female)', accent: 'US English', badge: 'Smooth & Conversational', gender: 'female' },
     { id: 'Polly.Matthew-Neural', name: 'Matthew (Neural Male)', accent: 'US English', badge: 'Executive Corporate', gender: 'male' },
 ];
@@ -554,7 +553,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
     const [testPhone, setTestPhone] = useState('');
     const [testUserName, setTestUserName] = useState('Harsh Patil');
     const [testScript, setTestScript] = useState(DEFAULT_VOICE_TEMPLATES.test_call);
-    const [testVoiceId, setTestVoiceId] = useState('Polly.Kajal-Neural');
+    const [testVoiceId, setTestVoiceId] = useState('Polly.Aditi');
     const [testSpeed, setTestSpeed] = useState('1.0');
     const [playingPreviewKey, setPlayingPreviewKey] = useState<string | null>(null);
     const [isTestingCall, setIsTestingCall] = useState(false);
@@ -1518,7 +1517,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                                                     type="button"
                                                                     onClick={() => playAudioPreview(
                                                                         rule.voice_template || DEFAULT_VOICE_TEMPLATES[ev.key] || `Hello Harsh, this is an alert regarding ${ev.name} at Mafatlal Chambers.`,
-                                                                        rule.voice_id || 'Polly.Kajal-Neural',
+                                                                        rule.voice_id || 'Polly.Aditi',
                                                                         rule.speech_speed || '1.0',
                                                                         `${module.id}_${ev.key}`
                                                                     )}
@@ -1534,7 +1533,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                                                 <div>
                                                                     <label className="block text-[10px] font-bold text-slate-600 mb-1">Speaker Voice / Accent:</label>
                                                                     <select
-                                                                        value={rule.voice_id || 'Polly.Kajal-Neural'}
+                                                                        value={rule.voice_id || 'Polly.Aditi'}
                                                                         onChange={(e) => setVoiceId(module.id, ev.key, e.target.value)}
                                                                         className="w-full text-xs font-semibold bg-white border border-purple-200 rounded-lg p-1.5 text-slate-800 outline-hidden focus:ring-2 focus:ring-purple-400"
                                                                     >

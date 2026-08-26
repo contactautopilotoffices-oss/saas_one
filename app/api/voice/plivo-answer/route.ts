@@ -16,11 +16,14 @@ export async function POST(request: NextRequest) {
 function handlePlivoXML(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const text = searchParams.get('text') || 'Hi, this is Pratiksha from the Operations team. Have a great day.';
-    const rawVoice = searchParams.get('voice') || 'Polly.Kajal';
+    const rawVoice = searchParams.get('voice') || 'Polly.Aditi';
     const rawSpeed = searchParams.get('speed') || '1.0';
 
-    // Normalize Polly voice name for Plivo (Plivo expects "Polly.Kajal", "Polly.Aditi", "Polly.Raveena", "Polly.Joanna", "Polly.Matthew")
-    const cleanVoiceName = rawVoice.replace(/-Neural/gi, '');
+    // Normalize Polly voice name for Plivo (Plivo XML specifically supports Polly.Aditi, Polly.Raveena, Polly.Joanna, Polly.Matthew)
+    let cleanVoiceName = rawVoice.replace(/-Neural/gi, '');
+    if (cleanVoiceName.toLowerCase().includes('kajal')) {
+        cleanVoiceName = 'Polly.Aditi';
+    }
     const voice = cleanVoiceName.startsWith('Polly.') ? cleanVoiceName : `Polly.${cleanVoiceName}`;
 
     // Parse speed into valid SSML prosody rate percentage (e.g. "1.1" -> "110%", "0.9" -> "90%")

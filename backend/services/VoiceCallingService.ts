@@ -125,7 +125,7 @@ export class VoiceCallingService {
                 try {
                     const authHeader = 'Basic ' + Buffer.from(`${config.plivo_auth_id}:${config.plivo_auth_token}`).toString('base64');
                     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fms-dev-saas-one.vercel.app';
-                    const selectedVoice = options.voiceId || config.default_voice || 'Polly.Kajal-Neural';
+                    const selectedVoice = options.voiceId || config.default_voice || 'Polly.Aditi';
                     const selectedSpeed = options.speechSpeed || config.default_speed || '1.0';
                     const answerUrl = `${baseUrl}/api/voice/plivo-answer?text=${encodeURIComponent(spokenScript)}&voice=${encodeURIComponent(selectedVoice)}&speed=${encodeURIComponent(String(selectedSpeed))}`;
 
