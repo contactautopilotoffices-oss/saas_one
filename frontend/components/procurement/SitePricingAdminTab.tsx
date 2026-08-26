@@ -411,9 +411,21 @@ export default function SitePricingAdminTab({
                 </div>
 
                 {isLoading ? (
-                    <div className="py-16 text-center text-slate-400">
-                        <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2 text-emerald-500" />
-                        <p className="text-sm">Loading catalog items & rates...</p>
+                    <div className="p-4 space-y-3 animate-pulse">
+                        {[1, 2, 3, 4, 5, 6].map((i) => (
+                            <div key={`pricing-skeleton-${i}`} className="flex items-center justify-between py-3 px-4 border-b border-slate-100 last:border-0">
+                                <div className="h-4 bg-slate-100 rounded-md w-8" />
+                                <div className="space-y-1.5 w-1/3">
+                                    <div className="h-4 bg-slate-200 rounded-md w-3/4" />
+                                    <div className="h-3 bg-slate-100 rounded-md w-1/2" />
+                                </div>
+                                <div className="h-4 bg-slate-100 rounded-md w-20" />
+                                <div className="h-4 bg-slate-100 rounded-md w-16" />
+                                <div className="h-4 bg-slate-200 rounded-md w-24" />
+                                <div className="h-4 bg-emerald-100 rounded-md w-24" />
+                                <div className="h-7 bg-slate-100 rounded-lg w-10" />
+                            </div>
+                        ))}
                     </div>
                 ) : filteredItems.length === 0 ? (
                     <div className="py-16 text-center text-slate-400">

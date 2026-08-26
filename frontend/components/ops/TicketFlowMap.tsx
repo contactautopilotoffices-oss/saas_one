@@ -470,12 +470,29 @@ export default function TicketFlowMap({
     };
 
     const handleBack = () => {
+        if (from?.startsWith('/')) {
+            router.push(from);
+            return;
+        }
+
+        const isOrgLevelAdmin = membership?.is_master_admin || ['org_super_admin', 'owner', 'admin', 'org_admin'].includes(membership?.org_role || '');
+        const effectiveOrgId = organizationId || membership?.org_id;
+
+        if (isOrgLevelAdmin && effectiveOrgId) {
+            if (from === 'requests') {
+                router.push(`/org/${effectiveOrgId}/dashboard?tab=requests`);
+            } else {
+                router.push(`/org/${effectiveOrgId}/dashboard`);
+            }
+            return;
+        }
+
         if (!propertyId || !membership) {
             router.back();
             return;
         }
 
-        const propMember = membership.properties.find(p => p.id === propertyId);
+        const propMember = membership.properties?.find(p => p.id === propertyId);
 
         if (propMember) {
             switch (propMember.role) {
@@ -503,8 +520,8 @@ export default function TicketFlowMap({
             }
         } else {
             // Fallback for org admins or if membership not found
-            if (organizationId) {
-                router.push(`/org/${organizationId}/dashboard`);
+            if (effectiveOrgId) {
+                router.push(`/org/${effectiveOrgId}/dashboard`);
             } else {
                 router.push(`/property/${propertyId}/dashboard`);
             }

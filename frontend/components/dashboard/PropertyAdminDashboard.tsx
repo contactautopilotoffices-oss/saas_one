@@ -1695,9 +1695,9 @@ const OverviewTab = memo(function OverviewTab({
                                     {(timePeriod === 'today' ? dieselStats.total_litres_today : timePeriod === 'month' ? dieselStats.total_litres_month : dieselStats.total_litres) === 0 && (timePeriod === 'today' ? dieselStats.total_kwh_today : timePeriod === 'month' ? dieselStats.total_kwh_month : dieselStats.total_kwh) > 0 ? 'kWh' : 'Litres'} Consumed
                                 </div>
                                 <div className="text-3xl font-black text-slate-900 flex items-baseline gap-1">
-                                    {(timePeriod === 'today' ? dieselStats.total_units_today : timePeriod === 'month' ? dieselStats.total_units_month : dieselStats.total_units).toLocaleString()}
+                                    {(Number(timePeriod === 'today' ? dieselStats?.total_units_today : timePeriod === 'month' ? dieselStats?.total_units_month : dieselStats?.total_units) || 0).toLocaleString()}
                                     <span className="text-sm text-slate-400 font-bold">
-                                        {(timePeriod === 'today' ? dieselStats.total_litres_today : timePeriod === 'month' ? dieselStats.total_litres_month : dieselStats.total_litres) === 0 && (timePeriod === 'today' ? dieselStats.total_kwh_today : timePeriod === 'month' ? dieselStats.total_kwh_month : dieselStats.total_kwh) > 0 ? 'kWh' : 'Litres'}
+                                        {(timePeriod === 'today' ? dieselStats?.total_litres_today : timePeriod === 'month' ? dieselStats?.total_litres_month : dieselStats?.total_litres) === 0 && (timePeriod === 'today' ? dieselStats?.total_kwh_today : timePeriod === 'month' ? dieselStats?.total_kwh_month : dieselStats?.total_kwh) > 0 ? 'kWh' : 'Litres'}
                                     </span>
                                 </div>
                                 <div className="pt-2 border-t border-slate-50 mt-2">
@@ -1708,8 +1708,8 @@ const OverviewTab = memo(function OverviewTab({
                         <div className="bg-white rounded-3xl p-5 border border-slate-100 shadow-sm">
                             <h3 className="text-sm font-black text-slate-900 mb-2">Vendor Revenue</h3>
                             <div className="text-slate-400 text-xs font-bold mb-2">{timePeriod === 'today' ? 'Today' : timePeriod === 'month' ? 'This Month' : 'All Time'}</div>
-                            <div className="text-3xl font-black text-slate-900">₹ {vendorStats.total_revenue.toLocaleString()}</div>
-                            <div className="text-xs text-slate-500 mt-2">Commission: ₹ {vendorStats.total_commission.toLocaleString()} from {vendorStats.total_vendors} vendors</div>
+                            <div className="text-3xl font-black text-slate-900">₹ {(Number(vendorStats?.total_revenue) || 0).toLocaleString()}</div>
+                            <div className="text-xs text-slate-500 mt-2">Commission: ₹ {(Number(vendorStats?.total_commission) || 0).toLocaleString()} from {vendorStats?.total_vendors || 0} vendors</div>
                         </div>
                     </div>
 
@@ -1833,10 +1833,10 @@ const OverviewTab = memo(function OverviewTab({
                                     <div className="text-xs font-bold text-emerald-600 mb-1">Visitors ({timePeriod === 'today' ? 'Today' : timePeriod === 'month' ? 'Month' : 'All'})</div>
                                     <div className="text-2xl font-black text-emerald-900">{vmsStats.total_visitors}</div>
                                 </div>
-                                <div className="p-4 bg-yellow-50 rounded-xl"><div className="text-xs font-bold text-yellow-600 mb-1">Electricity ({timePeriod === 'today' ? 'Today' : timePeriod === 'month' ? 'Month' : 'All'})</div><div className="text-2xl font-black text-slate-900">{(timePeriod === 'today' ? electricityStats.total_units_today : timePeriod === 'month' ? electricityStats.total_units_month : electricityStats.total_units).toLocaleString()}</div></div>
+                                <div className="p-4 bg-yellow-50 rounded-xl"><div className="text-xs font-bold text-yellow-600 mb-1">Electricity ({timePeriod === 'today' ? 'Today' : timePeriod === 'month' ? 'Month' : 'All'})</div><div className="text-2xl font-black text-slate-900">{(Number(timePeriod === 'today' ? electricityStats?.total_units_today : timePeriod === 'month' ? electricityStats?.total_units_month : electricityStats?.total_units) || 0).toLocaleString()}</div></div>
                                 <div className="p-4 bg-purple-50 rounded-xl">
                                     <div className="text-xs font-bold text-purple-600 mb-1">Vendor Revenue ({timePeriod === 'today' ? 'Today' : timePeriod === 'month' ? 'Month' : 'All'})</div>
-                                    <div className="text-2xl font-black text-purple-900">₹{vendorStats.total_revenue.toLocaleString()}</div>
+                                    <div className="text-2xl font-black text-purple-900">₹{(Number(vendorStats?.total_revenue) || 0).toLocaleString()}</div>
                                 </div>
                             </div>
                         </div>

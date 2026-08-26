@@ -157,6 +157,8 @@ export default function TicketDetailPage() {
   const [userRole, setUserRole] = useState<
     "admin" | "staff" | "tenant" | "mst" | "procurement" | null
   >(null);
+  const [isOrgAdminUser, setIsOrgAdminUser] = useState(false);
+  const [ticketOrgId, setTicketOrgId] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -617,13 +619,17 @@ export default function TicketDetailPage() {
     // Check Admin (Org or Property)
     const { data: orgMember } = await supabase
       .from("organization_memberships")
-      .select("role")
+      .select("role, organization_id")
       .eq("user_id", uid)
-      .in("role", ["master_admin", "org_super_admin"])
+      .in("role", ["master_admin", "org_super_admin", "org_admin", "owner"])
       .maybeSingle();
 
     if (orgMember) {
       setUserRole("admin");
+      setIsOrgAdminUser(true);
+      if (orgMember.organization_id) {
+        setTicketOrgId(orgMember.organization_id);
+      }
       return;
     }
 
@@ -1349,10 +1355,13 @@ export default function TicketDetailPage() {
 
       showToast("Request Deleted Successfully", "success");
       setTimeout(() => {
+        const effectiveOrgId = ticketOrgId || (ticket?.property as any)?.organization_id;
         // Only use `from` if it's an absolute path (starts with /), not a tab name like "requests"
         const destination =
           (from?.startsWith("/") ? from : null) ||
-          `/property/${ticket?.property_id}/${userRole === "admin" ? "dashboard" : userRole === "mst" ? "mst" : userRole === "staff" ? "staff" : "tenant"}?tab=requests`;
+          (isOrgAdminUser && effectiveOrgId
+            ? `/org/${effectiveOrgId}/dashboard`
+            : `/property/${ticket?.property_id}/${userRole === "admin" ? "dashboard" : userRole === "mst" ? "mst" : userRole === "staff" ? "staff" : "tenant"}?tab=requests`);
         router.push(destination);
       }, 1000);
     } catch (err: any) {
@@ -1364,11 +1373,26 @@ export default function TicketDetailPage() {
 
   const handleBack = () => {
     if (from) {
+      if (from.startsWith("/")) {
+        router.push(from);
+      } else {
+        window.history.back();
+      }
+      return;
+    }
+
+    if (typeof window !== "undefined" && window.history.length > 1) {
       window.history.back();
       return;
     }
 
-    // No `from` param means direct/shared link — always go to the correct dashboard
+    // Direct link fallback
+    const effectiveOrgId = ticketOrgId || (ticket?.property as any)?.organization_id;
+    if (isOrgAdminUser && effectiveOrgId) {
+      router.push(`/org/${effectiveOrgId}/dashboard`);
+      return;
+    }
+
     const pId = ticket?.property_id;
     if (!pId) {
       router.push("/");
@@ -2825,7 +2849,7 @@ export default function TicketDetailPage() {
                               >
                                 Order #{req.id.slice(0, 8).toUpperCase()}
                               </p>
-                              {req.procurement_viewed_at && (
+                              {req.procurement_viewed_at && !isNaN(new Date(req.procurement_viewed_at).getTime()) && (
                                 <div className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800">
                                   <Eye className="w-3 h-3 text-emerald-500" />
                                   <span>Seen by Procurement: {new Date(req.procurement_viewed_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
@@ -2850,7 +2874,7 @@ export default function TicketDetailPage() {
                               {req.status === "rejected" && req.rejecter?.full_name && ` • Rejected by ${req.rejecter.full_name}`}
                               {req.status === "ordered" && req.assignee?.full_name && ` • Ordered by ${req.assignee.full_name}`}
                               {req.status === "delivered" && req.assignee?.full_name && ` • Delivered by ${req.assignee.full_name}`}
-                              {` • `}{(userRole === 'admin' || userRole === 'procurement') && req.total_amount !== null ? `₹${req.total_amount.toLocaleString()}` : ''}
+                              {` • `}{(userRole === 'admin' || userRole === 'procurement') && req.total_amount != null ? `₹${Number(req.total_amount).toLocaleString()}` : ''}
                             </p>
                           </div>
                           <div className="flex items-center gap-3">
@@ -2954,7 +2978,7 @@ export default function TicketDetailPage() {
                                 >
                                   {labelMap[s] || s.split("_")[0]}
                                 </span>
-                                {stepTime && isActive && (
+                                {stepTime && isActive && !isNaN(new Date(stepTime).getTime()) && (
                                   <span className={`text-[7px] text-center uppercase font-medium ${isDark ? "text-slate-500" : "text-slate-400"}`}>
                                     {new Date(stepTime).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
                                   </span>
@@ -3039,7 +3063,7 @@ export default function TicketDetailPage() {
                                 </div>
                                 <div className="text-right">
                                   <p className={`text-[10px] font-black ${(userRole === 'admin' || userRole === 'procurement') && isDark ? "text-emerald-400" : (userRole === 'admin' || userRole === 'procurement') ? "text-emerald-600" : ""}`}>
-                                    {(userRole === 'admin' || userRole === 'procurement') && item.total_price !== null ? `₹${item.total_price.toLocaleString()}` : ''}
+                                    {(userRole === 'admin' || userRole === 'procurement') && item.total_price != null ? `₹${Number(item.total_price).toLocaleString()}` : ''}
                                   </p>
                                 </div>
                               </div>

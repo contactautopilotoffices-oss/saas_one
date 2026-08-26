@@ -120,7 +120,7 @@ const VMSOrgVisitorDashboard: React.FC<VMSOrgVisitorDashboardProps> = ({ orgId }
             v.properties?.name || v.property_id,
             v.coming_from || '-',
             v.whom_to_meet,
-            new Date(v.checkin_time).toLocaleString(),
+            v.checkin_time ? new Date(v.checkin_time).toLocaleString() : '-',
             v.checkout_time ? new Date(v.checkout_time).toLocaleString() : '-',
             v.status,
         ]);
@@ -545,7 +545,9 @@ const VMSOrgVisitorDashboard: React.FC<VMSOrgVisitorDashboardProps> = ({ orgId }
                                     <div className="flex justify-between items-center mb-2">
                                         <div>
                                             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Check-in</p>
-                                            <p className="text-slate-900 font-medium">{new Date(selectedVisitor.checkin_time).toLocaleString()}</p>
+                                            <p className="text-slate-900 font-medium">
+                                                {selectedVisitor.checkin_time ? new Date(selectedVisitor.checkin_time).toLocaleString() : '-'}
+                                            </p>
                                         </div>
                                         <div className="text-right">
                                             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Duration</p>

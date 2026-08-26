@@ -608,9 +608,21 @@ export default function PropertyBudgetsTab({
             {/* Table Container */}
             <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
                 {isLoading ? (
-                    <div className="py-28 text-center text-slate-500 dark:text-slate-400">
-                        <Loader2 className="w-10 h-10 animate-spin mx-auto mb-3 text-emerald-500" />
-                        <p className="text-sm font-semibold">Loading properties and budgets...</p>
+                    <div className="p-6 space-y-4 animate-pulse">
+                        {[1, 2, 3, 4, 5].map((i) => (
+                            <div key={`budget-skeleton-${i}`} className="flex items-center justify-between py-3.5 px-4 border-b border-slate-100 dark:border-slate-800 last:border-0">
+                                <div className="h-4 bg-slate-100 dark:bg-slate-800 rounded-md w-8" />
+                                <div className="space-y-1.5 w-1/4">
+                                    <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded-md w-3/4" />
+                                    <div className="h-3 bg-slate-100 dark:bg-slate-800 rounded-md w-1/2" />
+                                </div>
+                                <div className="h-4 bg-slate-100 dark:bg-slate-800 rounded-md w-24" />
+                                <div className="h-8 bg-amber-50/50 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900/30 rounded-xl w-32" />
+                                <div className="h-8 bg-sky-50/50 dark:bg-sky-950/20 border border-sky-100 dark:border-sky-900/30 rounded-xl w-32" />
+                                <div className="h-8 bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/30 rounded-xl w-32" />
+                                <div className="h-5 bg-slate-100 dark:bg-slate-800 rounded-full w-10 mx-auto" />
+                            </div>
+                        ))}
                     </div>
                 ) : filteredBudgets.length === 0 ? (
                     <div className="py-28 text-center text-slate-500 dark:text-slate-400">

@@ -171,8 +171,8 @@ export async function PATCH(
 
                 updateStatus = 'ordered';
             } else {
-                const vendorName = formData.get('vendor_name') as string || '';
-                const totalQuotedAmount = parseFloat(formData.get('total_quoted_amount') as string || '0');
+                const vendorName = (formData.get('vendor_name') as string || vendorQuotationData?.vendor_name || '').trim() || 'Vendor Quote';
+                const totalQuotedAmount = parseFloat(formData.get('total_quoted_amount') as string || '0') || (Number(existing.total_estimated_amount) || Number(existingNotesObj.total_estimated_amount) || 0);
                 const vendorNotes = formData.get('vendor_notes') as string || '';
                 const targetApproverId = formData.get('target_approver_id') as string || '';
                 const quoteFile = formData.get('quote_file') as File | null;

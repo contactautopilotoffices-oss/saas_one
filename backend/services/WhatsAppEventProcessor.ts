@@ -300,11 +300,11 @@ export const WhatsAppEventProcessor = {
             ppm_reminder: { campaign_name: 'reminder_ppm_v2', params: ['user_name', 'system_name', 'property', 'due_date', 'vendor_name', 'location'] },
             reminder_ticket_sla: { campaign_name: 'reminder_ticket_sla_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'sla_time', 'ticket_id'] },
             reminder_lead_followup: { campaign_name: 'reminder_lead_followup_v1', params: ['user_name', 'company_name', 'contact_person', 'phone', 'followup_time', 'lead_id'] },
-            checklist_slot_reminder: { campaign_name: 'checklist_slot_reminder_v1', params: ['user_name', 'checklist_name', 'property', 'due_time'] },
-            checklist_started: { campaign_name: 'checklist_started_v1', params: ['user_name', 'checklist_name', 'property', 'start_time'] },
-            checklist_completed: { campaign_name: 'checklist_completed_v1', params: ['user_name', 'checklist_name', 'property', 'completed_by', 'time'] },
-            checklist_overdue_alert: { campaign_name: 'checklist_overdue_alert_v1', params: ['user_name', 'checklist_name', 'property', 'slot_time'] },
-            checklist_rated: { campaign_name: 'checklist_rated_v1', params: ['user_name', 'checklist_name', 'property', 'rating', 'rater_name'] }
+            checklist_slot_reminder: { campaign_name: 'checklist_slot_reminder_v2', params: ['user_name', 'checklist_name', 'property', 'due_time'] },
+            checklist_started: { campaign_name: 'checklist_started', params: ['user_name', 'checklist_name', 'property', 'start_time'] },
+            checklist_completed: { campaign_name: 'checklist_completed', params: ['user_name', 'checklist_name', 'property', 'completed_by', 'time'] },
+            checklist_overdue_alert: { campaign_name: 'checklist_overdue_alert', params: ['user_name', 'checklist_name', 'property', 'slot_time'] },
+            checklist_rated: { campaign_name: 'checklist_rated', params: ['user_name', 'checklist_name', 'property', 'rating', 'rater_name'] }
         };
 
         // Intelligent routing: if media exists and org or system default has a media-specific template, use it; otherwise standard template
@@ -399,6 +399,7 @@ export const WhatsAppEventProcessor = {
             'reminder_lead_followup': ['user_name', 'company_name', 'contact_person', 'phone', 'followup_time', 'lead_id'],
 
             'checklist_slot_reminder_v1': ['user_name', 'checklist_name', 'property', 'due_time'],
+            'checklist_slot_reminder_v2': ['user_name', 'checklist_name', 'property', 'due_time'],
             'checklist_slot_reminder': ['user_name', 'checklist_name', 'property', 'due_time'],
 
             'checklist_started_v1': ['user_name', 'checklist_name', 'property', 'start_time'],
@@ -408,6 +409,7 @@ export const WhatsAppEventProcessor = {
             'checklist_completed': ['user_name', 'checklist_name', 'property', 'completed_by', 'time'],
 
             'checklist_overdue_alert_v1': ['user_name', 'checklist_name', 'property', 'slot_time'],
+            'checklist_overdue_alert_v2': ['user_name', 'checklist_name', 'property', 'slot_time'],
             'checklist_overdue_alert': ['user_name', 'checklist_name', 'property', 'slot_time'],
 
             'checklist_rated_v1': ['user_name', 'checklist_name', 'property', 'rating', 'rater_name'],
@@ -1245,15 +1247,50 @@ export const WhatsAppEventProcessor = {
         const organizationId = lead?.organization_id || payload.organization_id || await this.resolveLeadOrganizationId(payload);
         if (!organizationId) return;
 
-        const sourceName = lead?.source_info?.name || lead?.lead_source || await this.getLeadSourceName(payload.lead_source);
+        const leadData = lead || payload;
+        const sourceName = lead?.source_info?.name || leadData.lead_source || await this.getLeadSourceName(payload.lead_source);
         const propName = lead?.property?.name || await this.getPropertyName(payload.property_interest);
         
-        // Format requirement cleanly into the message parameters
-        const propertyWithReq = lead?.requirement 
-            ? `${propName ? propName + ' | ' : ''}Req: ${lead.requirement}` 
-            : (propName || lead?.location || 'Direct');
+        // Resolve location, campaign, and market for clear tracking in WhatsApp
+        const location = (leadData.location || payload.location || '').trim();
+        const campaign = (leadData.campaign || payload.campaign || '').trim();
+        const city = (leadData.city || payload.city || '').trim();
+        const requirement = (leadData.requirement || payload.requirement || '').trim();
 
-        const leadData = lead || payload;
+        let locationLabel = '';
+        if (propName) {
+            locationLabel = propName;
+            if (location && !propName.toLowerCase().includes(location.toLowerCase())) {
+                locationLabel += ` (${location})`;
+            } else if (campaign && !propName.toLowerCase().includes(campaign.toLowerCase())) {
+                locationLabel += ` (${campaign})`;
+            }
+        } else if (location) {
+            locationLabel = location;
+            if (campaign && !location.toLowerCase().includes(campaign.toLowerCase())) {
+                locationLabel += ` • ${campaign}`;
+            } else if (city && !location.toLowerCase().includes(city.toLowerCase())) {
+                locationLabel += ` (${city})`;
+            }
+        } else if (campaign) {
+            locationLabel = campaign;
+            if (city && !campaign.toLowerCase().includes(city.toLowerCase())) {
+                locationLabel += ` (${city})`;
+            }
+        } else if (city) {
+            locationLabel = city;
+        } else {
+            locationLabel = 'Direct / All';
+        }
+
+        const propertyInterestWithReq = requirement 
+            ? `${locationLabel} | Req: ${requirement}` 
+            : locationLabel;
+
+        const enrichedSource = (campaign && sourceName && !sourceName.toLowerCase().includes(campaign.toLowerCase()))
+            ? `${sourceName} (${campaign})`
+            : (sourceName || campaign || 'Direct');
+
         await this.dispatch({
             featureKey: 'lead_created',
             templateEventKey: 'lead_created',
@@ -1265,10 +1302,10 @@ export const WhatsAppEventProcessor = {
                 company_name: leadData.company_name || 'New Company',
                 contact_person: leadData.contact_person || 'N/A',
                 phone: leadData.contact_number || leadData.phone || 'N/A',
-                source: sourceName,
-                property_interest: propertyWithReq
+                source: enrichedSource,
+                property_interest: propertyInterestWithReq
             },
-            summaryMessage: `New CRM lead: ${leadData.company_name} (${leadData.contact_person || 'N/A'}) - Req: ${leadData.requirement || 'N/A'}`
+            summaryMessage: `New CRM lead: ${leadData.company_name} (${leadData.contact_person || 'N/A'}) [📍 ${locationLabel}${requirement ? ` | Req: ${requirement}` : ''}]`
         });
     },
 
@@ -1288,17 +1325,50 @@ export const WhatsAppEventProcessor = {
             ? { name: lead.assignee.full_name, phone: lead.assignee.phone } 
             : await this.getUserDetails(assigneeId);
 
+        const leadData = lead || payload;
         const propName = lead?.property?.name || await this.getPropertyName(payload.property_interest);
-        const propertyWithReq = lead?.requirement 
-            ? `${propName ? propName + ' | ' : ''}Req: ${lead.requirement}` 
-            : (propName || lead?.location || 'Direct');
+        
+        // Resolve location, campaign, and market for clear tracking in WhatsApp
+        const location = (leadData.location || payload.location || '').trim();
+        const campaign = (leadData.campaign || payload.campaign || '').trim();
+        const city = (leadData.city || payload.city || '').trim();
+        const requirement = (leadData.requirement || payload.requirement || '').trim();
+
+        let locationLabel = '';
+        if (propName) {
+            locationLabel = propName;
+            if (location && !propName.toLowerCase().includes(location.toLowerCase())) {
+                locationLabel += ` (${location})`;
+            } else if (campaign && !propName.toLowerCase().includes(campaign.toLowerCase())) {
+                locationLabel += ` (${campaign})`;
+            }
+        } else if (location) {
+            locationLabel = location;
+            if (campaign && !location.toLowerCase().includes(campaign.toLowerCase())) {
+                locationLabel += ` • ${campaign}`;
+            } else if (city && !location.toLowerCase().includes(city.toLowerCase())) {
+                locationLabel += ` (${city})`;
+            }
+        } else if (campaign) {
+            locationLabel = campaign;
+            if (city && !campaign.toLowerCase().includes(city.toLowerCase())) {
+                locationLabel += ` (${city})`;
+            }
+        } else if (city) {
+            locationLabel = city;
+        } else {
+            locationLabel = 'Direct / All';
+        }
+
+        const propertyInterestWithReq = requirement 
+            ? `${locationLabel} | Req: ${requirement}` 
+            : locationLabel;
 
         const followupDate = lead?.next_followup_date || payload.next_followup_date;
         const formattedFollowup = followupDate
             ? formatWhatsAppDateTime(followupDate)
-            : (lead?.requirement ? `TAT: Immediate | Req: ${lead.requirement}` : 'Immediate Follow-up');
+            : (requirement ? `TAT: Immediate | Req: ${requirement}` : 'Immediate Follow-up');
 
-        const leadData = lead || payload;
         await this.dispatch({
             featureKey: 'lead_assigned',
             templateEventKey: 'lead_assigned',
@@ -1310,10 +1380,10 @@ export const WhatsAppEventProcessor = {
                 company_name: leadData.company_name || 'Company',
                 contact_person: leadData.contact_person || 'N/A',
                 phone: leadData.contact_number || leadData.phone || 'N/A',
-                property_interest: propertyWithReq,
+                property_interest: propertyInterestWithReq,
                 next_followup: formattedFollowup
             },
-            summaryMessage: `Lead ${leadData.company_name} assigned to ${assignee.name} (Req: ${leadData.requirement || 'N/A'})`,
+            summaryMessage: `Lead ${leadData.company_name} assigned to ${assignee.name} [📍 ${locationLabel}${requirement ? ` | Req: ${requirement}` : ''}]`,
             contextualUserIds: { assigneeId }
         });
     },
@@ -1327,7 +1397,7 @@ export const WhatsAppEventProcessor = {
             templateEventKey: 'checklist_slot_reminder',
             organizationId: payload.organization_id,
             propertyId: payload.property_id,
-            entityId: payload.template_id,
+            entityId: payload.entity_id || payload.template_id,
             paramValues: {
                 user_name: assignedUser.name || 'Technician',
                 checklist_name: payload.template_title || 'SOP Checklist',
@@ -1348,7 +1418,7 @@ export const WhatsAppEventProcessor = {
             templateEventKey: 'checklist_started',
             organizationId: payload.organization_id,
             propertyId: payload.property_id,
-            entityId: payload.template_id,
+            entityId: payload.entity_id || payload.template_id,
             paramValues: {
                 user_name: assignedUser.name || 'Technician',
                 checklist_name: payload.template_title || 'SOP Checklist',
@@ -1391,7 +1461,7 @@ export const WhatsAppEventProcessor = {
             templateEventKey: 'checklist_overdue_alert',
             organizationId: payload.organization_id,
             propertyId: payload.property_id,
-            entityId: payload.template_id,
+            entityId: payload.entity_id || payload.template_id,
             paramValues: {
                 user_name: assignedUser.name || 'Technician',
                 checklist_name: payload.template_title || 'SOP Checklist',
@@ -1423,6 +1493,28 @@ export const WhatsAppEventProcessor = {
             },
             summaryMessage: `SOP Completion "${payload.template_title}" rated ${payload.rating}/3 by ${rater.name}`,
             contextualUserIds: { requesterId: payload.completed_by }
+        });
+    },
+
+    async handlePpmReminder(payload: any): Promise<void> {
+        const propertyName = await this.getPropertyName(payload.property_id);
+
+        await this.dispatch({
+            featureKey: 'reminder_ppm',
+            templateEventKey: 'reminder_ppm',
+            organizationId: payload.organization_id,
+            propertyId: payload.property_id,
+            entityId: payload.entity_id || payload.schedule_id,
+            paramValues: {
+                user_name: payload.user_name || 'Operations Team',
+                system_name: payload.system_name || 'Facility Equipment',
+                property: propertyName,
+                due_date: payload.due_date || 'Upcoming Date',
+                vendor_name: payload.vendor_name || 'Assigned Vendor',
+                location: payload.location || 'Site Plant Room'
+            },
+            summaryMessage: `🔧 PPM Reminder: ${payload.system_name} maintenance due on ${payload.due_date} at ${propertyName}`,
+            contextualUserIds: payload.assigned_to ? { assigneeId: payload.assigned_to } : {}
         });
     },
 
@@ -1518,31 +1610,5 @@ export const WhatsAppEventProcessor = {
             .limit(1)
             .maybeSingle();
         return defaultOrg?.id || null;
-    },
-
-    async handlePpmReminder(payload: any): Promise<void> {
-        const propertyName = await this.getPropertyName(payload.property_id);
-        const { data: vendor } = payload.vendor_id ? await supabaseAdmin
-            .from('vendors')
-            .select('name')
-            .eq('id', payload.vendor_id)
-            .maybeSingle() : { data: null };
-
-        await this.dispatch({
-            featureKey: 'reminder_ppm',
-            templateEventKey: 'reminder_ppm',
-            organizationId: payload.organization_id,
-            propertyId: payload.property_id,
-            entityId: payload.id,
-            paramValues: {
-                user_name: 'Property Team',
-                system_name: payload.system_name || 'System / Asset',
-                property: propertyName,
-                due_date: payload.planned_date || payload.due_date || 'Scheduled Date',
-                vendor_name: vendor?.name || payload.vendor_name || 'Assigned Vendor',
-                location: payload.location || 'Site Facility'
-            },
-            summaryMessage: `🔧 PPM Reminder: ${payload.system_name} at ${propertyName} is due on ${payload.planned_date || payload.due_date}`
-        });
     }
 };

@@ -205,9 +205,29 @@ export function populateRequisitionWorksheet(worksheet: ExcelJS.Worksheet, data:
 
     // 4. Split Items by Category
     const items = data.items || [];
-    const hkItems = items.filter(i => (i.category || '').toLowerCase() === 'hk' || (i.category || '').toLowerCase().includes('stationery') || (i.category || '').toLowerCase().includes('paper'));
-    const beverageItems = items.filter(i => (i.category || '').toLowerCase() === 'beverages' || (i.category || '').toLowerCase().includes('tea') || (i.category || '').toLowerCase().includes('coffee') || (i.category || '').toLowerCase().includes('pantry'));
-    const otherItems = items.filter(i => !hkItems.includes(i) && !beverageItems.includes(i));
+
+    const isTissueItem = (item: RequisitionItemData) => {
+        const cat = (item.category || '').toLowerCase();
+        const name = (item.name || '').toLowerCase();
+        return cat.includes('tissue') || cat.includes('paper') || cat.includes('stationery') ||
+               name.includes('tissue') || name.includes('m fold') || name.includes('m-fold') ||
+               name.includes('mfold') || name.includes('toilet roll') || name.includes('table top') ||
+               name.includes('napkin') || name.includes('roll') || name.includes('c-fold') ||
+               name.includes('paper product') || name.includes('dispenser tissue');
+    };
+
+    const isBeverageItem = (item: RequisitionItemData) => {
+        const cat = (item.category || '').toLowerCase();
+        const name = (item.name || '').toLowerCase();
+        return cat.includes('bev') || cat.includes('tea') || cat.includes('coffee') || cat.includes('ccd') || cat.includes('pantry') ||
+               name.includes('tea') || name.includes('coffee') || name.includes('milk') || name.includes('sugar') ||
+               name.includes('cup') || name.includes('pre mix') || name.includes('premix') || name.includes('ccd') ||
+               name.includes('beverage') || name.includes('lemon per cup') || name.includes('squeeze bottle');
+    };
+
+    const tissueItems = items.filter(isTissueItem);
+    const beverageItems = items.filter(i => !isTissueItem(i) && isBeverageItem(i));
+    const hkMaterialsItems = items.filter(i => !isTissueItem(i) && !isBeverageItem(i));
 
     const renderCategorySection = (title: string, itemsList: RequisitionItemData[]) => {
         if (itemsList.length === 0) return;
@@ -338,32 +358,44 @@ export function populateRequisitionWorksheet(worksheet: ExcelJS.Worksheet, data:
         currentRow += 2; // Gap between sections
     };
 
-    // Render HK Section
-    if (hkItems.length > 0) {
-        renderCategorySection('HK / Stationery / Paper Products', hkItems);
+    // Render Tissues Section (Table 1)
+    if (tissueItems.length > 0) {
+        renderCategorySection('Tissues', tissueItems);
     }
 
-    // Render Beverages Section
+    // Render Beverages Section (Table 2)
     if (beverageItems.length > 0) {
         renderCategorySection('CCD (Tea/Coffee) / Beverages', beverageItems);
     }
 
-    // Render Other Section if any
-    if (otherItems.length > 0) {
-        renderCategorySection('General & Technical Spares', otherItems);
+    // Render HK Materials Section (Table 3 - Spares part renamed as HK Materials)
+    if (hkMaterialsItems.length > 0) {
+        renderCategorySection('HK Materials', hkMaterialsItems);
     }
 
     // If total items is empty, render default template rows
     if (items.length === 0) {
-        renderCategorySection('HK / Stationery / Paper Products', [
-            { category: 'HK', name: 'Toilet Roll', brand: 'NA', details: 'White', requested_qty: 60, available_stock_qty: 60, unit: 'pcs' },
-            { category: 'HK', name: 'M fold', brand: 'NA', details: 'White', requested_qty: 120, available_stock_qty: 80, unit: 'pcs' },
-            { category: 'HK', name: 'Tissue paper', brand: 'NA', details: 'White', requested_qty: 55, available_stock_qty: 20, unit: 'pcs' },
+        renderCategorySection('Tissues', [
+            { category: 'Tissues', name: 'M Fold Tissue', brand: 'NA', details: 'White', requested_qty: 0, available_stock_qty: 0, unit: 'Piece' },
+            { category: 'Tissues', name: 'Table Top', brand: 'NA', details: 'White', requested_qty: 0, available_stock_qty: 0, unit: 'Piece' },
+            { category: 'Tissues', name: 'Toilet Rolls', brand: 'NA', details: 'White', requested_qty: 0, available_stock_qty: 0, unit: 'Piece' },
         ]);
         renderCategorySection('CCD (Tea/Coffee) / Beverages', [
-            { category: 'Beverages', name: 'CCD Coffee Beans', brand: 'CCD', details: 'Beans', requested_qty: 5, available_stock_qty: 3, unit: 'KG' },
-            { category: 'Beverages', name: 'CCD Tetra Milk', brand: 'CCD', details: 'Milk', requested_qty: 24, available_stock_qty: 84, unit: 'Ltr' },
-            { category: 'Beverages', name: 'Sugar', brand: 'NA', details: 'White', requested_qty: 5, available_stock_qty: 5, unit: 'KG' },
+            { category: 'Beverages', name: 'Milk in litre', brand: 'NA', details: '', requested_qty: 0, available_stock_qty: 0, unit: 'Piece' },
+            { category: 'Beverages', name: 'Paper Cups 70ml', brand: 'NA', details: '', requested_qty: 0, available_stock_qty: 0, unit: 'Piece' },
+            { category: 'Beverages', name: 'Pre Mix Coffee per cup', brand: 'NA', details: '', requested_qty: 0, available_stock_qty: 0, unit: 'Piece' },
+            { category: 'Beverages', name: 'Pre Mix Lemon per cup', brand: 'NA', details: '', requested_qty: 0, available_stock_qty: 0, unit: 'Piece' },
+            { category: 'Beverages', name: 'Pre Mix Tea per cup', brand: 'NA', details: '', requested_qty: 0, available_stock_qty: 0, unit: 'Piece' },
+        ]);
+        renderCategorySection('HK Materials', [
+            { category: 'HK Materials', name: '20 Litre Water Bottle', brand: 'NA', details: '', requested_qty: 24, available_stock_qty: 15, unit: 'Piece' },
+            { category: 'HK Materials', name: '250 Ml Water Bottle', brand: 'NA', details: '', requested_qty: 2, available_stock_qty: 2, unit: 'Piece' },
+            { category: 'HK Materials', name: '500 Ml Water Bottle', brand: 'NA', details: '', requested_qty: 0, available_stock_qty: 2, unit: 'Piece' },
+            { category: 'HK Materials', name: 'Air Freshner (R5)', brand: 'NA', details: '', requested_qty: 23, available_stock_qty: 3, unit: 'Piece' },
+            { category: 'HK Materials', name: 'Bucket', brand: 'NA', details: '', requested_qty: 0, available_stock_qty: 0, unit: 'Piece' },
+            { category: 'HK Materials', name: 'Carpet Spot Cleaning Liquid', brand: 'NA', details: '', requested_qty: 4, available_stock_qty: 0, unit: 'Piece' },
+            { category: 'HK Materials', name: 'Ceiling Broom', brand: 'NA', details: '', requested_qty: 0, available_stock_qty: 0, unit: 'Piece' },
+            { category: 'HK Materials', name: 'Colour Goli', brand: 'NA', details: '', requested_qty: 0, available_stock_qty: 0, unit: 'Piece' },
         ]);
     }
 }
@@ -421,14 +453,14 @@ export function populateSummaryWorksheet(
         { col: 'B', text: 'Property / Site Name' },
         { col: 'C', text: 'Floor / Location' },
         { col: 'D', text: 'Status' },
-        { col: 'E', text: 'HK Items' },
-        { col: 'F', text: 'Beverage Items' },
-        { col: 'G', text: 'Total Items' },
-        { col: 'H', text: 'Est. Total Cost (₹)' },
-        { col: 'I', text: 'Monthly Budget (₹)' },
-        { col: 'J', text: 'Budget Status' },
-        { col: 'K', text: 'Requested By' },
-        { col: 'L', text: 'Contact Phone' },
+        { col: 'E', text: 'Tissues' },
+        { col: 'F', text: 'Beverages' },
+        { col: 'G', text: 'HK Materials' },
+        { col: 'H', text: 'Total Items' },
+        { col: 'I', text: 'Est. Total Cost (₹)' },
+        { col: 'J', text: 'Monthly Budget (₹)' },
+        { col: 'K', text: 'Budget Status' },
+        { col: 'L', text: 'Requested By' },
         { col: 'M', text: 'Go to Site Page ➔' },
     ];
 
@@ -455,8 +487,27 @@ export function populateSummaryWorksheet(
         const rowIdx = currentRow;
         const targetSheetName = sheetNameMap.get(idx) || `Site ${idx + 1}`;
         const items = prop.items || [];
-        const hkCount = items.filter(i => (i.category || '').toLowerCase() === 'hk' || (i.category || '').toLowerCase().includes('stationery')).length;
-        const bevCount = items.filter(i => (i.category || '').toLowerCase() === 'beverages' || (i.category || '').toLowerCase().includes('tea') || (i.category || '').toLowerCase().includes('coffee')).length;
+        
+        const isTissueItem = (item: RequisitionItemData) => {
+            const cat = (item.category || '').toLowerCase();
+            const name = (item.name || '').toLowerCase();
+            return cat.includes('tissue') || cat.includes('paper') || cat.includes('stationery') ||
+                   name.includes('tissue') || name.includes('m fold') || name.includes('m-fold') ||
+                   name.includes('mfold') || name.includes('toilet roll') || name.includes('table top') ||
+                   name.includes('napkin') || name.includes('roll') || name.includes('c-fold');
+        };
+
+        const isBeverageItem = (item: RequisitionItemData) => {
+            const cat = (item.category || '').toLowerCase();
+            const name = (item.name || '').toLowerCase();
+            return cat.includes('bev') || cat.includes('tea') || cat.includes('coffee') || cat.includes('ccd') || cat.includes('pantry') ||
+                   name.includes('tea') || name.includes('coffee') || name.includes('milk') || name.includes('sugar') ||
+                   name.includes('cup') || name.includes('pre mix') || name.includes('premix') || name.includes('ccd');
+        };
+
+        const tissueCount = items.filter(isTissueItem).length;
+        const bevCount = items.filter(i => !isTissueItem(i) && isBeverageItem(i)).length;
+        const hkCount = items.filter(i => !isTissueItem(i) && !isBeverageItem(i)).length;
         const totalCount = items.length;
 
         const estCost = prop.totalEstimatedAmount || 0;
@@ -468,16 +519,16 @@ export function populateSummaryWorksheet(
         worksheet.getCell(`B${rowIdx}`).value = prop.propertyName;
         worksheet.getCell(`C${rowIdx}`).value = prop.floorTag || 'All Floors';
         worksheet.getCell(`D${rowIdx}`).value = (prop.status || 'Draft').toUpperCase();
-        worksheet.getCell(`E${rowIdx}`).value = hkCount;
+        worksheet.getCell(`E${rowIdx}`).value = tissueCount;
         worksheet.getCell(`F${rowIdx}`).value = bevCount;
-        worksheet.getCell(`G${rowIdx}`).value = totalCount;
-        worksheet.getCell(`H${rowIdx}`).value = estCost;
-        worksheet.getCell(`I${rowIdx}`).value = budget;
-        worksheet.getCell(`J${rowIdx}`).value = isOver && overAmt > 0
+        worksheet.getCell(`G${rowIdx}`).value = hkCount;
+        worksheet.getCell(`H${rowIdx}`).value = totalCount;
+        worksheet.getCell(`I${rowIdx}`).value = estCost;
+        worksheet.getCell(`J${rowIdx}`).value = budget;
+        worksheet.getCell(`K${rowIdx}`).value = isOver && overAmt > 0
             ? `⚠️ Over ₹${overAmt.toLocaleString('en-IN')}`
             : (budget > 0 ? '✓ Within Budget' : 'No Budget Set');
-        worksheet.getCell(`K${rowIdx}`).value = prop.requesterName || 'Property Admin';
-        worksheet.getCell(`L${rowIdx}`).value = prop.requesterPhone || 'N/A';
+        worksheet.getCell(`L${rowIdx}`).value = prop.requesterName || 'Property Admin';
 
         // Hyperlink to Property Sheet
         worksheet.getCell(`M${rowIdx}`).value = {
@@ -494,11 +545,12 @@ export function populateSummaryWorksheet(
         worksheet.getCell(`G${rowIdx}`).alignment = { horizontal: 'right' };
         worksheet.getCell(`H${rowIdx}`).alignment = { horizontal: 'right' };
         worksheet.getCell(`I${rowIdx}`).alignment = { horizontal: 'right' };
-        worksheet.getCell(`J${rowIdx}`).alignment = { horizontal: 'center' };
+        worksheet.getCell(`J${rowIdx}`).alignment = { horizontal: 'right' };
+        worksheet.getCell(`K${rowIdx}`).alignment = { horizontal: 'center' };
         worksheet.getCell(`M${rowIdx}`).alignment = { horizontal: 'center' };
 
-        worksheet.getCell(`H${rowIdx}`).numFmt = '₹#,##0.00';
         worksheet.getCell(`I${rowIdx}`).numFmt = '₹#,##0.00';
+        worksheet.getCell(`J${rowIdx}`).numFmt = '₹#,##0.00';
 
         // Row background & styling
         const isZebra = idx % 2 === 1;
@@ -541,9 +593,10 @@ export function populateSummaryWorksheet(
         worksheet.getCell(`G${totalRowIdx}`).value = { formula: `SUM(G${startDataRow}:G${endDataRow})` };
         worksheet.getCell(`H${totalRowIdx}`).value = { formula: `SUM(H${startDataRow}:H${endDataRow})` };
         worksheet.getCell(`I${totalRowIdx}`).value = { formula: `SUM(I${startDataRow}:I${endDataRow})` };
+        worksheet.getCell(`J${totalRowIdx}`).value = { formula: `SUM(J${startDataRow}:J${endDataRow})` };
 
-        worksheet.getCell(`H${totalRowIdx}`).numFmt = '₹#,##0.00';
         worksheet.getCell(`I${totalRowIdx}`).numFmt = '₹#,##0.00';
+        worksheet.getCell(`J${totalRowIdx}`).numFmt = '₹#,##0.00';
 
         ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M'].forEach(c => {
             const cell = worksheet.getCell(`${c}${totalRowIdx}`);

@@ -236,8 +236,8 @@ Please take immediate action to resolve or update the ticket.
 
 ## 2. SOP Checklists & Compliance
 
-### Template 5: `checklist_slot_reminder_v2`
-- **Template Name:** `checklist_slot_reminder_v2`
+### Template 5A: `checklist_slot_reminder_v2` (Pre-Start Reminder)
+- **Template Name:** `checklist_slot_reminder_v2` *(or `checklist_slot_reminder_v1`)*
 - **Category:** `UTILITY`
 - **Language:** `English (en)`
 - **Header:** `Text` &rarr; `Checklist Slot Due Reminder 📋`
@@ -261,13 +261,67 @@ Please ensure the shift inspection is performed and submitted on the portal.
   - `{{1}}`: `Operations Team`
   - `{{2}}`: `Daily DG & Electrical Panel Morning Inspection`
   - `{{3}}`: `WorkSquare Hub 1`
-  - `{{4}}`: `Today before 11:30 AM`
+  - `{{4}}`: `10:00 AM (in 10 mins)`
   - `{{5}}` *(Button URL Property UUID)*: `211e1330-ad83-446d-941f-dcea48396798`
 
 ---
 
-### Template 6: `checklist_overdue_alert_v2`
-- **Template Name:** `checklist_overdue_alert_v2`
+### Template 5B: `checklist_started_v1` (Shift Started Alert)
+- **Template Name:** `checklist_started_v1`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Text` &rarr; `Checklist Shift Started 📋`
+- **Body:**
+```text
+Hello {{1}},
+
+The scheduled checklist inspection for {{2}} at {{3}} has started (Shift Start: {{4}}).
+
+Please conduct your inspection rounds, log mandatory parameters, and upload verification photos in the app.
+```
+- **Footer:** `AutoPilot Operations`
+- **Button Type:** `Call to Action (Website URL)`
+  - **Button Text:** `Open Checklist`
+  - **URL Type:** `Static` &rarr; `https://fms-dev-saas-one.vercel.app/sop`
+- **Sample Values:**
+  - `{{1}}`: `Harsh Patil`
+  - `{{2}}`: `Daily Morning MST Shift Inspection`
+  - `{{3}}`: `Mafatlal Chambers`
+  - `{{4}}`: `09:00 AM`
+
+---
+
+### Template 5C: `checklist_completed_v1` (Checklist Completed & Submitted)
+- **Template Name:** `checklist_completed_v1`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Text` &rarr; `Checklist Completed ✅`
+- **Body:**
+```text
+Hello {{1}},
+
+The checklist inspection for {{2}} at {{3}} has been completed.
+
+👤 Completed By: {{4}}
+⏰ Completion Time: {{5}}
+
+The submission is now ready for supervisor audit and verification.
+```
+- **Footer:** `AutoPilot Operations`
+- **Button Type:** `Call to Action (Website URL)`
+  - **Button Text:** `Review Submission`
+  - **URL Type:** `Static` &rarr; `https://fms-dev-saas-one.vercel.app/sop`
+- **Sample Values:**
+  - `{{1}}`: `Property Admin`
+  - `{{2}}`: `Daily Morning MST Shift Inspection`
+  - `{{3}}`: `Mafatlal Chambers`
+  - `{{4}}`: `Ramesh MST`
+  - `{{5}}`: `12:45 PM`
+
+---
+
+### Template 6: `checklist_overdue_alert_v2` (Overdue / Missed Alert)
+- **Template Name:** `checklist_overdue_alert_v2` *(or `checklist_overdue_alert_v1`)*
 - **Category:** `UTILITY`
 - **Language:** `English (en)`
 - **Header:** `Text` &rarr; `🚨 Overdue Checklist Alert`
@@ -286,7 +340,7 @@ Please review site status to ensure compliance standards.
 - **Sample Values:**
   - `{{1}}`: `Washroom Hygiene Shift A`
   - `{{2}}`: `WorkSquare Hub 1`
-  - `{{3}}`: `10:00 AM (Overdue by 30 mins)`
+  - `{{3}}`: `09:00 AM – 05:00 PM (Incomplete)`
 
 ---
 

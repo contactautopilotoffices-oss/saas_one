@@ -183,7 +183,7 @@ async function processTicketSlaReminders(ctx: OrgContext, reminderMinutes: numbe
         const recipients = await resolveFeatureRecipients({
             organizationId: ctx.organizationId,
             propertyId: t.property_id,
-            featureKey: 'tickets',
+            featureKey: 'reminder_ticket_sla',
             assigneeId: t.assigned_to,
             requesterId: t.raised_by,
         });

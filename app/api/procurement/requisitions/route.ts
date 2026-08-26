@@ -325,7 +325,6 @@ export async function POST(request: NextRequest) {
             file_url: publicUrl,
             file_name: uploadedFileName,
             file_size_bytes: uploadedFileBuffer.length,
-            total_estimated_amount: totalEstimatedAmount,
             notes: notesPayload,
             status: 'submitted',
             uploaded_by: userId,
