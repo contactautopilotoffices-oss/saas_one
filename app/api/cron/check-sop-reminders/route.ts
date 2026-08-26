@@ -178,8 +178,13 @@ export async function GET(request: NextRequest) {
             const startMins = sH * 60 + sM;
             const endMins = eH * 60 + eM;
 
-            // Dynamic configured reminder lead time from Omnichannel settings (default 10 mins)
-            const configuredLeadMins = orgReminderMinutesMap.get(orgId) || 10;
+            // Dynamic configured reminder lead time from Omnichannel settings (property override > global > default 10 mins)
+            const orgMatrix = (orgSettingsRes.data || []).find(os => os.organization_id === orgId)?.notification_matrix || {};
+            const reminderRule = orgMatrix?.checklists?.checklist_slot_reminder;
+            const activeReminderRule = reminderRule?.property_overrides?.[propId] || reminderRule;
+            const configuredLeadMins = (typeof activeReminderRule?.reminder_minutes === 'number' && activeReminderRule.reminder_minutes > 0)
+                ? activeReminderRule.reminder_minutes
+                : (orgReminderMinutesMap.get(orgId) || 10);
             const preStartMins = startMins - configuredLeadMins;
             const isOvernight = endMins <= startMins;
 

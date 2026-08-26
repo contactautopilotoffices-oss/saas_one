@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { WhatsAppRecipientResolver } from '@/backend/services/WhatsAppRecipientResolver';
 import { NotificationService } from '@/backend/services/NotificationService';
 import { WhatsAppEventProcessor } from '@/backend/services/WhatsAppEventProcessor';
+import { VoiceCallingService } from '@/backend/services/VoiceCallingService';
 
 const LOCAL_TIMEZONE = 'Asia/Kolkata';
 
@@ -10,11 +11,12 @@ const LOCAL_TIMEZONE = 'Asia/Kolkata';
  * GET /api/cron/ppm-reminders
  * Runs daily via Vercel Cron (e.g. 9:00 AM IST).
  * Manages Preventive Maintenance (PPM) schedule reminders:
- * 1. Dynamically reads reminder lead time (days/minutes) from Omnichannel Settings (default 1 day / 1440 mins).
+ * 1. Dynamically reads reminder lead time (days/minutes) from Omnichannel Settings & property overrides.
  * 2. Finds all pending PPM tasks due on the target date.
- * 3. Consolidates multiple tasks for the same property into ONE clean WhatsApp message.
+ * 3. Consolidates multiple tasks for the same property into ONE clean WhatsApp message & In-App notification.
  * 4. Resolves recipients (roles & specific users) directly from Omnichannel Notification Matrix.
- * 5. Deduplicates so no property receives multiple reminders on the same day.
+ * 5. Dispatches automated Voice Calls if voice channel is enabled in Omnichannel matrix.
+ * 6. Deduplicates so no property receives multiple reminders on the same day.
  */
 export async function GET(request: NextRequest) {
     const authHeader = request.headers.get('authorization');
@@ -46,31 +48,15 @@ export async function GET(request: NextRequest) {
 
         if (orgErr) throw orgErr;
 
-        // Build org lead days map (default 1 day = 1440 mins)
-        const orgLeadDaysMap = new Map<string, number>();
+        // Build target dates set covering upcoming 1 to 7 days
         const targetDatesSet = new Set<string>();
-
-        (orgSettings || []).forEach(os => {
-            const matrix = os.notification_matrix || {};
-            const ppmRule = matrix?.ppm?.reminder_ppm || os?.whatsapp_service_config?.reminder_ppm;
-            const minutes = ppmRule?.reminder_minutes;
-            const days = typeof minutes === 'number' && minutes > 0 ? Math.max(1, Math.round(minutes / 1440)) : 1;
-            orgLeadDaysMap.set(os.organization_id, days);
-
-            // Compute target date for this org
-            const targetDateObj = new Date(istYear, istMonth, istDay + days);
+        for (let d = 1; d <= 7; d++) {
+            const targetDateObj = new Date(istYear, istMonth, istDay + d);
             const tYear = targetDateObj.getFullYear();
             const tMonth = String(targetDateObj.getMonth() + 1).padStart(2, '0');
             const tDay = String(targetDateObj.getDate()).padStart(2, '0');
             targetDatesSet.add(`${tYear}-${tMonth}-${tDay}`);
-        });
-
-        // Always ensure default 1-day ahead is in target dates
-        const default1DayObj = new Date(istYear, istMonth, istDay + 1);
-        const d1Year = default1DayObj.getFullYear();
-        const d1Month = String(default1DayObj.getMonth() + 1).padStart(2, '0');
-        const d1Day = String(default1DayObj.getDate()).padStart(2, '0');
-        targetDatesSet.add(`${d1Year}-${d1Month}-${d1Day}`);
+        }
 
         const targetDates = Array.from(targetDatesSet);
 
@@ -100,18 +86,25 @@ export async function GET(request: NextRequest) {
         const groupedTasks = new Map<string, typeof tasks>();
         for (const t of tasks) {
             const orgId = t.organization_id || '';
-            const requiredLeadDays = orgLeadDaysMap.get(orgId) || 1;
+            const propId = t.property_id || 'global';
 
-            // Check if this task's planned_date matches the specific org's configured lead days
+            // Resolve property override or global matrix lead days
+            const orgData = (orgSettings || []).find(os => os.organization_id === orgId);
+            const matrix = orgData?.notification_matrix || {};
+            const ppmRule = matrix?.ppm?.reminder_ppm || (orgData as any)?.whatsapp_service_config?.reminder_ppm;
+            const activePpmRule = ppmRule?.property_overrides?.[propId] || ppmRule;
+            const minutes = activePpmRule?.reminder_minutes;
+            const requiredLeadDays = typeof minutes === 'number' && minutes > 0 ? Math.max(1, Math.round(minutes / 1440)) : 1;
+
+            // Check if this task's planned_date matches the configured lead days
             const expectedDateObj = new Date(istYear, istMonth, istDay + requiredLeadDays);
             const expDateKey = `${expectedDateObj.getFullYear()}-${String(expectedDateObj.getMonth() + 1).padStart(2, '0')}-${String(expectedDateObj.getDate()).padStart(2, '0')}`;
 
             if (t.planned_date !== expDateKey) {
-                // Task is due on a different date than this org's configured alert lead time
+                // Task is due on a different date than this property's configured alert lead time
                 continue;
             }
 
-            const propId = t.property_id || 'global';
             const groupKey = `${propId}__${t.planned_date}`;
             if (!groupedTasks.has(groupKey)) {
                 groupedTasks.set(groupKey, []);
@@ -135,6 +128,12 @@ export async function GET(request: NextRequest) {
             if (alreadySentEntityIds.has(dedupEntityId)) {
                 continue; // Already sent today for this property and date
             }
+
+            // Resolve property override active rule for Voice and channels
+            const orgData = (orgSettings || []).find(os => os.organization_id === orgId);
+            const matrix = orgData?.notification_matrix || {};
+            const ppmRule = matrix?.ppm?.reminder_ppm || (orgData as any)?.whatsapp_service_config?.reminder_ppm;
+            const activePpmRule = ppmRule?.property_overrides?.[propId] || ppmRule;
 
             // 5. Resolve Recipients via Omnichannel Matrix
             const { users: resolvedUsers } = await WhatsAppRecipientResolver.resolveRecipients({
@@ -198,6 +197,38 @@ export async function GET(request: NextRequest) {
                         location: locationLabel
                     }
                 });
+
+                // C. Dispatch Voice Call if voice channel is enabled in Omnichannel matrix
+                try {
+                    const isVoiceEnabled = activePpmRule?.channels?.voice === true;
+                    if (isVoiceEnabled && resolvedUsers.length > 0) {
+                        const { data: propData } = await supabaseAdmin.from('properties').select('name').eq('id', propId).maybeSingle();
+                        const propertyName = propData?.name || 'Site Property';
+
+                        for (const u of resolvedUsers) {
+                            if (u.phone) {
+                                await VoiceCallingService.triggerCall({
+                                    organizationId: orgId,
+                                    propertyId: propId,
+                                    recipientPhone: u.phone,
+                                    recipientUserId: u.id,
+                                    eventType: 'REMINDER_PPM',
+                                    customTemplate: activePpmRule?.voice_template,
+                                    voiceId: activePpmRule?.voice_id,
+                                    speechSpeed: activePpmRule?.speech_speed,
+                                    variables: {
+                                        userName: u.name || 'Staff',
+                                        systemName: consolidatedSystem,
+                                        propertyName: propertyName,
+                                        dueDate: formattedDateLabel
+                                    }
+                                });
+                            }
+                        }
+                    }
+                } catch (voiceErr: any) {
+                    console.error('[PPM Reminders] Voice call error:', voiceErr.message);
+                }
 
                 alreadySentEntityIds.add(dedupEntityId);
                 totalRemindersSent++;

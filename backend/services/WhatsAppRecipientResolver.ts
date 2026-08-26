@@ -42,13 +42,15 @@ export interface ResolveWhatsAppRecipientsResult {
 const ALIAS_MAP: Record<string, string> = {
     meeting_rooms: 'meeting_room_booked',
     tickets: 'ticket_created',
+    ticket_sla_reminder: 'reminder_ticket_sla',
     material_requests: 'material_request_created',
     comparative_quotes: 'comparative_uploaded',
     material_delivery: 'material_delivered',
     monthly_requisitions: 'monthly_requisition_uploaded',
     crm_leads: 'lead_created',
     checklists: 'checklist_slot_reminder',
-    ppm: 'reminder_ppm'
+    ppm: 'reminder_ppm',
+    ppm_reminder: 'reminder_ppm'
 };
 
 export const DEFAULT_WHATSAPP_SERVICE_CONFIG: Record<string, FeatureWhatsAppConfig> = {
