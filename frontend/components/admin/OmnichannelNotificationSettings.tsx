@@ -29,10 +29,28 @@ export interface EventNotificationRule {
     notify_approver?: boolean;
     reminder_minutes?: number | null;
     voice_template?: string;
+    voice_id?: string;
+    speech_speed?: string;
     schedule_time?: string;
     frequency?: 'daily' | 'weekly';
     property_overrides?: Record<string, EventNotificationRule>;
 }
+
+export const AVAILABLE_VOICES = [
+    { id: 'Polly.Kajal-Neural', name: 'Kajal (Neural Indian Female)', accent: 'Indian English', badge: 'Ultra-Realistic (Recommended)', gender: 'female' },
+    { id: 'Polly.Aditi', name: 'Aditi (Bilingual Indian Female)', accent: 'Indian English', badge: 'Crisp & Clear', gender: 'female' },
+    { id: 'Polly.Raveena', name: 'Raveena (Indian Female)', accent: 'Indian English', badge: 'Standard', gender: 'female' },
+    { id: 'Polly.Joanna-Neural', name: 'Joanna (Neural Female)', accent: 'US English', badge: 'Smooth & Conversational', gender: 'female' },
+    { id: 'Polly.Matthew-Neural', name: 'Matthew (Neural Male)', accent: 'US English', badge: 'Executive Corporate', gender: 'male' },
+];
+
+export const AVAILABLE_SPEEDS = [
+    { value: '0.85', label: '0.85x (Slow)' },
+    { value: '0.95', label: '0.95x (Relaxed)' },
+    { value: '1.0', label: '1.0x (Normal)' },
+    { value: '1.10', label: '1.1x (Crisp / Fast)' },
+    { value: '1.20', label: '1.2x (Quick Alert)' },
+];
 
 export interface ModuleConfig {
     [eventKey: string]: EventNotificationRule;
@@ -532,12 +550,28 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
     const [testPhone, setTestPhone] = useState('');
     const [testUserName, setTestUserName] = useState('Harsh Patil');
     const [testScript, setTestScript] = useState(DEFAULT_VOICE_TEMPLATES.test_call);
+    const [testVoiceId, setTestVoiceId] = useState('Polly.Kajal-Neural');
+    const [testSpeed, setTestSpeed] = useState('1.0');
+    const [playingPreviewKey, setPlayingPreviewKey] = useState<string | null>(null);
     const [isTestingCall, setIsTestingCall] = useState(false);
     const [recentCallLogs, setRecentCallLogs] = useState<any[]>([]);
     const [isLoadingLogs, setIsLoadingLogs] = useState(false);
     const [showCallLogs, setShowCallLogs] = useState(false);
 
     const supabase = createClient();
+
+    useEffect(() => {
+        if (typeof window !== 'undefined' && window.speechSynthesis) {
+            window.speechSynthesis.getVoices();
+            const handleVoicesChanged = () => {
+                window.speechSynthesis.getVoices();
+            };
+            window.speechSynthesis.addEventListener('voiceschanged', handleVoicesChanged);
+            return () => {
+                window.speechSynthesis.removeEventListener('voiceschanged', handleVoicesChanged);
+            };
+        }
+    }, []);
 
     useEffect(() => {
         if (organizationId) {
@@ -783,10 +817,104 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
         }));
     };
 
-    const setVoiceTemplate = (moduleId: string, eventKey: string, template: string) => {
+    const playAudioPreview = (text: string, voiceId?: string, speed?: string, previewKey?: string) => {
+        if (typeof window === 'undefined') return;
+        if (window.speechSynthesis) {
+            window.speechSynthesis.cancel();
+            const pk = previewKey || 'test_modal';
+            setPlayingPreviewKey(pk);
+
+            const cleanText = text
+                .replace(/\{\{\s*user_name\s*\}\}/gi, 'Harsh')
+                .replace(/\{\{\s*checklist_title\s*\}\}/gi, 'LT Panel Inspection')
+                .replace(/\{\{\s*property_name\s*\}\}/gi, 'Mafatlal Chambers')
+                .replace(/\{\{\s*shift_time\s*\}\}/gi, '05:30 PM')
+                .replace(/\{\{\s*due_date\s*\}\}/gi, 'tomorrow')
+                .replace(/\{\{\s*system_name\s*\}\}/gi, 'Chiller Unit');
+
+            const utterance = new SpeechSynthesisUtterance(cleanText);
+            const sp = parseFloat(speed || '1.0');
+            utterance.rate = !isNaN(sp) ? sp : 1.0;
+
+            const selectedVoiceConfig = AVAILABLE_VOICES.find(v => v.id === voiceId);
+            const isFemale = selectedVoiceConfig ? selectedVoiceConfig.gender !== 'male' : !(voiceId || '').toLowerCase().includes('matthew');
+
+            // Apply feminine pitch (1.15) for female personas to guarantee a natural, clear female voice
+            utterance.pitch = isFemale ? 1.15 : 0.95;
+
+            const voices = window.speechSynthesis.getVoices();
+            if (voices && voices.length > 0) {
+                const maleKeywords = ['ravi', 'david', 'mark', 'george', 'guy', 'prabhat', 'richard', 'oliver', 'daniel', 'arthur', 'fred', 'albert', 'male', 'alex'];
+                const femaleKeywords = ['heera', 'neerja', 'swara', 'veena', 'sangeeta', 'aditi', 'kajal', 'raveena', 'zira', 'jenny', 'aria', 'samantha', 'victoria', 'karen', 'moira', 'tessa', 'joanna', 'salli', 'kimberly', 'ivy', 'kendra', 'amy', 'emma', 'female', 'girl', 'woman'];
+
+                let matchedVoice: SpeechSynthesisVoice | undefined;
+
+                if (isFemale) {
+                    // 1. Try Indian English Female Voice (e.g. Heera, Neerja, Swara, Aditi, Kajal, Veena)
+                    matchedVoice = voices.find(v =>
+                        (v.lang === 'en-IN' || v.lang.startsWith('en_IN') || v.name.toLowerCase().includes('india')) &&
+                        femaleKeywords.some(kw => v.name.toLowerCase().includes(kw)) &&
+                        !maleKeywords.some(kw => v.name.toLowerCase().includes(kw))
+                    );
+
+                    // 2. Try any English Female Voice (e.g. Zira, Jenny, Aria, Samantha, Google UK English Female, Google US English)
+                    if (!matchedVoice) {
+                        matchedVoice = voices.find(v =>
+                            v.lang.startsWith('en') &&
+                            femaleKeywords.some(kw => v.name.toLowerCase().includes(kw)) &&
+                            !maleKeywords.some(kw => v.name.toLowerCase().includes(kw))
+                        );
+                    }
+
+                    // 3. Try any English voice that is NOT a known male voice
+                    if (!matchedVoice) {
+                        matchedVoice = voices.find(v =>
+                            v.lang.startsWith('en') &&
+                            !maleKeywords.some(kw => v.name.toLowerCase().includes(kw))
+                        );
+                    }
+
+                    // 4. Fallback: Any voice not in male keywords
+                    if (!matchedVoice) {
+                        matchedVoice = voices.find(v => !maleKeywords.some(kw => v.name.toLowerCase().includes(kw)));
+                    }
+                } else {
+                    // Male Voice (e.g. Matthew)
+                    matchedVoice = voices.find(v =>
+                        v.lang.startsWith('en') &&
+                        maleKeywords.some(kw => v.name.toLowerCase().includes(kw))
+                    );
+                }
+
+                if (matchedVoice) {
+                    utterance.voice = matchedVoice;
+                }
+            }
+
+            utterance.onend = () => setPlayingPreviewKey(null);
+            utterance.onerror = () => setPlayingPreviewKey(null);
+            window.speechSynthesis.speak(utterance);
+        }
+    };
+
+    const setVoiceTemplate = (moduleId: string, eventKey: string, script: string) => {
         updateRule(moduleId, eventKey, current => ({
             ...current,
-            voice_template: template
+            voice_template: script
+        }));
+    };
+
+    const setVoiceId = (moduleId: string, eventKey: string, voiceId: string) => {
+        updateRule(moduleId, eventKey, current => ({
+            ...current,
+            voice_id: voiceId
+        }));
+    };
+
+    const setSpeechSpeed = (moduleId: string, eventKey: string, speed: string) => {
+        updateRule(moduleId, eventKey, current => ({
+            ...current,
+            speech_speed: speed
         }));
     };
 
@@ -805,7 +933,9 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                     phone: testPhone.trim(),
                     organizationId,
                     userName: testUserName.trim() || 'Admin',
-                    customScript: testScript.trim()
+                    customScript: testScript.trim(),
+                    voiceId: testVoiceId,
+                    speechSpeed: testSpeed
                 })
             });
 
@@ -1372,25 +1502,77 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                                         </div>
                                                     )}
 
-                                                    {/* Voice Script Customization (when Voice Channel is ON) */}
+                                                    {/* Voice Script & Voice Persona Customization (when Voice Channel is ON) */}
                                                     {rule.channels.voice && (
-                                                        <div className="pt-3 border-t border-purple-100/80 bg-purple-50/40 p-3 rounded-xl space-y-2">
-                                                            <div className="flex items-center justify-between">
-                                                                <div className="flex items-center gap-1.5 text-xs font-bold text-purple-900">
+                                                        <div className="pt-3 border-t border-purple-100/80 bg-purple-50/50 p-3.5 rounded-2xl space-y-3">
+                                                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                                                <div className="flex items-center gap-1.5 text-xs font-bold text-purple-950">
                                                                     <Volume2 className="w-3.5 h-3.5 text-purple-600" />
-                                                                    <span>AI Voice Spoken Script / Template:</span>
+                                                                    <span>Voice Persona & Speech Settings</span>
                                                                 </div>
-                                                                <span className="text-[10px] text-purple-600 font-semibold bg-purple-100/60 px-2 py-0.5 rounded-md">
-                                                                    Operations Voice Prompt
-                                                                </span>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => playAudioPreview(
+                                                                        rule.voice_template || DEFAULT_VOICE_TEMPLATES[ev.key] || `Hello Harsh, this is an alert regarding ${ev.name} at Mafatlal Chambers.`,
+                                                                        rule.voice_id || 'Polly.Kajal-Neural',
+                                                                        rule.speech_speed || '1.0',
+                                                                        `${module.id}_${ev.key}`
+                                                                    )}
+                                                                    className="inline-flex items-center gap-1 px-2.5 py-1 bg-white text-purple-700 hover:bg-purple-100 border border-purple-200 text-[11px] font-bold rounded-lg transition-colors shadow-2xs cursor-pointer"
+                                                                >
+                                                                    <Play className={`w-3 h-3 ${playingPreviewKey === `${module.id}_${ev.key}` ? 'animate-spin text-purple-600' : 'fill-purple-600'}`} />
+                                                                    <span>{playingPreviewKey === `${module.id}_${ev.key}` ? 'Playing...' : '🔊 Preview Voice'}</span>
+                                                                </button>
                                                             </div>
-                                                            <textarea
-                                                                rows={2}
-                                                                value={rule.voice_template || DEFAULT_VOICE_TEMPLATES[ev.key] || `Hello {{user_name}}, this is an alert regarding ${ev.name} at {{property_name}}.`}
-                                                                onChange={(e) => setVoiceTemplate(module.id, ev.key, e.target.value)}
-                                                                className="w-full text-xs font-medium bg-white border border-purple-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-purple-400 shadow-2xs resize-none"
-                                                                placeholder="Type custom voice message..."
-                                                            />
+
+                                                            {/* Voice & Speed Pickers */}
+                                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-white/80 p-2.5 rounded-xl border border-purple-200/60">
+                                                                <div>
+                                                                    <label className="block text-[10px] font-bold text-slate-600 mb-1">Speaker Voice / Accent:</label>
+                                                                    <select
+                                                                        value={rule.voice_id || 'Polly.Kajal-Neural'}
+                                                                        onChange={(e) => setVoiceId(module.id, ev.key, e.target.value)}
+                                                                        className="w-full text-xs font-semibold bg-white border border-purple-200 rounded-lg p-1.5 text-slate-800 outline-hidden focus:ring-2 focus:ring-purple-400"
+                                                                    >
+                                                                        {AVAILABLE_VOICES.map(v => (
+                                                                            <option key={v.id} value={v.id}>
+                                                                                {v.name} ({v.badge})
+                                                                            </option>
+                                                                        ))}
+                                                                    </select>
+                                                                </div>
+                                                                <div>
+                                                                    <label className="block text-[10px] font-bold text-slate-600 mb-1">Speech Speed (Rate):</label>
+                                                                    <select
+                                                                        value={rule.speech_speed || '1.0'}
+                                                                        onChange={(e) => setSpeechSpeed(module.id, ev.key, e.target.value)}
+                                                                        className="w-full text-xs font-semibold bg-white border border-purple-200 rounded-lg p-1.5 text-slate-800 outline-hidden focus:ring-2 focus:ring-purple-400"
+                                                                    >
+                                                                        {AVAILABLE_SPEEDS.map(s => (
+                                                                            <option key={s.value} value={s.value}>
+                                                                                {s.label}
+                                                                            </option>
+                                                                        ))}
+                                                                    </select>
+                                                                </div>
+                                                            </div>
+
+                                                            <div className="space-y-1.5">
+                                                                <div className="flex items-center justify-between">
+                                                                    <span className="text-[11px] font-bold text-slate-700">Spoken Voice Script / Prompt:</span>
+                                                                    <span className="text-[10px] text-purple-600 font-semibold bg-purple-100/70 px-2 py-0.5 rounded-md">
+                                                                        Neural Speech Engine
+                                                                    </span>
+                                                                </div>
+                                                                <textarea
+                                                                    rows={2}
+                                                                    value={rule.voice_template || DEFAULT_VOICE_TEMPLATES[ev.key] || `Hello {{user_name}}, this is an alert regarding ${ev.name} at {{property_name}}`}
+                                                                    onChange={(e) => setVoiceTemplate(module.id, ev.key, e.target.value)}
+                                                                    className="w-full text-xs font-medium bg-white border border-purple-200 rounded-xl p-2.5 outline-hidden focus:ring-2 focus:ring-purple-400 shadow-2xs resize-none"
+                                                                    placeholder="Type custom voice message..."
+                                                                />
+                                                            </div>
+
                                                             <div className="flex flex-wrap items-center gap-1.5">
                                                                 <span className="text-[10px] text-slate-500 font-semibold">Dynamic Variables:</span>
                                                                 {['{{user_name}}', '{{checklist_title}}', '{{property_name}}', '{{shift_time}}', '{{due_date}}'].map(v => (
@@ -1401,7 +1583,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                                                             const current = rule.voice_template || DEFAULT_VOICE_TEMPLATES[ev.key] || '';
                                                                             setVoiceTemplate(module.id, ev.key, current + ' ' + v);
                                                                         }}
-                                                                        className="px-1.5 py-0.5 text-[10px] font-mono bg-white text-purple-700 border border-purple-200 rounded-md hover:bg-purple-100 transition-colors shadow-2xs"
+                                                                        className="px-1.5 py-0.5 text-[10px] font-mono bg-white text-purple-700 border border-purple-200 rounded-md hover:bg-purple-100 transition-colors shadow-2xs cursor-pointer"
                                                                     >
                                                                         {v}
                                                                     </button>
@@ -1908,10 +2090,57 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                     />
                                 </div>
 
+                                {/* Voice Persona & Speed Controls */}
+                                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
+                                    <div className="flex items-center justify-between">
+                                        <label className="block text-xs font-bold text-slate-800">Voice Speaker & Accent</label>
+                                        <button
+                                            type="button"
+                                            onClick={() => playAudioPreview(testScript, testVoiceId, testSpeed, 'test_modal')}
+                                            className="inline-flex items-center gap-1.5 px-3 py-1 bg-purple-100/80 hover:bg-purple-200 text-purple-800 text-xs font-bold rounded-lg transition-colors cursor-pointer"
+                                        >
+                                            <Play className={`w-3 h-3 ${playingPreviewKey === 'test_modal' ? 'animate-spin text-purple-700' : 'fill-purple-700'}`} />
+                                            <span>{playingPreviewKey === 'test_modal' ? 'Playing...' : '🔊 Listen Audio Preview'}</span>
+                                        </button>
+                                    </div>
+
+                                    <select
+                                        value={testVoiceId}
+                                        onChange={(e) => setTestVoiceId(e.target.value)}
+                                        className="w-full text-xs font-semibold bg-white border border-slate-300 rounded-xl p-2.5 text-slate-900 outline-hidden focus:ring-2 focus:ring-purple-400"
+                                    >
+                                        {AVAILABLE_VOICES.map(v => (
+                                            <option key={v.id} value={v.id}>
+                                                {v.name} — {v.badge}
+                                            </option>
+                                        ))}
+                                    </select>
+
+                                    <div>
+                                        <label className="block text-[11px] font-bold text-slate-600 mb-1.5">Speech Speed (Rate):</label>
+                                        <div className="grid grid-cols-5 gap-1.5">
+                                            {AVAILABLE_SPEEDS.map(s => (
+                                                <button
+                                                    key={s.value}
+                                                    type="button"
+                                                    onClick={() => setTestSpeed(s.value)}
+                                                    className={`py-1.5 text-[11px] font-bold rounded-lg border transition-all text-center cursor-pointer ${
+                                                        testSpeed === s.value
+                                                            ? 'bg-purple-600 text-white border-purple-600 shadow-xs'
+                                                            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                                                    }`}
+                                                >
+                                                    {s.value}x
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+
                                 <div>
                                     <div className="flex items-center justify-between mb-1.5">
                                         <label className="block text-xs font-bold text-slate-700">Spoken Voice Prompt / Script</label>
-                                        <span className="text-[10px] font-semibold text-purple-600">Operations Voice Engine</span>
+                                        <span className="text-[10px] font-semibold text-purple-600">Neural Voice Synthesis</span>
                                     </div>
                                     <textarea
                                         rows={3}
@@ -1927,7 +2156,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                         <Sparkles className="w-3.5 h-3.5" /> Plivo Virtual Number Connected
                                     </div>
                                     <p className="text-[11px] text-purple-700">
-                                        When you click "Place Call Now", Plivo will dial your mobile number from your configured virtual caller ID and speak the exact script above.
+                                        When you click "Place Call Now", Plivo will dial your mobile number from your configured virtual caller ID and speak the exact script using your selected voice persona and speed.
                                     </p>
                                 </div>
                             </div>

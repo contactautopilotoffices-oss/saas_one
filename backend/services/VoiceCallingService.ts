@@ -1,13 +1,15 @@
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 
 export interface TriggerVoiceCallOptions {
-    organizationId: string;
+    organizationId?: string;
     propertyId?: string;
     recipientPhone: string;
     recipientUserId?: string;
     recipientName?: string;
     eventType: string; // 'CHECKLIST_STARTED', 'CHECKLIST_OVERDUE', 'PPM_REMINDER', 'TEST_CALL'
     customTemplate?: string;
+    voiceId?: string;
+    speechSpeed?: string | number;
     variables: {
         userName?: string;
         checklistTitle?: string;
@@ -22,6 +24,8 @@ export interface TriggerVoiceCallOptions {
 export interface VoiceServiceConfig {
     enabled?: boolean;
     provider?: 'plivo_direct' | 'bolna_plivo';
+    default_voice?: string;
+    default_speed?: string | number;
     plivo_auth_id?: string;
     plivo_auth_token?: string;
     plivo_virtual_number?: string;
@@ -119,7 +123,9 @@ export class VoiceCallingService {
                 try {
                     const authHeader = 'Basic ' + Buffer.from(`${config.plivo_auth_id}:${config.plivo_auth_token}`).toString('base64');
                     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fms-dev-saas-one.vercel.app';
-                    const answerUrl = `${baseUrl}/api/voice/plivo-answer?text=${encodeURIComponent(spokenScript)}`;
+                    const selectedVoice = options.voiceId || config.default_voice || 'Polly.Kajal-Neural';
+                    const selectedSpeed = options.speechSpeed || config.default_speed || '1.0';
+                    const answerUrl = `${baseUrl}/api/voice/plivo-answer?text=${encodeURIComponent(spokenScript)}&voice=${encodeURIComponent(selectedVoice)}&speed=${encodeURIComponent(String(selectedSpeed))}`;
 
                     const fromNumber = config.plivo_virtual_number ? config.plivo_virtual_number.replace(/[^0-9]/g, '') : 'AutoPilot';
                     const toNumber = formattedPhone.replace(/[^0-9]/g, '');
@@ -233,8 +239,10 @@ export class VoiceCallingService {
         organizationId: string;
         userName?: string;
         customScript?: string;
+        voiceId?: string;
+        speechSpeed?: string | number;
     }): Promise<{ success: boolean; callId?: string; spokenScript?: string; error?: string }> {
-        const { phone, organizationId, userName = 'Admin', customScript } = options;
+        const { phone, organizationId, userName = 'Admin', customScript, voiceId, speechSpeed } = options;
 
         // Automatically resolve user if phone exists in users table
         const cleanPhone = this.formatPhone(phone);
@@ -269,6 +277,8 @@ export class VoiceCallingService {
             recipientUserId: resolvedUserId || undefined,
             eventType: 'TEST_CALL',
             customTemplate: rawTemplate,
+            voiceId,
+            speechSpeed,
             variables: {
                 userName: resolvedUserName
             }

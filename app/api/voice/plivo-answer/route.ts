@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 /**
  * GET/POST /api/voice/plivo-answer
  * Plivo calls this webhook endpoint when the recipient answers the phone call.
- * Returns standard Plivo XML <Speak> with Indian English voice.
+ * Returns custom Neural voice with dynamic speed (rate) and human-like prosody.
  */
 export async function GET(request: NextRequest) {
     return handlePlivoXML(request);
@@ -15,13 +15,42 @@ export async function POST(request: NextRequest) {
 
 function handlePlivoXML(request: NextRequest) {
     const { searchParams } = new URL(request.url);
-    const text = searchParams.get('text') || 'Hello, this is a notification from AutoPilot Operations.';
-    const voice = searchParams.get('voice') || 'WOMAN'; // Standard universal voice compatible across all Plivo accounts
+    const text = searchParams.get('text') || 'Hi, this is Pratiksha from the Operations team. Have a great day.';
+    const rawVoice = searchParams.get('voice') || 'Polly.Kajal';
+    const rawSpeed = searchParams.get('speed') || '1.0';
 
-    // Plivo XML response
+    // Normalize Polly voice name for Plivo (Plivo expects "Polly.Kajal", "Polly.Aditi", "Polly.Raveena", "Polly.Joanna", "Polly.Matthew")
+    const cleanVoiceName = rawVoice.replace(/-Neural/gi, '');
+    const voice = cleanVoiceName.startsWith('Polly.') ? cleanVoiceName : `Polly.${cleanVoiceName}`;
+
+    // Parse speed into valid SSML prosody rate percentage (e.g. "1.1" -> "110%", "0.9" -> "90%")
+    let ratePercent = '100%';
+    const parsedSpeed = parseFloat(rawSpeed);
+    if (!isNaN(parsedSpeed) && parsedSpeed > 0) {
+        if (parsedSpeed > 5) {
+            // Already in percentage like "110"
+            ratePercent = `${Math.min(Math.max(parsedSpeed, 70), 150)}%`;
+        } else {
+            // Decimal format like "1.15" -> "115%"
+            ratePercent = `${Math.round(parsedSpeed * 100)}%`;
+        }
+    }
+
+    // Determine appropriate language tag based on voice
+    const language = (voice.includes('Matthew') || voice.includes('Joanna') || voice.includes('Salli') || voice.includes('Kimberly'))
+        ? 'en-US'
+        : 'en-IN';
+
+    const naturalText = escapeXml(text);
+
+    // Plivo XML response with dynamic Neural voice and speed control
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Speak voice="${voice}" language="en-IN">${escapeXml(text)}</Speak>
+    <Speak voice="${voice}" language="${language}">
+        <prosody rate="${ratePercent}" pitch="0%">
+            ${naturalText}
+        </prosody>
+    </Speak>
 </Response>`;
 
     return new NextResponse(xml, {

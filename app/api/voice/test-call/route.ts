@@ -8,7 +8,7 @@ import { VoiceCallingService } from '@/backend/services/VoiceCallingService';
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
-        const { phone, organizationId, userName, customScript } = body;
+        const { phone, organizationId, userName, customScript, voiceId, speechSpeed } = body;
 
         if (!phone) {
             return NextResponse.json({ error: 'Phone number is required' }, { status: 400 });
@@ -18,7 +18,9 @@ export async function POST(request: NextRequest) {
             phone,
             organizationId: organizationId || '',
             userName: userName || 'Admin',
-            customScript
+            customScript,
+            voiceId,
+            speechSpeed
         });
 
         if (!result.success) {

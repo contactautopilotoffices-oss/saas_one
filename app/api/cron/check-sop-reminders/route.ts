@@ -270,6 +270,8 @@ export async function GET(request: NextRequest) {
                                         recipientUserId: u.id,
                                         eventType: 'CHECKLIST_SLOT_REMINDER',
                                         customTemplate: reminderRule?.voice_template,
+                                        voiceId: reminderRule?.voice_id,
+                                        speechSpeed: reminderRule?.speech_speed,
                                         variables: {
                                             userName: u.name || 'Staff',
                                             checklistTitle: groupTitle,
@@ -359,6 +361,8 @@ export async function GET(request: NextRequest) {
                                         recipientUserId: u.id,
                                         eventType: 'CHECKLIST_STARTED',
                                         customTemplate: startedRule?.voice_template,
+                                        voiceId: startedRule?.voice_id,
+                                        speechSpeed: startedRule?.speech_speed,
                                         variables: {
                                             userName: u.name || 'Staff',
                                             checklistTitle: groupTitle,
@@ -466,6 +470,8 @@ export async function GET(request: NextRequest) {
                                                 recipientUserId: u.id,
                                                 eventType: 'CHECKLIST_OVERDUE',
                                                 customTemplate: overdueRule?.voice_template,
+                                                voiceId: overdueRule?.voice_id,
+                                                speechSpeed: overdueRule?.speech_speed,
                                                 variables: {
                                                     userName: u.name || 'Staff',
                                                     checklistTitle: overdueTitle,
