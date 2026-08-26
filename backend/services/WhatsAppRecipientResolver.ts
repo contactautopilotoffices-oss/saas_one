@@ -165,10 +165,7 @@ export const WhatsAppRecipientResolver = {
             }
         }
 
-        // Check if feature WhatsApp channel is disabled
-        if (!featureConfig.enabled) {
-            return { enabled: false, users: [], config: featureConfig };
-        }
+        const isChannelEnabled = featureConfig.enabled !== false;
 
         const targetRoles = featureConfig.roles || [];
         const targetUserIds = featureConfig.user_ids || [];
@@ -304,7 +301,7 @@ export const WhatsAppRecipientResolver = {
             .filter(u => u.phone && u.phone.length >= 10);
 
         return {
-            enabled: true,
+            enabled: isChannelEnabled,
             users: resolvedUsers,
             config: featureConfig
         };

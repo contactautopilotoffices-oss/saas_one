@@ -423,8 +423,15 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
 
         const cycleHour = (dir: 1 | -1) => {
             const idx = hours.indexOf(h12);
-            const next = hours[(idx + dir + 12) % 12];
-            onChange(to24(next, minute, ampm));
+            const nextIdx = (idx + dir + 12) % 12;
+            const next = hours[nextIdx];
+            let newAmpm = ampm;
+            if (dir === 1 && h12 === '11') {
+                newAmpm = ampm === 'AM' ? 'PM' : 'AM';
+            } else if (dir === -1 && h12 === '12') {
+                newAmpm = ampm === 'AM' ? 'PM' : 'AM';
+            }
+            onChange(to24(next, minute, newAmpm));
         };
         const cycleMinute = (dir: 1 | -1) => {
             const idx = minutes.indexOf(minute);

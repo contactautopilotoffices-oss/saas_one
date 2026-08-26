@@ -198,6 +198,11 @@ export async function GET(request: NextRequest) {
                 groupTitle = `${group[0].title}, ${group[1].title} & ${count - 2} more (${count} Checklists)`;
             }
 
+            // Collect all assigned user IDs across templates in this shift group
+            const groupAssigneeIds = Array.from(new Set(
+                group.flatMap(t => Array.isArray(t.assigned_to) ? t.assigned_to : [t.assigned_to]).filter(Boolean)
+            ));
+
             // Check deduplication across all templates in this group
             const hasSentPreStart = group.some(t => {
                 const sent = enqueuedEventsMap.get(t.id);
@@ -219,11 +224,12 @@ export async function GET(request: NextRequest) {
                 const leadTimeText = `${configuredLeadMins} mins`;
 
                 try {
-                    // Resolve dynamic recipients from Omnichannel Matrix
+                    // Resolve dynamic recipients from Omnichannel Matrix (roles + assigned staff)
                     const { users: reminderRecipients } = await WhatsAppRecipientResolver.resolveRecipients({
                         organizationId: orgId,
                         propertyId: propId,
-                        featureKey: 'checklist_slot_reminder'
+                        featureKey: 'checklist_slot_reminder',
+                        contextualUserIds: groupAssigneeIds
                     });
 
                     const recipientIds = Array.from(new Set(reminderRecipients.map(u => u.id)));
@@ -302,19 +308,22 @@ export async function GET(request: NextRequest) {
             // ─────────────────────────────────────────────────────────────────
             // STAGE 2: EXACT START TIME ALERT (Consolidated for the shift group)
             // ─────────────────────────────────────────────────────────────────
+            // Only fire shift start alert within 45 mins of start_time
+            const startGraceMins = 45;
             const isInStartedWindow = isOvernight 
-                ? (currentMins >= startMins || currentMins < endMins)
-                : (currentMins >= startMins && currentMins < endMins);
+                ? ((currentMins >= startMins && currentMins <= startMins + startGraceMins) || (currentMins < endMins && currentMins <= (startMins + startGraceMins) % 1440))
+                : (currentMins >= startMins && currentMins <= Math.min(startMins + startGraceMins, endMins));
 
             if (isInStartedWindow && !hasSentStarted) {
                 const formattedStartTime = format12h(rawStartTime);
 
                 try {
-                    // Resolve dynamic recipients from Omnichannel Matrix
+                    // Resolve dynamic recipients from Omnichannel Matrix (roles + assigned staff)
                     const { users: startedRecipients } = await WhatsAppRecipientResolver.resolveRecipients({
                         organizationId: orgId,
                         propertyId: propId,
-                        featureKey: 'checklist_started'
+                        featureKey: 'checklist_started',
+                        contextualUserIds: groupAssigneeIds
                     });
 
                     const recipientIds = Array.from(new Set(startedRecipients.map(u => u.id)));
@@ -423,7 +432,8 @@ export async function GET(request: NextRequest) {
                             const { users: overdueRecipients } = await WhatsAppRecipientResolver.resolveRecipients({
                                 organizationId: orgId,
                                 propertyId: propId,
-                                featureKey: 'checklist_overdue_alert'
+                                featureKey: 'checklist_overdue_alert',
+                                contextualUserIds: groupAssigneeIds
                             });
 
                             const recipientIds = Array.from(new Set(overdueRecipients.map(u => u.id)));
