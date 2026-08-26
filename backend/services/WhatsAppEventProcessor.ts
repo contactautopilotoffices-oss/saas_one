@@ -1397,7 +1397,7 @@ export const WhatsAppEventProcessor = {
             templateEventKey: 'checklist_slot_reminder',
             organizationId: payload.organization_id,
             propertyId: payload.property_id,
-            entityId: payload.template_id,
+            entityId: payload.entity_id || payload.template_id,
             paramValues: {
                 user_name: assignedUser.name || 'Technician',
                 checklist_name: payload.template_title || 'SOP Checklist',
@@ -1418,7 +1418,7 @@ export const WhatsAppEventProcessor = {
             templateEventKey: 'checklist_started',
             organizationId: payload.organization_id,
             propertyId: payload.property_id,
-            entityId: payload.template_id,
+            entityId: payload.entity_id || payload.template_id,
             paramValues: {
                 user_name: assignedUser.name || 'Technician',
                 checklist_name: payload.template_title || 'SOP Checklist',
@@ -1461,7 +1461,7 @@ export const WhatsAppEventProcessor = {
             templateEventKey: 'checklist_overdue_alert',
             organizationId: payload.organization_id,
             propertyId: payload.property_id,
-            entityId: payload.template_id,
+            entityId: payload.entity_id || payload.template_id,
             paramValues: {
                 user_name: assignedUser.name || 'Technician',
                 checklist_name: payload.template_title || 'SOP Checklist',

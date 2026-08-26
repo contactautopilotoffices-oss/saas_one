@@ -95,15 +95,14 @@ export async function GET(request: NextRequest) {
 
         const templateIds = validTemplates.map(t => t.id);
 
-        // 3. Parallel fetch:
-        // A. Today's enqueued WhatsApp reminder events (for deduplication)
+        // 3. Fetch auxiliary data in parallel:
+        // A. WhatsApp queue entries created today to prevent duplicate sends for the exact slot
         // B. Today's completed checklists in sop_completions
         // C. Organization settings for dynamic reminder_minutes lead times
         const [queueRes, completionsRes, orgSettingsRes] = await Promise.all([
             supabaseAdmin
                 .from('whatsapp_queue')
                 .select('entity_id, event_type')
-                .in('entity_id', templateIds)
                 .gte('created_at', startOfTodayIST),
             supabaseAdmin
                 .from('sop_completions')
@@ -116,13 +115,11 @@ export async function GET(request: NextRequest) {
         ]);
 
         // Build deduplication sets
-        const enqueuedEventsMap = new Map<string, Set<string>>(); // templateId -> Set of event_types already queued today
+        const enqueuedEntitySet = new Set<string>();
         (queueRes.data || []).forEach(row => {
-            if (!row.entity_id) return;
-            if (!enqueuedEventsMap.has(row.entity_id)) {
-                enqueuedEventsMap.set(row.entity_id, new Set());
+            if (row.entity_id) {
+                enqueuedEntitySet.add(row.entity_id);
             }
-            enqueuedEventsMap.get(row.entity_id)!.add(row.event_type);
         });
 
         // Build completions map for today
@@ -130,17 +127,6 @@ export async function GET(request: NextRequest) {
         (completionsRes.data || []).forEach(c => {
             if (c.status === 'completed' || c.completed_at) {
                 completedTemplateIds.add(c.template_id);
-            }
-        });
-
-        // Build org reminder_minutes map
-        const orgReminderMinutesMap = new Map<string, number>();
-        (orgSettingsRes.data || []).forEach(os => {
-            const matrix = os.notification_matrix || {};
-            const checklistRule = matrix?.checklists?.checklist_slot_reminder || os?.whatsapp_service_config?.checklist_slot_reminder;
-            const minutes = checklistRule?.reminder_minutes;
-            if (typeof minutes === 'number' && minutes > 0) {
-                orgReminderMinutesMap.set(os.organization_id, minutes);
             }
         });
 
@@ -161,7 +147,7 @@ export async function GET(request: NextRequest) {
         let startAlertsDispatched = 0;
         let overdueAlertsDispatched = 0;
 
-        for (const [, group] of groupedTemplates.entries()) {
+        for (const [groupKey, group] of groupedTemplates.entries()) {
             if (group.length === 0) continue;
 
             const firstTemplate = group[0];
@@ -178,49 +164,39 @@ export async function GET(request: NextRequest) {
             const startMins = sH * 60 + sM;
             const endMins = eH * 60 + eM;
 
-            // Dynamic configured reminder lead time from Omnichannel settings (property override > global > default 10 mins)
+            // Dynamic configured reminder lead time from Omnichannel settings
             const orgMatrix = (orgSettingsRes.data || []).find(os => os.organization_id === orgId)?.notification_matrix || {};
             const reminderRule = orgMatrix?.checklists?.checklist_slot_reminder;
             const activeReminderRule = reminderRule?.property_overrides?.[propId] || reminderRule;
             const configuredLeadMins = (typeof activeReminderRule?.reminder_minutes === 'number' && activeReminderRule.reminder_minutes > 0)
                 ? activeReminderRule.reminder_minutes
-                : (orgReminderMinutesMap.get(orgId) || 10);
+                : 10;
             const preStartMins = startMins - configuredLeadMins;
             const isOvernight = endMins <= startMins;
 
-            // Fetch property name for friendly voice/text dispatch
+            // Fetch property name
             const { data: propData } = await supabaseAdmin.from('properties').select('name').eq('id', propId).maybeSingle();
             const propertyName = propData?.name || 'Site Facility';
 
             // Format consolidated checklist title
             const count = group.length;
-            let groupTitle = '';
-            if (count === 1) {
-                groupTitle = group[0].title;
-            } else if (count === 2) {
-                groupTitle = `${group[0].title}, ${group[1].title} (2 Checklists)`;
-            } else {
-                groupTitle = `${group[0].title}, ${group[1].title} & ${count - 2} more (${count} Checklists)`;
-            }
+            let groupTitle = count === 1 ? group[0].title : (count === 2 ? `${group[0].title}, ${group[1].title} (2 Checklists)` : `${group[0].title}, ${group[1].title} & ${count - 2} more (${count} Checklists)`);
 
-            // Collect all assigned user IDs across templates in this shift group
+            // Collect assigned user IDs
             const groupAssigneeIds = Array.from(new Set(
                 group.flatMap(t => Array.isArray(t.assigned_to) ? t.assigned_to : [t.assigned_to]).filter(Boolean)
             ));
 
-            // Check deduplication across all templates in this group
-            const hasSentPreStart = group.some(t => {
-                const sent = enqueuedEventsMap.get(t.id);
-                return sent && (sent.has('CHECKLIST_SLOT_REMINDER') || sent.has('SOP_REMINDER'));
-            });
+            // Slot-specific deduplication keys
+            const slotPreStartKey = (tid: string) => `sop_rem_${tid}_${rawStartTime}_${dateKey}`;
+            const slotStartedKey = (tid: string) => `sop_start_${tid}_${rawStartTime}_${dateKey}`;
+            const slotOverdueKey = (tid: string) => `sop_overdue_${tid}_${rawStartTime}_${dateKey}`;
 
-            const hasSentStarted = group.some(t => {
-                const sent = enqueuedEventsMap.get(t.id);
-                return sent && (sent.has('CHECKLIST_STARTED') || sent.has('SOP_STARTED'));
-            });
+            const hasSentPreStart = group.some(t => enqueuedEntitySet.has(slotPreStartKey(t.id)));
+            const hasSentStarted = group.some(t => enqueuedEntitySet.has(slotStartedKey(t.id)));
 
             // ─────────────────────────────────────────────────────────────────
-            // STAGE 1: PRE-START REMINDER (Consolidated for the shift group)
+            // STAGE 1: PRE-START REMINDER
             // ─────────────────────────────────────────────────────────────────
             const isInPreStartWindow = currentMins >= preStartMins && currentMins < startMins;
 
@@ -229,7 +205,6 @@ export async function GET(request: NextRequest) {
                 const leadTimeText = `${configuredLeadMins} mins`;
 
                 try {
-                    // Resolve dynamic recipients from Omnichannel Matrix (roles + assigned staff)
                     const { users: reminderRecipients } = await WhatsAppRecipientResolver.resolveRecipients({
                         organizationId: orgId,
                         propertyId: propId,
@@ -239,7 +214,6 @@ export async function GET(request: NextRequest) {
 
                     const recipientIds = Array.from(new Set(reminderRecipients.map(u => u.id)));
 
-                    // 1. Dispatch in-app notifications
                     if (recipientIds.length > 0) {
                         await NotificationService.sendToMany(recipientIds, {
                             propertyId: propId,
@@ -252,12 +226,12 @@ export async function GET(request: NextRequest) {
                         });
                     }
 
-                    // 2. Dispatch WhatsApp notification (1 consolidated message)
                     await WhatsAppEventProcessor.processEvent({
                         event_type: 'CHECKLIST_SLOT_REMINDER',
                         payload: {
                             organization_id: orgId,
                             property_id: propId,
+                            entity_id: slotPreStartKey(firstTemplate.id),
                             template_id: firstTemplate.id,
                             template_title: groupTitle,
                             due_time: `${formattedStartTime} (in ${leadTimeText})`,
@@ -265,13 +239,8 @@ export async function GET(request: NextRequest) {
                         }
                     });
 
-                    // 3. Dispatch Voice Call if voice channel is enabled in Omnichannel matrix
                     try {
-                        const orgMatrix = (orgSettingsRes.data || []).find(os => os.organization_id === orgId)?.notification_matrix || {};
-                        const reminderRule = orgMatrix?.checklists?.checklist_slot_reminder;
-                        const activeReminderRule = reminderRule?.property_overrides?.[propId] || reminderRule;
                         const isVoiceEnabled = activeReminderRule?.channels?.voice === true;
-
                         if (isVoiceEnabled && reminderRecipients.length > 0) {
                             for (const u of reminderRecipients) {
                                 if (u.phone) {
@@ -284,37 +253,21 @@ export async function GET(request: NextRequest) {
                                         customTemplate: activeReminderRule?.voice_template,
                                         voiceId: activeReminderRule?.voice_id,
                                         speechSpeed: activeReminderRule?.speech_speed,
-                                        variables: {
-                                            userName: u.name || 'Staff',
-                                            checklistTitle: groupTitle,
-                                            propertyName: propertyName,
-                                            shiftTime: formattedStartTime
-                                        }
+                                        variables: { userName: u.name || 'Staff', checklistTitle: groupTitle, propertyName, shiftTime: formattedStartTime }
                                     });
                                 }
                             }
                         }
-                    } catch (voiceErr: any) {
-                        console.error('[SOP Reminders] Pre-start voice call error:', voiceErr.message);
-                    }
+                    } catch (voiceErr: any) { console.error('[SOP Reminders] Pre-start voice call error:', voiceErr.message); }
 
-                    // Mark all templates in group as sent
-                    group.forEach(t => {
-                        if (!enqueuedEventsMap.has(t.id)) enqueuedEventsMap.set(t.id, new Set());
-                        enqueuedEventsMap.get(t.id)!.add('CHECKLIST_SLOT_REMINDER');
-                    });
-
+                    group.forEach(t => enqueuedEntitySet.add(slotPreStartKey(t.id)));
                     remindersDispatched++;
-                    console.log(`[SOP Reminders] Sent consolidated pre-start reminder for "${groupTitle}" (starts in ${leadTimeText} at ${formattedStartTime})`);
-                } catch (err: any) {
-                    console.error(`[SOP Reminders] Pre-start error for group ${groupTitle}:`, err.message);
-                }
+                } catch (err: any) { console.error(`[SOP Reminders] Pre-start error for group ${groupTitle}:`, err.message); }
             }
 
             // ─────────────────────────────────────────────────────────────────
-            // STAGE 2: EXACT START TIME ALERT (Consolidated for the shift group)
+            // STAGE 2: EXACT START TIME ALERT
             // ─────────────────────────────────────────────────────────────────
-            // Only fire shift start alert within 45 mins of start_time
             const startGraceMins = 45;
             const isInStartedWindow = isOvernight 
                 ? ((currentMins >= startMins && currentMins <= startMins + startGraceMins) || (currentMins < endMins && currentMins <= (startMins + startGraceMins) % 1440))
@@ -322,9 +275,7 @@ export async function GET(request: NextRequest) {
 
             if (isInStartedWindow && !hasSentStarted) {
                 const formattedStartTime = format12h(rawStartTime);
-
                 try {
-                    // Resolve dynamic recipients from Omnichannel Matrix (roles + assigned staff)
                     const { users: startedRecipients } = await WhatsAppRecipientResolver.resolveRecipients({
                         organizationId: orgId,
                         propertyId: propId,
@@ -334,7 +285,6 @@ export async function GET(request: NextRequest) {
 
                     const recipientIds = Array.from(new Set(startedRecipients.map(u => u.id)));
 
-                    // 1. Dispatch in-app notifications
                     if (recipientIds.length > 0) {
                         await NotificationService.sendToMany(recipientIds, {
                             propertyId: propId,
@@ -347,12 +297,12 @@ export async function GET(request: NextRequest) {
                         });
                     }
 
-                    // 2. Dispatch WhatsApp notification (1 consolidated message)
                     await WhatsAppEventProcessor.processEvent({
                         event_type: 'CHECKLIST_STARTED',
                         payload: {
                             organization_id: orgId,
                             property_id: propId,
+                            entity_id: slotStartedKey(firstTemplate.id),
                             template_id: firstTemplate.id,
                             template_title: groupTitle,
                             start_time: formattedStartTime,
@@ -360,13 +310,10 @@ export async function GET(request: NextRequest) {
                         }
                     });
 
-                    // 3. Dispatch Voice Call if voice channel is enabled in Omnichannel matrix
                     try {
-                        const orgMatrix = (orgSettingsRes.data || []).find(os => os.organization_id === orgId)?.notification_matrix || {};
                         const startedRule = orgMatrix?.checklists?.checklist_started;
                         const activeStartedRule = startedRule?.property_overrides?.[propId] || startedRule;
                         const isVoiceEnabled = activeStartedRule?.channels?.voice === true;
-
                         if (isVoiceEnabled && startedRecipients.length > 0) {
                             for (const u of startedRecipients) {
                                 if (u.phone) {
@@ -379,63 +326,34 @@ export async function GET(request: NextRequest) {
                                         customTemplate: activeStartedRule?.voice_template,
                                         voiceId: activeStartedRule?.voice_id,
                                         speechSpeed: activeStartedRule?.speech_speed,
-                                        variables: {
-                                            userName: u.name || 'Staff',
-                                            checklistTitle: groupTitle,
-                                            propertyName: propertyName,
-                                            shiftTime: formattedStartTime
-                                        }
+                                        variables: { userName: u.name || 'Staff', checklistTitle: groupTitle, propertyName, shiftTime: formattedStartTime }
                                     });
                                 }
                             }
                         }
-                    } catch (voiceErr: any) {
-                        console.error('[SOP Reminders] Started voice call error:', voiceErr.message);
-                    }
+                    } catch (voiceErr: any) { console.error('[SOP Reminders] Started voice call error:', voiceErr.message); }
 
-                    // Mark all templates in group as sent
-                    group.forEach(t => {
-                        if (!enqueuedEventsMap.has(t.id)) enqueuedEventsMap.set(t.id, new Set());
-                        enqueuedEventsMap.get(t.id)!.add('CHECKLIST_STARTED');
-                    });
-
+                    group.forEach(t => enqueuedEntitySet.add(slotStartedKey(t.id)));
                     startAlertsDispatched++;
-                    console.log(`[SOP Reminders] Sent consolidated shift started alert for "${groupTitle}" at ${formattedStartTime}`);
-                } catch (err: any) {
-                    console.error(`[SOP Reminders] Started alert error for group ${groupTitle}:`, err.message);
-                }
+                } catch (err: any) { console.error(`[SOP Reminders] Started alert error for group ${groupTitle}:`, err.message); }
             }
 
             // ─────────────────────────────────────────────────────────────────
-            // STAGE 3: OVERDUE / MISSED ALERT (Consolidated for incomplete items)
+            // STAGE 3: OVERDUE / MISSED ALERT
             // ─────────────────────────────────────────────────────────────────
-            const isAfterEndTime = isOvernight
-                ? (currentMins >= endMins && currentMins < startMins)
-                : (currentMins >= endMins);
+            const isAfterEndTime = isOvernight ? (currentMins >= endMins && currentMins < startMins) : (currentMins >= endMins);
 
             if (isAfterEndTime) {
                 const incompleteTemplates = group.filter(t => !completedTemplateIds.has(t.id));
-
                 if (incompleteTemplates.length > 0) {
-                    const hasSentOverdue = incompleteTemplates.some(t => {
-                        const sent = enqueuedEventsMap.get(t.id);
-                        return sent && (sent.has('CHECKLIST_OVERDUE') || sent.has('CHECKLIST_OVERDUE_ALERT') || sent.has('SOP_OVERDUE') || sent.has('SOP_MISSED'));
-                    });
+                    const hasSentOverdue = incompleteTemplates.some(t => enqueuedEntitySet.has(slotOverdueKey(t.id)));
 
                     if (!hasSentOverdue) {
                         const slotWindowLabel = `${format12h(rawStartTime)} – ${format12h(rawEndTime)}`;
                         const incCount = incompleteTemplates.length;
-                        let overdueTitle = '';
-                        if (incCount === 1) {
-                            overdueTitle = incompleteTemplates[0].title;
-                        } else if (incCount === 2) {
-                            overdueTitle = `${incompleteTemplates[0].title}, ${incompleteTemplates[1].title} (2 Checklists)`;
-                        } else {
-                            overdueTitle = `${incompleteTemplates[0].title}, ${incompleteTemplates[1].title} & ${incCount - 2} more (${incCount} Checklists)`;
-                        }
+                        const overdueTitle = incCount === 1 ? incompleteTemplates[0].title : (incCount === 2 ? `${incompleteTemplates[0].title}, ${incompleteTemplates[1].title} (2 Checklists)` : `${incompleteTemplates[0].title}, ${incompleteTemplates[1].title} & ${incCount - 2} more (${incCount} Checklists)`);
 
                         try {
-                            // Resolve dynamic recipients from Omnichannel Matrix (roles + assigned managers)
                             const { users: overdueRecipients } = await WhatsAppRecipientResolver.resolveRecipients({
                                 organizationId: orgId,
                                 propertyId: propId,
@@ -445,7 +363,6 @@ export async function GET(request: NextRequest) {
 
                             const recipientIds = Array.from(new Set(overdueRecipients.map(u => u.id)));
 
-                            // 1. Dispatch in-app notifications
                             if (recipientIds.length > 0) {
                                 await NotificationService.sendToMany(recipientIds, {
                                     propertyId: propId,
@@ -458,12 +375,12 @@ export async function GET(request: NextRequest) {
                                 });
                             }
 
-                            // 2. Dispatch WhatsApp notification (1 consolidated message)
                             await WhatsAppEventProcessor.processEvent({
                                 event_type: 'CHECKLIST_OVERDUE',
                                 payload: {
                                     organization_id: orgId,
                                     property_id: propId,
+                                    entity_id: slotOverdueKey(incompleteTemplates[0].id),
                                     template_id: incompleteTemplates[0].id,
                                     template_title: overdueTitle,
                                     slot_time: slotWindowLabel,
@@ -471,13 +388,10 @@ export async function GET(request: NextRequest) {
                                 }
                             });
 
-                            // 3. Dispatch Voice Call if voice channel is enabled in Omnichannel matrix
                             try {
-                                const orgMatrix = (orgSettingsRes.data || []).find(os => os.organization_id === orgId)?.notification_matrix || {};
                                 const overdueRule = orgMatrix?.checklists?.checklist_overdue_alert;
                                 const activeOverdueRule = overdueRule?.property_overrides?.[propId] || overdueRule;
                                 const isVoiceEnabled = activeOverdueRule?.channels?.voice === true;
-
                                 if (isVoiceEnabled && overdueRecipients.length > 0) {
                                     for (const u of overdueRecipients) {
                                         if (u.phone) {
@@ -490,27 +404,14 @@ export async function GET(request: NextRequest) {
                                                 customTemplate: activeOverdueRule?.voice_template,
                                                 voiceId: activeOverdueRule?.voice_id,
                                                 speechSpeed: activeOverdueRule?.speech_speed,
-                                                variables: {
-                                                    userName: u.name || 'Staff',
-                                                    checklistTitle: overdueTitle,
-                                                    propertyName: propertyName,
-                                                    shiftTime: slotWindowLabel
-                                                }
+                                                variables: { userName: u.name || 'Staff', checklistTitle: overdueTitle, propertyName, shiftTime: slotWindowLabel }
                                             });
                                         }
                                     }
                                 }
-                            } catch (voiceErr: any) {
-                                console.error('[SOP Reminders] Overdue voice call error:', voiceErr.message);
-                            }
+                            } catch (voiceErr: any) { console.error('[SOP Reminders] Overdue voice call error:', voiceErr.message); }
 
-                            // Mark all incomplete templates in group as sent
-                            incompleteTemplates.forEach(t => {
-                                if (!enqueuedEventsMap.has(t.id)) enqueuedEventsMap.set(t.id, new Set());
-                                enqueuedEventsMap.get(t.id)!.add('CHECKLIST_OVERDUE');
-                                enqueuedEventsMap.get(t.id)!.add('CHECKLIST_OVERDUE_ALERT');
-                            });
-
+                            incompleteTemplates.forEach(t => enqueuedEntitySet.add(slotOverdueKey(t.id)));
                             overdueAlertsDispatched++;
                             console.log(`[SOP Reminders] Sent consolidated overdue alert for "${overdueTitle}" (slot: ${slotWindowLabel})`);
                         } catch (err: any) {
