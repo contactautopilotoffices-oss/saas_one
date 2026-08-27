@@ -156,7 +156,7 @@ export async function GET(request: NextRequest) {
 async function processTicketSlaReminders(ctx: OrgContext, reminderMinutes: number): Promise<number> {
     const template = ctx.templates.reminder_ticket_sla || {
         campaign_name: 'reminder_ticket_sla_v1',
-        params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'sla_time', 'ticket_id']
+        params: ['user_name', 'ticket_number', 'title', 'property', 'sla_deadline', 'priority', 'assignee_name']
     };
 
     const now = new Date();
@@ -200,8 +200,11 @@ async function processTicketSlaReminders(ctx: OrgContext, reminderMinutes: numbe
             title: t.title || 'Ticket',
             property: propName,
             sla_deadline: slaDeadlineStr,
+            sla_time: slaDeadlineStr,
             priority: t.priority || 'Medium',
             assignee_name: assigneeName,
+            assigned_to: assigneeName,
+            ticket_id: t.id
         };
 
         const orderedParams: string[] = (template.params || []).map((k: string) => paramValues[k] ?? 'N/A');

@@ -1244,7 +1244,9 @@ export class NotificationService {
 
                 if (matrixRule) {
                     const propOverride = (payload.propertyId && matrixRule.property_overrides) ? matrixRule.property_overrides[payload.propertyId] : null;
-                    const isPushEnabled = propOverride ? (propOverride.channels?.push !== false) : (matrixRule.channels?.push !== false);
+                    const isPushEnabled = (propOverride && propOverride.channels && propOverride.channels.push !== undefined)
+                        ? (propOverride.channels.push === true)
+                        : (matrixRule.channels?.push !== false);
                     if (!isPushEnabled) {
                         console.log(`[NotificationService] Push disabled via Omnichannel Matrix for ${featureKey}`);
                         return;

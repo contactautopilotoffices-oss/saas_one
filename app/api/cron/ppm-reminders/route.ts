@@ -200,7 +200,9 @@ export async function GET(request: NextRequest) {
 
                 // C. Dispatch Voice Call if voice channel is enabled in Omnichannel matrix
                 try {
-                    const isVoiceEnabled = activePpmRule?.channels?.voice === true;
+                    const isVoiceEnabled = (activePpmRule?.channels?.voice !== undefined)
+                        ? (activePpmRule.channels.voice === true)
+                        : (ppmRule?.channels?.voice === true);
                     if (isVoiceEnabled && resolvedUsers.length > 0) {
                         const { data: propData } = await supabaseAdmin.from('properties').select('name').eq('id', propId).maybeSingle();
                         const propertyName = propData?.name || 'Site Property';
@@ -213,9 +215,9 @@ export async function GET(request: NextRequest) {
                                     recipientPhone: u.phone,
                                     recipientUserId: u.id,
                                     eventType: 'REMINDER_PPM',
-                                    customTemplate: activePpmRule?.voice_template,
-                                    voiceId: activePpmRule?.voice_id,
-                                    speechSpeed: activePpmRule?.speech_speed,
+                                    customTemplate: activePpmRule?.voice_template || ppmRule?.voice_template,
+                                    voiceId: activePpmRule?.voice_id || ppmRule?.voice_id,
+                                    speechSpeed: activePpmRule?.speech_speed || ppmRule?.speech_speed,
                                     variables: {
                                         userName: u.name || 'Staff',
                                         systemName: consolidatedSystem,
@@ -227,7 +229,7 @@ export async function GET(request: NextRequest) {
                         }
                     }
                 } catch (voiceErr: any) {
-                    console.error('[PPM Reminders] Voice call error:', voiceErr.message);
+                    console.error('[PPM Reminders] Voice call error for group:', voiceErr.message);
                 }
 
                 alreadySentEntityIds.add(dedupEntityId);

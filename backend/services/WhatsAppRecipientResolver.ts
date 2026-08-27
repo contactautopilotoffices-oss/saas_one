@@ -132,8 +132,8 @@ export const WhatsAppRecipientResolver = {
                 propOverride = matrixRule.property_overrides[propertyId];
             }
 
-            const isWhatsAppEnabled = propOverride
-                ? (propOverride.channels?.whatsapp === true)
+            const isWhatsAppEnabled = (propOverride && propOverride.channels && propOverride.channels.whatsapp !== undefined)
+                ? (propOverride.channels.whatsapp === true)
                 : (matrixRule.channels?.whatsapp === true);
 
             featureConfig = {

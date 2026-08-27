@@ -123,8 +123,8 @@ export const EmailRecipientResolver = {
                 propOverride = matrixRule.property_overrides[propertyId];
             }
 
-            const isEmailEnabled = propOverride
-                ? (propOverride.channels?.email === true)
+            const isEmailEnabled = (propOverride && propOverride.channels && propOverride.channels.email !== undefined)
+                ? (propOverride.channels.email === true)
                 : (matrixRule.channels?.email === true);
 
             featureConfig = {

@@ -31,8 +31,12 @@ export const EventProcessor = {
             await this.handleVendorProcurementRequestedEvent(payload);
         } else if (event_type === 'VENDOR_PROCUREMENT_ARRANGED') {
             await this.handleVendorProcurementArrangedEvent(payload);
+        } else if (['SOP_STARTED', 'CHECKLIST_STARTED'].includes(event_type)) {
+            await this.handleChecklistStarted(payload);
         } else if (['SOP_COMPLETED', 'CHECKLIST_COMPLETED'].includes(event_type)) {
             await this.handleChecklistCompleted(payload);
+        } else if (['SOP_RATED', 'CHECKLIST_RATED'].includes(event_type)) {
+            await this.handleChecklistRated(payload);
         } else if (['SOP_OVERDUE', 'SOP_MISSED', 'CHECKLIST_OVERDUE', 'CHECKLIST_MISSED'].includes(event_type)) {
             await this.handleChecklistOverdue(payload);
         } else if (['CHECKLIST_SLOT_REMINDER', 'SOP_REMINDER'].includes(event_type)) {
@@ -806,6 +810,83 @@ export const EventProcessor = {
             property: property || { name: 'Site Property' },
             assignedTo: user,
             dueTime: payload.due_time
+        });
+    },
+
+    async handleChecklistStarted(payload: any) {
+        const orgId = payload.organization_id;
+        const propId = payload.property_id;
+        if (!orgId) return;
+
+        const { data: property } = await supabaseAdmin
+            .from('properties')
+            .select('id, name')
+            .eq('id', propId)
+            .maybeSingle();
+
+        const { data: user } = payload.assigned_to ? await supabaseAdmin
+            .from('users')
+            .select('id, full_name, email')
+            .eq('id', payload.assigned_to)
+            .maybeSingle() : { data: null };
+
+        const { enabled, emails } = await EmailRecipientResolver.resolveRecipients({
+            organizationId: orgId,
+            propertyId: propId,
+            featureKey: 'checklist_started',
+            contextualEmails: [user?.email]
+        });
+
+        if (!enabled || emails.length === 0) return;
+
+        await EmailService.sendChecklistStartedEmail({
+            emailTo: emails,
+            checklistTitle: payload.template_title || 'SOP Checklist',
+            property: property || { name: 'Site Property' },
+            assignedTo: user,
+            startTime: payload.start_time
+        });
+    },
+
+    async handleChecklistRated(payload: any) {
+        const orgId = payload.organization_id;
+        const propId = payload.property_id;
+        if (!orgId) return;
+
+        const { data: property } = await supabaseAdmin
+            .from('properties')
+            .select('id, name')
+            .eq('id', propId)
+            .maybeSingle();
+
+        const { data: rater } = payload.rated_by ? await supabaseAdmin
+            .from('users')
+            .select('id, full_name, email')
+            .eq('id', payload.rated_by)
+            .maybeSingle() : { data: null };
+
+        const { data: completedBy } = payload.completed_by ? await supabaseAdmin
+            .from('users')
+            .select('id, full_name, email')
+            .eq('id', payload.completed_by)
+            .maybeSingle() : { data: null };
+
+        const { enabled, emails } = await EmailRecipientResolver.resolveRecipients({
+            organizationId: orgId,
+            propertyId: propId,
+            featureKey: 'checklist_rated',
+            contextualEmails: [completedBy?.email, rater?.email]
+        });
+
+        if (!enabled || emails.length === 0) return;
+
+        await EmailService.sendChecklistRatedEmail({
+            emailTo: emails,
+            checklistTitle: payload.template_title || 'SOP Checklist',
+            property: property || { name: 'Site Property' },
+            ratedBy: rater,
+            completedBy,
+            rating: payload.rating
         });
     },
 

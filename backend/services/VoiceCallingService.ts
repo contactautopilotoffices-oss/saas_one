@@ -83,6 +83,8 @@ export class VoiceCallingService {
         if (!clean.startsWith('+')) {
             if (clean.length === 10) {
                 clean = `+91${clean}`;
+            } else if (clean.length === 11 && clean.startsWith('0')) {
+                clean = `+91${clean.slice(1)}`;
             } else if (clean.length === 12 && clean.startsWith('91')) {
                 clean = `+${clean}`;
             } else {
@@ -102,7 +104,11 @@ export class VoiceCallingService {
             .replace(/\{\{\s*property_name\s*\}\}/gi, vars.propertyName || vars.property_name || 'Site')
             .replace(/\{\{\s*shift_time\s*\}\}/gi, vars.shiftTime || vars.shift_time || 'Scheduled Time')
             .replace(/\{\{\s*due_date\s*\}\}/gi, vars.dueDate || vars.due_date || 'Upcoming Date')
-            .replace(/\{\{\s*system_name\s*\}\}/gi, vars.systemName || vars.system_name || 'Equipment');
+            .replace(/\{\{\s*system_name\s*\}\}/gi, vars.systemName || vars.system_name || 'Equipment')
+            .replace(/\{\{\s*ticket_number\s*\}\}/gi, vars.ticketNumber || vars.ticket_number || 'Ticket')
+            .replace(/\{\{\s*title\s*\}\}/gi, vars.title || 'Service Request')
+            .replace(/\{\{\s*priority\s*\}\}/gi, vars.priority || 'High')
+            .replace(/\{\{\s*deadline\s*\}\}/gi, vars.deadline || 'scheduled SLA');
     }
 
     /**

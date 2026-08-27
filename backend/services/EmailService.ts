@@ -886,6 +886,119 @@ export const EmailService = {
         }
     },
 
+    async sendChecklistStartedEmail({
+        emailTo,
+        checklistTitle,
+        property,
+        assignedTo,
+        startTime
+    }: {
+        emailTo: string | string[];
+        checklistTitle: string;
+        property: any;
+        assignedTo?: any;
+        startTime?: string;
+    }) {
+        if (!smtpUser || !emailTo) return false;
+        try {
+            const recipients = Array.isArray(emailTo) ? emailTo.join(', ') : emailTo;
+            const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fms.autopilotoffices.com';
+            const subject = `[🚀 Shift Started] Checklist: ${checklistTitle} - ${property?.name || 'Property'}`;
+
+            const html = `
+                <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; background-color: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <h2 style="color: #2563eb; margin: 0; font-size: 20px;">🚀 Checklist Shift Started</h2>
+                        <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Scheduled shift inspection is now live</p>
+                    </div>
+
+                    <div style="background-color: #eff6ff; border-left: 4px solid #2563eb; padding: 16px; border-radius: 6px; margin: 18px 0;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                            <tr><td style="padding: 4px 0; color: #64748b; width: 130px;"><b>Checklist:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: bold;">${checklistTitle}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Property:</b></td><td style="padding: 4px 0; color: #0f172a;">${property?.name || 'Site Property'}</td></tr>
+                            ${startTime ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Start Time:</b></td><td style="padding: 4px 0; color: #2563eb; font-weight: bold;">${startTime}</td></tr>` : ''}
+                            ${assignedTo ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Assigned To:</b></td><td style="padding: 4px 0; color: #0f172a;">${assignedTo.full_name || assignedTo.email || 'Staff'}</td></tr>` : ''}
+                        </table>
+                    </div>
+
+                    <div style="text-align: center; margin-top: 28px;">
+                        <a href="${appUrl}/property/${property?.id || ''}/soft-service-manager" style="display: inline-block; background-color: #2563eb; color: #ffffff; text-decoration: none; font-weight: bold; padding: 12px 28px; border-radius: 8px; font-size: 14px;">Open Checklist</a>
+                    </div>
+                </div>
+            `;
+
+            await transporter.sendMail({
+                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                to: recipients,
+                subject,
+                html,
+            });
+            console.log(`[EmailService] Checklist started email sent to ${recipients}`);
+            return true;
+        } catch (error) {
+            console.error('[EmailService] Failed to send checklist started email:', error);
+            return false;
+        }
+    },
+
+    async sendChecklistRatedEmail({
+        emailTo,
+        checklistTitle,
+        property,
+        ratedBy,
+        completedBy,
+        rating
+    }: {
+        emailTo: string | string[];
+        checklistTitle: string;
+        property: any;
+        ratedBy?: any;
+        completedBy?: any;
+        rating?: number | string;
+    }) {
+        if (!smtpUser || !emailTo) return false;
+        try {
+            const recipients = Array.isArray(emailTo) ? emailTo.join(', ') : emailTo;
+            const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fms.autopilotoffices.com';
+            const subject = `[⭐ Audited & Rated] Checklist: ${checklistTitle} - ${property?.name || 'Property'}`;
+
+            const html = `
+                <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; background-color: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <h2 style="color: #f59e0b; margin: 0; font-size: 20px;">⭐ Checklist Audited & Rated</h2>
+                        <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Supervisor rating logged for checklist submission</p>
+                    </div>
+
+                    <div style="background-color: #fffbeb; border-left: 4px solid #f59e0b; padding: 16px; border-radius: 6px; margin: 18px 0;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                            <tr><td style="padding: 4px 0; color: #64748b; width: 130px;"><b>Checklist:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: bold;">${checklistTitle}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Property:</b></td><td style="padding: 4px 0; color: #0f172a;">${property?.name || 'Site Property'}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Rating:</b></td><td style="padding: 4px 0; color: #f59e0b; font-weight: bold; font-size: 16px;">${rating || '3/3 (Approved)'}</td></tr>
+                            ${ratedBy ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Audited By:</b></td><td style="padding: 4px 0; color: #0f172a;">${ratedBy.full_name || ratedBy.email || 'Supervisor'}</td></tr>` : ''}
+                            ${completedBy ? `<tr><td style="padding: 4px 0; color: #64748b;"><b>Completed By:</b></td><td style="padding: 4px 0; color: #0f172a;">${completedBy.full_name || completedBy.email || 'Staff'}</td></tr>` : ''}
+                        </table>
+                    </div>
+
+                    <div style="text-align: center; margin-top: 28px;">
+                        <a href="${appUrl}/property/${property?.id || ''}/soft-service-manager" style="display: inline-block; background-color: #f59e0b; color: #ffffff; text-decoration: none; font-weight: bold; padding: 12px 28px; border-radius: 8px; font-size: 14px;">View Scorecard</a>
+                    </div>
+                </div>
+            `;
+
+            await transporter.sendMail({
+                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                to: recipients,
+                subject,
+                html,
+            });
+            console.log(`[EmailService] Checklist rated email sent to ${recipients}`);
+            return true;
+        } catch (error) {
+            console.error('[EmailService] Failed to send checklist rated email:', error);
+            return false;
+        }
+    },
+
     async sendPpmReminderEmail({
         emailTo,
         schedule,

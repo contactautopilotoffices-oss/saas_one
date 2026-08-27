@@ -303,7 +303,7 @@ export const WhatsAppEventProcessor = {
             checklist_slot_reminder: { campaign_name: 'checklist_slot_reminder_v2', params: ['user_name', 'checklist_name', 'property', 'due_time'] },
             checklist_started: { campaign_name: 'checklist_started', params: ['user_name', 'checklist_name', 'property', 'start_time'] },
             checklist_completed: { campaign_name: 'checklist_completed', params: ['user_name', 'checklist_name', 'property', 'completed_by', 'time'] },
-            checklist_overdue_alert: { campaign_name: 'checklist_overdue_alert', params: ['user_name', 'checklist_name', 'property', 'slot_time'] },
+            checklist_overdue_alert: { campaign_name: 'checklist_overdue_alert_v2', params: ['checklist_name', 'property', 'slot_time'] },
             checklist_rated: { campaign_name: 'checklist_rated', params: ['user_name', 'checklist_name', 'property', 'rating', 'rater_name'] }
         };
 
@@ -339,11 +339,11 @@ export const WhatsAppEventProcessor = {
             'meeting_room_cancelled_v2': ['user_name', 'room_name', 'property', 'date', 'start_time', 'end_time', 'booker'],
             'meeting_room_cancelled': ['user_name', 'room_name', 'property', 'date', 'start_time', 'end_time', 'booker'],
 
-            'crm_lead_created_v1': ['user_name', 'company_name', 'contact_person', 'phone', 'source', 'property_interest'],
-            'lead_created': ['user_name', 'company_name', 'contact_person', 'phone', 'source', 'property_interest'],
+            'crm_lead_created_v1': ['user_name', 'company_name', 'contact_person', 'phone', 'source', 'property_interest', 'lead_id'],
+            'lead_created': ['user_name', 'company_name', 'contact_person', 'phone', 'source', 'property_interest', 'lead_id'],
 
-            'crm_lead_assigned_v1': ['user_name', 'company_name', 'contact_person', 'phone', 'property_interest', 'next_followup'],
-            'lead_assigned': ['user_name', 'company_name', 'contact_person', 'phone', 'property_interest', 'next_followup'],
+            'crm_lead_assigned_v1': ['user_name', 'company_name', 'contact_person', 'phone', 'property_interest', 'next_followup', 'lead_id'],
+            'lead_assigned': ['user_name', 'company_name', 'contact_person', 'phone', 'property_interest', 'next_followup', 'lead_id'],
 
             'ticket_created_v3': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'],
             'ticket_created_v3_media': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'],
@@ -392,11 +392,13 @@ export const WhatsAppEventProcessor = {
             'reminder_ppm': ['user_name', 'system_name', 'property', 'due_date', 'vendor_name', 'location'],
             'ppm_reminder': ['user_name', 'system_name', 'property', 'due_date', 'vendor_name', 'location'],
 
-            'reminder_ticket_sla_v1': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'sla_time', 'ticket_id'],
-            'reminder_ticket_sla': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'sla_time', 'ticket_id'],
+            'reminder_ticket_sla_v1': ['user_name', 'ticket_number', 'title', 'property', 'sla_deadline', 'priority', 'assignee_name'],
+            'reminder_ticket_sla': ['user_name', 'ticket_number', 'title', 'property', 'sla_deadline', 'priority', 'assignee_name'],
 
             'reminder_lead_followup_v1': ['user_name', 'company_name', 'contact_person', 'phone', 'followup_time', 'lead_id'],
             'reminder_lead_followup': ['user_name', 'company_name', 'contact_person', 'phone', 'followup_time', 'lead_id'],
+
+            'fms_welcome_onboarding_v1': ['user_name', 'helpdesk_contact'],
 
             'checklist_slot_reminder_v1': ['user_name', 'checklist_name', 'property', 'due_time'],
             'checklist_slot_reminder_v2': ['user_name', 'checklist_name', 'property', 'due_time'],
@@ -409,8 +411,8 @@ export const WhatsAppEventProcessor = {
             'checklist_completed': ['user_name', 'checklist_name', 'property', 'completed_by', 'time'],
 
             'checklist_overdue_alert_v1': ['user_name', 'checklist_name', 'property', 'slot_time'],
-            'checklist_overdue_alert_v2': ['user_name', 'checklist_name', 'property', 'slot_time'],
-            'checklist_overdue_alert': ['user_name', 'checklist_name', 'property', 'slot_time'],
+            'checklist_overdue_alert_v2': ['checklist_name', 'property', 'slot_time'],
+            'checklist_overdue_alert': ['checklist_name', 'property', 'slot_time'],
 
             'checklist_rated_v1': ['user_name', 'checklist_name', 'property', 'rating', 'rater_name'],
             'checklist_rated': ['user_name', 'checklist_name', 'property', 'rating', 'rater_name']
@@ -1466,7 +1468,8 @@ export const WhatsAppEventProcessor = {
                 user_name: assignedUser.name || 'Technician',
                 checklist_name: payload.template_title || 'SOP Checklist',
                 property: propertyName,
-                slot_time: payload.slot_time || 'Scheduled Slot'
+                slot_time: payload.slot_time || 'Scheduled Slot',
+                scheduled_time: payload.slot_time || 'Scheduled Slot'
             },
             summaryMessage: `⚠️ Overdue Checklist: "${payload.template_title}" was missed at ${propertyName}`,
             contextualUserIds: { assigneeId: payload.assigned_to }
@@ -1528,12 +1531,13 @@ export const WhatsAppEventProcessor = {
         return property?.name || 'N/A';
     },
 
-    async getUserDetails(userId?: string | null): Promise<{ name: string; phone: string | null }> {
-        if (!userId) return { name: 'Staff', phone: null };
+    async getUserDetails(userId?: string | string[] | null): Promise<{ name: string; phone: string | null }> {
+        const cleanId = Array.isArray(userId) ? userId[0] : userId;
+        if (!cleanId || typeof cleanId !== 'string' || !cleanId.trim()) return { name: 'Staff', phone: null };
         const { data: user } = await supabaseAdmin
             .from('users')
             .select('full_name, phone')
-            .eq('id', userId)
+            .eq('id', cleanId.trim())
             .maybeSingle();
         return {
             name: user?.full_name || 'Staff',

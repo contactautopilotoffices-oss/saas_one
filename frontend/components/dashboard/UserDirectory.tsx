@@ -139,7 +139,7 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
         } catch { /* silent */ }
     };
 
-    const fetchUserPropertyAssignments = async (userId: string) => {
+    const fetchUserPropertyAssignments = async (userId: string, defaultPropId?: string, defaultPropName?: string, defaultRole?: string) => {
         if (propAssignPropsMap[userId]) return; // already loaded
         try {
             const { data } = await supabase
@@ -147,11 +147,18 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                 .select('property_id, role, properties(name)')
                 .eq('user_id', userId)
                 .eq('is_active', true);
-            const props = (data || []).map((r: any) => ({
+            let props = (data || []).map((r: any) => ({
                 property_id: r.property_id,
                 name: r.properties?.name || r.property_id,
                 role: r.role,
             }));
+            if (props.length === 0 && defaultPropId) {
+                props = [{
+                    property_id: defaultPropId,
+                    name: defaultPropName || defaultPropId,
+                    role: defaultRole || 'tenant',
+                }];
+            }
             setPropAssignPropsMap(prev => ({ ...prev, [userId]: props }));
         } catch { /* silent */ }
     };
@@ -384,12 +391,50 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
     };
 
     const roleOptions = propertyId
-        ? ['property_admin', 'staff', 'mst', 'security', 'soft_service_manager', 'tenant']
-        : ['org_super_admin', 'property_admin', 'staff', 'mst', 'security', 'soft_service_manager', 'super_tenant', 'tenant'];
+        ? [
+            'property_admin',
+            'tenant',
+            'staff',
+            'mst',
+            'security',
+            'soft_service_manager',
+            'soft_service_supervisor',
+            'vendor',
+            'procurement',
+            'finance'
+        ]
+        : [
+            'org_super_admin',
+            'property_admin',
+            'tenant',
+            'super_tenant',
+            'staff',
+            'mst',
+            'security',
+            'soft_service_manager',
+            'soft_service_supervisor',
+            'procurement',
+            'finance',
+            'sales',
+            'bd_rep',
+            'vendor'
+        ];
 
     const formatRole = (role: string) => {
-        if (role === 'tenant') return 'Client';
-        if (role === 'super_tenant') return 'Super Client';
+        if (!role) return 'Member';
+        if (role === 'tenant') return 'Client / Tenant';
+        if (role === 'super_tenant') return 'Super Client (Multi-Property)';
+        if (role === 'org_super_admin') return 'Org Super Admin';
+        if (role === 'property_admin') return 'Property Admin';
+        if (role === 'mst') return 'MST (Technician)';
+        if (role === 'soft_service_manager') return 'Soft Service Manager';
+        if (role === 'soft_service_supervisor') return 'Soft Service Supervisor';
+        if (role === 'procurement' || role === 'procurement_user') return 'Procurement';
+        if (role === 'finance' || role === 'accounts') return 'Finance / Accounts';
+        if (role === 'sales' || role === 'sales_executive') return 'Sales / CRM';
+        if (role === 'bd_rep' || role === 'bd_admin' || role === 'bd_super_admin') return 'Business Development';
+        if (role === 'security') return 'Security / Front Desk';
+        if (role === 'vendor') return 'Vendor / Contractor';
         return role.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
     };
 
@@ -584,7 +629,7 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                                                         </>
                                                     )}
                                                 </div>
-                                            ) : orgId && user.propertyRole && !['tenant', 'super_tenant'].includes(user.propertyRole) ? (
+                                            ) : orgId && (user.propertyRole || user.propertyName) && user.orgRole !== 'super_tenant' ? (
                                                 <div className="flex flex-wrap items-center gap-1.5">
                                                     <button
                                                         onClick={() => {
@@ -592,7 +637,7 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                                                                 setExpandedPropAdminUserId(null);
                                                             } else {
                                                                 setExpandedPropAdminUserId(user.id);
-                                                                fetchUserPropertyAssignments(user.id);
+                                                                fetchUserPropertyAssignments(user.id, user.propertyId, user.propertyName, user.propertyRole);
                                                             }
                                                         }}
                                                         className="inline-flex items-center gap-1 px-2.5 py-1 bg-primary/10 text-primary text-[10px] font-black uppercase tracking-wider rounded-lg border border-primary/20 hover:bg-primary/25 transition-smooth"
@@ -602,7 +647,9 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                                                             ? 'Hide Properties'
                                                             : propAssignPropsMap[user.id]
                                                                 ? `Properties (${propAssignPropsMap[user.id].length})`
-                                                                : 'Properties'}
+                                                                : user.propertyName
+                                                                    ? user.propertyName
+                                                                    : 'Properties'}
                                                     </button>
                                                     {expandedPropAdminUserId === user.id && (
                                                         <>
@@ -622,7 +669,11 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                                                                 <span className="text-[10px] text-text-tertiary font-medium">No active properties</span>
                                                             )}
                                                             <button
-                                                                onClick={() => { setPropAssignUser(user); setPropAssignSelectedPropId(''); setPropAssignRole('property_admin'); }}
+                                                                onClick={() => {
+                                                                    setPropAssignUser(user);
+                                                                    setPropAssignSelectedPropId('');
+                                                                    setPropAssignRole(user.propertyRole === 'tenant' ? 'tenant' : (user.propertyRole || 'property_admin'));
+                                                                }}
                                                                 className="inline-flex items-center gap-1 px-2 py-1 bg-surface-elevated text-text-secondary text-[10px] font-black uppercase tracking-wider rounded-lg border border-border hover:bg-muted transition-smooth"
                                                             >
                                                                 <Plus className="w-3 h-3" />
@@ -887,6 +938,7 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                                             className="w-full px-4 py-3 bg-surface-elevated border border-border rounded-xl text-sm font-medium text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
                                         >
                                             <option value="property_admin">Property Admin</option>
+                                            <option value="tenant">Client / Tenant</option>
                                             <option value="staff">Staff</option>
                                             <option value="mst">MST</option>
                                             <option value="security">Security</option>

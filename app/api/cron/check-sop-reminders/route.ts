@@ -195,10 +195,10 @@ export async function GET(request: NextRequest) {
             const hasSentPreStart = group.some(t => enqueuedEntitySet.has(slotPreStartKey(t.id)));
             const hasSentStarted = group.some(t => enqueuedEntitySet.has(slotStartedKey(t.id)));
 
-            // ─────────────────────────────────────────────────────────────────
-            // STAGE 1: PRE-START REMINDER
-            // ─────────────────────────────────────────────────────────────────
-            const isInPreStartWindow = currentMins >= preStartMins && currentMins < startMins;
+            // Handle cross-midnight lead time (e.g. shift starts at 00:05 AM with 10 min lead time)
+            const isInPreStartWindow = preStartMins < 0
+                ? (currentMins >= (preStartMins + 1440) || currentMins < startMins)
+                : (currentMins >= preStartMins && currentMins < startMins);
 
             if (isInPreStartWindow && !hasSentPreStart) {
                 const formattedStartTime = format12h(rawStartTime);
@@ -240,7 +240,9 @@ export async function GET(request: NextRequest) {
                     });
 
                     try {
-                        const isVoiceEnabled = activeReminderRule?.channels?.voice === true;
+                        const isVoiceEnabled = (activeReminderRule?.channels?.voice !== undefined)
+                            ? (activeReminderRule.channels.voice === true)
+                            : (reminderRule?.channels?.voice === true);
                         if (isVoiceEnabled && reminderRecipients.length > 0) {
                             for (const u of reminderRecipients) {
                                 if (u.phone) {
@@ -250,9 +252,9 @@ export async function GET(request: NextRequest) {
                                         recipientPhone: u.phone,
                                         recipientUserId: u.id,
                                         eventType: 'CHECKLIST_SLOT_REMINDER',
-                                        customTemplate: activeReminderRule?.voice_template,
-                                        voiceId: activeReminderRule?.voice_id,
-                                        speechSpeed: activeReminderRule?.speech_speed,
+                                        customTemplate: activeReminderRule?.voice_template || reminderRule?.voice_template,
+                                        voiceId: activeReminderRule?.voice_id || reminderRule?.voice_id,
+                                        speechSpeed: activeReminderRule?.speech_speed || reminderRule?.speech_speed,
                                         variables: { userName: u.name || 'Staff', checklistTitle: groupTitle, propertyName, shiftTime: formattedStartTime }
                                     });
                                 }
@@ -313,7 +315,9 @@ export async function GET(request: NextRequest) {
                     try {
                         const startedRule = orgMatrix?.checklists?.checklist_started;
                         const activeStartedRule = startedRule?.property_overrides?.[propId] || startedRule;
-                        const isVoiceEnabled = activeStartedRule?.channels?.voice === true;
+                        const isVoiceEnabled = (activeStartedRule?.channels?.voice !== undefined)
+                            ? (activeStartedRule.channels.voice === true)
+                            : (startedRule?.channels?.voice === true);
                         if (isVoiceEnabled && startedRecipients.length > 0) {
                             for (const u of startedRecipients) {
                                 if (u.phone) {
@@ -323,9 +327,9 @@ export async function GET(request: NextRequest) {
                                         recipientPhone: u.phone,
                                         recipientUserId: u.id,
                                         eventType: 'CHECKLIST_STARTED',
-                                        customTemplate: activeStartedRule?.voice_template,
-                                        voiceId: activeStartedRule?.voice_id,
-                                        speechSpeed: activeStartedRule?.speech_speed,
+                                        customTemplate: activeStartedRule?.voice_template || startedRule?.voice_template,
+                                        voiceId: activeStartedRule?.voice_id || startedRule?.voice_id,
+                                        speechSpeed: activeStartedRule?.speech_speed || startedRule?.speech_speed,
                                         variables: { userName: u.name || 'Staff', checklistTitle: groupTitle, propertyName, shiftTime: formattedStartTime }
                                     });
                                 }
@@ -391,7 +395,9 @@ export async function GET(request: NextRequest) {
                             try {
                                 const overdueRule = orgMatrix?.checklists?.checklist_overdue_alert;
                                 const activeOverdueRule = overdueRule?.property_overrides?.[propId] || overdueRule;
-                                const isVoiceEnabled = activeOverdueRule?.channels?.voice === true;
+                                const isVoiceEnabled = (activeOverdueRule?.channels?.voice !== undefined)
+                                    ? (activeOverdueRule.channels.voice === true)
+                                    : (overdueRule?.channels?.voice === true);
                                 if (isVoiceEnabled && overdueRecipients.length > 0) {
                                     for (const u of overdueRecipients) {
                                         if (u.phone) {
@@ -401,9 +407,9 @@ export async function GET(request: NextRequest) {
                                                 recipientPhone: u.phone,
                                                 recipientUserId: u.id,
                                                 eventType: 'CHECKLIST_OVERDUE',
-                                                customTemplate: activeOverdueRule?.voice_template,
-                                                voiceId: activeOverdueRule?.voice_id,
-                                                speechSpeed: activeOverdueRule?.speech_speed,
+                                                customTemplate: activeOverdueRule?.voice_template || overdueRule?.voice_template,
+                                                voiceId: activeOverdueRule?.voice_id || overdueRule?.voice_id,
+                                                speechSpeed: activeOverdueRule?.speech_speed || overdueRule?.speech_speed,
                                                 variables: { userName: u.name || 'Staff', checklistTitle: overdueTitle, propertyName, shiftTime: slotWindowLabel }
                                             });
                                         }
