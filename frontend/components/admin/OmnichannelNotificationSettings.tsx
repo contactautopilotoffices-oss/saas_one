@@ -8,9 +8,11 @@ import {
     UserCheck, X, Building, Search, UserPlus, ChevronDown,
     User, Ticket, Wrench, Clock, FileText, Truck, Layers,
     ClipboardCheck, BarChart3, ShoppingBag, Eye, Copy,
-    Phone, PhoneCall, Volume2, Sparkles, Play
+    Phone, PhoneCall, Volume2, Sparkles, Play, ShieldAlert, Activity
 } from 'lucide-react';
 import { createClient } from '@/frontend/utils/supabase/client';
+import VoiceAnomalyDashboard from '@/frontend/components/admin/VoiceAnomalyDashboard';
+import WhatsAppAnomalyDashboard from '@/frontend/components/admin/WhatsAppAnomalyDashboard';
 
 export interface ChannelConfig {
     email: boolean;
@@ -537,6 +539,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
     const [selectedPropertyScope, setSelectedPropertyScope] = useState<string>('global');
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
     const [activeModuleTab, setActiveModuleTab] = useState<string>('tickets');
+    const [mainTab, setMainTab] = useState<'rules' | 'voice_analytics' | 'whatsapp_analytics'>('rules');
 
     // Broadcast Welcome Modal State
     const [showBroadcastModal, setShowBroadcastModal] = useState(false);
@@ -1173,33 +1176,91 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                 </div>
             </div>
 
-            {/* Scope Selection Bar */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 bg-slate-50 rounded-2xl border border-slate-200">
-                <div className="flex items-center gap-3">
-                    <div className="p-2 bg-indigo-100 text-indigo-600 rounded-xl">
-                        <Building className="w-5 h-5" />
-                    </div>
-                    <div>
-                        <h4 className="font-bold text-slate-900 text-sm">Configuration Scope</h4>
-                        <p className="text-xs text-slate-500">Configure global organization defaults or building-specific override rules.</p>
-                    </div>
-                </div>
-                <div className="flex items-center gap-2">
-                    <span className="text-xs font-semibold text-slate-500">Scope:</span>
-                    <select
-                        value={selectedPropertyScope}
-                        onChange={(e) => setSelectedPropertyScope(e.target.value)}
-                        className="bg-white border border-slate-300 font-bold text-xs text-slate-900 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-primary/20 shadow-xs"
-                    >
-                        <option value="global">🌐 Global (All Properties Default)</option>
-                        {propertiesList.map(p => (
-                            <option key={p.id} value={p.id}>
-                                🏢 {p.name} (Property Override)
-                            </option>
-                        ))}
-                    </select>
-                </div>
+            {/* Navigation Tabs Bar */}
+            <div className="flex items-center gap-2 p-1.5 bg-slate-100/90 rounded-2xl border border-slate-200/90 overflow-x-auto">
+                <button
+                    type="button"
+                    onClick={() => setMainTab('rules')}
+                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
+                        mainTab === 'rules'
+                            ? 'bg-white text-slate-900 shadow-xs ring-1 ring-slate-200'
+                            : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+                    }`}
+                >
+                    <Layers className="w-4 h-4 text-primary" />
+                    <span>Notification Rules & Channels</span>
+                </button>
+                <button
+                    type="button"
+                    onClick={() => setMainTab('voice_analytics')}
+                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
+                        mainTab === 'voice_analytics'
+                            ? 'bg-white text-purple-900 shadow-xs ring-1 ring-purple-200'
+                            : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+                    }`}
+                >
+                    <PhoneCall className="w-4 h-4 text-purple-600" />
+                    <span>🎙️ Voice Telephony & Anomaly Center</span>
+                </button>
+                <button
+                    type="button"
+                    onClick={() => setMainTab('whatsapp_analytics')}
+                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
+                        mainTab === 'whatsapp_analytics'
+                            ? 'bg-white text-emerald-900 shadow-xs ring-1 ring-emerald-200'
+                            : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+                    }`}
+                >
+                    <MessageSquare className="w-4 h-4 text-emerald-600" />
+                    <span>💬 WhatsApp Gateway & Delivery Health</span>
+                </button>
             </div>
+
+            {/* TAB VIEW: Voice Telephony Analytics */}
+            {mainTab === 'voice_analytics' && (
+                <VoiceAnomalyDashboard
+                    organizationId={organizationId}
+                    onTestCallClick={() => setShowTestCallModal(true)}
+                />
+            )}
+
+            {/* TAB VIEW: WhatsApp Delivery & Health Analytics */}
+            {mainTab === 'whatsapp_analytics' && (
+                <WhatsAppAnomalyDashboard
+                    organizationId={organizationId}
+                />
+            )}
+
+            {/* TAB VIEW: Rules & Notification Matrix */}
+            {mainTab === 'rules' && (
+                <>
+                    {/* Scope Selection Bar */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 bg-slate-50 rounded-2xl border border-slate-200">
+                        <div className="flex items-center gap-3">
+                            <div className="p-2 bg-indigo-100 text-indigo-600 rounded-xl">
+                                <Building className="w-5 h-5" />
+                            </div>
+                            <div>
+                                <h4 className="font-bold text-slate-900 text-sm">Configuration Scope</h4>
+                                <p className="text-xs text-slate-500">Configure global organization defaults or building-specific override rules.</p>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs font-semibold text-slate-500">Scope:</span>
+                            <select
+                                value={selectedPropertyScope}
+                                onChange={(e) => setSelectedPropertyScope(e.target.value)}
+                                className="bg-white border border-slate-300 font-bold text-xs text-slate-900 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-primary/20 shadow-xs"
+                            >
+                                <option value="global">🌐 Global (All Properties Default)</option>
+                                {propertiesList.map(p => (
+                                    <option key={p.id} value={p.id}>
+                                        🏢 {p.name} (Property Override)
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    </div>
 
             {/* Modules Accordion Cards */}
             <div className="space-y-6">
@@ -1723,6 +1784,8 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                     Save Notification Matrix
                 </button>
             </div>
+                </>
+            )}
 
             {/* Toast feedback */}
             <AnimatePresence>

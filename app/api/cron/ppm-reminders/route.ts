@@ -207,12 +207,15 @@ export async function GET(request: NextRequest) {
                         const { data: propData } = await supabaseAdmin.from('properties').select('name').eq('id', propId).maybeSingle();
                         const propertyName = propData?.name || 'Site Property';
 
+                        const seenVoicePhones = new Set<string>();
                         for (const u of resolvedUsers) {
-                            if (u.phone) {
+                            const cleanPhone = u.phone ? VoiceCallingService.formatPhone(u.phone) : '';
+                            if (cleanPhone && cleanPhone.length >= 10 && !seenVoicePhones.has(cleanPhone)) {
+                                seenVoicePhones.add(cleanPhone);
                                 await VoiceCallingService.triggerCall({
                                     organizationId: orgId,
                                     propertyId: propId,
-                                    recipientPhone: u.phone,
+                                    recipientPhone: cleanPhone,
                                     recipientUserId: u.id,
                                     eventType: 'REMINDER_PPM',
                                     customTemplate: activePpmRule?.voice_template || ppmRule?.voice_template,

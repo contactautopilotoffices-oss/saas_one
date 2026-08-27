@@ -213,7 +213,12 @@ export const WhatsAppEventProcessor = {
         const { enabled, users, config } = await WhatsAppRecipientResolver.resolveRecipients({
             organizationId,
             propertyId,
-            featureKey
+            featureKey,
+            contextualUserIds: contextualUserIds ? [
+                contextualUserIds.assigneeId,
+                contextualUserIds.requesterId,
+                contextualUserIds.approverId
+            ].filter(Boolean) as string[] : []
         });
 
         if (!enabled) {
@@ -282,9 +287,9 @@ export const WhatsAppEventProcessor = {
             crm_lead_assigned: { campaign_name: 'crm_lead_assigned_v1', params: ['user_name', 'company_name', 'contact_person', 'phone', 'property_interest', 'next_followup'] },
             ticket_created: { campaign_name: 'ticket_created_v3', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'] },
             ticket_created_media: { campaign_name: 'ticket_created_v3_media', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'] },
-            ticket_assigned: { campaign_name: 'ticket_assigned_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'ticket_id'] },
-            ticket_completed: { campaign_name: 'ticket_completed_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'resolved_by', 'ticket_id'] },
-            ticket_completed_media: { campaign_name: 'ticket_completed_v1_media', params: ['user_name', 'ticket_number', 'title', 'property', 'resolved_by', 'ticket_id'] },
+            ticket_assigned: { campaign_name: 'ticket_assigned_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone'] },
+            ticket_completed: { campaign_name: 'ticket_completed_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'resolved_by'] },
+            ticket_completed_media: { campaign_name: 'ticket_completed_v1_media', params: ['user_name', 'ticket_number', 'title', 'property', 'resolved_by'] },
             daily_property_report: { campaign_name: 'ai_property_report_v1', params: ['user_name', 'org_name', 'date', 'critical_count', 'open_count', 'resolved_count', 'electricity_kwh', 'dg_liters', 'ppm_completed', 'ppm_missed', 'sop_compliance', 'property_summary', 'ai_insights'] },
             ai_property_report: { campaign_name: 'ai_property_report_v1', params: ['user_name', 'org_name', 'date', 'critical_count', 'open_count', 'resolved_count', 'electricity_kwh', 'dg_liters', 'ppm_completed', 'ppm_missed', 'sop_compliance', 'property_summary', 'ai_insights'] },
             material_request_created: { campaign_name: 'material_request_created_v3', params: ['user_name', 'ticket_number', 'property', 'requested_by', 'requester_phone', 'items_summary', 'ticket_id'] },
@@ -298,11 +303,11 @@ export const WhatsAppEventProcessor = {
             procurement_vendor_aligned: { campaign_name: 'procurement_vendor_aligned_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'vendor_details', 'arranged_by'] },
             reminder_ppm: { campaign_name: 'reminder_ppm_v2', params: ['user_name', 'system_name', 'property', 'due_date', 'vendor_name', 'location'] },
             ppm_reminder: { campaign_name: 'reminder_ppm_v2', params: ['user_name', 'system_name', 'property', 'due_date', 'vendor_name', 'location'] },
-            reminder_ticket_sla: { campaign_name: 'reminder_ticket_sla_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'sla_time', 'ticket_id'] },
+            reminder_ticket_sla: { campaign_name: 'reminder_ticket_sla_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'sla_time'] },
             reminder_lead_followup: { campaign_name: 'reminder_lead_followup_v1', params: ['user_name', 'company_name', 'contact_person', 'phone', 'followup_time', 'lead_id'] },
             checklist_slot_reminder: { campaign_name: 'checklist_slot_reminder_v2', params: ['user_name', 'checklist_name', 'property', 'due_time'] },
-            checklist_started: { campaign_name: 'checklist_started', params: ['user_name', 'checklist_name', 'property', 'start_time'] },
-            checklist_completed: { campaign_name: 'checklist_completed', params: ['user_name', 'checklist_name', 'property', 'completed_by', 'time'] },
+            checklist_started: { campaign_name: 'checklist_started_v1', params: ['user_name', 'checklist_name', 'property', 'start_time'] },
+            checklist_completed: { campaign_name: 'checklist_completed_v1', params: ['user_name', 'checklist_name', 'property', 'completed_by', 'time'] },
             checklist_overdue_alert: { campaign_name: 'checklist_overdue_alert_v2', params: ['checklist_name', 'property', 'slot_time'] },
             checklist_rated: { campaign_name: 'checklist_rated', params: ['user_name', 'checklist_name', 'property', 'rating', 'rater_name'] }
         };
@@ -339,24 +344,24 @@ export const WhatsAppEventProcessor = {
             'meeting_room_cancelled_v2': ['user_name', 'room_name', 'property', 'date', 'start_time', 'end_time', 'booker'],
             'meeting_room_cancelled': ['user_name', 'room_name', 'property', 'date', 'start_time', 'end_time', 'booker'],
 
-            'crm_lead_created_v1': ['user_name', 'company_name', 'contact_person', 'phone', 'source', 'property_interest', 'lead_id'],
-            'lead_created': ['user_name', 'company_name', 'contact_person', 'phone', 'source', 'property_interest', 'lead_id'],
+            'crm_lead_created_v1': ['user_name', 'company_name', 'contact_person', 'phone', 'source', 'property_interest'],
+            'lead_created': ['user_name', 'company_name', 'contact_person', 'phone', 'source', 'property_interest'],
 
-            'crm_lead_assigned_v1': ['user_name', 'company_name', 'contact_person', 'phone', 'property_interest', 'next_followup', 'lead_id'],
-            'lead_assigned': ['user_name', 'company_name', 'contact_person', 'phone', 'property_interest', 'next_followup', 'lead_id'],
+            'crm_lead_assigned_v1': ['user_name', 'company_name', 'contact_person', 'phone', 'property_interest', 'next_followup'],
+            'lead_assigned': ['user_name', 'company_name', 'contact_person', 'phone', 'property_interest', 'next_followup'],
 
-            'ticket_created_v3': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'],
-            'ticket_created_v3_media': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'],
-            'ticket_created': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'],
-            'ticket_created_media': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'],
+            'ticket_created_v3': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'],
+            'ticket_created_v3_media': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'],
+            'ticket_created': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'],
+            'ticket_created_media': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'],
 
-            'ticket_assigned_v1': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'ticket_id'],
-            'ticket_assigned': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'ticket_id'],
+            'ticket_assigned_v1': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone'],
+            'ticket_assigned': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone'],
 
-            'ticket_completed_v1': ['user_name', 'ticket_number', 'title', 'property', 'resolved_by', 'ticket_id'],
-            'ticket_completed_v1_media': ['user_name', 'ticket_number', 'title', 'property', 'resolved_by', 'ticket_id'],
-            'ticket_completed': ['user_name', 'ticket_number', 'title', 'property', 'resolved_by', 'ticket_id'],
-            'ticket_completed_media': ['user_name', 'ticket_number', 'title', 'property', 'resolved_by', 'ticket_id'],
+            'ticket_completed_v1': ['user_name', 'ticket_number', 'title', 'property', 'resolved_by'],
+            'ticket_completed_v1_media': ['user_name', 'ticket_number', 'title', 'property', 'resolved_by'],
+            'ticket_completed': ['user_name', 'ticket_number', 'title', 'property', 'resolved_by'],
+            'ticket_completed_media': ['user_name', 'ticket_number', 'title', 'property', 'resolved_by'],
 
             'ai_property_report_v1': ['user_name', 'org_name', 'date', 'critical_count', 'open_count', 'resolved_count', 'electricity_kwh', 'dg_liters', 'ppm_completed', 'ppm_missed', 'sop_compliance', 'property_summary', 'ai_insights'],
             'daily_property_report': ['user_name', 'org_name', 'date', 'critical_count', 'open_count', 'resolved_count', 'electricity_kwh', 'dg_liters', 'ppm_completed', 'ppm_missed', 'sop_compliance', 'property_summary', 'ai_insights'],

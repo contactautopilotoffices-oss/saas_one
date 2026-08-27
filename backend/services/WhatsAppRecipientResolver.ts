@@ -132,9 +132,15 @@ export const WhatsAppRecipientResolver = {
                 propOverride = matrixRule.property_overrides[propertyId];
             }
 
-            const isWhatsAppEnabled = (propOverride && propOverride.channels && propOverride.channels.whatsapp !== undefined)
-                ? (propOverride.channels.whatsapp === true)
-                : (matrixRule.channels?.whatsapp === true);
+            const isMasterEnabled = (propOverride && propOverride.enabled !== undefined)
+                ? propOverride.enabled !== false
+                : (matrixRule.enabled !== false);
+
+            const isWhatsAppEnabled = isMasterEnabled && (
+                (propOverride && propOverride.channels && propOverride.channels.whatsapp !== undefined)
+                    ? (propOverride.channels.whatsapp === true)
+                    : (matrixRule.channels?.whatsapp === true)
+            );
 
             featureConfig = {
                 enabled: isWhatsAppEnabled,
@@ -168,6 +174,11 @@ export const WhatsAppRecipientResolver = {
         }
 
         const isChannelEnabled = featureConfig.enabled !== false;
+
+        // If WhatsApp is disabled for this feature/event, return early immediately
+        if (!isChannelEnabled) {
+            return { enabled: false, users: [], config: featureConfig };
+        }
 
         const targetRoles = featureConfig.roles || [];
         const targetUserIds = featureConfig.user_ids || [];

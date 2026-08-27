@@ -10,6 +10,8 @@ export interface TriggerVoiceCallOptions {
     customTemplate?: string;
     voiceId?: string;
     speechSpeed?: string | number;
+    bypassCooldown?: boolean;
+    cooldownMinutes?: number;
     variables: {
         userName?: string;
         checklistTitle?: string;
@@ -79,7 +81,8 @@ export class VoiceCallingService {
      * Formats phone numbers to standard E.164 (e.g. "+919876543210").
      */
     static formatPhone(phone: string): string {
-        let clean = phone.replace(/[^0-9+]/g, '');
+        let clean = (phone || '').replace(/[^0-9+]/g, '');
+        if (!clean) return '';
         if (!clean.startsWith('+')) {
             if (clean.length === 10) {
                 clean = `+91${clean}`;
@@ -113,13 +116,42 @@ export class VoiceCallingService {
 
     /**
      * Triggers an outbound voice call directly via Plivo (or via Bolna AI if configured).
+     * Includes an automatic 15-minute cooldown guard to prevent race condition loops and spamming.
      */
-    static async triggerCall(options: TriggerVoiceCallOptions): Promise<{ success: boolean; callId?: string; error?: string }> {
-        const { organizationId, propertyId, recipientPhone, recipientUserId, eventType, variables } = options;
+    static async triggerCall(options: TriggerVoiceCallOptions): Promise<{ success: boolean; callId?: string; throttled?: boolean; error?: string }> {
+        const { organizationId, propertyId, recipientPhone, recipientUserId, eventType, variables, bypassCooldown } = options;
 
         try {
-            const config = await this.getConfig(organizationId);
             const formattedPhone = this.formatPhone(recipientPhone);
+            if (!formattedPhone || formattedPhone.length < 10) {
+                console.warn(`[VoiceCallingService] Invalid phone number "${recipientPhone}", skipping call.`);
+                return { success: false, error: 'Invalid phone number format' };
+            }
+
+            // ─────────────────────────────────────────────────────────────────
+            // 15-MINUTE RECIPIENT COOLDOWN GUARD (DEDUPLICATION)
+            // Blocks accidental rapid-fire loops and cron race conditions
+            // ─────────────────────────────────────────────────────────────────
+            const cooldownMins = options.cooldownMinutes ?? 15;
+            if (!bypassCooldown && eventType !== 'TEST_CALL' && cooldownMins > 0) {
+                const cutoffTime = new Date(Date.now() - cooldownMins * 60 * 1000).toISOString();
+                const { data: recentCalls } = await supabaseAdmin
+                    .from('omnichannel_call_logs')
+                    .select('id, created_at, call_status')
+                    .eq('recipient_phone', formattedPhone)
+                    .eq('event_type', eventType)
+                    .in('call_status', ['initiated', 'in_progress', 'completed'])
+                    .gte('created_at', cutoffTime)
+                    .order('created_at', { ascending: false })
+                    .limit(1);
+
+                if (recentCalls && recentCalls.length > 0) {
+                    console.log(`[VoiceCallingService] Throttled duplicate call to ${formattedPhone} for ${eventType}. Prior call placed at ${recentCalls[0].created_at} (<${cooldownMins}m ago).`);
+                    return { success: true, callId: recentCalls[0].id, throttled: true };
+                }
+            }
+
+            const config = await this.getConfig(organizationId);
             const rawTemplate = options.customTemplate || DEFAULT_VOICE_TEMPLATES[eventType.toLowerCase()] || DEFAULT_VOICE_TEMPLATES.checklist_started;
             const spokenScript = this.renderTemplate(rawTemplate, variables);
 
