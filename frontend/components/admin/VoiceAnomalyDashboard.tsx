@@ -224,19 +224,21 @@ export default function VoiceAnomalyDashboard({ organizationId, onTestCallClick 
                         </span>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 pt-1">
                         {anomalies.map(anom => (
-                            <div key={anom.id} className="p-3.5 bg-white rounded-2xl border border-amber-200 shadow-2xs space-y-1.5 text-xs">
-                                <div className="flex items-center justify-between">
-                                    <span className="font-bold text-slate-900">{anom.title}</span>
-                                    <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md ${
-                                        anom.severity === 'HIGH' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'
-                                    }`}>
-                                        {anom.severity} PRIORITY
-                                    </span>
+                            <div key={anom.id} className="p-4 bg-white rounded-2xl border border-amber-200 shadow-2xs space-y-2 text-xs flex flex-col justify-between">
+                                <div className="space-y-1.5">
+                                    <div className="flex items-start justify-between gap-2">
+                                        <span className="font-bold text-slate-900 break-all">{anom.title}</span>
+                                        <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md shrink-0 ${
+                                            anom.severity === 'HIGH' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'
+                                        }`}>
+                                            {anom.severity} PRIORITY
+                                        </span>
+                                    </div>
+                                    <p className="text-slate-600 leading-relaxed">{anom.description}</p>
                                 </div>
-                                <p className="text-slate-600 leading-relaxed">{anom.description}</p>
-                                <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1 border-t border-slate-100">
+                                <div className="flex items-center justify-between text-[11px] text-slate-400 pt-2 border-t border-slate-100">
                                     <span className="font-mono font-bold text-slate-700">{anom.recipient_phone}</span>
                                     <span>{new Date(anom.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}</span>
                                 </div>

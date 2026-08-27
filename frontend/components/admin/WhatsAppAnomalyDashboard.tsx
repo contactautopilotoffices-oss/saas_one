@@ -149,9 +149,9 @@ export default function WhatsAppAnomalyDashboard({ organizationId }: WhatsAppAno
     const uniqueTemplates = Array.from(new Set(queueRows.map(r => r.template_name).filter(Boolean)));
 
     return (
-        <div className="w-full space-y-7 animate-in fade-in duration-300">
-            {/* Header */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-5 p-6 md:p-8 bg-gradient-to-r from-slate-900 via-emerald-950 to-slate-950 text-white rounded-3xl shadow-xl border border-emerald-800/40">
+        <div className="w-full space-y-6 animate-in fade-in duration-300">
+            {/* Header Banner - Full Width */}
+            <div className="w-full flex flex-col lg:flex-row lg:items-center justify-between gap-5 p-6 md:p-8 bg-gradient-to-r from-slate-900 via-emerald-950 to-slate-950 text-white rounded-3xl shadow-xl border border-emerald-800/40">
                 <div className="flex items-start md:items-center gap-4">
                     <div className="w-14 h-14 rounded-2xl bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center text-emerald-300 shadow-inner shrink-0 mt-1 md:mt-0">
                         <MessageSquare className="w-7 h-7" />
@@ -165,7 +165,7 @@ export default function WhatsAppAnomalyDashboard({ organizationId }: WhatsAppAno
                                 META CLOUD API LIVE 🟢
                             </span>
                         </div>
-                        <p className="text-xs md:text-sm text-emerald-200/90 mt-1 max-w-3xl leading-relaxed">
+                        <p className="text-xs md:text-sm text-emerald-200/90 mt-1.5 max-w-4xl leading-relaxed">
                             Live telemetry of all outgoing WhatsApp notifications, automated root-cause detection for failed templates, parameter validation diagnostics, and 1-click retry dispatch.
                         </p>
                     </div>
@@ -175,16 +175,16 @@ export default function WhatsAppAnomalyDashboard({ organizationId }: WhatsAppAno
                     type="button"
                     onClick={() => fetchAnalytics(false)}
                     disabled={isRefreshing}
-                    className="inline-flex items-center justify-center gap-2 px-5 py-3 bg-white/10 hover:bg-white/20 text-white text-xs font-bold rounded-2xl transition-all border border-white/15 cursor-pointer shadow-sm hover:shadow-md disabled:opacity-50 shrink-0"
+                    className="inline-flex items-center justify-center gap-2 px-5 py-3 bg-white/10 hover:bg-white/20 text-white text-xs font-bold rounded-2xl transition-all border border-white/15 cursor-pointer shadow-sm hover:shadow-md disabled:opacity-50 shrink-0 self-start lg:self-center"
                 >
                     <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
                     <span>Refresh Telemetry</span>
                 </button>
             </div>
 
-            {/* Metrics Overview Cards */}
-            <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-                <div className="p-5 bg-white rounded-3xl border border-slate-200/80 shadow-xs space-y-1">
+            {/* Metrics Overview Cards - Full Width Responsive Grid */}
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+                <div className="p-5 bg-white rounded-2xl md:rounded-3xl border border-slate-200/80 shadow-xs space-y-1">
                     <div className="flex items-center justify-between text-slate-400">
                         <span className="text-[11px] font-extrabold uppercase tracking-wider">Total Queued</span>
                         <MessageSquare className="w-5 h-5 text-emerald-600" />
@@ -193,7 +193,7 @@ export default function WhatsAppAnomalyDashboard({ organizationId }: WhatsAppAno
                     <span className="text-xs font-semibold text-slate-500">Recorded Meta Dispatches</span>
                 </div>
 
-                <div className="p-5 bg-white rounded-3xl border border-slate-200/80 shadow-xs space-y-1">
+                <div className="p-5 bg-white rounded-2xl md:rounded-3xl border border-slate-200/80 shadow-xs space-y-1">
                     <div className="flex items-center justify-between text-slate-400">
                         <span className="text-[11px] font-extrabold uppercase tracking-wider">Delivery Rate</span>
                         <CheckCircle2 className="w-5 h-5 text-emerald-600" />
@@ -202,7 +202,7 @@ export default function WhatsAppAnomalyDashboard({ organizationId }: WhatsAppAno
                     <span className="text-xs font-semibold text-emerald-600">{metrics.sentCount} Successfully Delivered</span>
                 </div>
 
-                <div className="p-5 bg-white rounded-3xl border border-slate-200/80 shadow-xs space-y-1">
+                <div className="p-5 bg-white rounded-2xl md:rounded-3xl border border-slate-200/80 shadow-xs space-y-1">
                     <div className="flex items-center justify-between text-slate-400">
                         <span className="text-[11px] font-extrabold uppercase tracking-wider">Delivery Failures</span>
                         <XCircle className="w-5 h-5 text-rose-600" />
@@ -211,7 +211,7 @@ export default function WhatsAppAnomalyDashboard({ organizationId }: WhatsAppAno
                     <span className="text-xs font-semibold text-rose-500">Provider / Meta Rejections</span>
                 </div>
 
-                <div className="p-5 bg-white rounded-3xl border border-slate-200/80 shadow-xs space-y-1">
+                <div className="p-5 bg-white rounded-2xl md:rounded-3xl border border-slate-200/80 shadow-xs space-y-1">
                     <div className="flex items-center justify-between text-slate-400">
                         <span className="text-[11px] font-extrabold uppercase tracking-wider">Queue Backlog</span>
                         <Clock className="w-5 h-5 text-amber-600" />
@@ -220,7 +220,7 @@ export default function WhatsAppAnomalyDashboard({ organizationId }: WhatsAppAno
                     <span className="text-xs font-semibold text-slate-500">Pending Instant Dispatch</span>
                 </div>
 
-                <div className="p-5 bg-white rounded-3xl border border-slate-200/80 shadow-xs col-span-2 lg:col-span-1 space-y-1">
+                <div className="p-5 bg-white rounded-2xl md:rounded-3xl border border-slate-200/80 shadow-xs col-span-2 md:col-span-1 space-y-1">
                     <div className="flex items-center justify-between text-slate-400">
                         <span className="text-[11px] font-extrabold uppercase tracking-wider">Flagged Issues</span>
                         <ShieldAlert className="w-5 h-5 text-amber-600" />
@@ -234,48 +234,50 @@ export default function WhatsAppAnomalyDashboard({ organizationId }: WhatsAppAno
                 </div>
             </div>
 
-            {/* Delivery Anomaly Alerts Banner */}
+            {/* Delivery Anomaly Alerts Banner - Spacious Full Width */}
             {anomalies.length > 0 && (
-                <div className="p-6 bg-amber-50/90 border border-amber-200 rounded-3xl space-y-4 shadow-xs">
+                <div className="w-full p-6 md:p-7 bg-amber-50/90 border border-amber-200 rounded-3xl space-y-4 shadow-xs">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                         <div className="flex items-center gap-2.5">
                             <AlertTriangle className="w-6 h-6 text-amber-700 shrink-0" />
                             <div>
-                                <h4 className="text-base font-black text-amber-950">Active Delivery Anomalies & Warnings ({anomalies.length})</h4>
+                                <h4 className="text-base md:text-lg font-black text-amber-950">Active Delivery Anomalies & Warnings ({anomalies.length})</h4>
                                 <p className="text-xs text-amber-800">Review flagged delivery issues, root causes, and suggested fixes below.</p>
                             </div>
                         </div>
-                        <span className="text-xs font-black text-amber-900 uppercase tracking-wide bg-amber-200/80 px-3 py-1 rounded-full w-fit">
+                        <span className="text-xs font-black text-amber-900 uppercase tracking-wide bg-amber-200/80 px-3.5 py-1 rounded-full w-fit">
                             Attention Needed
                         </span>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 pt-1">
                         {anomalies.map(anom => (
-                            <div key={anom.id} className="p-4 bg-white rounded-2xl border border-amber-200/90 shadow-2xs space-y-3">
-                                <div className="flex items-start justify-between gap-2">
-                                    <span className="font-extrabold text-slate-900 text-xs md:text-sm">{anom.title}</span>
-                                    <span className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-md shrink-0 ${
-                                        anom.severity === 'HIGH' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'
-                                    }`}>
-                                        {anom.severity}
-                                    </span>
-                                </div>
-                                <p className="text-xs text-slate-600 leading-relaxed">{anom.description}</p>
-                                
-                                {anom.suggested_fix && (
-                                    <div className="p-2.5 bg-blue-50/80 border border-blue-100 rounded-xl flex items-start gap-2 text-xs text-blue-900">
-                                        <Wrench className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
-                                        <div>
-                                            <span className="font-bold">Recommended Fix: </span>
-                                            <span>{anom.suggested_fix}</span>
-                                        </div>
+                            <div key={anom.id} className="p-4 md:p-5 bg-white rounded-2xl border border-amber-200/90 shadow-2xs space-y-3 flex flex-col justify-between">
+                                <div className="space-y-2.5">
+                                    <div className="flex items-start justify-between gap-2">
+                                        <span className="font-extrabold text-slate-900 text-xs md:text-sm break-all">{anom.title}</span>
+                                        <span className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-md shrink-0 ${
+                                            anom.severity === 'HIGH' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'
+                                        }`}>
+                                            {anom.severity}
+                                        </span>
                                     </div>
-                                )}
+                                    <p className="text-xs text-slate-600 leading-relaxed">{anom.description}</p>
+                                    
+                                    {anom.suggested_fix && (
+                                        <div className="p-2.5 bg-blue-50/80 border border-blue-100 rounded-xl flex items-start gap-2 text-xs text-blue-900">
+                                            <Wrench className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                                            <div>
+                                                <span className="font-bold">Recommended Fix: </span>
+                                                <span>{anom.suggested_fix}</span>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
 
-                                <div className="flex items-center justify-between text-xs text-slate-400 pt-2 border-t border-slate-100">
+                                <div className="flex items-center justify-between text-xs text-slate-400 pt-2.5 border-t border-slate-100">
                                     <span className="font-mono font-bold text-slate-800">{anom.phone}</span>
-                                    <span className="font-mono font-semibold text-emerald-700">{anom.template_name || anom.event_type}</span>
+                                    <span className="font-mono font-semibold text-emerald-700 break-all">{anom.template_name || anom.event_type}</span>
                                 </div>
                             </div>
                         ))}
@@ -283,8 +285,8 @@ export default function WhatsAppAnomalyDashboard({ organizationId }: WhatsAppAno
                 </div>
             )}
 
-            {/* Meta Template Health Matrix with Root Cause Diagnostics */}
-            <div className="p-6 md:p-8 bg-white border border-slate-200/90 rounded-3xl shadow-xs space-y-6">
+            {/* Meta Template Health Matrix with Wide Responsive Cards */}
+            <div className="w-full p-6 md:p-8 bg-white border border-slate-200/90 rounded-3xl shadow-xs space-y-6">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <div>
                         <h4 className="text-lg md:text-xl font-black text-slate-900 flex items-center gap-2.5">
@@ -300,7 +302,8 @@ export default function WhatsAppAnomalyDashboard({ organizationId }: WhatsAppAno
                     </span>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+                {/* Wide Grid filling all screen space */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
                     {templateHealth.map(tpl => {
                         const isHealthy = tpl.status === 'healthy';
                         const isDegraded = tpl.status === 'degraded';
@@ -313,9 +316,9 @@ export default function WhatsAppAnomalyDashboard({ organizationId }: WhatsAppAno
                                     ? 'bg-rose-50/20 border-rose-200/80 hover:border-rose-300'
                                     : 'bg-slate-50/40 border-slate-200 hover:border-slate-300'
                             }`}>
-                                <div className="space-y-2">
+                                <div className="space-y-3">
                                     <div className="flex items-start justify-between gap-2">
-                                        <span className="font-mono font-black text-slate-900 text-xs md:text-sm truncate max-w-[220px]" title={tpl.templateName}>
+                                        <span className="font-mono font-black text-slate-900 text-xs md:text-sm break-all leading-tight">
                                             {tpl.templateName}
                                         </span>
                                         <span className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-lg shrink-0 ${
@@ -332,16 +335,18 @@ export default function WhatsAppAnomalyDashboard({ organizationId }: WhatsAppAno
                                     </div>
 
                                     {/* Stat boxes */}
-                                    <div className="grid grid-cols-3 gap-2 py-2 text-center bg-white p-3 rounded-xl border border-slate-200/70 shadow-3xs">
-                                        <div>
+                                    <div className="flex items-center justify-between gap-2 py-2 px-3 bg-white rounded-xl border border-slate-200/80 shadow-3xs">
+                                        <div className="text-center flex-1">
                                             <span className="text-[10px] text-slate-400 font-extrabold uppercase block">TOTAL</span>
                                             <span className="text-sm font-black text-slate-900">{tpl.total}</span>
                                         </div>
-                                        <div>
+                                        <div className="w-px h-6 bg-slate-100" />
+                                        <div className="text-center flex-1">
                                             <span className="text-[10px] text-emerald-600 font-extrabold uppercase block">SENT</span>
                                             <span className="text-sm font-black text-emerald-700">{tpl.sent}</span>
                                         </div>
-                                        <div>
+                                        <div className="w-px h-6 bg-slate-100" />
+                                        <div className="text-center flex-1">
                                             <span className="text-[10px] text-rose-600 font-extrabold uppercase block">FAILED</span>
                                             <span className="text-sm font-black text-rose-600">{tpl.failed}</span>
                                         </div>
@@ -349,18 +354,19 @@ export default function WhatsAppAnomalyDashboard({ organizationId }: WhatsAppAno
 
                                     {/* Root cause diagnostics banner */}
                                     {hasFailures && (
-                                        <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl space-y-1 text-xs">
-                                            <div className="flex items-center gap-1.5 text-rose-900 font-bold">
+                                        <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl space-y-1.5 text-xs">
+                                            <div className="flex items-center gap-1.5 text-rose-900 font-bold text-[11px]">
                                                 <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
-                                                <span>Exact Root Cause Diagnosis:</span>
+                                                <span>Root Cause Diagnosis:</span>
                                             </div>
-                                            <p className="text-[11px] text-rose-800 leading-snug">
+                                            <p className="text-[11px] text-rose-800 font-medium leading-relaxed">
                                                 {tpl.primaryError || 'Disparity in Meta approved campaign name or parameter payload.'}
                                             </p>
                                             {tpl.suggestedFix && (
-                                                <p className="text-[11px] text-slate-600 font-semibold pt-1 border-t border-rose-200/60 mt-1">
-                                                    💡 <span className="font-bold text-slate-900">Fix:</span> {tpl.suggestedFix}
-                                                </p>
+                                                <div className="pt-1.5 border-t border-rose-200/70 text-[11px] text-slate-700 flex items-start gap-1">
+                                                    <span className="font-bold text-slate-900 shrink-0">💡 Fix:</span>
+                                                    <span className="text-slate-800">{tpl.suggestedFix}</span>
+                                                </div>
                                             )}
                                         </div>
                                     )}
@@ -377,8 +383,8 @@ export default function WhatsAppAnomalyDashboard({ organizationId }: WhatsAppAno
                 </div>
             </div>
 
-            {/* Message Queue Logs & Search */}
-            <div className="p-6 md:p-8 bg-white border border-slate-200/90 rounded-3xl shadow-xs space-y-5">
+            {/* Message Queue Logs & Search - Full Width */}
+            <div className="w-full p-6 md:p-8 bg-white border border-slate-200/90 rounded-3xl shadow-xs space-y-5">
                 <div className="flex flex-col md:flex-row items-center justify-between gap-4">
                     <div className="relative flex-1 w-full">
                         <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -480,7 +486,7 @@ export default function WhatsAppAnomalyDashboard({ organizationId }: WhatsAppAno
                                                     {row.status}
                                                 </span>
                                             </td>
-                                            <td className="py-3.5 px-4 text-slate-600 max-w-sm" title={row.error_message || row.message}>
+                                            <td className="py-3.5 px-4 text-slate-600 max-w-md" title={row.error_message || row.message}>
                                                 {row.error_message ? (
                                                     <span className="text-rose-600 font-semibold">{row.error_message}</span>
                                                 ) : (

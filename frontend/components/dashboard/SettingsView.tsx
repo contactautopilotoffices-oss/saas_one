@@ -316,7 +316,7 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
     }
 
     return (
-        <div className="max-w-4xl mx-auto space-y-4 md:space-y-8 animate-in fade-in duration-500">
+        <div className="w-full max-w-[1680px] mx-auto px-2 sm:px-4 md:px-6 space-y-4 md:space-y-6 animate-in fade-in duration-500">
             {/* Header */}
             <div>
                 <h1 className="text-xl md:text-3xl font-display font-bold text-slate-900">Account Settings</h1>
