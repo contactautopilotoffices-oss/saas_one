@@ -103,6 +103,52 @@ export interface LeadSource {
 }
 
 // ===========================================
+// Saved / Custom Views ("subsheet" tabs over the leads table)
+// ===========================================
+
+export type ViewPeriodPreset =
+    | 'this_week' | 'last_week'
+    | 'this_month' | 'last_month'
+    | 'last_30' | 'this_quarter';
+
+export interface SavedViewPeriod {
+    mode: 'any' | 'rolling' | 'fixed';
+    preset?: ViewPeriodPreset;           // used when mode === 'rolling'
+    date_from?: string;                  // YYYY-MM-DD, used when mode === 'fixed'
+    date_to?: string;                    // YYYY-MM-DD, used when mode === 'fixed'
+    date_field?: 'created_at' | 'next_followup_date' | 'last_contacted';
+}
+
+// The persisted filter bundle. Mirrors the params the leads list already sends.
+export interface SavedViewFilters {
+    scope?: 'mine' | 'all';
+    search?: string;
+    status?: string[];                   // status UUIDs
+    lead_source?: string[];              // source UUIDs
+    city?: string[];
+    campaign?: string[];
+    seats_range?: string;                // 'lt25' | '25to50' | '50to100' | 'gt100'
+    period?: SavedViewPeriod;
+    sort_by?: string;
+    sort_order?: 'asc' | 'desc';
+}
+
+export interface CRMSavedView {
+    id: string;
+    organization_id: string;
+    created_by: string;
+    name: string;
+    icon?: string | null;
+    color?: string | null;
+    filters: SavedViewFilters;
+    sort_order: number;
+    is_default: boolean;
+    is_active: boolean;
+    created_at: string;
+    updated_at: string;
+}
+
+// ===========================================
 // Enhanced Lead Data (Parsed from Excel/Import)
 // ===========================================
 

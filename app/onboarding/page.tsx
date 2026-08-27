@@ -28,6 +28,7 @@ const AVAILABLE_ROLES = [
     { id: 'tenant', label: 'Client', desc: 'Raise requests & view updates', icon: '🏠' },
     { id: 'vendor', label: 'Vendor', desc: 'Manage shop revenue & orders', icon: '🍔' },
     { id: 'procurement', label: 'Procurement', desc: 'Manage material requests & orders', icon: '📦' },
+    { id: 'accounts', label: 'Accounts / Finance', desc: 'Payments, UTRs & petty-cash approvals', icon: '💰' },
     { id: 'bd_rep', label: 'BD Representative', desc: 'Sales rep — manage assigned leads & follow-ups', icon: '📈' },
     { id: 'bd_admin', label: 'BD Admin', desc: 'Manage all leads, team & CRM settings', icon: '🎯' },
 ];
@@ -275,18 +276,20 @@ export default function OnboardingPage() {
                 }
             }
 
-            // 1.2️⃣ If procurement role, ALSO insert into organization_memberships for global access
-            if (selectedRole === 'procurement') {
+            // 1.2️⃣ Finance & procurement are org-wide — ALSO grant org-level membership
+            //       so their dashboards (Payment Tracker / procurement) resolve access.
+            if (selectedRole === 'procurement' || selectedRole === 'accounts') {
                 const { error: orgMemError } = await supabase
                     .from('organization_memberships')
                     .insert({
                         user_id: authUser.id,
                         organization_id: targetOrgId,
-                        role: 'procurement'
+                        role: selectedRole,
+                        is_active: true
                     });
 
                 if (orgMemError && !orgMemError.message.toLowerCase().includes('duplicate key')) {
-                    console.error('Org-level membership failed for procurement:', orgMemError);
+                    console.error(`Org-level membership failed for ${selectedRole}:`, orgMemError);
                 }
             }
 

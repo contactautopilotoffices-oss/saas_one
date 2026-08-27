@@ -110,3 +110,50 @@ export async function DELETE(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ success: true });
 }
+
+// PUT /api/crm/notes
+export async function PUT(request: NextRequest) {
+    const body = await request.json().catch(() => null);
+    if (!body?.id || !body?.note?.trim()) {
+        return NextResponse.json({ error: 'id and note are required' }, { status: 400 });
+    }
+
+    const { data: note } = await supabaseAdmin
+        .from('crm_notes')
+        .select('id, user_id, lead_id, crm_leads(organization_id)')
+        .eq('id', body.id)
+        .maybeSingle();
+    if (!note) return NextResponse.json({ error: 'Note not found' }, { status: 404 });
+
+    const orgId = (note as any).crm_leads?.organization_id ?? null;
+    const access = await resolveCrmAccess(request, orgId);
+    if (isCrmAccessError(access)) return access;
+
+    if (note.user_id !== access.user.id && !access.isAdmin) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    const { data, error } = await supabaseAdmin
+        .from('crm_notes')
+        .update({ note: body.note.trim() })
+        .eq('id', body.id)
+        .select('*, user_info:users(id, full_name, email)')
+        .single();
+
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+    try {
+        await supabaseAdmin.from('crm_activity_log').insert({
+            lead_id: note.lead_id,
+            user_id: access.user.id,
+            activity_type: 'note_edited',
+            description: 'Note edited',
+            metadata: { note_id: body.id },
+        });
+    } catch (e) {
+        console.error(e);
+    }
+
+    return NextResponse.json({ note: data });
+}
+

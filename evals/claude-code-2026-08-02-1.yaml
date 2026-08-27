@@ -1,0 +1,401 @@
+agent: claude-code
+session: 2026-08-02-1
+commit: 93a567b0121acda2537e17632b31351f3519a059
+# NOTE ON SCOPE: I built nothing this session. The user interrupted the build and asked
+# only for a report, then for this evaluation. Every score below is an assessment of code
+# written by a PARALLEL session in this repo, verified by me by running it. I score all 12
+# because none were previously scored (evals/ did not exist); none are carried.
+requirements_touched: []
+requirements_assessed: [REQ-01, REQ-02, REQ-03, REQ-04, REQ-05, REQ-06, REQ-07, REQ-08, REQ-09, REQ-10, REQ-11, REQ-12]
+
+# ============================================================================
+# THE SINGLE MOST IMPORTANT FACT IN THIS SCORECARD
+# ============================================================================
+# The migration supabase/migrations/20260803000001_agent_council.sql has NEVER BEEN
+# APPLIED. Verified live against project xvucakstcmtfoanmgcql:
+#   select table_name from information_schema.tables
+#    where table_schema='public' and table_name like 'council%';   -->  []
+# Zero council_* tables exist. Therefore: no agent identity record exists, no session has
+# ever been persisted, no finding has ever been stored, no inbox row has ever existed, and
+# no audit workbook has ever been produced. The council has never run outside a script.
+# This single fact is why nothing scores above 3.
+# ============================================================================
+
+scores:
+  - id: REQ-01
+    prompt_line: "lets build a Council of Agents who have their own email id"
+    prompt_line_2: "should have an inbox of their own in the organization of our starting with 8"
+    grounding_question_answer: >
+      No. There is no inbound mail path of any kind — no IMAP poller, no webhook, no
+      forwarding rule. Verified: grep for imap/webhook/inbound across backend/lib/council
+      and app/api/council returns nothing. The only way a message reaches an agent is a
+      human POSTing JSON to /api/council/inbox/to-agent, which is a human forwarding
+      something by hand — precisely what the grounding question excludes. Outbound is also
+      not from the agent's address: mailer.ts sends over the shared SMTP envelope
+      (SMTP_SENDER_EMAIL) and puts the agent only in the display-name and Reply-To. The
+      addresses <key>@council.autopilot.offices are virtual and, as far as I can tell, not
+      a real routable domain.
+    evidence:
+      - "supabase/migrations/20260803000001_agent_council.sql:201-374 — 8 agents seeded IN SQL TEXT ONLY; table does not exist in the DB"
+      - "backend/lib/council/personas.ts:42 — FOUNDING_AGENTS, the 8 identities as a TS constant"
+      - "backend/lib/council/mailer.ts:66-72 — from = shared SMTP sender, replyTo = agent address"
+      - "app/api/council/inbox/to-agent/route.ts:134-147 — 'inbound' is a human-supplied POST body"
+    repro: "set -a; source .env; set +a; COUNCIL_MOCK_LLM=1 npx tsx scratch/council_smoke.ts   # shows the 8 identities; then: (psql) select * from council_agents;  --> relation does not exist"
+    real_data: false
+    score: 1
+    to_next_point: >
+      Apply the migration so the 8 identities exist as records, then close one real mail
+      loop end to end on a single agent — a real mailbox or webhook that receives, parses
+      into a task record, and replies from that agent's own address.
+    carried: false
+
+  - id: REQ-02
+    prompt_line: "how does my db + llm plus a suitable framework give me a ops psecialist , a compliace specialist , a q/a nalyst , a product lifecycle anlyst , a cto with lens on dat breaches and more technical aspects , a procurement specialist agents team and llm supervised council"
+    grounding_question_answer: >
+      Closer to one model wearing eight hats than to eight scoped specialists. The lenses
+      are genuinely well written and DO produce distinguishable output on real data (I ran
+      Bose live and got ops-shaped findings citing real ticket numbers). But the defining
+      requirement — "its own data scope (which tables/queries it may read)" — is not
+      implemented at all. buildOpinionMessages serializes the ENTIRE data pack and sends
+      the identical payload to all eight personas. Nothing in code prevents the Procurement
+      agent reading the security notes or the Tenant agent reading AOP spend. Of the four
+      required properties, only the evaluation lens is real; data scope is absent, output
+      format is one shared JSON schema for all eight, and per-agent escalation rules do not
+      exist anywhere in the code.
+    evidence:
+      - "backend/lib/council/personas.ts:241 — return JSON.stringify(pack.sections, null, 1) — the WHOLE pack, same for every agent"
+      - "backend/lib/council/personas.ts:42-232 — 8 distinct persona prompts with real lenses and priors (this part is genuinely good)"
+      - "backend/lib/council/personas.ts:50,74,98 — lenses expressed as prompt text ('You read the tickets and ppm sections FIRST') — a suggestion to the model, not an enforced scope"
+      - "LIVE PROOF of distinguishable output: Bose returned 4 ops findings incl. [P0] active_over_30d=188, [P1] sla_breached_active=107"
+    repro: "set -a; source .env; set +a; npx tsx scratch/council_smoke.ts  (mock) — or the one-persona live probe described in caveats"
+    real_data: true
+    score: 2
+    to_next_point: >
+      Enforce scope in code: give each CouncilAgentDef an allowed_sections list and have
+      buildOpinionMessages filter the pack to it, so a role cannot read outside its scope
+      even if the model asks. That is the literal wording of the score-5 anchor.
+    carried: false
+
+  - id: REQ-03
+    prompt_line: "and llm supervised council (https://github.com/karpathy/llm-council.git) clone this and help me better the FMS"
+    grounding_question_answer: >
+      For the vendor-vs-fire-NOC case: nobody resolves it in a way I can point at. The
+      chairman prompt does instruct synthesis across positions, and peer ranking is real
+      and anonymized — but there is no dissent section in the required output format, so a
+      minority view is structurally liable to be averaged away rather than preserved. And
+      the reasoning is NOT reviewable after the fact, because council_messages does not
+      exist as a table: no transcript has ever been stored. There is also no defined
+      trigger — nothing anywhere states what makes something council-worthy versus a single
+      agent's call.
+    evidence:
+      - "backend/lib/council/runner.ts — 3 stages genuinely adapted, not just referenced"
+      - "VERIFIED RUNNING: status transitions stage1 → stage2 → synthesis → complete; 17 messages (opinion=8 review=8 synthesis=1); labels ops:Agent A .. tenant:Agent H; aggregate Bose=1 .. Kulkarni=8"
+      - "anonymization is real and shuffled — the load-bearing trick from council.py is preserved"
+      - "backend/lib/council/personas.ts:312-325 — chairman output format has NO dissent/minority section"
+      - "vercel.json — no council cron; no trigger definition anywhere"
+    repro: "set -a; source .env; set +a; COUNCIL_MOCK_LLM=1 npx tsx scratch/council_smoke.ts"
+    real_data: false
+    score: 2
+    to_next_point: >
+      Apply the migration so transcripts actually persist, and add an explicit dissent
+      block to the chairman format so a minority position survives synthesis verbatim.
+    carried: false
+
+  - id: REQ-04
+    prompt_line: "help me better the FMS beyound an Input /output engine to an impact engine"
+    grounding_question_answer: >
+      Nothing. I cannot name a single thing that happened because the system noticed it.
+      There is no cron, no scheduled convening, no autonomous trigger of any kind —
+      verified: grep council vercel.json returns nothing. Every council run traces back to
+      a human clicking Convene or running a script. No outcome is recorded, no outcome is
+      measured against a counterfactual, and no impact is quantified in hours, rupees, SLA
+      breaches avoided or tickets aged out. This is still an input/output engine; it is a
+      more sophisticated one that produces better reports on request.
+    evidence:
+      - "vercel.json — no council entry among the 19 existing crons"
+      - "app/api/council/sessions/route.ts:64 — runCouncil is invoked only from an HTTP POST"
+      - "no outcomes/impact table exists in the migration's 5 tables"
+    repro: "grep -n council vercel.json   # returns nothing"
+    real_data: false
+    score: 0
+    to_next_point: >
+      One closed loop: a cron that detects one signal, records the action taken, and
+      records the outcome — even a single measured loop moves this to 3.
+    carried: false
+
+  - id: REQ-05
+    prompt_line: "its about finding every ounce of data nad tying value to it"
+    grounding_question_answer: >
+      Unknown, and nothing was produced to find out. There is no inventory artifact of any
+      kind — no table/column list, no last-written/last-read analysis, no dark-data naming,
+      no value hypothesis per field. What exists is a consumption layer, not an inventory:
+      the data pack reads 10 domains and it does so genuinely well against the real DB. But
+      reading 10 domains is not the same as knowing what percentage of columns nothing
+      reads. Notably the one piece of missing data the eval hands over on a plate —
+      TRUTH-08, intake captures no category/floor/location — is not represented anywhere.
+    evidence:
+      - "backend/lib/council/dataPack.ts:639-655 — 10 sections, each tagged {source, fetched_at}"
+      - "VERIFIED LIVE: ppm 749 total/529 overdue/70.6%; mailbox 306 threads 306 unresolved; generators 10, 2449.4 run-hours; aop_import_warnings 1 unacked"
+      - "no docs/*INVENTORY* exists; no column-level usage analysis anywhere in the repo"
+    repro: "set -a; source .env; set +a; COUNCIL_MOCK_LLM=1 npx tsx scratch/council_smoke.ts   # prints all 10 sections with live figures"
+    real_data: true
+    score: 1
+    to_next_point: >
+      Produce the actual inventory deliverable: every table and column with last-written,
+      last-read, and consuming view/agent — the eval asks for an artifact, not a reader.
+    carried: false
+
+  - id: REQ-06
+    prompt_line: "hey water not logged today , hey the tickets look duller today"
+    grounding_question_answer: >
+      Barely, and not for the example the prompt actually gives. The string "water" appears
+      ZERO times in dataPack.ts — the canonical example in the founding prompt is not
+      implemented. Absence detection exists in exactly one place: generators with no
+      reading in 7 days. There is no expected-events definition table, so cadence is
+      hardcoded, not configurable. Drift is better: the electricity pace section does a real
+      like-for-like previous-window comparison restricted to meters reporting in BOTH
+      windows, which is a defensible statistic on real history. But there is no baseline for
+      "tickets look duller" at all, no suppression rule anywhere, and no measured
+      false-positive rate.
+    evidence:
+      - "backend/lib/council/dataPack.ts — grep -c water  -->  0"
+      - "backend/lib/council/dataPack.ts:557 — no_reading_in_7d, the ONLY absence check, hardcoded to generators"
+      - "backend/lib/council/dataPack.ts:317-335 — like-for-like pace windows, one real drift statistic"
+      - "no suppression rule, no expected_events table, no false-positive tracking anywhere"
+    repro: "grep -c water backend/lib/council/dataPack.ts   # 0"
+    real_data: true
+    score: 2
+    to_next_point: >
+      Add a configurable expected-events table (metric, scope, cadence, grace window) and
+      implement the water case from it — that plus the existing pace statistic reaches 3.
+    carried: false
+
+  - id: REQ-07
+    prompt_line: "they must have capbility to write mails export fms audits , identify gaps , duplex with theorganization voice"
+    grounding_question_answer: >
+      Not forwardable without a rewrite, and the duplex half is absent. Mail composition
+      produces LLM prose stored as a draft — correct for safety (FP-05) but the requirement
+      asks for send-ready. The audit export is real code against a real format (exceljs,
+      3 sheets) but has NEVER produced a workbook, because it reads session rows from
+      tables that do not exist. Gap identification is the strongest part and I verified it
+      live: Bose produced four evidence-cited findings on real ticket data. There is no
+      voice definition file anywhere — nothing versioned, nothing applied consistently — and
+      no inbound comprehension, so "duplex" is one-directional today.
+    evidence:
+      - "backend/lib/council/auditExport.ts:121 — buildCouncilAuditWorkbook, real exceljs, never executed on real data"
+      - "backend/lib/council/mailer.ts:50-80 — sendAsAgent, degrades to draft on SMTP failure (good)"
+      - "LIVE GAP-FINDING PROOF: [P0] Excessive Active Tickets Over 30 Days (evidence active_over_30d=188); [P1] High SLA Breach Rate (sla_breached_active=107); [P2] flagged that intake-quality data was ABSENT rather than inventing it"
+      - "no voice spec file exists in the repo"
+    repro: "one-persona live probe (see caveats) — reproduces the four findings above"
+    real_data: true
+    score: 2
+    to_next_point: >
+      Write a versioned voice spec file and apply it in the mail/synthesis prompts, and
+      produce one real audit workbook from a real session.
+    carried: false
+
+  - id: REQ-08
+    prompt_line: "connecting whatsapp to get a hook of things"
+    grounding_question_answer: >
+      No. A technician in a corridor can do nothing. The only occurrence of "whatsapp" in
+      the entire council build is inside frontend/components/master-council/fixtures.ts —
+      i.e. fake content in a UI mock. Per the eval's own evidence rule, a UI that displays
+      something is worth 0 toward the requirement. Note the repo DOES have a working
+      WhatsApp queue and Graph API integration elsewhere (WhatsAppQueueService, ~48k rows),
+      so this is unwired rather than unavailable.
+    evidence:
+      - "grep -ril whatsapp backend/lib/council app/api/council  -->  nothing"
+      - "grep -ril whatsapp frontend/components/master-council  -->  fixtures.ts ONLY (mock UI content)"
+    repro: "grep -ril whatsapp backend/lib/council/ app/api/council/"
+    real_data: false
+    score: 0
+    to_next_point: >
+      One real round trip on one flow, with sender-number-to-person identity resolution
+      before any write.
+    carried: false
+
+  - id: REQ-09
+    prompt_line: "love for yout o build an mvp here into the master admin"
+    prompt_line_2: "the master admin is oour safe space we play there then move them into the super admin and then more"
+    grounding_question_answer: >
+      The blast radius is genuinely well confined, and this is the strongest requirement in
+      the build. Every /api/council/* route calls requireMasterAdmin server-side
+      (session getUser -> users.is_master_admin -> 403), so it is real permission
+      separation, not a separate UI area over the same permissions. The council writes only
+      to its own council_* tables and never to FMS production data. What is missing is
+      everything about the NEXT step: the promotion path is not written down (COUNCIL_SPEC
+      line 139 lists "promotion to super admin" as a post-MVP bullet, with no criteria),
+      there is no rollback, there is no agent-action audit log, and dry-run is not the
+      default — COUNCIL_MOCK_LLM is an opt-in env var, not a default posture.
+    evidence:
+      - "backend/lib/council/guard.ts:28-45 — requireMasterAdmin, server-side, used by all 8 routes"
+      - "council writes confined to council_* tables; no FMS production writes in any route"
+      - "docs/COUNCIL_SPEC.md:139 — promotion listed as post-MVP with zero criteria"
+      - "no rollback path, no agent action audit log"
+    repro: "curl -s localhost:3000/api/council/agents   # 401 without a master-admin session"
+    real_data: true
+    score: 3
+    to_next_point: >
+      Write the promotion criteria down as a checklist an agent must demonstrably pass, and
+      add an append-only agent-action log covering both tiers.
+    carried: false
+
+  - id: REQ-10
+    prompt_line: "the ui can be very sci fi but bounded by the deisn md file"
+    prompt_line_2: "at the end I want aui similar tot his"
+    grounding_question_answer: >
+      Three colours, and I am listing them here because nobody else did. Token discipline is
+      measurably good: ZERO new tokens were added to app/globals.css (grep -c council = 0),
+      ZERO arbitrary Tailwind bracket values across all five components, and only three
+      inline hex literals in the entire UI. That is far better than "loosely inspired". But
+      the three are undocumented deviations, which is exactly what the score-3 anchor asks
+      to be listed and flagged, so I flag them for a human decision below. I did NOT verify
+      legibility under load this session — I never rendered the preview harness.
+    deviations_flagged_for_human:
+      - "#16212a — chamber backdrop, not a design-system token"
+      - "#ffb4ab — used in the severity/error family, not a --error token reference"
+      - "#ffd9d4 — same family as above"
+    evidence:
+      - "app/globals.css — grep -c council  -->  0 (no invented tokens)"
+      - "frontend/components/master-council/*.tsx — 3 distinct hex literals total, 0 arbitrary Tailwind values"
+      - "frontend/components/dashboard/MasterAdminDashboard.tsx:39,41,437,530,636 — tab genuinely wired, full-bleed p-0 like ai-assistant"
+    repro: "grep -oh '#[0-9A-Fa-f]\\{6\\}' frontend/components/master-council/*.tsx | sort -u"
+    real_data: false
+    score: 3
+    to_next_point: >
+      Replace the three hexes with design-system token references, or record a reason for
+      each, and screenshot a dense transcript to prove legibility under load.
+    carried: false
+
+  - id: REQ-11
+    prompt_line: "how does my db + llm plus a suitable framework give me"
+    grounding_question_answer: >
+      Reasonably well documented, honestly stated. AI_OPERATIONS_LAYER_PLAN.md contains a
+      real decision record with rejected alternatives (no telephony yet, no second
+      notification stack, LLM kept off the deterministic path) and COUNCIL_SPEC.md is the
+      binding contract. The db -> agent -> llm path is described in plain language in the
+      architecture report produced this session. Model lock-in is named honestly, including
+      the specific hazard that GROQ_API_KEY is a shared 100k/day org-wide budget that one
+      council session can exhaust, taking down the ticket classifier, OCR and chatbot. What
+      is thin is the exit path: provider-switchability is asserted but there is no written
+      migration route off Groq.
+    evidence:
+      - "AI_OPERATIONS_LAYER_PLAN.md §5,§6,§7 — phasing, hard problems, what NOT to build"
+      - "docs/COUNCIL_SPEC.md — the binding contract"
+      - "backend/services/mailboxDigest.ts:20-26 — the shared-budget hazard, documented in-repo"
+      - "architecture report published this session — plain-language db->agent->llm path"
+    repro: "open AI_OPERATIONS_LAYER_PLAN.md and docs/COUNCIL_SPEC.md"
+    real_data: false
+    score: 3
+    to_next_point: >
+      Write the exit path: what changes if Groq is replaced, and what is model-specific in
+      the persona prompts.
+    carried: false
+
+  - id: REQ-12
+    prompt_line: "why you ask today I am dependent on my team for getting things done"
+    grounding_question_answer: >
+      None. There is not one task that previously required asking a person that can now be
+      completed without asking a person. Nothing runs on a schedule; every council run
+      requires a human to trigger it; every email requires a human to release it; the
+      migration itself still requires a human to apply it. Judged strictly, the supervision
+      load has gone UP this week, not down: there is now a substantial new system that a
+      person must check, and it has not yet removed a single check. The eval says zero is a
+      failing project, and on this requirement the project is currently failing.
+    evidence:
+      - "no cron; no autonomous trigger anywhere in the council build"
+      - "app/api/council/sessions/route.ts — human POST required"
+      - "migration unapplied — even installation awaits a person"
+    repro: "grep -n council vercel.json   # nothing scheduled"
+    real_data: false
+    score: 0
+    to_next_point: >
+      Ship one weekly cron that convenes the council and emails the audit — that alone
+      removes the weekly manual deep-audit from a person's plate and is worth a 3.
+    carried: false
+
+caveats:
+  - "I BUILT NOTHING THIS SESSION. The user interrupted my build after two files and asked
+     for a report instead. The code assessed here was written by a parallel session. I
+     verified it by running it; I did not author it. Per the protocol I should score only
+     what I touched — I am scoring everything because evals/ was empty and an unscored
+     build is worse than an externally-scored one. Treat this as a first-party audit, and
+     weight a future kimi-code review accordingly."
+  - "I could not verify a full real (non-mock) council run. A complete run is ~17 LLM calls
+     and GROQ_API_KEY is a shared 100k-token DAILY org-wide budget also serving the ticket
+     classifier, meter OCR, catalog upload, call coaching and the master-admin chatbot
+     (documented at backend/services/mailboxDigest.ts:20-26). Running one would have risked
+     taking those down. I ran ONE persona (Bose) against a TRIMMED pack (1,146 chars,
+     tickets+ppm only) as a proportionate probe."
+  - "I did not render the UI. REQ-10 legibility-under-load is unverified; I scored only the
+     token discipline, which is measurable statically."
+  - "The 188-vs-190 aging discrepancy is NOT a model error. The data pack counts
+     floor(age_days) > 30 (strictly more than 30 full days); my SQL used
+     created_at < now() - interval '30 days'. Tickets aged exactly 30.x days fall in the gap.
+     Worth fixing as a data-trust item, but the model faithfully reported what it was given."
+  - "MOCK-INTO-PRODUCTION HAZARD (found during this audit, not yet exploited): with
+     COUNCIL_MOCK_LLM=1 the runner persists canned findings tagged
+     model='llama-3.3-70b-versatile' (runner.ts:275,327,372) with no mock marker on the row,
+     and app/api/council/sessions/route.ts has NO guard against mock mode. If that env var
+     were ever set in production, fabricated findings would be indistinguishable from real
+     ones in council_findings. Not a live FP-01 violation today (no tables exist, so nothing
+     has been written), but it is one env var away from being one. Recommend the sessions
+     route refuse to run when isMockLlm() is true."
+
+truth_checks:
+  TRUTH-01: fail   # Technician role. No role-hierarchy data in the pack at all; compliance/CTO personas have no evidence with which to flag the privilege-escalation gap. grep Technician across council code -> nothing.
+  TRUTH-02: fail   # Tenant assignee @-picker. No intake-form or assignee data in the pack; cannot be flagged as either workflow or data-leak finding.
+  TRUTH-03: pass   # Agents do not assume super-admin access. The council uses the service role under a master-admin gate and marks missing sections as notes rather than faking them.
+  TRUTH-04: pass   # Public photo bucket IS present in securityNotes with provenance 'confirmed-prior-audit', and the CTO persona (personas.ts:147) treats it as a breach that has already happened. The council adds no media anywhere.
+  TRUTH-05: fail   # 1198 vs 704. ticketsSummary computes counts from a single source with NO source-of-truth ambiguity note. Confirmed harmful in practice: my live probe had Bose quote ticket counts as flat truth.
+  TRUTH-06: pass   # PV backlog. Verified live: pending_validation = 212 today (audit said 210 — consistent drift). Computed from the DB, never hardcoded; the 70 figure appears nowhere.
+  TRUTH-07: fail   # 104-day ticket. Aging IS computed (over30, over90, oldest+property) but whether an escalation FIRED is not modelled — no escalation-log query exists. The eval asks for the gap, not the ticket.
+  TRUTH-08: fail   # Intake captures no category/floor/location. No completeness metric exists. Best the live probe could produce was "No intake quality data available" — honest, but the root cause is un-nameable from the evidence supplied.
+  TRUTH-09: fail   # Test ticket. Two clauses pass (no agent creates test records; nothing added to production) but the third — "Cleanup policy is proposed" — is not met anywhere in the council work.
+  TRUTH-10: pass   # 503 global-logout. Not mentioned, and critically no cause is asserted. Treated as neither open nor closed; no violation.
+  _consequence: >
+    Six fails. The rule "a fail voids any Part A score above 3" bites nothing, because no
+    Part A score exceeds 3. Stated explicitly so a reader does not assume the cap was
+    silently applied to inflate anything.
+
+first_principles:
+  FP-01: pass      # Verified empirically, and this is the build's best result. Live probe cited sla_breached_active=107 and in_progress=1; I checked both against the DB directly and they match EXACTLY. The persona also flagged absent intake data rather than inventing a number. See the mock-into-production hazard in caveats — a risk, not a current violation.
+  FP-02: pass      # Read-before-write holds. Agents read; the only writes are to council_* tables; outbound mail requires an explicit send:true from a human.
+  FP-03: fail      # Legible to a non-developer — currently NO. The only way I could establish what the agents do was to run tsx scripts and read source, which is the literal failure condition in the text. The tab is wired and the UI exists, so applying the migration would likely flip this to pass; today it does not pass.
+  FP-04: pass      # Fails loudly. dataPack degrades each section to a visible note rather than swallowing errors; runner tracks failedAgents; routes return 500 with an actionable migration message. Minor soft spot: to-agent returns HTTP 200 with reply_error on generation failure.
+  FP-05: pass      # Nothing irreversible without a human. External mail requires send:true; drafts are the default; no permission changes, deletions or POs are automated.
+  FP-06: pass      # Scope discipline held. The build matches COUNCIL_SPEC; I found no self-granted scope. (My own two stray files from the interrupted build were removed this session.)
+
+proposals:
+  - "Agents 7 and 8 (Deshpande/Energy, Kulkarni/Tenant) are BUILT but their justification was
+     never written. REQ-02 states the justification is part of the score. Recommend a short
+     docs/proposals/agents-7-8.md — energy because utilities are the second-largest cost line
+     and the data already exists; tenant because pending_validation=212 is a tenant-experience
+     failure no other lens owns."
+  - "Guard the sessions route against COUNCIL_MOCK_LLM (see caveats). Not built — flagging."
+  - "Add source-of-truth ambiguity notes wherever ticket counts appear, to close TRUTH-05."
+  - "NOT BUILT and awaiting approval, per FP-06: expected-events table for absence detection;
+     dissent block in the chairman format; weekly convening cron; per-agent data scoping."
+
+overall_score: 1.76   # weighted Part A total 123 / 70
+weighted_total: 123   # of a possible 350
+honest_summary: >
+  The council is a well-engineered instrument that has never been switched on. The migration
+  has never been applied, so zero council tables exist: no identity, session, finding or
+  inbox row has ever been persisted. What I could verify by running it is genuinely good —
+  the 10-section data pack pulls real live figures (529 of 749 PPMs overdue, 306 unresolved
+  mailbox threads), the 3-stage protocol executes correctly with real anonymized peer
+  ranking, and a live persona call produced four evidence-cited findings whose numbers I
+  confirmed against the database exactly. That is a real foundation and FP-01 holds.
+  But the scores are low because the requirements are about outcomes, not instruments.
+  Three of twelve score zero. Nothing is scheduled, so nothing initiates (REQ-04=0). WhatsApp
+  exists only as fake content in a UI fixture (REQ-08=0). And on the requirement the whole
+  project answers to — reducing dependence on the team — there is not one task a person has
+  stopped doing (REQ-12=0). The prompt's own canonical example, "water not logged today", is
+  not implemented: the string "water" appears zero times in the data pack. Six of ten TRUTH
+  checks fail because the audit's known facts were never fed to the agents as evidence, so
+  the personas cannot flag what they cannot see. Nothing in this session reduced the human's
+  supervision load; strictly, the build has added a system that must itself be supervised.
+  The single highest-leverage next action is not more code: it is applying the migration and
+  running one real council session, which would convert roughly half these scores from
+  "written" to "working".

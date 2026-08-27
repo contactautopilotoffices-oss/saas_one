@@ -13,6 +13,7 @@ import { useAuth } from '@/frontend/context/AuthContext';
 import Skeleton from '@/frontend/components/ui/Skeleton';
 import SignOutModal from '@/frontend/components/ui/SignOutModal';
 import NotificationBell from './NotificationBell';
+import PendingActionsBell from './PendingActionsBell';
 
 const StockDashboard = dynamic(
     () => import('@/frontend/components/stock/StockDashboard'),
@@ -282,6 +283,7 @@ const SoftServiceManagerDashboard: React.FC<SoftServiceManagerDashboardProps> = 
                         </div>
                     </div>
                     <div className="flex items-center gap-3 sm:gap-4 shrink-0">
+                        <PendingActionsBell />
                         <NotificationBell />
                         <button
                             onClick={() => handleTabChange('profile')}

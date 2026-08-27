@@ -13,7 +13,9 @@ export type RoleKey =
     | 'super_tenant'
     | 'bd_rep'
     | 'bd_admin'
-    | 'bd_super_admin';
+    | 'bd_super_admin'
+    | 'accounts'
+    | 'ops_super_admin';
 
 export type CapabilityDomain =
     | 'users'
@@ -27,7 +29,9 @@ export type CapabilityDomain =
     | 'reports'
     | 'vendors'
     | 'stock'
-    | 'crm';
+    | 'crm'
+    | 'petty_cash'
+    | 'accounts';
 
 export type CapabilityAction = 'view' | 'create' | 'update' | 'approve' | 'assign' | 'delete' | 'suspend';
 

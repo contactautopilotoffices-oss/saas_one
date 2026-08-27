@@ -8,7 +8,7 @@ import {
     Key, Eye, EyeOff, Globe, Copy, X, Ticket, Link as LinkIcon, LogOut,
     UserCircle, FileDown, Brain, Wrench, MessageCircle,
     TrendingUp, MapPin, Radio, Flame, Phone, Gauge,
-  MessageSquarePlus, Mail
+  MessageSquarePlus, Mail, Sparkles
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -36,8 +36,9 @@ import WhatsAppSystemControl from '@/frontend/components/ops/WhatsAppSystemContr
 import IssueTrackingDashboard from '@/frontend/components/master-admin/IssueTrackingDashboard';
 import DailyProgressDashboard from './DailyProgressDashboard';
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
+import CouncilChamber from '@/frontend/components/master-council/CouncilChamber';
 
-type Tab = 'overview' | 'bd-pipeline' | 'analytics' | 'daily-progress' | 'usage' | 'organizations' | 'tickets' | 'users' | 'visitors' | 'invite-links' | 'ai-insights' | 'ai-assistant' | 'issue-config' | 'modules' | 'settings' | 'resolvers' | 'super-tenants' | 'whatsapp-templates' | 'issues' | 'email-config';
+type Tab = 'overview' | 'bd-pipeline' | 'analytics' | 'daily-progress' | 'usage' | 'organizations' | 'tickets' | 'users' | 'visitors' | 'invite-links' | 'ai-insights' | 'ai-assistant' | 'council' | 'issue-config' | 'modules' | 'settings' | 'resolvers' | 'super-tenants' | 'whatsapp-templates' | 'issues' | 'email-config';
 
 // Shape returned by GET /api/admin/bd-stats (cross-org BD pipeline metrics).
 interface BDStats {
@@ -148,7 +149,7 @@ const MasterAdminDashboard = () => {
     // Restore tab from URL and handle back navigation
     useEffect(() => {
         const tab = searchParams.get('tab');
-        if (tab && ['overview', 'bd-pipeline', 'analytics', 'daily-progress', 'usage', 'organizations', 'tickets', 'users', 'visitors', 'invite-links', 'ai-insights', 'ai-assistant', 'issue-config', 'modules', 'settings', 'resolvers', 'super-tenants', 'whatsapp-templates', 'issues', 'email-config'].includes(tab)) {
+        if (tab && ['overview', 'bd-pipeline', 'analytics', 'daily-progress', 'usage', 'organizations', 'tickets', 'users', 'visitors', 'invite-links', 'ai-insights', 'ai-assistant', 'council', 'issue-config', 'modules', 'settings', 'resolvers', 'super-tenants', 'whatsapp-templates', 'issues', 'email-config'].includes(tab)) {
             setActiveTab(tab as Tab);
         }
     }, [searchParams]);
@@ -420,6 +421,10 @@ const MasterAdminDashboard = () => {
 
     const navItems: { id: Tab, label: string, icon: any, section?: string }[] = [
         { id: 'overview', label: 'Console', icon: ShieldCheck },
+        // Agent Council sits second on purpose. It was originally 15th of 21 in a
+        // sidebar whose nav scrolls behind a 5px scrollbar, so it sat below the fold
+        // on a 1080p screen and read as "not built". Position is the whole fix.
+        { id: 'council', label: 'Agent Council', icon: Sparkles },
         { id: 'bd-pipeline', label: 'BD Pipeline', icon: TrendingUp },
         { id: 'analytics', label: 'Engagement', icon: Activity },
         { id: 'daily-progress', label: 'Daily Progress', icon: LayoutGrid },
@@ -525,8 +530,8 @@ const MasterAdminDashboard = () => {
             />
 
             {/* Main Content */}
-            <main id="main-scroll-container" className={`flex-1 ${activeTab === 'ai-assistant' ? 'p-0' : 'p-12'} lg:ml-72 transition-all duration-500 overflow-y-auto`}>
-                {activeTab !== 'ai-assistant' && (
+            <main id="main-scroll-container" className={`flex-1 ${activeTab === 'ai-assistant' || activeTab === 'council' ? 'p-0' : 'p-12'} lg:ml-72 transition-all duration-500 overflow-y-auto`}>
+                {activeTab !== 'ai-assistant' && activeTab !== 'council' && (
                     <header className="flex justify-between items-center mb-12">
                         <div>
                             <h2 className="text-3xl font-black text-text-primary tracking-tight capitalize">{activeTab.replace('-', ' ')}</h2>
@@ -630,6 +635,9 @@ const MasterAdminDashboard = () => {
                         )}
                         {activeTab === 'ai-assistant' && (
                             <MasterAdminChatbot />
+                        )}
+                        {activeTab === 'council' && (
+                            <CouncilChamber />
                         )}
                         {activeTab === 'whatsapp-templates' && (
                             <WhatsAppTemplatesManager />

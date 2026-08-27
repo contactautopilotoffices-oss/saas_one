@@ -64,11 +64,19 @@ export default function DashboardLayout({
     }
 
     const isFullDashboard = pathname?.endsWith('/dashboard');
+    // The Accounts (Finance) workspace renders its OWN chrome via its nested
+    // layout — same pattern as the FMS dashboard — so skip the shared sidebar.
+    const isAccountsWorkspace = !!pathname && /\/(accounts|petty-cash|aop)(\/|$)/.test(pathname);
 
     if (isFullDashboard) {
         // FMS dashboard renders its own chrome (no shared sidebar) — still surface
         // the CRM⇄FMS switch for BD Super Admins.
         return <>{children}<ModuleSwitch /></>;
+    }
+
+    if (isAccountsWorkspace) {
+        // Accounts workspace provides its own sidebar; render it bare.
+        return <>{children}</>;
     }
 
     // BD Super Admin's CEO dashboard (/{orgId}/crm) renders its own rich top bar

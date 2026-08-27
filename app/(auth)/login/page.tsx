@@ -8,6 +8,7 @@ import { useAuth } from '@/frontend/context/AuthContext';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/frontend/utils/supabase/client';
 import Loader from '@/frontend/components/ui/Loader';
+import { resolveSilo } from '@/frontend/lib/auth/silos';
 
 // Feature cards for the animated showcase
 const features = [
@@ -295,19 +296,15 @@ function AuthContent() {
                 // Property-level roles (property_admin, staff, tenant, etc.) may also have
                 // an org_membership row (created by the user-create API), but they should
                 // be routed via Step 4 (property_memberships) instead.
-                const ORG_LEVEL_ROLES = ['org_super_admin', 'super_tenant', 'owner', 'admin', 'org_admin', 'maintenance_vendor', 'procurement', 'bd_admin', 'bd_super_admin', 'bd_rep'];
+                const ORG_LEVEL_ROLES = ['org_super_admin', 'super_tenant', 'owner', 'admin', 'org_admin', 'maintenance_vendor', 'procurement', 'bd_admin', 'bd_super_admin', 'bd_rep', 'accounts'];
                 const activeOrgMemberships = (orgMemberships || []).filter(
                     (m) => ORG_LEVEL_ROLES.includes(m.role) && (m.is_active === true || m.is_active === null)
                 );
 
-                // ✅ CRM guard — single source of truth.
-                // Business-development (CRM) users must ALWAYS land on the CRM view and
-                // NEVER fall through to an FMS dashboard. We fetch property memberships
-                // early so we can detect any genuine FMS role that should outrank CRM.
-                // If the user has a CRM role and NO genuine FMS role, short-circuit to /{org}/crm.
-                const CRM_ONLY_ROLES = ['bd_rep', 'bd_admin', 'bd_super_admin'];
-                const FMS_ROLES = ['property_admin', 'tenant', 'security', 'staff', 'mst', 'vendor', 'org_admin', 'owner', 'admin', 'procurement', 'org_super_admin', 'super_tenant', 'maintenance_vendor'];
-
+                // ✅ Silo guard — see frontend/lib/auth/silos.ts.
+                // CRM and Accounts users must ALWAYS land in their own workspace and NEVER
+                // fall through to an FMS dashboard. We fetch property memberships early so
+                // we can detect any genuine FMS role that should outrank the silo.
                 const { data: allPropMembershipsForGuard } = await supabase
                     .from('property_memberships')
                     .select('property_id, organization_id, role, is_active')
@@ -317,22 +314,14 @@ function AuthContent() {
                 const activePropForGuard = (allPropMembershipsForGuard || []).filter(
                     (m) => m.is_active === true || m.is_active === null
                 );
-                const allActiveRoles = [
-                    ...activeOrgMemberships.map((m) => m.role),
-                    ...activePropForGuard.map((m) => m.role),
-                ];
-                const hasCrmRole = allActiveRoles.some((r) => CRM_ONLY_ROLES.includes(r));
-                const hasFmsRole = allActiveRoles.some((r) => FMS_ROLES.includes(r));
 
-                if (hasCrmRole && !hasFmsRole) {
-                    // Resolve the org id from whichever membership carries the CRM role.
-                    const crmOrgMembership = activeOrgMemberships.find((m) => CRM_ONLY_ROLES.includes(m.role));
-                    const crmPropMembership = activePropForGuard.find((m) => CRM_ONLY_ROLES.includes(m.role));
-                    const crmOrgId = crmOrgMembership?.organization_id || crmPropMembership?.organization_id;
-                    if (crmOrgId) {
-                        router.replace(`/${crmOrgId}/crm`);
-                        return;
-                    }
+                const silo = resolveSilo([
+                    ...activeOrgMemberships.map((m) => ({ role: m.role, orgId: m.organization_id })),
+                    ...activePropForGuard.map((m) => ({ role: m.role, orgId: m.organization_id })),
+                ]);
+                if (silo) {
+                    router.replace(silo.path);
+                    return;
                 }
 
                 if (activeOrgMemberships.length > 0) {

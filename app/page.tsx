@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/frontend/context/AuthContext';
+import { resolveSilo } from '@/frontend/lib/auth/silos';
 import { createClient } from '@/frontend/utils/supabase/client';
 import Link from 'next/link';
 import HeroSection from '@/frontend/components/landing/HeroSection';
@@ -47,34 +48,20 @@ export default function Home() {
                     return;
                 }
 
-                // 2. CRM guard — single source of truth (mirrors the login handler).
-                // Business-development (CRM) users must ALWAYS land on the CRM view and
-                // NEVER fall through to an FMS dashboard. If the user has a CRM role and
-                // NO genuine FMS role, short-circuit to /{org}/crm.
-                const CRM_ONLY_ROLES = ['bd_rep', 'bd_admin', 'bd_super_admin'];
-                const FMS_ROLES = ['property_admin', 'tenant', 'security', 'staff', 'mst', 'vendor', 'org_admin', 'owner', 'admin', 'procurement', 'org_super_admin', 'super_tenant', 'maintenance_vendor'];
-
-                const crmOrgMemberships = (membership?.all_org_memberships || [])
-                    .filter((m) => CRM_ONLY_ROLES.includes(m.role));
-                const crmPropMemberships = (membership?.properties || [])
-                    .filter((p) => CRM_ONLY_ROLES.includes(p.role));
-                const allMembershipRoles = [
-                    ...(membership?.org_role ? [membership.org_role] : []),
-                    ...(membership?.all_org_memberships || []).map((m) => m.role),
-                    ...(membership?.properties || []).map((p) => p.role),
-                ];
-                const hasCrmRole = allMembershipRoles.some((r) => CRM_ONLY_ROLES.includes(r));
-                const hasFmsRole = allMembershipRoles.some((r) => FMS_ROLES.includes(r));
-
-                if (hasCrmRole && !hasFmsRole) {
-                    const crmOrgId =
-                        crmOrgMemberships[0]?.org_id ||
-                        crmPropMemberships[0]?.organization_id ||
-                        membership?.org_id;
-                    if (crmOrgId) {
-                        router.replace(`/${crmOrgId}/crm`);
-                        return;
-                    }
+                // 2. Silo guard — CRM and Accounts users must ALWAYS land in their own
+                // workspace and NEVER fall through to an FMS dashboard. See
+                // frontend/lib/auth/silos.ts (mirrored by the login handler).
+                const silo = resolveSilo(
+                    [
+                        { role: membership?.org_role, orgId: membership?.org_id },
+                        ...(membership?.all_org_memberships || []).map((m) => ({ role: m.role, orgId: m.org_id })),
+                        ...(membership?.properties || []).map((p) => ({ role: p.role, orgId: p.organization_id })),
+                    ],
+                    membership?.org_id,
+                );
+                if (silo) {
+                    router.replace(silo.path);
+                    return;
                 }
 
                 // 3. Check Org Membership from context

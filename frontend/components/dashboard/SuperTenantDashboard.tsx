@@ -18,6 +18,7 @@ import TenantRoomBooking from '@/frontend/components/meeting-rooms/TenantRoomBoo
 import SettingsView from './SettingsView';
 import TicketCard from '@/frontend/components/shared/TicketCard';
 import NotificationBell from './NotificationBell';
+import PendingActionsBell from './PendingActionsBell';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Filter } from 'lucide-react';
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
@@ -1012,6 +1013,7 @@ const SuperTenantDashboard = () => {
 
                         {/* Right: Property dropdown + desktop time filter + avatar */}
                         <div className="flex items-center gap-4 shrink-0">
+                            <PendingActionsBell />
                             <NotificationBell />
 
                             {/* Time Period Filter — desktop only; mobile shown inside overview content */}

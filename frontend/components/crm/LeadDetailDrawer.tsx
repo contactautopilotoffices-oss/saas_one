@@ -5,7 +5,7 @@ import {
     X, Phone, Mail, MapPin, Building, Calendar, User, Users, DollarSign,
     Edit, Trash2, PhoneCall, Video, Map, FileText, MessageSquare,
     Clock, ChevronRight, Plus, CheckCircle, CalendarPlus, Pencil, Save,
-    FileSignature, LayoutGrid, MapPin as MapPinIcon
+    FileSignature, LayoutGrid, MapPin as MapPinIcon, Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CRMLead, CRMActivity, CRMNote, CRMEvent, TimelineItem, LeadStatusConfig, LeadSource, EventType } from '@/frontend/types/crm';
@@ -22,6 +22,7 @@ interface LeadDetailDrawerProps {
     isOpen: boolean;
     onClose: () => void;
     onLeadUpdate?: (lead: CRMLead) => void;
+    onEdit?: (lead: CRMLead) => void;
 }
 
 const EVENT_TYPE_META: Record<string, { title: string; activityType: string }> = {
@@ -64,7 +65,7 @@ const ACTIVITY_DOT_COLORS: Record<string, string> = {
     restored: '#22C55E',
 };
 
-export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate }: LeadDetailDrawerProps) {
+export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate, onEdit }: LeadDetailDrawerProps) {
     const [lead, setLead] = useState<CRMLead | null>(null);
     const [activities, setActivities] = useState<CRMActivity[]>([]);
     const [notes, setNotes] = useState<CRMNote[]>([]);
@@ -198,7 +199,11 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
         );
     };
     // Reassignment (admins + reps)
+
     const [formResponses, setFormResponses] = useState<{ question: string; answer: string }[]>([]);
+    const [editingRequestDetails, setEditingRequestDetails] = useState(false);
+    const [savingRequestDetails, setSavingRequestDetails] = useState(false);
+    const [requestDraft, setRequestDraft] = useState<Record<string, string>>({});
     const [reps, setReps] = useState<{ id: string; full_name?: string; email?: string }[]>([]);
     const [showReassign, setShowReassign] = useState(false);
     const [reassigning, setReassigning] = useState(false);
@@ -254,6 +259,56 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
         } catch (err) {
             console.error('Failed to delete note:', err);
             showToast('Failed to delete note', 'error');
+        }
+    };
+
+    const handleSaveRequestDetails = async () => {
+        if (!lead) return;
+        setSavingRequestDetails(true);
+        try {
+            const updatePayload: Record<string, any> = {};
+
+            Object.entries(requestDraft).forEach(([q, val]) => {
+                const normQ = q.toLowerCase();
+                if (normQ.includes('email')) {
+                    updatePayload.email = val;
+                } else if (normQ.includes('phone') || normQ.includes('contact number')) {
+                    updatePayload.contact_number = val;
+                } else if (normQ.includes('company')) {
+                    updatePayload.company_name = val;
+                } else if (normQ.includes('timeline') || normQ.includes('move-in')) {
+                    updatePayload.move_in_timeline = val;
+                } else if (normQ.includes('seat')) {
+                    const num = parseInt(val, 10);
+                    if (!isNaN(num)) updatePayload.seats = num;
+                } else if (normQ.includes('name') || normQ.includes('contact person')) {
+                    updatePayload.contact_person = val;
+                }
+            });
+
+            const newResponses = formResponses.map(f => ({
+                question: f.question,
+                answer: requestDraft[f.question] !== undefined ? requestDraft[f.question] : f.answer,
+            }));
+            setFormResponses(newResponses);
+
+            if (Object.keys(updatePayload).length > 0) {
+                const res = await fetch(`/api/crm/leads/${lead.id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(updatePayload),
+                });
+                if (res.ok) {
+                    const updated: CRMLead = { ...lead, ...updatePayload };
+                    setLead(updated);
+                    onLeadUpdate?.(updated);
+                }
+            }
+        } catch (e) {
+            console.error('Failed to save request details:', e);
+        } finally {
+            setSavingRequestDetails(false);
+            setEditingRequestDetails(false);
         }
     };
 
@@ -617,13 +672,24 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
                             );
                         })()}
                     </div>
-                    <button
-                        onClick={onClose}
-                        aria-label="Close"
-                        className="p-2 hover:bg-muted rounded-xl transition-colors"
-                    >
-                        <X className="w-5 h-5 text-text-secondary" />
-                    </button>
+                    <div className="flex items-center gap-2">
+                        {onEdit && lead && (
+                            <button
+                                onClick={() => onEdit(lead)}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold text-primary border border-primary/30 hover:bg-primary/10 transition-colors"
+                                title="Edit lead details"
+                            >
+                                <Edit className="w-4 h-4" /> Edit
+                            </button>
+                        )}
+                        <button
+                            onClick={onClose}
+                            aria-label="Close"
+                            className="p-2 hover:bg-muted rounded-xl transition-colors"
+                        >
+                            <X className="w-5 h-5 text-text-secondary" />
+                        </button>
+                    </div>
                 </div>
 
                 {/* Lifecycle pipeline (Amazon-style, click any stage to move the lead) */}
@@ -977,25 +1043,63 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
                                     {/* Request Details — every field the prospect submitted on the ad form */}
                                     {formResponses.length > 0 && (
                                         <div className="bg-surface-elevated rounded-xl p-4">
-                                            <h3 className="font-bold text-text-primary mb-3">Request Details</h3>
-                                            <div className="space-y-2.5">
-                                                {formResponses.map((f, i) => {
-                                                    const isSeatReq = f.question.toLowerCase().includes('seat requirement') || f.question.toLowerCase() === 'seats';
-                                                    if (isSeatReq) {
-                                                        return (
-                                                            <div key={i} className="py-1">
-                                                                {renderEditable('Seat Requirement', 'seats', lead.seats != null ? lead.seats : f.answer, <Users className="w-4 h-4" />)}
-                                                            </div>
-                                                        );
-                                                    }
-                                                    return (
+                                            <div className="flex items-center justify-between mb-3">
+                                                <h3 className="font-bold text-text-primary">Request Details</h3>
+                                                {!editingRequestDetails && (
+                                                    <button
+                                                        onClick={() => {
+                                                            const initialDraft: Record<string, string> = {};
+                                                            formResponses.forEach(f => { initialDraft[f.question] = f.answer; });
+                                                            setRequestDraft(initialDraft);
+                                                            setEditingRequestDetails(true);
+                                                        }}
+                                                        className="p-1.5 hover:bg-muted rounded-lg transition-colors flex items-center gap-1 text-xs font-bold text-primary"
+                                                        title="Edit request details"
+                                                    >
+                                                        <Pencil className="w-3.5 h-3.5" /> Edit
+                                                    </button>
+                                                )}
+                                            </div>
+                                            {editingRequestDetails ? (
+                                                <div className="space-y-3">
+                                                    {formResponses.map((f, i) => (
+                                                        <div key={i} className="flex flex-col gap-1">
+                                                            <label className="text-xs font-bold text-text-secondary">{f.question}</label>
+                                                            <input
+                                                                type="text"
+                                                                value={requestDraft[f.question] ?? f.answer}
+                                                                onChange={(e) => setRequestDraft({ ...requestDraft, [f.question]: e.target.value })}
+                                                                className="w-full px-3 py-1.5 border border-border rounded-lg text-sm bg-surface text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                                                            />
+                                                        </div>
+                                                    ))}
+                                                    <div className="flex items-center gap-2 justify-end pt-2">
+                                                        <button
+                                                            onClick={() => setEditingRequestDetails(false)}
+                                                            className="px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-muted rounded-lg transition-colors"
+                                                        >
+                                                            Cancel
+                                                        </button>
+                                                        <button
+                                                            disabled={savingRequestDetails}
+                                                            onClick={handleSaveRequestDetails}
+                                                            className="px-3.5 py-1.5 text-xs font-bold bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-50 transition-colors inline-flex items-center gap-1.5"
+                                                        >
+                                                            {savingRequestDetails ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                                                            Save Changes
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <div className="space-y-2.5">
+                                                    {formResponses.map((f, i) => (
                                                         <div key={i} className="flex flex-col">
                                                             <span className="text-xs font-bold text-text-secondary">{f.question}</span>
                                                             <span className="text-sm text-text-primary break-words">{f.answer}</span>
                                                         </div>
-                                                    );
-                                                })}
-                                            </div>
+                                                    ))}
+                                                </div>
+                                            )}
                                         </div>
                                     )}
 

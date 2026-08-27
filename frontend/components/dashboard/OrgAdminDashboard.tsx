@@ -52,6 +52,7 @@ import { BDQuickStats } from './UnifiedDashboard';
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
 import OrgProgressTracker from '@/frontend/components/org-efficiency/OrgProgressTracker';
 import OrgEfficiencyMeter from '@/frontend/components/org-efficiency/OrgEfficiencyMeter';
+import CommandCenter from '@/frontend/components/dashboard/command-center/CommandCenter';
 
 // Types
 type Tab = 'overview' | 'properties' | 'requests' | 'reports' | 'visitors' | 'settings' | 'profile' | 'revenue' | 'users' | 'diesel_logger' | 'diesel' | 'electricity_logger' | 'electricity' | 'stock_reports' | 'checklist' | 'super_tenants' | 'escalation' | 'rooms' | 'ppm' | 'vendors' | 'procurement' | 'roster' | 'water_logger' | 'water' | 'guest_experience' | 'ai_tickets' | 'org_progress' | 'org_efficiency';
@@ -861,6 +862,25 @@ const OrgAdminDashboard = () => {
         
         router.replace(`${window.location.pathname}?${params.toString()}`, { scroll: false });
     };
+
+    // COMMAND CENTER — the default super-admin surface (from the electricity
+    // branch). Gated on the tab rather than hard-coded `true`: an explicit
+    // ?tab= request falls through to the legacy layout below, which is where
+    // Organization Progress and Org Efficiency live. Hard-coding true would
+    // make those unreachable.
+    // NB: typed `boolean`, not a literal, so TS does not mark the legacy code
+    // below as unreachable — that resets control-flow narrowing and turns
+    // hundreds of dormant lines into spurious "possibly null" errors.
+    const showCommandCenter: boolean = activeTab === 'overview';
+    if (showCommandCenter) {
+        return (
+            <CommandCenter
+                userName={user?.user_metadata?.full_name || 'Super Admin'}
+                userEmail={user?.email || ''}
+                orgId={org?.id ?? ''}
+            />
+        );
+    }
 
     if (!org && !isLoading) return (
         <div className="p-10 text-center">

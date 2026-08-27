@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 
 export interface AppSession {
     user_id: string;
-    role: 'master_admin' | 'org_super_admin' | 'org_admin' | 'property_admin' | 'staff' | 'soft_service_manager' | 'soft_service_staff' | 'tenant' | 'super_tenant' | 'maintenance_vendor' | 'bd_admin' | 'bd_super_admin' | 'bd_rep';
+    role: 'master_admin' | 'org_super_admin' | 'ops_super_admin' | 'org_admin' | 'property_admin' | 'staff' | 'soft_service_manager' | 'soft_service_staff' | 'tenant' | 'super_tenant' | 'maintenance_vendor' | 'bd_admin' | 'bd_super_admin' | 'bd_rep';
     org_id: string;
     property_ids: string[];
     available_modules: string[];

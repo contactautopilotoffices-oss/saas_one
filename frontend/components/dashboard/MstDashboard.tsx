@@ -17,6 +17,8 @@ import { checkInResolver } from '@/frontend/utils/resolver';
 import Skeleton from '@/frontend/components/ui/Skeleton';
 import SignOutModal from '@/frontend/components/ui/SignOutModal';
 import NotificationBell from './NotificationBell';
+import PendingActionsBell from './PendingActionsBell';
+import ReliabilityBadge from './ReliabilityBadge';
 import Image from 'next/image';
 import DieselStaffDashboard from '@/frontend/components/diesel/DieselStaffDashboard';
 import ElectricityStaffDashboard from '@/frontend/components/electricity/ElectricityStaffDashboard';
@@ -834,6 +836,7 @@ const MstDashboard = () => {
                     </div>
                     <div className="flex items-center gap-3">
                         {/* Notification Bell */}
+                        <PendingActionsBell />
                         <NotificationBell />
 
                         {/* Shift Status in Navbar */}
@@ -1127,6 +1130,9 @@ const DashboardTab = ({ tickets, completedCount, ticketStats, onTicketClick, use
 
     return (
         <div className="space-y-6">
+            {/* Own reliability score (employee sees their own) */}
+            <ReliabilityBadge userId={userId} />
+
             {/* Header */}
             <div>
                 <h1 className="text-2xl font-bold text-text-primary">Maintenance Dashboard</h1>

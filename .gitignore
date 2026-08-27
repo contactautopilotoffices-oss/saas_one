@@ -51,4 +51,22 @@ next-env.d.ts
 # scratch
 scratch/
 scratch_check.mjs
+# vendored node runtime - 106MB binary, must never be committed
+.node/
 
+# Editor/IDE install accidentally created inside the repo (12k files, ~157MB).
+# Not project source; GitHub also rejects blobs over 100MB.
+/vscode/
+
+# Local screenshot/diff scratch space from UI work (~24MB of PNGs).
+/scratch/
+
+# Working business data dropped at the repo root. These are live financial
+# records (payment trackers, AOP budgets, electricity ledgers, petty-cash PRD)
+# and belong in the finance drive, not in source control.
+/*.xlsx
+/*.docx
+/AOP-*.xlsx
+/Cassandra.png
+/ChatGPT Image*.png
+/Commercial Calculator/

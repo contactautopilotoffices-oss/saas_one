@@ -10,6 +10,8 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
 import InviteMemberModal from './InviteMemberModal'; // This is actually our AddMemberModal now
+import ReliabilityBadge from './ReliabilityBadge';
+import { useAuth } from '@/frontend/context/AuthContext';
 import ClientQRGeneratorModal from '../vms/ClientQRGeneratorModal';
 
 interface UserWithMembership {
@@ -38,6 +40,9 @@ interface UserDirectoryProps {
 }
 
 const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpdated }: UserDirectoryProps) => {
+    const { membership } = useAuth();
+    // Reliability panel is visible to org/ops super admins only (RLS agrees).
+    const canViewReliability = membership?.org_role === 'org_super_admin' || membership?.org_role === 'ops_super_admin';
     const [users, setUsers] = useState<UserWithMembership[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
@@ -1007,6 +1012,13 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                                             <span className="text-sm font-bold text-slate-900">
                                                 {selectedUserForProfile.propertyName}
                                             </span>
+                                        </div>
+                                    )}
+
+                                    {canViewReliability && (
+                                        <div className="pt-2">
+                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Reliability</p>
+                                            <ReliabilityBadge userId={selectedUserForProfile.id} />
                                         </div>
                                     )}
 

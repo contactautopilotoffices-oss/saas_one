@@ -71,6 +71,42 @@
     {
       "path": "/api/cron/whatsapp-reminders",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/sync-zoho-books",
+      "schedule": "0 */2 * * *"
+    },
+    {
+      "path": "/api/cron/sync-purchase-mailbox",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/sync-vendor-compliance",
+      "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/enrich-vendor-compliance",
+      "schedule": "0 */2 * * *"
+    },
+    {
+      "path": "/api/cron/council-convene",
+      "schedule": "30 1 * * 1"
+    },
+    {
+      "path": "/api/cron/sync-electricity-mailbox",
+      "schedule": "0 */2 * * *"
+    },
+    {
+      "path": "/api/cron/electricity-validate",
+      "schedule": "17 2 * * *"
+    },
+    {
+      "path": "/api/cron/electricity-chase",
+      "schedule": "7 * * * *"
+    },
+    {
+      "path": "/api/cron/electricity-monthly-report",
+      "schedule": "0 5 5 * *"
     }
   ]
 }

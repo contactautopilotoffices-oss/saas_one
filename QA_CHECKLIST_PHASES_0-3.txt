@@ -1,0 +1,486 @@
+==============================================================================
+ PROCUREMENT / ACCOUNTS + PETTY CASH  —  QA & WIRING CHECKLIST
+ Phases 0-3   ·   fill RESULT [PASS/FAIL/BLOCKED/N-A] + NOTES as you test
+ Last built: 2026-07-28
+==============================================================================
+
+HOW TO READ EACH TEST
+  DO       = the action to perform in the app (or curl)
+  EXPECT   = what a PASS looks like
+  WIRED    = where it lives in the code (route  ->  file)
+  LOGIN AS = which account/role must be signed in for this test
+  RESULT   = [  ] you fill:  PASS / FAIL / BLOCKED / N-A   + notes
+
+------------------------------------------------------------------------------
+ 0.  PREREQUISITES  (do once, before anything else)
+------------------------------------------------------------------------------
+[x] P-1  Run migration  20260723000001_add_accounts_role.sql   VERIFIED IN DB 2026-07-28
+[x] P-2  Run migration  20260723000002_petty_cash.sql          VERIFIED IN DB 2026-07-28
+[x] P-3  Run migration  20260723000003_payment_tracker.sql     VERIFIED IN DB 2026-07-28
+         (all objects, realtime + REPLICA IDENTITY FULL, RLS confirmed present)
+[ ] P-4  Assign >=1 user the 'accounts' role   ** CURRENTLY 0 ASSIGNED **
+         REQUIRED before any Finance test (Pay / UTR / Close). As of 2026-07-28:
+         accounts=0, procurement=9, property_admins=32, org_admins=7, properties=13
+[ ] P-5  Assign a property_admin on a test site (for approvals)
+[ ] P-6  Have >=1 plain non-tenant staff user on that site (the requester)
+[ ] P-7  (Phase 3 only) Set env: ZOHO_CLIENT_ID / ZOHO_CLIENT_SECRET /
+         ZOHO_REFRESH_TOKEN     (see .env.example)
+[ ] P-8  (email) Set SMTP_HOST/PORT/USER/PASS/SENDER_EMAIL  (optional; without
+         these all emails silently no-op — that is expected, not a bug)
+[ ] P-9  (cron) Set CRON_SECRET  (for the 2-hourly Zoho auto-sync)
+
+  TEST ACCOUNTS MATRIX  — fill in your real logins, reuse across all tests
+  .........................................................................
+   PURPOSE                | EMAIL                              | PASSWORD/NOTE
+   Master / Org admin     | contact.autopilotoffices@gmail.com | (you)
+   Accounts (Finance)     | ______________________________     | role 'accounts'
+   Approver (Prop. admin) | ______________________________     | property_admin
+   Requester (staff)      | ______________________________     | any non-tenant
+   Procurement            | ______________________________     | purchase_manager
+                          |                                    |  or _executive
+   Tenant (neg. test)     | ______________________________     | must NOT see Finance
+  .........................................................................
+  Roles that count as  (ONLY roles that actually exist in your app_role enum):
+    APPROVER  = property_admin, soft_service_manager, soft_service_supervisor,
+                org_admin, org_super_admin, master_admin
+    FINANCE   = accounts, org_super_admin, master_admin
+    PROCURE (align POs) = procurement, property_admin  (+ finance/admin roles)
+    TENANT (blocked)    = tenant, super_tenant, vendor
+    NB: the access code also lists purchase_manager / purchase_executive /
+        manager_executive / tenant_user -- these are NOT in your enum, so they
+        can never be assigned and simply never match (harmless dead entries).
+        Real align roles = procurement (9 users) + property_admin (32).
+    HEADS-UP: food_vendor & maintenance_vendor are NOT classed as tenants, so
+        today they WOULD see Petty Cash. Decide if they should be excluded.
+
+
+==============================================================================
+ PHASE 0 — ACCOUNTS ROLE PLUMBING + SIDEBAR
+   Wiring map:
+     app_role enum         -> migration 20260723000001
+     RoleKey / domains      -> frontend/types/rbac.ts
+     capability grants      -> frontend/constants/capabilities.ts
+     role level             -> backend/services/authService.ts
+     org-role priority       -> frontend/context/AuthContext.tsx
+     nav gating + Finance    -> frontend/components/layout/DashboardSidebar.tsx
+==============================================================================
+
+[ ] 0.1  'accounts' role is assignable
+     DO       : Assign a user role='accounts' at org level
+     EXPECT   : No DB enum error (migration P-1 applied)
+     WIRED    : migration 20260723000001_add_accounts_role.sql
+     LOGIN AS : Master/Org admin
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 0.2  Finance section shows for the accounts user
+     DO       : Log in as Accounts user, look at left sidebar
+     EXPECT   : "Finance" group with "Petty Cash" + "Payment Tracker"
+     WIRED    : DashboardSidebar.tsx  (canSeeAccounts = accountsCaps().canSee)
+     LOGIN AS : Accounts
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 0.3  Petty Cash shows for ALL non-tenant staff
+     DO       : Log in as plain Requester staff
+     EXPECT   : Sidebar shows Finance -> "Petty Cash" (Payment Tracker may be
+                hidden if they are not accounts/procurement/admin)
+     WIRED    : DashboardSidebar.tsx  canSeePettyCash (any non-tenant role)
+     LOGIN AS : Requester
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 0.4  Tenant is blocked (negative test)
+     DO       : Log in as a Tenant/vendor user
+     EXPECT   : NO "Finance" section at all (no Petty Cash, no Payment Tracker)
+     WIRED    : TENANT_LIKE_ROLES excluded in sidebar + access libs
+     LOGIN AS : Tenant
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 0.5  Payment Tracker link opens the dashboard
+     DO       : Click Finance -> Payment Tracker
+     EXPECT   : Lands on /<orgId>/accounts, page renders (not 403/blank)
+     WIRED    : app/(dashboard)/[orgId]/accounts/page.tsx
+     LOGIN AS : Accounts (or Procurement/Admin)
+     RESULT   : [  ]  NOTES: __________________________________________
+
+
+==============================================================================
+ PHASE 1 — PETTY CASH MVP
+   Wiring map:
+     tables + trigger + RLS + realtime -> migration 20260723000002_petty_cash
+     access rules                       -> backend/lib/pettyCash/access.ts
+     email intimation                    -> backend/lib/pettyCash/notify.ts
+     list/create                          -> app/api/petty-cash/route.ts
+     detail + transitions                 -> app/api/petty-cash/[id]/route.ts
+     file upload (bucket petty_cash_documents) -> app/api/petty-cash/upload
+     UI page                               -> app/(dashboard)/[orgId]/petty-cash
+     dashboard / new / detail              -> frontend/components/pettyCash/*
+   Status flow:
+     submitted -> approved -> paid -> settlement_submitted -> closed
+     branches: reject | send_back -> resubmit | cancel
+==============================================================================
+
+[ ] 1.1  Create a request
+     DO       : Petty Cash -> New Request. Pick property, type=Advance,
+                category=Housekeeping, amount=5000, purpose, mode=UPI -> Submit
+     EXPECT   : New row, number PC-YYYY-##### auto-assigned, status
+                "Pending Approval" (amber); shows under "Mine" tab
+     WIRED    : POST /api/petty-cash  -> NewRequestModal.tsx
+     LOGIN AS : Requester
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 1.2  Requester can only file on their own property (negative)
+     DO       : Try to create against a property you are NOT a member of
+     EXPECT   : 403 "You are not a member of that property"
+     WIRED    : POST /api/petty-cash (propertyIds check; admins exempt)
+     LOGIN AS : Requester
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 1.3  Approve (full or partial)
+     DO       : As approver open the request -> Approve. Optionally change the
+                approved amount to 4500.
+     EXPECT   : status -> "Approved" (blue); approved_amount stored;
+                requester emailed; now visible in Finance "Disbursements"
+     WIRED    : PATCH /api/petty-cash/[id] action=approve -> RequestDetailDrawer
+     LOGIN AS : Approver (of that property)
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 1.4  Approver scoping (negative)
+     DO       : As an approver of property A, try to approve a request on
+                property B
+     EXPECT   : 403 Forbidden (only own-property approvals; admins = whole org)
+     WIRED    : PATCH [id]  isApproverOfProperty check
+     LOGIN AS : Approver (wrong property)
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 1.5  Reject requires a reason
+     DO       : Reject with empty reason, then with a reason
+     EXPECT   : Empty -> 400 "A reason is required"; with reason -> "Rejected"
+                (red), requester emailed
+     WIRED    : PATCH [id] action=reject
+     LOGIN AS : Approver
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 1.6  Send back -> resubmit loop
+     DO       : Approver "Send back" with a note -> Requester edits fields
+                (amount/purpose/etc) -> Resubmit
+     EXPECT   : sent_back (orange) -> back to "Pending Approval"; edits saved;
+                only the OWNER can resubmit
+     WIRED    : PATCH [id] action=send_back / action=resubmit
+     LOGIN AS : Approver, then Requester
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 1.7  Disburse (mark Paid)  — Finance only
+     DO       : As Accounts, open an Approved request -> Pay. Enter mode + a
+                payment reference (UPI/bank).
+     EXPECT   : status -> "Paid" (violet); paid_by/paid_at set; requester
+                emailed "submit your bills"
+     WIRED    : PATCH [id] action=pay  (access.canDisburse)
+     LOGIN AS : Accounts / Finance
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 1.8  Non-finance cannot pay (negative)
+     DO       : As Approver (not accounts) try to Pay
+     EXPECT   : No Pay button; direct API call -> 403 Forbidden
+     WIRED    : canDisburse = accounts/super/master only
+     LOGIN AS : Approver
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 1.9  Settle with bills
+     DO       : As Requester (owner) on a Paid request -> Settle. Enter
+                actual_spent=4200, amount_returned=300, upload 1-2 receipts.
+     EXPECT   : status -> "Settlement Submitted" (sky); docs saved (stage=
+                settlement); finance emailed
+     WIRED    : PATCH [id] action=settle + /api/petty-cash/upload
+                (bucket petty_cash_documents)
+     LOGIN AS : Requester (owner)
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 1.10 Overspend path
+     DO       : Settle with extra_claimed instead of amount_returned
+     EXPECT   : extra_claimed stored; still moves to Settlement Submitted
+     WIRED    : PATCH [id] action=settle
+     LOGIN AS : Requester
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 1.11 Validate & close  — Finance only
+     DO       : As Accounts -> Close the settled request (optional remark)
+     EXPECT   : status -> "Closed" (green); closed_by/closed_at set;
+                requester emailed; request now locked
+     WIRED    : PATCH [id] action=close (canDisburse)
+     LOGIN AS : Accounts / Finance
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 1.12 Cancel
+     DO       : Owner cancels their own open request (or admin cancels any)
+     EXPECT   : status -> "Cancelled"; cannot cancel a closed/cancelled one
+     WIRED    : PATCH [id] action=cancel (owner or admin)
+     LOGIN AS : Requester (own) / Admin (any)
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 1.13 Tab scoping is correct
+     DO       : Check each tab: Mine / Approvals / Disbursements / All
+     EXPECT   : Mine = only my requests; Approvals = submitted on my
+                properties (approvers); Disbursements = approved+settlement
+                (finance); All = admins/finance see whole org, others see
+                own + own-properties
+     WIRED    : GET /api/petty-cash?tab=...
+     LOGIN AS : each of Requester / Approver / Accounts / Admin
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 1.14 SECURITY: bad tab value does NOT leak the org  (regression fix)
+     DO       : curl  GET /api/petty-cash?org_id=<ORG>&tab=zzz  (as a plain
+                non-admin requester's session/token)
+     EXPECT   : Returns ONLY that user's own requests (falls back to 'mine'),
+                NOT the whole org. (Was a leak; now allowlisted.)
+     WIRED    : app/api/petty-cash/route.ts  (TABS allowlist)
+     LOGIN AS : Requester (low privilege)
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 1.15 Realtime updates
+     DO       : Open the dashboard in two browsers; act in one
+     EXPECT   : The other refreshes within ~1s without manual reload
+     WIRED    : supabase realtime on petty_cash_requests + PettyCashDashboard
+     LOGIN AS : any two roles
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 1.16 Activity log / audit
+     DO       : Open a request detail -> Activity timeline
+     EXPECT   : Every action listed (actor, from->to status, remark, time)
+     WIRED    : petty_cash_activity + RequestDetailDrawer
+     LOGIN AS : any participant
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 1.17 Email intimation (only if SMTP set)
+     DO       : Run through submit/approve/pay/settle/close
+     EXPECT   : Emails to the right party at each hop (or silent no-op if SMTP
+                not configured — that is fine)
+     WIRED    : backend/lib/pettyCash/notify.ts
+     LOGIN AS : n/a (check inboxes)
+     RESULT   : [  ]  NOTES: __________________________________________
+
+
+==============================================================================
+ PHASE 2 — PAYMENT TRACKER  (works fully with MANUAL / CSV PO entry)
+   Wiring map:
+     tables (POs, payments, config) -> migration 20260723000003_payment_tracker
+     access rules                    -> backend/lib/accounts/access.ts
+     UTR email                        -> backend/lib/accounts/notify.ts
+     PO list/add/import               -> app/api/accounts/pos/route.ts
+     payment align (create tranche)   -> app/api/accounts/payments/route.ts
+     complete/update/cancel           -> app/api/accounts/payments/[id]/route.ts
+     proof upload (bucket payment_proofs) -> app/api/accounts/upload/route.ts
+     UI dashboard + 3 modals          -> frontend/components/accounts/*
+   Three tabs:
+     To Align (procurement) -> Aligned (with accounts) -> Completed (paid+UTR)
+==============================================================================
+
+[ ] 2.1  Add a PO manually
+     DO       : Payment Tracker -> Add/Import PO -> "Add one". PO number,
+                vendor, amount, dept, site, category -> Add PO
+     EXPECT   : PO appears in "To Align" with Pending = full amount
+     WIRED    : POST /api/accounts/pos  -> AddPoModal.tsx (canAlign)
+     LOGIN AS : Procurement / Accounts / Admin
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 2.2  CSV import
+     DO       : Add/Import PO -> "Import CSV". Upload a file with columns:
+                PO No (or Purchase Order#), Vendor Name, Amount (or PO Value /
+                Total PO amount), Status, Department, Project Name (or Site),
+                Category
+     EXPECT   : "Imported N PO(s)"; rows show in To Align; re-importing the
+                same file UPDATES (no duplicates)
+     WIRED    : POST /api/accounts/pos { rows:[...] } (upsert on org+po_number)
+     LOGIN AS : Procurement / Accounts / Admin
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 2.3  CSV with a repeated PO number does NOT crash  (regression fix)
+     DO       : Import a CSV that lists the SAME PO number on 2+ lines
+                (e.g. one-row-per-line-item export)
+     EXPECT   : Import succeeds (last row wins) — NO 500 "ON CONFLICT ...
+                cannot affect row a second time"
+     WIRED    : app/api/accounts/pos/route.ts  (de-dupe before upsert)
+     LOGIN AS : Procurement
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 2.4  Align a FULL payment
+     DO       : On a To-Align PO -> Align. requested_amount = full, optional
+                GST hold / TDS / term
+     EXPECT   : Moves to "Aligned" tab (blue); tranche #1; PO Pending drops to 0
+     WIRED    : POST /api/accounts/payments  -> AlignPaymentModal (canAlign)
+     LOGIN AS : Procurement / Accounts / Admin
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 2.5  Split payment (multiple tranches)
+     DO       : Align 50% of a PO, then align the balance later
+     EXPECT   : Two Aligned rows, tranche #1 and #2; PO Pending reflects the
+                remaining un-aligned amount each time
+     WIRED    : POST /api/accounts/payments (auto tranche_no = max+1)
+     LOGIN AS : Procurement
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 2.6  Mark paid + UTR  — Accounts only
+     DO       : On an Aligned row -> Mark paid. Enter UTR (required), paid
+                amount, date, upload proof
+     EXPECT   : Moves to "Completed" (green); UTR + proof stored; procurement
+                + accounts emailed the UTR
+     WIRED    : PATCH /api/accounts/payments/[id] action=complete
+                (canComplete) -> MarkPaidModal ; upload -> payment_proofs
+     LOGIN AS : Accounts
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 2.7  UTR is required (negative)
+     DO       : Try to complete without a UTR
+     EXPECT   : 400 "UTR number is required"
+     WIRED    : PATCH [id] action=complete
+     LOGIN AS : Accounts
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 2.8  Non-accounts cannot complete (negative)
+     DO       : As Procurement (canAlign but not canComplete) try Mark paid
+     EXPECT   : No button; API -> 403 Forbidden
+     WIRED    : canComplete = accounts/super/master only
+     LOGIN AS : Procurement
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 2.9  Completed cannot be cancelled (negative)
+     DO       : Try to cancel a completed payment
+     EXPECT   : 409 "Completed payments cannot be cancelled"
+     WIRED    : PATCH [id] action=cancel
+     LOGIN AS : Procurement / Admin
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 2.10 Filters + search
+     DO       : Use search (PO#/vendor/UTR) and department filter on tabs
+     EXPECT   : Results narrow correctly; row count updates
+     WIRED    : GET /api/accounts/pos , /api/accounts/payments
+     LOGIN AS : Accounts
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 2.11 Cross-org isolation (negative)
+     DO       : As a user of org A, curl the API with org_id of org B
+     EXPECT   : 403 "no accounts access to this organization"
+     WIRED    : resolveAccountsAccess org check
+     LOGIN AS : Accounts (org A)
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 2.12 Realtime
+     DO       : Two browsers; align/complete in one
+     EXPECT   : Other dashboard updates within ~1s
+     WIRED    : realtime on po_payments + zoho_purchase_orders
+     LOGIN AS : any two
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 2.13 UTR email (only if SMTP set)
+     DO       : Complete a payment
+     EXPECT   : Email with UTR to procurement + accounts (or silent no-op)
+     WIRED    : backend/lib/accounts/notify.ts
+     RESULT   : [  ]  NOTES: __________________________________________
+
+
+==============================================================================
+ PHASE 3 — ZOHO BOOKS  ->  APP PO SYNC
+   BLOCKED ON: ZOHO_CLIENT_ID / ZOHO_CLIENT_SECRET / ZOHO_REFRESH_TOKEN
+              + Zoho Organization ID   (default org = 807372318)
+   Wiring map:
+     list POs from Zoho   -> backend/services/zohoService.ts (listPurchaseOrders)
+     sync into DB          -> backend/services/zohoBooksSync.ts
+     manual "Sync now"      -> app/api/accounts/pos/sync/route.ts
+     config get/set         -> app/api/accounts/zoho-config/route.ts
+     config UI               -> frontend/components/accounts/ZohoConfigModal.tsx
+     auto sync (every 2h)    -> app/api/cron/sync-zoho-books + vercel.json
+==============================================================================
+
+[ ] 3.1  Config panel opens + shows credential state
+     DO       : Payment Tracker -> "Zoho" button
+     EXPECT   : Modal opens. If env creds set -> green "Server credentials
+                detected"; if not -> amber "Server is missing Zoho credentials"
+     WIRED    : GET /api/accounts/zoho-config  -> ZohoConfigModal
+     LOGIN AS : Accounts / Procurement / Admin
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 3.2  Save the Zoho Organization ID
+     DO       : Enter 807372318 -> Save & sync
+     EXPECT   : Saved; if creds present -> "Synced N PO(s) from Zoho"; if not
+                -> clear error, nothing crashes
+     WIRED    : PUT /api/accounts/zoho-config ; POST /api/accounts/pos/sync
+     LOGIN AS : Accounts / Admin
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 3.3  Org ID validation (negative)
+     DO       : Enter a non-numeric org id (e.g. "abc")
+     EXPECT   : 400 "must be numeric (e.g. 807372318)"
+     WIRED    : PUT /api/accounts/zoho-config
+     LOGIN AS : Accounts
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 3.4  Synced POs carry site / department / category
+     DO       : After a successful sync, open To Align
+     EXPECT   : Zoho POs show Site, Dept, Category populated (mapped from Zoho
+                custom fields cf_site / cf_department / cf_category), amount =
+                Zoho total, vendor + PO number correct
+     WIRED    : backend/services/zohoBooksSync.ts (cf_* mapping)
+     LOGIN AS : Accounts / Procurement
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 3.5  Sync is idempotent (re-sync updates, no dupes)
+     DO       : Click "Sync now" twice
+     EXPECT   : Same POs updated in place; no duplicate rows; last_synced_at +
+                last status update in the Zoho panel
+     WIRED    : upsert on (organization_id, po_number)
+     LOGIN AS : Accounts
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 3.6  Graceful when unconfigured (negative)
+     DO       : With no org id saved (or is_active off), click Sync now
+     EXPECT   : "Zoho Books is not configured for this organization" — no crash
+     WIRED    : zohoBooksSync.ts early no-op
+     LOGIN AS : Accounts
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 3.7  Cron auth guard
+     DO       : curl  GET /api/cron/sync-zoho-books  (no auth header)
+     EXPECT   : 401 ; with header "Authorization: Bearer <CRON_SECRET>" -> runs
+     WIRED    : app/api/cron/sync-zoho-books/route.ts ; vercel.json schedule
+     LOGIN AS : n/a (server/cron)
+     RESULT   : [  ]  NOTES: __________________________________________
+
+[ ] 3.8  Zoho PO -> align -> pay end to end
+     DO       : Take a synced Zoho PO through Align -> Mark paid + UTR
+     EXPECT   : Same Phase-2 flow works on Zoho-sourced POs
+     LOGIN AS : Procurement then Accounts
+     RESULT   : [  ]  NOTES: __________________________________________
+
+
+==============================================================================
+ QUICK Q&A  (sanity answers while testing)
+==============================================================================
+ Q: Nothing shows in "To Align"?
+ A: No POs yet. Add one manually (2.1), import CSV (2.2), or sync Zoho (3.2).
+    Only POs with pending (un-aligned) amount > 0 appear there.
+
+ Q: I don't see the "Zoho" / "Add PO" / "Align" buttons.
+ A: Those need canAlign (procurement/accounts/admin). A pure viewer won't see
+    them. "Mark paid" needs the accounts role.
+
+ Q: Emails aren't arriving.
+ A: Expected until SMTP_* env is set. The flow itself still works; email is
+    best-effort and silently skipped without SMTP.
+
+ Q: Sync says "missing credentials".
+ A: Set ZOHO_CLIENT_ID / ZOHO_CLIENT_SECRET / ZOHO_REFRESH_TOKEN and restart.
+    The org id (807372318) is separate and set in the Zoho panel.
+
+ Q: A user sees the wrong petty-cash rows.
+ A: Check their role -> which tab. Mine=own only; Approvals/Disbursements need
+    approver/finance; All is scoped for non-admins to own+own-properties.
+
+ Q: There are TWO Zoho orgs named "Parsvatech Workspaces Private Limited".
+ A: Use the DEFAULT one = 807372318 (live POs). The other (829011181) is a
+    legacy/sandbox org — skip it.
+
+==============================================================================
+ SIGN-OFF
+   Phase 0  [  ]  tester ______  date ______
+   Phase 1  [  ]  tester ______  date ______
+   Phase 2  [  ]  tester ______  date ______
+   Phase 3  [  ]  tester ______  date ______
+==============================================================================

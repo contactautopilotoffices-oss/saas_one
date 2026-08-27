@@ -1,0 +1,432 @@
+agent: claude-code
+session: 2026-08-03-1
+commit: 0b682137
+scope: >
+  Baseline assessment of SPEC-ELECTRICITY.md requirements REQ-E-01..13 against the codebase
+  as it stands. NOTHING WAS BUILT THIS SESSION. Every score below is a measurement of the
+  pre-existing state, not a claim of work done. Per EVAL.md protocol rule 6 these would
+  normally be marked carried:true, but no prior scorecard covers the REQ-E-* series, so this
+  establishes the baseline at carried:false with zero build credit claimed.
+requirements_touched: []
+
+# ---------------------------------------------------------------------------
+# HEADLINE FINDING — the premise test from SPEC-ELECTRICITY.md §5
+# ---------------------------------------------------------------------------
+premise_test:
+  question: >
+    The spec's §5 says: build S4 read-only first, because the whole pipeline rests on
+    "if data is filled to the pinpoint, validating the data against the bill should not be
+    a problem." How often is the data actually filled to the pinpoint?
+  method: >
+    Read-only SQL against the production Supabase project (xvucakstcmtfoanmgcql), joining
+    electricity_bills.billing_month against distinct meter coverage in electricity_readings.
+  result: >
+    There is NO month in the database where bills and meter readings are both adequately
+    populated. Bill data runs 2025-11 .. 2026-05. Meter coverage in those exact months:
+    Nov-2025 0/46 meters, Dec-2025 0/46, Jan-2026 7/46, Feb-2026 12/46, Mar-2026 8/46,
+    Apr-2026 9/46, May-2026 9/46. Peak coverage during any billed month is 26% (Feb-2026).
+    Coverage does improve to 76-78% in Jun/Jul-2026 — but there are zero bills for those
+    months. The overlap between "months with bills" and "months with usable logs" is empty.
+  implication: >
+    S4 cannot be run today on any month, and no variance threshold (decision #1, the
+    spec's own top-ranked blocker) can be derived from this data. The spec author's
+    hypothesis is confirmed and stronger than stated: "If it turns out the logs are 40%
+    complete, S5 is the product and the rest is packaging." The logs are ~20% complete
+    across the billed period. S5 is the product.
+  repro: |
+    with bill_months as (select distinct billing_month::date m from electricity_bills),
+         read_cov as (select date_trunc('month',reading_date)::date m,
+                             count(distinct meter_id) meters_reporting
+                      from electricity_readings group by 1)
+    select b.m bill_month, coalesce(r.meters_reporting,0) meters_reporting,
+           (select count(*) from electricity_meters) meters_total
+    from bill_months b left join read_cov r on r.m=b.m order by b.m;
+
+data_quality_defects_found:
+  - id: DQ-01
+    finding: >
+      24 electricity_readings rows are dated in the future, from 2026-08-04 to 2026-12-07
+      (today is 2026-08-03). A meter reading cannot be taken tomorrow. No CHECK constraint
+      or application guard rejects a future reading_date.
+    impact: >
+      Any completeness scan for S5 will treat these as filled, suppressing chase tasks for
+      dates that were never actually read. Fix before S5 is built or the chase engine
+      inherits the defect.
+    repro: "select count(*) from electricity_readings where reading_date > current_date;"
+  - id: DQ-02
+    finding: >
+      electricity_billing_accounts.aop_site_id is NULL on all 15 rows. The FK exists; the
+      data does not.
+    impact: "S13 (AOP linkage) has no join key populated. The last stage of the pipeline is unreachable even once built."
+    repro: "select count(*) from electricity_billing_accounts where aop_site_id is not null;"
+  - id: DQ-03
+    finding: >
+      4 of 15 billing accounts have property_id NULL, and meters exist on only 6 distinct
+      properties. Bill-to-meter joins are partial before any code is written.
+    repro: "select count(*) filter (where property_id is not null), count(*) from electricity_billing_accounts;"
+  - id: DQ-04
+    finding: >
+      The view electricity_monthly_consumption (created in 20260802000003) is read by zero
+      lines of application code. Grep for it across app/, backend/, frontend/ returns nothing.
+    impact: "Dark data in the exact place S4 needs to read from. Relevant to EVAL.md REQ-05."
+
+# ---------------------------------------------------------------------------
+# CORRECTIONS TO SPEC-ELECTRICITY.md
+# ---------------------------------------------------------------------------
+spec_corrections:
+  - section: "S10 / REQ-E-10"
+    spec_says: "The screenshot did not come through — nothing was attached to the message. Please resend."
+    correction: >
+      The screenshot DID arrive in this session. It shows a Qandle HRMS "Alerts" screen with
+      two tabs (Notifications | Pending Actions) and per-item cards carrying three buttons —
+      Approve (green) / View Form (blue) / Reject (red) — plus a timestamp line and, where an
+      action is not supported in-app, a red "Use Qandle Website for this Action" note instead
+      of buttons. The pattern to replicate is a tabbed alerts centre with per-item action
+      triples, not merely a count badge.
+  - section: "§1 Roles / REQ-E-07"
+    spec_says: "Ops Super Admin — No, must be built. Org Super Admin sits above it."
+    correction: >
+      dipti.walanj@worksquare.in ALREADY EXISTS in production with role 'org_super_admin' in
+      org 211e1330 (Autopilot Offices) — identical to saniel@worksquare.in and
+      rushab@worksquare.in. The person intended to be the checker currently holds the
+      accepter's role. Building ops_super_admin therefore includes a DOWNGRADE of a live
+      account, not just an insert. That is a permission change on a real user and per FP-05
+      needs explicit human confirmation before it is executed.
+  - section: "§1 ⚠️ Blocker (TRUTH-03)"
+    spec_says: "Super Admin account authenticates but has no organization membership rows. Fix the membership rows first."
+    correction: >
+      Partially stale. All three named org_super_admin accounts (saniel, rushab, dipti) now
+      have exactly 1 organization_memberships row each. The account still holding zero
+      membership rows is the master_admin, ranganathanlohitaksha@gmail.com. So the REQ-E-07
+      gate as written no longer blocks the org_super_admin tier, but a master-admin-scoped
+      test would still be blocked. I did not attempt a login, so I cannot confirm the
+      original "console renders inaccessible" symptom is resolved — only that the row-level
+      cause described in TRUTH-03 is no longer present for those three accounts.
+  - section: "S4"
+    spec_says: "Reconcile against the logging module — compare board reading against site-logged readings."
+    correction: >
+      A function named computeReconciliation already exists (backend/lib/electricity/tracker.ts:344-368)
+      and is live in the UI, but it reconciles a DIFFERENT axis: billed rupee total vs AOP
+      booked actual, money against money. It does not touch electricity_readings at all.
+      The name will mislead anyone assuming S4 is partly done. S4 as specified (units vs
+      units) has no implementation.
+
+# ---------------------------------------------------------------------------
+# SCORES
+# ---------------------------------------------------------------------------
+scores:
+  - id: REQ-E-01
+    requirement: "Single consolidated inbox with sender allow-list and de-duplication"
+    grounding_question: "Can a bill arrive twice and produce one record?"
+    grounding_question_answer: >
+      Unanswerable — no bill has ever arrived by mail. There is no electricity inbox. A
+      Zoho mailbox sync exists for the PROCUREMENT purchase mailbox
+      (backend/services/zohoMailService.ts, app/api/cron/sync-purchase-mailbox), but it is a
+      different mailbox feeding a different table (mailbox_threads), it lists messages only,
+      and it has no attachment download, no sender allow-list, and no de-duplication by
+      consumer number + billing month. All 102 bills in production came from an xlsx import.
+    evidence:
+      - "backend/services/zohoMailService.ts — list-only Zoho client, no getAttachment path"
+      - "app/api/cron/sync-purchase-mailbox/route.ts — purchase mailbox, not electricity"
+      - "select count(*) from electricity_bills where source='ocr'; -> 0"
+    repro: "grep -rn 'electricity' app/api/cron/ | wc -l   # -> 0"
+    real_data: true
+    score: 0
+    to_next_point: "Create the inbox, ingest one real bill mail to a stored document row with sender allow-listing."
+    carried: false
+
+  - id: REQ-E-02
+    requirement: "Per-field OCR extraction with per-field confidence"
+    grounding_question: "Which field on this bill is the system least sure about, and can I see that without opening the PDF?"
+    grounding_question_answer: >
+      No. No bill has ever been OCR'd — electricity_bills has zero rows with source='ocr'.
+      Groq vision OCR does exist and works, but for METER PHOTOS, and it returns one
+      document-level confidence number for a single field (the reading). The spec's
+      requirement is the opposite shape: many fields per document, each independently scored.
+      Nothing in the schema can store a per-field confidence today.
+    evidence:
+      - "app/api/ocr/meter/route.ts:52 — returns {reading, confidence, unit, is_blurry, digits_found}: one confidence for one field"
+      - "app/api/ocr/meter/route.ts:168 — ocr_confidence persisted on the reading row"
+      - "supabase/migrations/20260802000002_electricity_bills.sql:69-70 — source CHECK allows 'ocr' but no confidence column exists"
+    repro: "select count(*) from electricity_bills where source='ocr';  -- 0"
+    real_data: true
+    score: 1
+    to_next_point: "Extract one real bill PDF into the 12 spec'd fields with a confidence per field, persisted and visible in the UI."
+    carried: false
+
+  - id: REQ-E-03
+    requirement: "Auto-distribution of bill copies to site property admins"
+    grounding_question: "Did the right site get the right bill, with no human forwarding?"
+    grounding_question_answer: "No. No distribution code exists. EmailService has no attachment parameter, so it could not send a bill copy even if invoked."
+    evidence:
+      - "backend/services/EmailService.ts — sendEmail signature has no attachments param"
+      - "grep -rn 'forwardBill\\|forward' backend/lib/electricity/ -> no matches"
+    repro: "ls backend/lib/electricity/   # -> access.ts, tracker.ts only"
+    real_data: true
+    score: 0
+    to_next_point: "Add attachment support to EmailService and send one real bill to the resolved property admin."
+    carried: false
+
+  - id: REQ-E-04
+    requirement: "Reconciliation with a defined, configurable variance threshold"
+    grounding_question: "What variance is a finding, and who set that number?"
+    grounding_question_answer: >
+      For bill-vs-log (what S4 asks): nothing is a finding, because that comparison does not
+      exist in code. For the DIFFERENT reconciliation that does exist (billed rupees vs AOP
+      actual), the answer is 5%, and nobody set it — it is a hardcoded module constant with
+      no configuration surface and no org override. Neither answer satisfies the requirement.
+      Critically, the threshold also cannot be derived from data right now: see premise_test
+      above — no billed month has more than 26% meter coverage.
+    evidence:
+      - "backend/lib/electricity/tracker.ts:342 — const FLAG_THRESHOLD_PCT = 5 (hardcoded)"
+      - "backend/lib/electricity/tracker.ts:344-368 — computeReconciliation compares billed_total vs aop_actual, never electricity_readings"
+      - "grep -rn 'electricity_monthly_consumption' app backend frontend -> 0 matches (the units view is read by nothing)"
+    repro: "grep -n 'FLAG_THRESHOLD_PCT' backend/lib/electricity/tracker.ts"
+    real_data: true
+    score: 1
+    to_next_point: >
+      Run the units-vs-units comparison read-only over the one month with best coverage
+      (Feb-2026, 12/46 meters), publish the variance distribution, and let a human set the
+      threshold from it into config rather than a constant.
+    carried: false
+
+  - id: REQ-E-05
+    requirement: "Three-touch chase with mid-sequence stop and cost logging"
+    grounding_question: "If data is filled after touch 1, does touch 2 still fire? What did this month's chasing cost?"
+    grounding_question_answer: >
+      No chase exists, so neither question has an answer. WhatsApp send infrastructure is
+      real and in production use (whatsapp_queue table, webhook dispatcher, several cron
+      senders), which is a genuine head start, but no electricity chase task, no touch
+      sequencing, no stop condition, and no cost field anywhere.
+    evidence:
+      - "app/api/webhooks/whatsapp-queue/route.ts — real outbound dispatcher exists"
+      - "grep -rn -i 'chase\\|touch1\\|touch_1' backend/lib/electricity/ -> no matches"
+      - "No voice provider anywhere: grep -rn 'twilio\\|exotel\\|vapi' -> no matches"
+    repro: "grep -rn -i 'reliability\\|strike\\|chase' backend/lib/ | wc -l   # -> 0 relevant"
+    real_data: false
+    score: 0
+    to_next_point: "One chase task created from one real missing-date set, touch 1 sent, and the sequence provably halting when the reading lands."
+    carried: false
+
+  - id: REQ-E-06
+    requirement: "Reliability flag: visible to subject, contestable, rolling window, scoped"
+    grounding_question: "Can the person see their own record and challenge a strike today?"
+    grounding_question_answer: "No. No reliability table, no strike concept, no contest path, nothing in any profile UI. Not started."
+    evidence:
+      - "grep -rn -i 'reliability|strike' app backend frontend -> only unrelated 'retry logic for reliability' comments in 3 dashboards"
+    repro: "grep -rn -i 'strike' supabase/migrations/ | wc -l   # -> 0"
+    real_data: false
+    score: 0
+    to_next_point: "Table + subject-visible view + contest action, before any strike is ever written."
+    carried: false
+    note: >
+      Flagging the spec's own caution as agreed and material: this is the one requirement in
+      the set with employment consequences. The spec's four conditions (subject visibility,
+      contestability, fair-assignability, rolling window) should be treated as build-blocking
+      preconditions, not enhancements, and HR policy review should gate the ship.
+
+  - id: REQ-E-07
+    requirement: "Ops Super Admin role with server-side permission separation from Org Super Admin"
+    grounding_question: "Can the checker approve a payment if they try the API directly?"
+    grounding_question_answer: >
+      There is no checker to test. The string 'ops_super_admin' appears nowhere in the
+      repository. Worse than absent: the intended checker (dipti.walanj@worksquare.in) is
+      live in production as 'org_super_admin', i.e. currently holding exactly the accepter
+      authority the spec says must be separated from her. The separation is not merely
+      unbuilt, it is currently inverted.
+    evidence:
+      - "grep -rn 'ops_super_admin' app frontend backend supabase -> 0 matches"
+      - "backend/lib/electricity/access.ts:21-22 — ELECTRICITY_ROLES = [org_super_admin, master_admin, accounts, procurement]; no checker tier"
+      - "prod query: dipti.walanj@worksquare.in role='org_super_admin' in org 211e1330"
+    repro: "select u.email, om.role from users u join organization_memberships om on om.user_id=u.id where u.email like '%worksquare%';"
+    real_data: true
+    score: 0
+    to_next_point: "Add the role to both role systems and prove a checker's direct API call to the payment-submit route returns 403."
+    carried: false
+    gate_note: >
+      SPEC gate says this cannot exceed 2 until TRUTH-03 is fixed. On live evidence the
+      org_super_admin membership rows now exist, so that specific gate would no longer bind —
+      but the score is 0 on its own merits, so the gate is moot this session.
+
+  - id: REQ-E-08
+    requirement: "Monthly PDF, exportable and emailable, real data"
+    grounding_question: "Can I email it from the app without downloading it first?"
+    grounding_question_answer: >
+      No. No electricity report exists in any format. A working HTML-to-PDF pipeline does
+      exist for the Council module and is directly reusable, but it has never been pointed at
+      electricity data.
+    evidence:
+      - "backend/lib/council/auditPdf.ts — puppeteer HTML->PDF, working precedent"
+      - "No route under app/api/electricity/ produces a PDF (routes: tracker, tracker/explain, bills, pace)"
+    repro: "find app/api/electricity -name route.ts   # 4 routes, none returning application/pdf"
+    real_data: true
+    score: 0
+    to_next_point: "Generate the month's PDF from real bill rows and expose both a download and a send action."
+    carried: false
+
+  - id: REQ-E-09
+    requirement: "Dispute tracker with genuinely open-ended response capture"
+    grounding_question: "Can someone answer with a photo and a paragraph and have both survive intact?"
+    grounding_question_answer: >
+      No. 'disputed' exists only as one of three values in a payment_status enum, settable
+      from the register's status dropdown. There is no dispute record, no reason field, no
+      response, no attachment, no thread, and no notification. Zero bills are in the disputed
+      state in production. The spec's central instruction — do not build a dropdown, keep the
+      response open-ended — is un-violated only because no response field exists at all.
+    evidence:
+      - "supabase/migrations/20260802000002_electricity_bills.sql:64-65 — CHECK (payment_status IN ('pending','paid','disputed'))"
+      - "frontend/components/electricity/ElectricityBillRegister.tsx:38 — STATUSES array, a dropdown value"
+      - "app/api/electricity/tracker/route.ts:130 — VALID_STATUSES gate on PATCH"
+      - "prod: select count(*) from electricity_bills where payment_status='disputed'; -> 0"
+    repro: "select payment_status, count(*) from electricity_bills group by 1;"
+    real_data: true
+    score: 1
+    to_next_point: "A dispute row with a free-text + attachment response persisted intact and shown verbatim before any summary."
+    carried: false
+
+  - id: REQ-E-10
+    requirement: "Notification badge per the HRMS pattern, bounded by the design file"
+    grounding_question: "Does the count clear correctly, and is every token from the design md?"
+    grounding_question_answer: >
+      Partly, for the wrong object. A real realtime notification bell with an unread count
+      badge exists and the count does clear on read. But it is the generic notifications
+      bell — it has no Pending Actions tab, no per-item Approve / View Form / Reject triple,
+      and nothing in the electricity pipeline writes to it. Against the screenshot that did
+      arrive this session, roughly the badge is present and the entire action surface is not.
+    evidence:
+      - "frontend/components/dashboard/NotificationBell.tsx:27,49,116,132,175 — unreadCount lifecycle, badge render, clear-on-read"
+      - "No pending_actions table exists in supabase/migrations/"
+    repro: "grep -n 'unreadCount' frontend/components/dashboard/NotificationBell.tsx"
+    real_data: true
+    score: 1
+    to_next_point: "A Pending Actions surface carrying real per-item actions, with tokens traced to design.md and deviations logged."
+    carried: false
+
+  - id: REQ-E-11
+    requirement: "Immutable audit trail across S7 and S11"
+    grounding_question: "Six months from now, can I prove who checked and who approved?"
+    grounding_question_answer: >
+      No. Neither S7 nor S11 exists, so there is nothing to audit; and the bills table records
+      no actor on any transition. payment_status can be changed via PATCH with no record of
+      who changed it or when — updated_at is overwritten in place. A user-management audit
+      table exists elsewhere in the schema and is a usable pattern, but no electricity
+      approval is captured anywhere.
+    evidence:
+      - "supabase/migrations/20260802000002_electricity_bills.sql:50-83 — no changed_by, no history table, no trigger"
+      - "supabase/migrations/20260707000000_user_management_audit.sql — the reusable pattern"
+    repro: "grep -n 'changed_by\\|audit' supabase/migrations/20260802000002_electricity_bills.sql   # -> no matches"
+    real_data: true
+    score: 0
+    to_next_point: "Append-only transition table written by trigger, capturing actor + before/after on every status change."
+    carried: false
+
+  - id: REQ-E-12
+    requirement: "Three-phase payment form, L1 column first, per-site selection"
+    grounding_question: "Can I choose early for one site and due-date for another in one submission?"
+    grounding_question_answer: >
+      No — there is no form, no selection, and no submission. The three amounts themselves are
+      real, populated columns rendered in the register, which is the substantive head start.
+      But the stated column order is violated in the one place the three amounts appear today:
+      the register renders Total, then Early-pay-by, then Early-pay-amt, then After-due-amt.
+      L1 (early, the lowest) is third from the left, not first.
+    evidence:
+      - "frontend/components/electricity/ElectricityBillRegister.tsx:153-156 — <th>Total</th>, <th>Early pay by</th>, <th>Early pay amt</th>, <th>After due amt</th>"
+      - "supabase/migrations/20260802000002_electricity_bills.sql:59-62 — total_amount, early_payment_amount, after_due_date_amount all real columns"
+      - "frontend/lib/electricity/trackerTypes.ts — inr() renders comma-separated, no decimals (this part already matches the standing preference)"
+    repro: "sed -n '149,158p' frontend/components/electricity/ElectricityBillRegister.tsx"
+    real_data: true
+    score: 1
+    to_next_point: "Reorder to early/due/late and add a per-site radio selection that submits one mixed-scenario batch."
+    carried: false
+
+  - id: REQ-E-13
+    requirement: "Accounts handoff locked; payment execution stays human"
+    grounding_question: "Can this system move money on its own? It must not be able to."
+    grounding_question_answer: >
+      It cannot — but by absence, not by design. There is no payment portal integration, no
+      outbound payment call, and no accounts handoff object. The safety property the
+      requirement protects is intact today; the capability it is meant to gate does not exist
+      yet. Scoring the requirement as built would be dishonest, so it scores 0 while FP-05
+      is recorded as pass.
+    evidence:
+      - "No route under app/api/ references a payment gateway for electricity"
+      - "app/api/electricity/tracker/route.ts — PATCH sets payment_status/payment_date only; a human types it"
+    repro: "grep -rn -i 'razorpay\\|payment_gateway\\|payout' app/api/electricity/   # -> 0 matches"
+    real_data: true
+    score: 0
+    to_next_point: "Build the locked instruction set to Accounts, with the payment action itself explicitly outside the system."
+    carried: false
+
+# ---------------------------------------------------------------------------
+caveats:
+  - "NOTHING WAS BUILT THIS SESSION. This is a baseline measurement, not progress. Every score is the state I found."
+  - >
+    I did not run the application or log in as any role. All role findings are from the
+    database and from source; the TRUTH-03 symptom ('console inaccessible') is therefore
+    unverified either way — I can only report that the membership rows described as missing
+    are now present for the three org_super_admin accounts.
+  - >
+    I could not test OCR accuracy on a real electricity bill, because no bill PDF exists in
+    the system — all 102 bill rows came from the xlsx import. Any estimate of extraction
+    quality would be invention.
+  - >
+    The variance threshold (spec decision #1) cannot be derived from current data. I ran the
+    read-only analysis the spec recommends in §5 and the answer is that the required overlap
+    does not exist yet. This is a real answer to the question, but not the number the spec
+    was hoping for.
+  - >
+    Bill data stops at May-2026 while today is Aug-2026 — three billing months are missing
+    entirely. I did not determine whether that is an import cutoff or a collection gap.
+  - "I did not verify DISCOM format coverage (spec open question #2) — no bill documents exist to inspect."
+
+truth_checks:
+  TRUTH-01: not_verified   # did not log in as the technician credential this session
+  TRUTH-02: not_verified
+  TRUTH-03: partially_resolved  # org_super_admin rows now exist (saniel/rushab/dipti); master_admin has 0 memberships; login symptom untested
+  TRUTH-04: not_verified   # no new media added this session, so not violated
+  TRUTH-05: not_verified
+  TRUTH-06: pass           # no output this session repeats the 70 figure
+  TRUTH-07: not_verified
+  TRUTH-08: not_verified
+  TRUTH-09: pass           # no test records created in production this session
+  TRUTH-10: not_verified
+
+first_principles:
+  FP-01: pass  # every figure above carries the query that produced it
+  FP-02: pass  # this session was read-only against production; no writes
+  FP-03: pass  # findings stated in plain language with the reproduction command beside them
+  FP-04: pass  # premise failure reported as the headline rather than buried
+  FP-05: pass  # no irreversible action taken; the dipti role downgrade is flagged for human decision, not executed
+  FP-06: pass  # scored only REQ-E-01..13 as written; the implementation plan is filed as a proposal, unbuilt
+
+proposals:
+  - >
+    Reorder the S12/register columns to early / due / late (L1 first) — this is a one-line
+    fix to an existing violation at ElectricityBillRegister.tsx:153-156 and needs no new
+    infrastructure. Not done: it is outside what was asked this session.
+  - >
+    Add a CHECK constraint rejecting future reading_date on electricity_readings, and
+    quarantine the 24 existing future rows for review rather than deleting them.
+  - >
+    Reverse the spec's build order per its own §5, and go further: build S5 (the chase)
+    BEFORE S4 (the reconciliation). The premise test shows the reconciliation has no data to
+    run on, and only the chase produces that data. Building S4 first yields a working
+    comparison over an empty set.
+  - >
+    Full 6-phase implementation plan filed at docs/ELECTRICITY_AUTOMATION_PLAN.md. Unbuilt,
+    pending approval.
+
+overall_score: 0.41   # weighted (sum score*weight = 37) / (weight total 90), expressed 0-5
+
+honest_summary: >
+  Of the thirteen electricity requirements, nine are at 0 and four are at 1. Nothing in this
+  pipeline is built. The four ones are all the same shape: a real, working asset exists
+  adjacent to the requirement — Groq OCR for meters, a reconciliation on the wrong axis, a
+  'disputed' enum value, an unread-count bell — and each will mislead a reader into thinking
+  the requirement is partly done. It is not. The most useful output of this session is not a
+  score, it is the premise test: the pipeline's founding assumption is that meter logs are
+  filled to the pinpoint, and across every month for which a bill exists, meter coverage
+  peaks at 26% and is 0% for the two earliest months. Nobody could have built S4 on this data
+  regardless of how well it was engineered. The chase is not a supporting feature of this
+  spec; on the evidence it is the whole product, and the reconciliation is what becomes
+  possible a few months after the chase starts working.
