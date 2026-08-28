@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { NotificationService } from '@/backend/services/NotificationService';
+import { EmailService } from '@/backend/services/EmailService';
+import { getBookingDateTimeIST } from '@/backend/utils/timezone';
 
 /**
  * GET /api/meeting-room-bookings
@@ -86,16 +88,18 @@ export async function POST(request: NextRequest) {
             date,
             startTime,
             endTime,
-            comment
+            comment,
+            attendeeEmail
         } = body;
 
         if (!meetingRoomId || !propertyId || !date || !startTime || !endTime) {
             return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
         }
 
-        // 1. Validate future date
-        const bookingDateTime = new Date(`${date}T${startTime}`);
-        if (bookingDateTime < new Date()) {
+        // 1. Validate future date with IST timezone awareness
+        const cleanDate = String(date).split('T')[0];
+        const bookingDateTime = getBookingDateTimeIST(cleanDate, startTime);
+        if (isNaN(bookingDateTime.getTime()) || bookingDateTime < new Date()) {
             return NextResponse.json({ error: 'Cannot book for a past date/time' }, { status: 400 });
         }
 
@@ -141,7 +145,7 @@ export async function POST(request: NextRequest) {
             .from('meeting_room_bookings')
             .select('id')
             .eq('meeting_room_id', meetingRoomId)
-            .eq('booking_date', date)
+            .eq('booking_date', cleanDate)
             .eq('status', 'confirmed')
             .lt('start_time', endTime)
             .gt('end_time', startTime);
@@ -155,32 +159,47 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Room is already booked for this time slot' }, { status: 409 });
         }
 
-        // 5. Fetch organization_id for consistency
+        // 5. Fetch organization_id and property name
         const { data: property } = await supabaseAdmin
             .from('properties')
-            .select('organization_id')
+            .select('organization_id, name')
             .eq('id', propertyId)
             .single();
 
-        // 6. Create booking
-        const { data: booking, error: insertError } = await supabase
+        // 6. Create booking with graceful fallback if attendee_email column is not yet present
+        const insertPayload: any = {
+            meeting_room_id: meetingRoomId,
+            property_id: propertyId,
+            organization_id: property?.organization_id || null,
+            user_id: user.id,
+            company_id: companyMember?.company_id || null, // Link booking to company too
+            booking_date: cleanDate,
+            start_time: startTime,
+            end_time: endTime,
+            status: 'confirmed',
+            comment: comment || null,
+            attendee_email: attendeeEmail?.trim() || null
+        };
+
+        let bookingResult = await supabase
             .from('meeting_room_bookings')
-            .insert({
-                meeting_room_id: meetingRoomId,
-                property_id: propertyId,
-                organization_id: property?.organization_id || null,
-                user_id: user.id,
-                company_id: companyMember?.company_id || null, // Link booking to company too
-                booking_date: date,
-                start_time: startTime,
-                end_time: endTime,
-                status: 'confirmed',
-                comment: comment || null
-            })
+            .insert(insertPayload)
             .select('*')
             .single();
 
-        if (insertError) {
+        if (bookingResult.error && (bookingResult.error.message?.includes('attendee_email') || bookingResult.error.code === 'PGRST204' || bookingResult.error.code === '42703')) {
+            console.warn('[Booking API] attendee_email column not found in table, retrying insert without column...');
+            delete insertPayload.attendee_email;
+            bookingResult = await supabase
+                .from('meeting_room_bookings')
+                .insert(insertPayload)
+                .select('*')
+                .single();
+        }
+
+        const { data: booking, error: insertError } = bookingResult;
+
+        if (insertError || !booking) {
             console.error('Booking creation error:', insertError);
             return NextResponse.json({ error: 'Failed to create booking' }, { status: 500 });
         }
@@ -206,6 +225,50 @@ export async function POST(request: NextRequest) {
                 return NextResponse.json({
                     error: `Insufficient ${credit.company_id ? 'company ' : ''}meeting room credits. You need ${durationHours}h but only have ${credit.remaining_hours}h remaining. [Debug: ${errorMessage}]`
                 }, { status: 402 });
+            }
+        }
+
+        // Send email notification to attendee/guest if attendeeEmail was provided
+        if (attendeeEmail?.trim()) {
+            const attendeeEmails = attendeeEmail
+                .split(/[,;]+/)
+                .map((e: string) => e.trim())
+                .filter((e: string) => e && e.includes('@'));
+
+            if (attendeeEmails.length > 0) {
+                (async () => {
+                    try {
+                        const { data: roomData } = await supabaseAdmin
+                            .from('meeting_rooms')
+                            .select('name')
+                            .eq('id', meetingRoomId)
+                            .single();
+
+                        const { data: userData } = await supabaseAdmin
+                            .from('users')
+                            .select('full_name, email')
+                            .eq('id', user.id)
+                            .single();
+
+                        for (const emailTo of attendeeEmails) {
+                            await EmailService.sendMeetingRoomEmail({
+                                emailTo,
+                                roomName: roomData?.name || 'Meeting Room',
+                                date: cleanDate,
+                                startTime,
+                                endTime,
+                                propertyName: property?.name || 'Your Property',
+                                requesterName: userData?.full_name || 'Meeting Host',
+                                requesterEmail: userData?.email || user.email || 'N/A',
+                                isCancellation: false,
+                                comment: comment || null
+                            });
+                            console.log(`[Booking API] Meeting room booking notification email sent to attendee: ${emailTo}`);
+                        }
+                    } catch (emailErr) {
+                        console.error('[Booking API] Failed to send attendee notification email:', emailErr);
+                    }
+                })();
             }
         }
 

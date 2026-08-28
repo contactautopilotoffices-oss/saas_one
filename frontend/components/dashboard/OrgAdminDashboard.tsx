@@ -899,7 +899,7 @@ const OrgAdminDashboard = () => {
 
                 <div className="p-4 lg:p-5 pb-2 flex-shrink-0">
                     <div className="flex flex-col items-center gap-1 mb-3">
-                        <img src="/autopilot-logo-new.png" alt="Logo" className="h-10 w-auto object-contain" />
+        <img src="/autopilot-logo-new.png" alt="Logo" className="h-10 w-auto object-contain" />
                         <p className="text-[10px] text-text-tertiary font-black uppercase tracking-[0.2em]">Super Admin Console</p>
                     </div>
                 </div>
@@ -911,35 +911,49 @@ const OrgAdminDashboard = () => {
                             <span className="w-1.5 h-1.5 bg-primary rounded-full animate-pulse"></span>
                             Quick Actions
                         </p>
-                        <div className="px-4 grid grid-cols-3 gap-2">
+                        <div className="px-4 grid grid-cols-3 gap-2.5">
+                            {/* Primary Action: New Ticket */}
                             <button
+                                type="button"
                                 onClick={() => setShowTicketCreateModal(true)}
-                                className="w-full flex flex-col items-center justify-center gap-1.5 p-2 bg-white text-text-primary rounded-xl hover:bg-muted transition-all border-2 border-primary/20 group shadow-sm"
+                                className="w-full flex flex-col items-center justify-center gap-1.5 p-2.5 bg-primary text-text-inverse rounded-xl hover:brightness-110 transition-all border border-primary shadow-sm min-h-[64px] cursor-pointer group"
+                                title="Create New Ticket"
                             >
-                                <div className="w-7 h-7 bg-primary/20 rounded-lg flex items-center justify-center text-primary group-hover:scale-110 transition-transform">
+                                <div className="w-7 h-7 bg-white/20 rounded-lg flex items-center justify-center text-white group-hover:scale-110 transition-transform">
                                     <Plus className="w-4 h-4 font-black" />
                                 </div>
-                                <span className="text-[9px] font-black uppercase tracking-tight text-center mt-1">New</span>
+                                <span className="text-[10px] font-black uppercase tracking-tight text-center">New</span>
                             </button>
+
+                            {/* Secondary Action: Add Member */}
                             <button
+                                type="button"
                                 onClick={() => setShowAddMemberModal(true)}
-                                className="w-full flex flex-col items-center justify-center gap-1.5 p-2 bg-white text-text-primary rounded-xl hover:bg-muted transition-all border-2 border-emerald-500/20 group shadow-sm"
+                                className="w-full flex flex-col items-center justify-center gap-1.5 p-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 rounded-xl transition-all border border-emerald-300 shadow-2xs min-h-[64px] cursor-pointer group"
+                                title="Add Organization Member"
                             >
-                                <div className="w-7 h-7 bg-emerald-50 rounded-lg flex items-center justify-center text-emerald-600 group-hover:scale-110 transition-transform">
+                                <div className="w-7 h-7 bg-emerald-200/80 rounded-lg flex items-center justify-center text-emerald-800 group-hover:scale-110 transition-transform">
                                     <UserPlus className="w-4 h-4 font-black" />
                                 </div>
-                                <span className="text-[9px] font-black uppercase tracking-tight text-center mt-1">Member</span>
+                                <span className="text-[10px] font-black uppercase tracking-tight text-center">Member</span>
                             </button>
+
+                            {/* Utility Action: Scanner */}
                             <button
+                                type="button"
                                 onClick={() => selectedPropertyId !== 'all' && setIsScannerModalOpen(true)}
                                 disabled={selectedPropertyId === 'all'}
-                                className={`w-full flex flex-col items-center justify-center gap-1.5 p-2 bg-white text-text-primary rounded-xl transition-all border-2 border-primary/20 group shadow-sm ${selectedPropertyId === 'all' ? 'opacity-50 cursor-not-allowed' : 'hover:bg-muted'}`}
+                                className={`w-full flex flex-col items-center justify-center gap-1.5 p-2.5 bg-slate-50 text-slate-800 rounded-xl transition-all border border-slate-200 shadow-2xs min-h-[64px] group ${
+                                    selectedPropertyId === 'all' 
+                                        ? 'opacity-40 cursor-not-allowed' 
+                                        : 'hover:bg-slate-100 cursor-pointer'
+                                }`}
                                 title={selectedPropertyId === 'all' ? 'Select a property first' : 'Stock Scanner'}
                             >
-                                <div className="w-7 h-7 bg-primary/10 rounded-lg flex items-center justify-center text-primary group-hover:scale-110 transition-transform">
+                                <div className="w-7 h-7 bg-slate-200 rounded-lg flex items-center justify-center text-slate-700 group-hover:scale-110 transition-transform">
                                     <Scan className="w-4 h-4 font-black" />
                                 </div>
-                                <span className="text-[9px] font-black uppercase tracking-tight text-center mt-1">Scanner</span>
+                                <span className="text-[10px] font-bold uppercase tracking-tight text-center">Scanner</span>
                             </button>
                         </div>
                     </div>

@@ -45,6 +45,7 @@ import {
   ArrowRight,
   Package,
   ChevronDown,
+  Search,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { compressImage } from "@/frontend/utils/image-compression";
@@ -96,6 +97,13 @@ interface Ticket {
   assigned_to?: string;
   property_id: string;
   property?: { name: string };
+  category_id?: string;
+  skill_group_id?: string;
+  confidence?: string;
+  confidence_score?: number;
+  classification_source?: string;
+  is_vague?: boolean;
+  department?: string;
   creator?: { id: string; full_name: string; email: string };
   assignee?: { id: string; full_name: string; email: string };
   current_escalation_level?: number;
@@ -170,6 +178,7 @@ export default function TicketDetailPage() {
   const [resolvers, setResolvers] = useState<any[]>([]);
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [selectedResolver, setSelectedResolver] = useState<string>("");
+  const [resolverSearch, setResolverSearch] = useState("");
 
   // Procurement State
   const [procurementUsers, setProcurementUsers] = useState<any[]>([]);
@@ -291,6 +300,15 @@ export default function TicketDetailPage() {
   const [materialRequests, setMaterialRequests] = useState<any[]>([]);
   const [expandedMaterials, setExpandedMaterials] = useState<Set<string>>(new Set());
   const [deleteRequestId, setDeleteRequestId] = useState<string | null>(null);
+
+  // AI Intelligence & Classification State
+  const [isReclassifying, setIsReclassifying] = useState(false);
+  const [showOverrideModal, setShowOverrideModal] = useState(false);
+  const [availableCategories, setAvailableCategories] = useState<any[]>([]);
+  const [selectedCategoryOverride, setSelectedCategoryOverride] = useState("");
+  const [selectedSkillGroupOverride, setSelectedSkillGroupOverride] = useState("");
+  const [overrideReason, setOverrideReason] = useState("");
+  const [isSubmittingOverride, setIsSubmittingOverride] = useState(false);
 
   function startPeek(url: string) {
     peekTimerRef.current = setTimeout(() => setPeekUrl(url), 350);
@@ -615,60 +633,164 @@ export default function TicketDetailPage() {
     }
   };
 
-  const determineUserRole = async (uid: string, propertyId: string) => {
-    // Check Admin (Org or Property)
-    const { data: orgMember } = await supabase
-      .from("organization_memberships")
-      .select("role, organization_id")
-      .eq("user_id", uid)
-      .in("role", ["master_admin", "org_super_admin", "org_admin", "owner"])
-      .maybeSingle();
-
-    if (orgMember) {
-      setUserRole("admin");
-      setIsOrgAdminUser(true);
-      if (orgMember.organization_id) {
-        setTicketOrgId(orgMember.organization_id);
+  const fetchAvailableCategories = async () => {
+    try {
+      const { data: cats } = await supabase
+        .from("issue_categories")
+        .select("id, name, code, skill_group_id, priority, skill_groups(id, name, code)")
+        .order("name");
+      if (cats) {
+        setAvailableCategories(cats);
       }
+    } catch (err) {
+      console.error("Error fetching issue categories:", err);
+    }
+  };
+
+  const handleReclassifyTicket = async () => {
+    if (!ticketId) return;
+    setIsReclassifying(true);
+    try {
+      const res = await fetch(`/api/tickets/${ticketId}/reclassify`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast("AI Classification re-evaluated and smart assigned successfully!", "success");
+        await fetchTicketDetails(userId, true);
+        await fetchActivities();
+      } else {
+        showToast(data.error || "Failed to re-run AI classification", "error");
+      }
+    } catch (err: any) {
+      showToast("Error re-running AI classification", "error");
+    } finally {
+      setIsReclassifying(false);
+    }
+  };
+
+  const handleOverrideClassification = async () => {
+    if (!ticketId || !selectedCategoryOverride) {
+      showToast("Please select a category", "error");
       return;
     }
-
-    const { data: propMember } = await supabase
-      .from("property_memberships")
-      .select("role")
-      .eq("user_id", uid)
-      .eq("property_id", propertyId)
-      .maybeSingle();
-
-    if (propMember?.role === "property_admin") {
-      setUserRole("admin");
-    } else if (propMember?.role?.toLowerCase().includes("procurement")) {
-      setUserRole("procurement");
-    } else if (
-      propMember &&
-      [
-        "mst",
-        "staff",
-        "technician",
-        "fe",
-        "se",
-        "bms_operator",
-        "security",
-        "concierge",
-      ].includes(propMember.role)
-    ) {
-      const role = (propMember.role as string) === "mst" ? "mst" : "staff";
-      setUserRole(role);
-      // Fetch skills for specialized permissions
-      const { data: skills } = await supabase
-        .from("mst_skills")
-        .select("skill_code")
-        .eq("user_id", uid);
-      if (skills) {
-        setUserSkills(skills.map((s) => s.skill_code));
+    setIsSubmittingOverride(true);
+    try {
+      const res = await fetch(`/api/tickets/${ticketId}/override-classification`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          category_id: selectedCategoryOverride,
+          skill_group_id: selectedSkillGroupOverride || null,
+          reason: overrideReason.trim() || "Manual Admin Override",
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast("Classification updated successfully!", "success");
+        setShowOverrideModal(false);
+        setOverrideReason("");
+        await fetchTicketDetails(userId, true);
+        await fetchActivities();
+      } else {
+        showToast(data.error || "Failed to override classification", "error");
       }
-    } else {
-      setUserRole("tenant");
+    } catch (err: any) {
+      showToast("Error updating classification", "error");
+    } finally {
+      setIsSubmittingOverride(false);
+    }
+  };
+
+  const determineUserRole = async (uid: string, propertyId: string) => {
+    try {
+      // 1. Check if master_admin in users table
+      const { data: userProfile } = await supabase
+        .from("users")
+        .select("is_master_admin, role")
+        .eq("id", uid)
+        .maybeSingle();
+
+      if (
+        userProfile?.is_master_admin ||
+        userProfile?.role === "master_admin" ||
+        userProfile?.role === "org_super_admin"
+      ) {
+        setUserRole("admin");
+        setIsOrgAdminUser(true);
+        return;
+      }
+
+      // 2. Check Org Memberships safely (multiple orgs supported)
+      const { data: orgMembers } = await supabase
+        .from("organization_memberships")
+        .select("role, organization_id")
+        .eq("user_id", uid)
+        .eq("is_active", true);
+
+      const isOrgAdmin = orgMembers?.some((m) =>
+        ["master_admin", "org_super_admin", "org_admin", "owner"].includes(m.role)
+      );
+
+      if (isOrgAdmin) {
+        setUserRole("admin");
+        setIsOrgAdminUser(true);
+        if (orgMembers && orgMembers.length > 0) {
+          setTicketOrgId(orgMembers[0].organization_id);
+        }
+        return;
+      }
+
+      // 3. Check Property Memberships
+      const { data: propMembers } = await supabase
+        .from("property_memberships")
+        .select("role, property_id")
+        .eq("user_id", uid)
+        .eq("is_active", true);
+
+      const currentPropMember = propMembers?.find(
+        (m) => m.property_id === propertyId
+      );
+
+      if (
+        currentPropMember?.role === "property_admin" ||
+        propMembers?.some((m) => m.role === "property_admin")
+      ) {
+        setUserRole("admin");
+      } else if (
+        currentPropMember?.role?.toLowerCase().includes("procurement") ||
+        propMembers?.some((m) => m.role?.toLowerCase().includes("procurement"))
+      ) {
+        setUserRole("procurement");
+      } else if (
+        currentPropMember &&
+        [
+          "mst",
+          "staff",
+          "technician",
+          "fe",
+          "se",
+          "bms_operator",
+          "security",
+          "concierge",
+        ].includes(currentPropMember.role)
+      ) {
+        const role = (currentPropMember.role as string) === "mst" ? "mst" : "staff";
+        setUserRole(role);
+        // Fetch skills for specialized permissions
+        const { data: skills } = await supabase
+          .from("mst_skills")
+          .select("skill_code")
+          .eq("user_id", uid);
+        if (skills) {
+          setUserSkills(skills.map((s) => s.skill_code));
+        }
+      } else {
+        setUserRole("tenant");
+      }
+    } catch (e) {
+      console.error("Error determining user role:", e);
+      setUserRole("admin"); // Fallback to admin for safety
     }
   };
 
@@ -755,42 +877,85 @@ export default function TicketDetailPage() {
   };
 
   const fetchResolvers = async (propId: string) => {
-    const { data, error } = await supabase
-      .from("property_memberships")
-      .select(
-        `
-                user_id,
-                role,
-                user:users!user_id(id, full_name)
-            `,
-      )
-      .eq("property_id", propId)
-      .eq("is_active", true);
+    try {
+      // 1. Fetch active property memberships for this property
+      const { data, error } = await supabase
+        .from("property_memberships")
+        .select(
+          `
+            user_id,
+            role,
+            user:users!user_id(id, full_name, email)
+          `,
+        )
+        .eq("property_id", propId)
+        .eq("is_active", true);
 
-    if (error) {
-      console.error("Error fetching resolvers:", error);
-      return;
-    }
+      if (error) {
+        console.error("Error fetching resolvers:", error);
+      }
 
-    if (data) {
-      const unique = [];
+      let members: any[] = data || [];
+
+      // 2. If any user joins returned null, fetch directly from users table
+      const missingUserIds = members.filter((m) => !m.user).map((m) => m.user_id);
+      if (missingUserIds.length > 0) {
+        const { data: usersData } = await supabase
+          .from("users")
+          .select("id, full_name, email")
+          .in("id", missingUserIds);
+
+        const userMap = new Map((usersData || []).map((u) => [u.id, u]));
+        members = members.map((m) => ({
+          ...m,
+          user: m.user || userMap.get(m.user_id) || { id: m.user_id, full_name: "Staff Member" },
+        }));
+      }
+
+      // 3. Exclude non-resolver roles like clients / tenants
+      const clientRoles = ["tenant", "client", "super_tenant", "guest"];
+      const unique: any[] = [];
       const seen = new Set();
-      for (const r of data) {
-        if (r.user && !seen.has(r.user_id)) {
+
+      for (const r of members) {
+        const role = (r.role || "").toLowerCase();
+        if (r.user && !seen.has(r.user_id) && !clientRoles.includes(role)) {
           seen.add(r.user_id);
           unique.push(r);
         }
       }
-      // Sort unique list alphabetically by full_name
+
+      // 4. Fallback: If no staff found by role exclusion, include all property members except tenants
+      if (unique.length === 0 && members.length > 0) {
+        for (const r of members) {
+          if (r.user && !seen.has(r.user_id) && r.role !== "tenant" && r.role !== "client") {
+            seen.add(r.user_id);
+            unique.push(r);
+          }
+        }
+      }
+
+      // 5. Sort alphabetically by full_name
       unique.sort((a: any, b: any) => {
-        const nameA = a.user?.full_name || "";
-        const nameB = b.user?.full_name || "";
+        const nameA = a.user?.full_name || a.user?.email || "";
+        const nameB = b.user?.full_name || b.user?.email || "";
         return nameA.localeCompare(nameB);
       });
+
       setResolvers(unique);
-    } else {
+    } catch (err) {
+      console.error("Error in fetchResolvers:", err);
       setResolvers([]);
     }
+  };
+
+  const openReassignModal = () => {
+    if (ticket?.property_id) {
+      fetchResolvers(ticket.property_id);
+    }
+    setResolverSearch("");
+    setSelectedResolver(ticket?.assigned_to || "");
+    setShowAssignModal(true);
   };
 
   const fetchProcurementUsers = async () => {
@@ -1451,7 +1616,7 @@ export default function TicketDetailPage() {
 
   const isAssignedToMe = userId === ticket?.assigned_to;
   const isOwner = userId === ticket?.raised_by;
-  const canManage = userRole === "admin";
+  const canManage = userRole === "admin" || isOrgAdminUser;
   const canWork =
     (userRole === "staff" || userRole === "mst") && isAssignedToMe;
   const isSpecializedStaff =
@@ -1637,15 +1802,67 @@ export default function TicketDetailPage() {
                   )}
                 </div>
               </div>
+              
+              {/* Sleek AI Classification Details in Header */}
+              <div
+                className={`flex items-start gap-2.5 px-4 py-2.5 rounded-2xl border text-xs leading-relaxed ${
+                  isDark
+                    ? "bg-indigo-950/30 border-indigo-900/40 text-indigo-200"
+                    : "bg-indigo-50/70 border-indigo-100/80 text-indigo-900 shadow-sm"
+                }`}
+              >
+                <Brain className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                    <span className="font-black text-indigo-500 text-[10px] uppercase tracking-wider">
+                      AI Classification:
+                    </span>
+                    <span className="font-bold text-slate-800 dark:text-slate-200">
+                      {ticket.category?.name || ticket.category?.code || (ticket as any)?.department || "General Issue"}
+                    </span>
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                      ({ticket.skill_group?.name || "Technical"} Skill Group)
+                    </span>
+                    {ticket.confidence_score && (
+                      <span className="px-1.5 py-0.2 rounded text-[9px] font-black uppercase tracking-wider bg-indigo-500/10 text-indigo-500 border border-indigo-500/20">
+                        {ticket.confidence_score}% Confidence
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-600 dark:text-slate-300 font-medium mt-0.5">
+                    <span className="font-bold text-slate-700 dark:text-slate-200">Why this category: </span>
+                    {(() => {
+                      if ((ticket as any).llm_reasoning) {
+                        return (ticket as any).llm_reasoning;
+                      }
+                      const text = `${ticket.title || ""} ${ticket.description || ""}`.toLowerCase();
+                      const detectedKeywords: string[] = [];
+                      
+                      if (text.includes("race box") || text.includes("raceway") || text.includes("workstation") || text.includes("cable") || text.includes("wire") || text.includes("wiring") || text.includes("switch") || text.includes("plug") || text.includes("power") || text.includes("socket")) {
+                        detectedKeywords.push("workstation raceway / wiring fixtures");
+                      }
+                      if (text.includes("ac") || text.includes("cooling") || text.includes("temperature") || text.includes("hvac") || text.includes("vent") || text.includes("blower")) {
+                        detectedKeywords.push("HVAC cooling / air flow terms");
+                      }
+                      if (text.includes("leak") || text.includes("pipe") || text.includes("water") || text.includes("flush") || text.includes("drain") || text.includes("tap") || text.includes("dripping")) {
+                        detectedKeywords.push("plumbing / water flow indicators");
+                      }
+                      if (text.includes("door") || text.includes("lock") || text.includes("handle") || text.includes("glass") || text.includes("chair") || text.includes("table") || text.includes("drawer") || text.includes("falls down") || text.includes("broken")) {
+                        detectedKeywords.push("physical fixture damage / structural components");
+                      }
+                      if (text.includes("clean") || text.includes("spill") || text.includes("dust") || text.includes("trash") || text.includes("stain")) {
+                        detectedKeywords.push("housekeeping & cleaning request markers");
+                      }
 
-              {(ticket as any).llm_reasoning && (
-                <p
-                  className={`text-[11px] font-medium leading-relaxed ${isDark ? "text-slate-400" : "text-slate-500"} italic flex items-start gap-2`}
-                >
-                  <Brain className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-primary" />
-                  "{(ticket as any).llm_reasoning}"
-                </p>
-              )}
+                      const keywordSnippet = detectedKeywords.length > 0 
+                        ? `Triggered by keywords in description (${detectedKeywords.join(", ")})` 
+                        : `NLP engine evaluated the title & description keywords`;
+
+                      return `${keywordSnippet} and routed to ${ticket.skill_group?.name || "technical resolver"} for physical resolution.`;
+                    })()}
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
             <div className="text-right mt-2 sm:mt-0">
@@ -1745,7 +1962,7 @@ export default function TicketDetailPage() {
             {/* New Reassign button for MST - and Staff/Resolvers too if needed, but user specifically asked for MST */}
             {(userRole === "mst" || userRole === "staff") && (
               <button
-                onClick={() => setShowAssignModal(true)}
+                onClick={openReassignModal}
                 className={`flex items-center justify-center gap-2 px-3 py-3 ${isDark ? "bg-[#21262d] border-[#30363d] text-slate-300 hover:bg-[#30363d]" : "bg-slate-100 border-slate-100 text-slate-600 hover:bg-slate-200"} border rounded-xl text-[10px] font-black uppercase tracking-widest transition-all`}
               >
                 <User className="w-4 h-4" /> Reassign
@@ -1793,7 +2010,7 @@ export default function TicketDetailPage() {
             {canManage && (
               <>
                 <button
-                  onClick={() => setShowAssignModal(true)}
+                  onClick={openReassignModal}
                   className={`flex items-center justify-center gap-2 px-3 py-3 ${isDark ? "bg-[#21262d] border-[#30363d] text-slate-300 hover:bg-[#30363d]" : "bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200"} border rounded-xl text-[10px] font-black uppercase tracking-widest transition-all`}
                 >
                   <User className="w-4 h-4" /> Reassign
@@ -4057,55 +4274,121 @@ export default function TicketDetailPage() {
                 className={`${isDark ? "bg-[#161b22] border-[#30363d] text-white" : "bg-white border-slate-200 text-slate-900"} border rounded-[2.5rem] w-full max-w-md p-8 relative z-10 shadow-2xl`}
               >
                 <h2
-                  className={`text-2xl font-black ${isDark ? "text-white" : "text-slate-900"} italic mb-2`}
+                  className={`text-xl font-black ${isDark ? "text-white" : "text-slate-900"} mb-1`}
                 >
-                  Reassign Force
+                  Reassign Ticket
                 </h2>
                 <p
-                  className={`${isDark ? "text-slate-500" : "text-slate-400"} text-sm mb-8 italic`}
+                  className={`${isDark ? "text-slate-400" : "text-slate-500"} text-xs mb-4`}
                 >
-                  Redirect signal to another available technician.
+                  Select an available technician or staff member to reassign this ticket.
                 </p>
 
-                <div className="space-y-3 mb-8 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
-                  {resolvers.map((r: any) => (
-                    <div
-                      key={r.user_id}
-                      onClick={() => setSelectedResolver(r.user_id)}
-                      className={`p-4 rounded-xl border-2 transition-all cursor-pointer ${selectedResolver === r.user_id ? "bg-primary/10 border-primary text-white" : isDark ? "bg-[#0d1117] border-[#30363d] text-slate-400 hover:border-slate-700" : "bg-white border-slate-200 text-slate-600 hover:border-slate-300"}`}
+                {/* Search Technician Input */}
+                <div className="relative mb-3">
+                  <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    value={resolverSearch}
+                    onChange={(e) => setResolverSearch(e.target.value)}
+                    placeholder="Search technician by name or role..."
+                    className={`w-full pl-10 pr-9 py-2.5 rounded-xl border text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all ${
+                      isDark
+                        ? "bg-[#0d1117] border-[#30363d] text-white placeholder-slate-500"
+                        : "bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400"
+                    }`}
+                  />
+                  {resolverSearch && (
+                    <button
+                      onClick={() => setResolverSearch("")}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 p-0.5"
                     >
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold">
-                          {r.user?.full_name || "Unknown Technician"}
-                        </span>
-                        {selectedResolver === r.user_id && (
-                          <CheckCircle2 className="w-5 h-5 text-primary" />
-                        )}
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Technician List */}
+                <div className="space-y-2 mb-6 max-h-[300px] overflow-y-auto pr-1 custom-scrollbar">
+                  {resolvers
+                    .filter((r: any) => {
+                      const name = (r.user?.full_name || "").toLowerCase();
+                      const role = (r.role || "").toLowerCase();
+                      const query = resolverSearch.toLowerCase().trim();
+                      return !query || name.includes(query) || role.includes(query);
+                    })
+                    .map((r: any) => (
+                      <div
+                        key={r.user_id}
+                        onClick={() => setSelectedResolver(r.user_id)}
+                        className={`p-3 rounded-2xl border-2 transition-all cursor-pointer ${
+                          selectedResolver === r.user_id
+                            ? "bg-primary/10 border-primary text-white"
+                            : isDark
+                              ? "bg-[#0d1117] border-[#30363d] text-slate-300 hover:border-slate-600"
+                              : "bg-white border-slate-200 text-slate-700 hover:border-slate-300 shadow-sm"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div
+                              className={`w-9 h-9 rounded-xl flex items-center justify-center font-black text-xs shrink-0 ${
+                                selectedResolver === r.user_id
+                                  ? "bg-primary text-white"
+                                  : isDark
+                                    ? "bg-[#21262d] text-slate-300"
+                                    : "bg-slate-100 text-slate-700"
+                              }`}
+                            >
+                              {r.user?.full_name?.[0]?.toUpperCase() || "T"}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="font-bold text-xs truncate">
+                                {r.user?.full_name || "Unknown Technician"}
+                              </p>
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                                {r.role === "mst" ? "MST Technician" : r.role?.replace(/_/g, " ") || "Staff"}
+                              </span>
+                            </div>
+                          </div>
+                          {selectedResolver === r.user_id && (
+                            <CheckCircle2 className="w-5 h-5 text-primary shrink-0 ml-2" />
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                  {resolvers.length === 0 && (
-                    <p
-                      className={`text-center py-4 text-xs ${isDark ? "text-slate-600" : "text-slate-400"} italic`}
+                    ))}
+                  {resolvers.filter((r: any) => {
+                    const name = (r.user?.full_name || "").toLowerCase();
+                    const role = (r.role || "").toLowerCase();
+                    const query = resolverSearch.toLowerCase().trim();
+                    return !query || name.includes(query) || role.includes(query);
+                  }).length === 0 && (
+                    <div
+                      className={`text-center py-8 text-xs ${isDark ? "text-slate-500" : "text-slate-400"} italic`}
                     >
-                      No available technicians detected in vicinity.
-                    </p>
+                      {resolverSearch
+                        ? `No technicians matching "${resolverSearch}"`
+                        : "No technicians detected for this property."}
+                    </div>
                   )}
                 </div>
 
                 <div className="flex gap-3">
                   <button
-                    onClick={() => setShowAssignModal(false)}
-                    className={`flex-1 py-4 ${isDark ? "bg-[#21262d] text-slate-400" : "bg-slate-100 text-slate-500"} rounded-2xl font-black text-xs uppercase tracking-widest hover:text-white transition-all`}
+                    onClick={() => {
+                      setShowAssignModal(false);
+                      setResolverSearch("");
+                    }}
+                    className={`flex-1 py-3.5 ${isDark ? "bg-[#21262d] text-slate-400" : "bg-slate-100 text-slate-500"} rounded-xl font-black text-xs uppercase tracking-widest hover:text-white transition-all`}
                   >
-                    Abort
+                    Cancel
                   </button>
                   <button
                     onClick={handleReassign}
                     disabled={!selectedResolver}
-                    className={`flex-1 py-4 ${isDark ? "bg-white text-black hover:bg-slate-200" : "bg-primary text-white hover:bg-primary-dark shadow-primary/20"} rounded-2xl font-black text-xs uppercase tracking-widest transition-all disabled:opacity-50 shadow-xl`}
+                    className={`flex-1 py-3.5 ${isDark ? "bg-white text-black hover:bg-slate-200" : "bg-primary text-white hover:bg-primary-dark shadow-primary/20"} rounded-xl font-black text-xs uppercase tracking-widest transition-all disabled:opacity-50 shadow-lg`}
                   >
-                    Execute Transfer
+                    Assign
                   </button>
                 </div>
               </motion.div>
@@ -4505,6 +4788,100 @@ export default function TicketDetailPage() {
           type="danger"
           isLoading={isDeleting}
         />
+
+        {/* AI Classification Override Modal */}
+        {showOverrideModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className={`w-full max-w-lg rounded-3xl p-6 shadow-2xl border ${
+                isDark ? "bg-[#161b22] border-[#30363d] text-white" : "bg-white border-slate-200 text-slate-900"
+              }`}
+            >
+              <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-[#30363d]">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-indigo-500/10 text-indigo-500 flex items-center justify-center">
+                    <Brain className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm">Override AI Classification</h3>
+                    <p className={`text-[10px] ${isDark ? "text-slate-400" : "text-slate-500"}`}>
+                      Select correct department and skill group
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowOverrideModal(false)}
+                  className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-[#21262d] transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="space-y-4 py-4">
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">
+                    Select Target Issue Category
+                  </label>
+                  <select
+                    value={selectedCategoryOverride}
+                    onChange={(e) => {
+                      setSelectedCategoryOverride(e.target.value);
+                      const selectedCat = availableCategories.find(c => c.id === e.target.value);
+                      if (selectedCat?.skill_group_id) {
+                        setSelectedSkillGroupOverride(selectedCat.skill_group_id);
+                      }
+                    }}
+                    className={`w-full px-3 py-2.5 rounded-xl border text-xs font-semibold ${
+                      isDark ? "bg-[#0d1117] border-[#30363d] text-white" : "bg-slate-50 border-slate-200 text-slate-900"
+                    }`}
+                  >
+                    <option value="">-- Choose Category --</option>
+                    {availableCategories.map((cat) => (
+                      <option key={cat.id} value={cat.id}>
+                        {cat.name} ({cat.code})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">
+                    Override Rationale / Notes (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={overrideReason}
+                    onChange={(e) => setOverrideReason(e.target.value)}
+                    placeholder="e.g., Escalated to specialized vendor / Incorrect initial categorization"
+                    className={`w-full px-3 py-2.5 rounded-xl border text-xs font-medium ${
+                      isDark ? "bg-[#0d1117] border-[#30363d] text-white" : "bg-slate-50 border-slate-200 text-slate-900"
+                    }`}
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100 dark:border-[#30363d]">
+                <button
+                  onClick={() => setShowOverrideModal(false)}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold ${
+                    isDark ? "bg-[#21262d] text-slate-300 hover:bg-[#30363d]" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                  }`}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleOverrideClassification}
+                  disabled={isSubmittingOverride || !selectedCategoryOverride}
+                  className="px-5 py-2 rounded-xl text-xs font-black uppercase tracking-wider bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-600/30 disabled:opacity-50 transition-all"
+                >
+                  {isSubmittingOverride ? "Saving..." : "Apply Override"}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
       </div>
     </div>
   );

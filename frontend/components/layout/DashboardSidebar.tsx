@@ -167,9 +167,9 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
                 </div>
 
                 {/* Navigation */}
-                <nav className="flex-1 px-3 space-y-1 overflow-y-auto custom-scrollbar touch-scroll min-h-0">
+                <nav className="flex-1 px-3 space-y-0.5 overflow-y-auto custom-scrollbar touch-scroll min-h-0">
                     {!isBDRole && (
-                        <p className="px-3 text-[10px] font-medium text-text-tertiary tracking-wider mb-3 font-body">
+                        <p className="px-3 text-[10px] font-medium text-text-tertiary tracking-wider mb-1.5 font-body">
                             Management
                         </p>
                     )}
@@ -179,28 +179,28 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
                                 href={item.href}
                                 onClick={handleLinkClick}
                                 className={`
-                                    flex items-center gap-3 px-3 py-3 lg:py-2.5 rounded-[var(--radius-md)] transition-smooth group
+                                    flex items-center gap-3 px-3 py-1.5 rounded-[var(--radius-md)] transition-smooth group
                                     ${pathname === item.href
                                         ? 'bg-primary text-text-inverse shadow-sm'
                                         : 'text-text-secondary hover:bg-surface-elevated hover:text-text-primary'
                                     }
                                 `}
                             >
-                                <item.icon className={`w-5 h-5 transition-smooth group-hover:scale-105 shrink-0`} />
-                                <span className="font-body font-medium text-sm">{item.label}</span>
+                                <item.icon className={`w-4 h-4 mr-0.5 transition-smooth group-hover:scale-105 shrink-0`} />
+                                <span className="font-body font-medium text-xs md:text-sm">{item.label}</span>
                             </Link>
                         </CapabilityWrapper>
                     ))}
 
                     {/* BD Super Admin (CEO) — grouped Overview / Tools sections */}
                     {isBdSuperAdmin && isCrmRoute && (
-                        <div className="space-y-5">
+                        <div className="space-y-3">
                             {BD_SUPER_NAV_SECTIONS.map((section) => (
                                 <div key={section.title}>
-                                    <p className="px-3 text-[10px] font-medium text-text-tertiary tracking-wider mb-3 font-body uppercase">
+                                    <p className="px-3 text-[10px] font-medium text-text-tertiary tracking-wider mb-1.5 font-body uppercase">
                                         {section.title}
                                     </p>
-                                    <div className="space-y-1">
+                                    <div className="space-y-0.5 pl-2">
                                         {section.items.map((item) => {
                                             const isActive = item.href.endsWith('/crm')
                                                 ? pathname === item.href
@@ -211,15 +211,15 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
                                                     href={item.href}
                                                     onClick={handleLinkClick}
                                                     className={`
-                                                        flex items-center gap-3 px-3 py-3 lg:py-2.5 rounded-[var(--radius-md)] transition-smooth group
+                                                        flex items-center gap-3 px-3 py-1.5 rounded-[var(--radius-md)] transition-smooth group
                                                         ${isActive
                                                             ? 'bg-primary text-text-inverse shadow-sm'
                                                             : 'text-text-secondary hover:bg-surface-elevated hover:text-text-primary'
                                                         }
                                                     `}
                                                 >
-                                                    <item.icon className="w-5 h-5 transition-smooth group-hover:scale-105 shrink-0" />
-                                                    <span className="font-body font-medium text-sm">{item.label}</span>
+                                                    <item.icon className="w-4 h-4 mr-0.5 transition-smooth group-hover:scale-105 shrink-0" />
+                                                    <span className="font-body font-medium text-xs md:text-sm">{item.label}</span>
                                                 </Link>
                                             );
                                         })}
@@ -231,32 +231,34 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
 
                     {/* CRM Section (standard rep/admin) */}
                     {(!isBdSuperAdmin || !isCrmRoute) && (
-                        <div className={isBDRole ? '' : 'pt-4 mt-4 border-t border-border'}>
-                            <p className="px-3 text-[10px] font-medium text-text-tertiary tracking-wider mb-3 font-body">
+                        <div className={isBDRole ? '' : 'pt-2.5 mt-2.5 border-t border-border'}>
+                            <p className="px-3 text-[10px] font-medium text-text-tertiary tracking-wider mb-1.5 font-body">
                                 CRM
                             </p>
-                            {CRM_NAV_ITEMS.map((item) => {
-                                const isActive = item.href.endsWith('/crm')
-                                    ? pathname === item.href
-                                    : pathname?.startsWith(item.href);
-                                return (
-                                    <Link
-                                        key={item.href}
-                                        href={item.href}
-                                        onClick={handleLinkClick}
-                                        className={`
-                                            flex items-center gap-3 px-3 py-3 lg:py-2.5 rounded-[var(--radius-md)] transition-smooth group
-                                            ${isActive
-                                                ? 'bg-primary text-text-inverse shadow-sm'
-                                                : 'text-text-secondary hover:bg-surface-elevated hover:text-text-primary'
-                                            }
-                                        `}
-                                    >
-                                        <item.icon className={`w-5 h-5 transition-smooth group-hover:scale-105 shrink-0`} />
-                                        <span className="font-body font-medium text-sm">{item.label}</span>
-                                    </Link>
-                                );
-                            })}
+                            <div className="space-y-0.5 pl-2">
+                                {CRM_NAV_ITEMS.map((item) => {
+                                    const isActive = item.href.endsWith('/crm')
+                                        ? pathname === item.href
+                                        : pathname?.startsWith(item.href);
+                                    return (
+                                        <Link
+                                            key={item.href}
+                                            href={item.href}
+                                            onClick={handleLinkClick}
+                                            className={`
+                                                flex items-center gap-3 px-3 py-1.5 rounded-[var(--radius-md)] transition-smooth group
+                                                ${isActive
+                                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                                    : 'text-text-secondary hover:bg-surface-elevated hover:text-text-primary'
+                                                }
+                                            `}
+                                        >
+                                            <item.icon className={`w-4 h-4 mr-0.5 transition-smooth group-hover:scale-105 shrink-0`} />
+                                            <span className="font-body font-medium text-xs md:text-sm">{item.label}</span>
+                                        </Link>
+                                    );
+                                })}
+                            </div>
                         </div>
                     )}
                 </nav>

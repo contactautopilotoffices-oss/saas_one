@@ -66,7 +66,11 @@ export function classifyTicketEnhanced(text: string): EnhancedClassificationResu
             if (!Array.isArray(keywords)) continue;
 
             for (const keyword of keywords) {
-                if (lowerText.includes(keyword)) {
+                const isMatch = keyword.length <= 3
+                    ? new RegExp(`\\b${keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(lowerText)
+                    : lowerText.includes(keyword);
+
+                if (isMatch) {
                     matches.push({
                         issue_code: issueCode,
                         skill_group: skillGroup,

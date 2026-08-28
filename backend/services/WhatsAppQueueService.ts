@@ -1,9 +1,12 @@
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
+import { AiSensyService } from '@/backend/services/AiSensyService';
+import { WhatsAppService } from '@/backend/services/WhatsAppService';
 
 export interface WhatsAppQueuePayload {
     ticketId?: string;
     propertyId?: string;
     userIds: string[];
+    customPhones?: string[];
     message: string;
     mediaUrl?: string;
     mediaType?: 'image' | 'video';
@@ -16,7 +19,7 @@ export interface WhatsAppQueuePayload {
 
 export class WhatsAppQueueService {
     /**
-     * Batch-enqueue WhatsApp messages for multiple users.
+     * Batch-enqueue WhatsApp messages for multiple users or custom phone numbers.
      * Fetches all phone numbers in one query, then inserts all rows in one INSERT.
      * The Supabase DB webhook fires per-row and sends each message independently.
      */
@@ -59,27 +62,35 @@ export class WhatsAppQueueService {
             }
         }
         
-        if (payload.userIds.length === 0) return;
-
-        const { data: users } = await supabaseAdmin
-            .from('users')
-            .select('id, phone')
-            .in('id', payload.userIds);
-
-        const usersWithPhone: { id: string; phone: string }[] = [];
+        const recipientsToEnqueue: { id: string | null; phone: string }[] = [];
         const usersWithoutPhone: string[] = [];
 
-        (users || []).forEach(u => {
-            if (u.phone && String(u.phone).trim()) {
-                usersWithPhone.push({ id: u.id, phone: String(u.phone).trim() });
-            } else {
-                usersWithoutPhone.push(u.id);
-            }
-        });
+        if (payload.userIds && payload.userIds.length > 0) {
+            const { data: users } = await supabaseAdmin
+                .from('users')
+                .select('id, phone')
+                .in('id', payload.userIds);
 
-        // 1. Enqueue WhatsApp messages for users with phone numbers
-        if (usersWithPhone.length > 0) {
-            const rows = usersWithPhone.map(u => ({
+            (users || []).forEach(u => {
+                if (u.phone && String(u.phone).trim()) {
+                    recipientsToEnqueue.push({ id: u.id, phone: String(u.phone).trim() });
+                } else {
+                    usersWithoutPhone.push(u.id);
+                }
+            });
+        }
+
+        if (payload.customPhones && payload.customPhones.length > 0) {
+            payload.customPhones.forEach(p => {
+                if (p && String(p).trim()) {
+                    recipientsToEnqueue.push({ id: null, phone: String(p).trim() });
+                }
+            });
+        }
+
+        if (recipientsToEnqueue.length > 0) {
+            // 1. Enqueue WhatsApp messages for recipients with phone numbers
+            const rows = recipientsToEnqueue.map(u => ({
                 ticket_id: payload.ticketId || null,
                 user_id: u.id,
                 phone: u.phone,
@@ -121,7 +132,7 @@ export class WhatsAppQueueService {
                                 // Atomic Claim: Only proceed if status is still 'pending'
                                 const { data: claimed } = await supabaseAdmin
                                     .from('whatsapp_queue')
-                                    .update({ status: 'processing', updated_at: new Date().toISOString() })
+                                    .update({ status: 'processing' })
                                     .eq('id', r.id)
                                     .eq('status', 'pending')
                                     .select('id')
@@ -136,10 +147,29 @@ export class WhatsAppQueueService {
                                 let sendError: string | undefined;
 
                                 if (r.template_name) {
+                                    let campaignName = r.template_name;
+                                    let templateParams = Array.isArray(r.template_params) ? [...r.template_params] : [];
+
+                                    // Auto-heal legacy unapproved campaign names or parameter counts
+                                    if (campaignName === 'checklist_started') campaignName = 'checklist_started_v1';
+                                    if (campaignName === 'checklist_completed') campaignName = 'checklist_completed_v1';
+                                    if (campaignName === 'checklist_overdue_alert') campaignName = 'checklist_overdue_alert_v2';
+                                    if (campaignName === 'material_request_created') campaignName = 'material_request_created_v3';
+                                    if (campaignName === 'material_request_created_v3' && templateParams.length > 6) templateParams = templateParams.slice(0, 6);
+                                    if (campaignName === 'comparative_approval_requested_v1' && templateParams.length > 7) templateParams = templateParams.slice(0, 7);
+                                    if (campaignName === 'comparative_uploaded_info_v1' && templateParams.length > 8) templateParams = templateParams.slice(0, 8);
+                                    if (campaignName === 'comparative_approved_v1' && templateParams.length > 7) templateParams = templateParams.slice(0, 7);
+                                    if (campaignName === 'comparative_rejected_v1' && templateParams.length > 7) templateParams = templateParams.slice(0, 7);
+                                    if (campaignName === 'ticket_assigned_v1' && templateParams.length > 7) templateParams = templateParams.slice(0, 7);
+                                    if (campaignName === 'ticket_completed_v1' && templateParams.length > 5) templateParams = templateParams.slice(0, 5);
+                                    if (campaignName === 'ticket_completed_v1_media' && templateParams.length > 5) templateParams = templateParams.slice(0, 5);
+                                    if (campaignName === 'ticket_created_v3' && templateParams.length > 10) templateParams = templateParams.slice(0, 10);
+                                    if (campaignName === 'ticket_created_v3_media' && templateParams.length > 9) templateParams = templateParams.slice(0, 9);
+
                                     const res = await AiSensyService.sendTemplate({
                                         phone: r.phone,
-                                        campaignName: r.template_name,
-                                        templateParams: Array.isArray(r.template_params) ? r.template_params : [],
+                                        campaignName,
+                                        templateParams,
                                         mediaUrl: r.media_url || undefined,
                                     });
                                     sent = res.success;
@@ -172,7 +202,6 @@ export class WhatsAppQueueService {
             }
         }
 
-
         // 2. Channel Fallback: Fall back ONLY to Push Notification for users missing a phone number
         if (usersWithoutPhone.length > 0) {
             try {
@@ -194,4 +223,3 @@ export class WhatsAppQueueService {
         }
     }
 }
-

@@ -50,10 +50,15 @@ const ALIAS_MAP: Record<string, string> = {
     crm_leads: 'lead_created',
     checklists: 'checklist_slot_reminder',
     ppm: 'reminder_ppm',
-    ppm_reminder: 'reminder_ppm'
+    ppm_reminder: 'reminder_ppm',
+    cafeteria_revenue: 'vendor_revenue_recorded',
+    vendor_revenue: 'vendor_revenue_recorded'
 };
 
 export const DEFAULT_WHATSAPP_SERVICE_CONFIG: Record<string, FeatureWhatsAppConfig> = {
+    vendor_revenue_recorded: { enabled: true, roles: ['property_admin', 'org_super_admin', 'accounts'], user_ids: [], notify_requester: true },
+    vendor_revenue_reminder: { enabled: true, roles: ['property_admin'], user_ids: [], notify_assignee: true, notify_requester: true },
+    vendor_revenue_pending_digest: { enabled: true, roles: ['property_admin', 'org_super_admin', 'accounts'], user_ids: [] },
     ticket_created: { enabled: true, roles: ['property_admin', 'staff'], user_ids: [], notify_assignee: true, notify_requester: true },
     ticket_assigned: { enabled: true, roles: [], user_ids: [], notify_assignee: true },
     ticket_completed: { enabled: true, roles: [], user_ids: [], notify_requester: true },

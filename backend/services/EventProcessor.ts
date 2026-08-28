@@ -47,6 +47,10 @@ export const EventProcessor = {
             await this.handleLeadCreated(payload);
         } else if (['LEAD_ASSIGNED', 'CRM_LEAD_ASSIGNED'].includes(event_type)) {
             await this.handleLeadAssigned(payload);
+        } else if (['VENDOR_REVENUE_RECORDED', 'VENDOR_REVENUE_UPLOADED'].includes(event_type)) {
+            await this.handleVendorRevenueRecorded(payload);
+        } else if (['VENDOR_REVENUE_REMINDER', 'VENDOR_REVENUE_MISSED'].includes(event_type)) {
+            await this.handleVendorRevenueReminder(payload);
         } else {
             console.warn(`[EventProcessor] Unknown event type: ${event_type}`);
         }
@@ -93,14 +97,44 @@ export const EventProcessor = {
         const isCancellation = ['MEETING_ROOM_CANCELLED', 'ROOM_CANCELLED', 'ROOM_BOOKING_CANCELLED'].includes(eventType);
         const featureKey = isCancellation ? 'meeting_room_cancelled' : 'meeting_room_booked';
 
+        // Parse contextual emails: booker email + attendee email if present
+        let attendeeEmail = payload.attendee_email;
+        if (!attendeeEmail && payload.id) {
+            const { data: bookingRow } = await supabaseAdmin
+                .from('meeting_room_bookings')
+                .select('attendee_email')
+                .eq('id', payload.id)
+                .maybeSingle();
+            if (bookingRow?.attendee_email) {
+                attendeeEmail = bookingRow.attendee_email;
+            }
+        }
+
+        const contextualEmails = [userData?.email];
+        if (attendeeEmail) {
+            const extraEmails = String(attendeeEmail)
+                .split(/[,;]+/)
+                .map((e: string) => e.trim())
+                .filter((e: string) => e && e.includes('@'));
+            contextualEmails.push(...extraEmails);
+        }
+
         const { enabled, emails } = await EmailRecipientResolver.resolveRecipients({
             organizationId: property.organization_id,
             propertyId,
             featureKey,
-            contextualEmails: [userData?.email]
+            contextualEmails
         });
 
-        if (!enabled || emails.length === 0) {
+        // Also ensure attendee emails and booker receive the notification
+        const attendeeList = attendeeEmail ? String(attendeeEmail).split(/[,;]+/).map(e => e.trim()).filter(e => e.includes('@')) : [];
+        const allRecipients = Array.from(new Set([
+            ...(enabled ? emails : []),
+            ...(userData?.email ? [userData.email] : []),
+            ...attendeeList
+        ]));
+
+        if (allRecipients.length === 0) {
             console.log(`[EventProcessor] Meeting room email disabled or no recipients for org ${property.organization_id} (feature: ${featureKey})`);
             return;
         }
@@ -119,7 +153,7 @@ export const EventProcessor = {
             .eq('id', meetingRoomId)
             .single();
 
-        for (const emailTo of emails) {
+        for (const emailTo of allRecipients) {
             await EmailService.sendMeetingRoomEmail({
                 emailTo,
                 roomName: roomData?.name || 'Meeting Room',
@@ -1014,5 +1048,38 @@ export const EventProcessor = {
             assignedTo: assignee || { full_name: 'Sales Rep' },
             propertyName: lead?.property?.name
         });
+    },
+
+    async handleVendorRevenueRecorded(payload: any) {
+        const propertyId = payload.property_id;
+        const orgId = payload.organization_id;
+        if (!orgId) return;
+
+        const { enabled, emails } = await EmailRecipientResolver.resolveRecipients({
+            organizationId: orgId,
+            propertyId,
+            featureKey: 'vendor_revenue_recorded'
+        });
+
+        if (!enabled || emails.length === 0) return;
+
+        console.log(`[EventProcessor] Vendor revenue recorded email triggered for ${payload.shop_name} at property ${propertyId} to ${emails.join(', ')}`);
+    },
+
+    async handleVendorRevenueReminder(payload: any) {
+        const propertyId = payload.property_id;
+        const orgId = payload.organization_id;
+        if (!orgId) return;
+
+        const { enabled, emails } = await EmailRecipientResolver.resolveRecipients({
+            organizationId: orgId,
+            propertyId,
+            featureKey: 'vendor_revenue_reminder'
+        });
+
+        if (!enabled || emails.length === 0) return;
+
+        console.log(`[EventProcessor] Vendor revenue reminder email triggered for ${payload.shop_name} at property ${propertyId} to ${emails.join(', ')}`);
     }
 };
+

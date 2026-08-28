@@ -24,6 +24,7 @@ This document contains the revised, copy-paste ready message template copy for A
 6. [Meeting Room Reservations](#6-meeting-room-reservations)
 7. [CRM Sales Leads](#7-crm-sales-leads)
 8. [FMS Welcome & Onboarding Broadcast](#8-fms-welcome--onboarding-broadcast)
+9. [Cafeteria & Food Vendor Revenue Suite](#9-cafeteria--food-vendor-revenue-suite)
 
 ---
 
@@ -1128,3 +1129,117 @@ Need support? Contact our site helpdesk at {{2}} for prompt assistance.
 - **Sample Values:**
   - `{{1}}`: `Rahul Sharma`
   - `{{2}}`: `contact.autopilotoffices@gmail.com`
+
+---
+
+## 9. Cafeteria & Food Vendor Revenue Suite
+
+### Template 22: `vendor_revenue_recorded_v1` (Daily Revenue Recorded & Commission Calculated)
+*(Sent when a food vendor uploads their daily sales revenue, confirming the amount and commission breakdown)*
+
+- **Template Name:** `vendor_revenue_recorded_v1`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Text` &rarr; `Cafeteria Revenue Recorded 💰`
+- **Body:**
+```text
+Hello {{1}},
+
+Daily cafeteria revenue for {{2}} at {{3}} has been recorded for {{4}}.
+
+💵 Daily Revenue: ₹{{5}}
+📊 Commission Rate: {{6}}%
+🏷️ Commission Due: ₹{{7}}
+
+Your monthly commission statement has been updated.
+```
+- **Footer:** `AutoPilot Cafeteria Management`
+- **Button Type:** `Call to Action (Website URL)`
+  - **Button Text:** `View Revenue Portal`
+  - **URL Type:** `Dynamic` &rarr; `https://fms-dev-saas-one.vercel.app/properties/{{8}}/vendor-revenue`
+- **Sample Values:**
+  - `{{1}}`: `Sunil Sharma (Chai Point)`
+  - `{{2}}`: `Chai Point Stall #2`
+  - `{{3}}`: `Mafatlal Chambers`
+  - `{{4}}`: `27/08/2026`
+  - `{{5}}`: `24,500`
+  - `{{6}}`: `10`
+  - `{{7}}`: `2,450`
+  - `{{8}}` *(Property ID)*: `d35372d1-bee2-403f-8578-00da66f16984`
+
+---
+
+### Template 23: `vendor_revenue_reminder_v1` (Missing Daily Revenue Reminder)
+*(Sent automatically at the UI-selected cutoff time e.g. after 6:00 PM to vendors who have not submitted today's revenue)*
+
+- **Template Name:** `vendor_revenue_reminder_v1`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Text` &rarr; `Daily Revenue Submission Pending ⏰` *(or None)*
+- **Body:**
+```text
+Hello {{1}},
+
+This is a reminder that daily sales revenue for {{2}} at {{3}} has not been submitted for today ({{4}}). Please enter your today's total revenue in the vendor portal to ensure timely commission settlement.
+```
+- **Footer:** `AutoPilot Cafeteria Management`
+- **Button Type:** `Call to Action (Website URL)`
+  - **Button Text:** `Submit Revenue Now`
+  - **URL Type:** `Dynamic` &rarr; `https://fms-dev-saas-one.vercel.app/properties/{{5}}/vendor-revenue`
+- **Sample Values:**
+  - `{{1}}`: `Sunil Sharma`
+  - `{{2}}`: `Chai Point Stall #2`
+  - `{{3}}`: `Mafatlal Chambers`
+  - `{{4}}`: `27/08/2026`
+  - `{{5}}` *(Property ID)*: `d35372d1-bee2-403f-8578-00da66f16984`
+
+---
+
+### Template 24: `vendor_revenue_pending_digest_v1` (Pending Revenue Daily Team Digest)
+*(Sent to Property Managers, Accounts, and Operations team at the cutoff time summarizing the list of vendors who have not submitted daily revenue)*
+
+- **Template Name:** `vendor_revenue_pending_digest_v1`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Text` &rarr; `Cafeteria Revenue Pending Report 📊`
+- **Body:**
+```text
+Hello {{1}},
+
+Here is the daily cafeteria revenue submission summary for {{2}} on {{3}}:
+
+🏪 Total Food Vendors: {{4}}
+✅ Revenue Submitted: {{5}}
+⚠️ Submission Pending: {{6}}
+
+📋 Pending Vendors List:
+{{7}}
+
+Please follow up with the pending vendor partners for timely submission.
+```
+- **Footer:** `AutoPilot Cafeteria Operations`
+- **Button Type:** `Call to Action (Website URL)`
+  - **Button Text:** `View Revenue Portal`
+  - **URL Type:** `Dynamic` &rarr; `https://fms-dev-saas-one.vercel.app/properties/{{8}}/vendor-revenue`
+- **Meta Sample Values:**
+  - `{{1}}`: `Operations Team`
+  - `{{2}}`: `Mafatlal Chambers`
+  - `{{3}}`: `27/08/2026`
+  - `{{4}}`: `8`
+  - `{{5}}`: `5`
+  - `{{6}}`: `3`
+  - `{{7}}`: `• Chai Point Stall #2 (Sunil Sharma)\n• Subway Cafeteria (Ramesh Kumar)\n• Dosa Plaza Kiosk (Anand Verma)`
+  - `{{8}}` *(Property ID)*: `d35372d1-bee2-403f-8578-00da66f16984`
+
+---
+
+### Automated Voice Call Alert Prompt (Plivo / Bolna AI)
+When the **Voice** channel toggle is activated in Omnichannel settings:
+- **Neural Speaker Voice:** `Polly.Aditi` (Indian English Female) or `Polly.Raveena`
+- **Speech Speed:** `1.0x`
+- **Spoken Voice Script:**
+```text
+Hi {{user_name}}, this is Pratiksha from the Operations team. This is a quick reminder that today's revenue for {{shop_name}} at {{property_name}} has not been recorded yet. Please open the AutoPilot app and submit your sales figures before the day ends.
+```
+
+
