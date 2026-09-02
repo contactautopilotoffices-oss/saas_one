@@ -30,11 +30,11 @@ interface DieselReading {
     id?: string;
     generator_id: string;
     reading_date: string;
-    opening_hours: number;
+    opening_hours: number | string;
     closing_hours: number | string | null;
-    opening_kwh: number;
+    opening_kwh: number | string;
     closing_kwh: number | string | null;
-    opening_diesel_level: number;
+    opening_diesel_level: number | string;
     closing_diesel_level: number | string | null;
     diesel_added_litres: number | string;
     computed_consumed_litres?: number | null;
@@ -346,12 +346,8 @@ export default function DieselSpreadsheetLogger({
 
                 if (field === 'notes') {
                     updatedEntry.notes = value;
-                } else if (field === 'diesel_added_litres') {
-                    updatedEntry.diesel_added_litres = value === '' ? 0 : Number(value);
-                } else if (field === 'opening_hours' || field === 'opening_kwh' || field === 'opening_diesel_level') {
-                    updatedEntry[field] = value === '' ? 0 : Number(value);
                 } else {
-                    updatedEntry[field] = value === '' ? '' : Number(value);
+                    updatedEntry[field] = value;
                 }
 
                 nextState[dateStr][genId] = updatedEntry;
@@ -638,7 +634,7 @@ export default function DieselSpreadsheetLogger({
                     const hasAdded = Number(r.diesel_added_litres) > 0;
 
                     if (hasClosingHours || hasClosingKwh || hasClosingDiesel || hasAdded) {
-                        const openingDiesel = r.opening_diesel_level || 0;
+                        const openingDiesel = Number(r.opening_diesel_level) || 0;
                         const added = Number(r.diesel_added_litres) || 0;
                         const closingDiesel = hasClosingDiesel ? Number(r.closing_diesel_level) : openingDiesel;
                         const consumedLitres = Math.max(0, (openingDiesel + added) - closingDiesel);
@@ -646,10 +642,10 @@ export default function DieselSpreadsheetLogger({
                         readingsToSave.push({
                             generator_id: genId,
                             reading_date: dateStr,
-                            opening_hours: r.opening_hours || 0,
-                            closing_hours: hasClosingHours ? Number(r.closing_hours) : r.opening_hours,
-                            opening_kwh: r.opening_kwh || 0,
-                            closing_kwh: hasClosingKwh ? Number(r.closing_kwh) : r.opening_kwh,
+                            opening_hours: Number(r.opening_hours) || 0,
+                            closing_hours: r.closing_hours !== '' ? Number(r.closing_hours) : null,
+                            opening_kwh: Number(r.opening_kwh) || 0,
+                            closing_kwh: r.closing_kwh !== '' ? Number(r.closing_kwh) : null,
                             opening_diesel_level: openingDiesel,
                             closing_diesel_level: closingDiesel,
                             diesel_added_litres: added,
@@ -724,15 +720,15 @@ export default function DieselSpreadsheetLogger({
             generators.forEach(gen => {
                 const r = readings[day.dateStr]?.[gen.id];
                 if (r) {
-                    const openH = r.opening_hours || 0;
+                    const openH = Number(r.opening_hours) || 0;
                     const closeH = r.closing_hours !== '' && r.closing_hours !== null ? Number(r.closing_hours) : openH;
                     const runH = Math.max(0, closeH - openH);
 
-                    const openK = r.opening_kwh || 0;
+                    const openK = Number(r.opening_kwh) || 0;
                     const closeK = r.closing_kwh !== '' && r.closing_kwh !== null ? Number(r.closing_kwh) : openK;
                     const runK = Math.max(0, closeK - openK);
 
-                    const openD = r.opening_diesel_level || 0;
+                    const openD = Number(r.opening_diesel_level) || 0;
                     const addedD = Number(r.diesel_added_litres) || 0;
                     const closeD = r.closing_diesel_level !== '' && r.closing_diesel_level !== null ? Number(r.closing_diesel_level) : openD;
                     const consD = Math.max(0, (openD + addedD) - closeD);
@@ -959,7 +955,7 @@ export default function DieselSpreadsheetLogger({
                                 const r = readings[day.dateStr]?.[gen.id];
                                 if (!r) return;
 
-                                const openD = Math.round((r.opening_diesel_level || 0) * 100) / 100;
+                                const openD = Math.round((Number(r.opening_diesel_level) || 0) * 100) / 100;
                                 const addedD = Number(r.diesel_added_litres) || 0;
                                 const closeD = r.closing_diesel_level !== '' && r.closing_diesel_level !== null ? Number(r.closing_diesel_level) : null;
                                 if (closeD !== null) {
@@ -967,14 +963,14 @@ export default function DieselSpreadsheetLogger({
                                     hasDieselCons = true;
                                 }
 
-                                const openK = Math.round((r.opening_kwh || 0) * 100) / 100;
+                                const openK = Math.round((Number(r.opening_kwh) || 0) * 100) / 100;
                                 const closeK = r.closing_kwh !== '' && r.closing_kwh !== null ? Number(r.closing_kwh) : null;
                                 if (closeK !== null) {
                                     dailyTotalKwhCons += Math.max(0, closeK - openK);
                                     hasKwhCons = true;
                                 }
 
-                                const openH = Math.round((r.opening_hours || 0) * 100) / 100;
+                                const openH = Math.round((Number(r.opening_hours) || 0) * 100) / 100;
                                 const closeH = r.closing_hours !== '' && r.closing_hours !== null ? Number(r.closing_hours) : null;
                                 if (closeH !== null) {
                                     dailyTotalRunHrs += Math.max(0, closeH - openH);
@@ -1023,15 +1019,15 @@ export default function DieselSpreadsheetLogger({
                                             notes: ''
                                         };
 
-                                        const openH = Math.round((r.opening_hours || 0) * 100) / 100;
+                                        const openH = Math.round((Number(r.opening_hours) || 0) * 100) / 100;
                                         const closeH = r.closing_hours !== '' && r.closing_hours !== null ? Number(r.closing_hours) : null;
                                         const runH = closeH !== null ? Math.round(Math.max(0, closeH - openH) * 100) / 100 : null;
 
-                                        const openK = Math.round((r.opening_kwh || 0) * 100) / 100;
+                                        const openK = Math.round((Number(r.opening_kwh) || 0) * 100) / 100;
                                         const closeK = r.closing_kwh !== '' && r.closing_kwh !== null ? Number(r.closing_kwh) : null;
                                         const runK = closeK !== null ? Math.round(Math.max(0, closeK - openK) * 100) / 100 : null;
 
-                                        const openD = Math.round((r.opening_diesel_level || 0) * 100) / 100;
+                                        const openD = Math.round((Number(r.opening_diesel_level) || 0) * 100) / 100;
                                         const addedD = Number(r.diesel_added_litres) || 0;
                                         const closeD = r.closing_diesel_level !== '' && r.closing_diesel_level !== null ? Number(r.closing_diesel_level) : null;
                                         const consD = closeD !== null ? Math.round(Math.max(0, (openD + addedD) - closeD) * 100) / 100 : null;

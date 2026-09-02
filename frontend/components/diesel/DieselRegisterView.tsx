@@ -500,8 +500,9 @@ const DieselRegisterView: React.FC<DieselRegisterViewProps> = ({
                                     {isEditing ? (
                                         <input
                                             type="number"
+                                            step="any"
                                             value={editValues.diesel_added_litres || ''}
-                                            onChange={e => setEditValues({ ...editValues, diesel_added_litres: parseInt(e.target.value, 10) || 0 })}
+                                            onChange={e => setEditValues({ ...editValues, diesel_added_litres: parseFloat(e.target.value) || 0 })}
                                             className={`w-20 px-2 py-1 rounded border text-sm font-mono ${isDark ? 'bg-[#0d1117] border-slate-700 text-white' : 'bg-white border-slate-300'}`}
                                         />
                                     ) : r.diesel_added_litres > 0 ? (

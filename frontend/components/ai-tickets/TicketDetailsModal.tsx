@@ -1,18 +1,47 @@
 "use client";
 
 import React, { useState } from 'react';
-import { X, ExternalLink, Code2, AlertTriangle, MessageSquare, Cpu, Github, Maximize2 } from 'lucide-react';
+import { X, ExternalLink, Code2, AlertTriangle, MessageSquare, Cpu, Github, Maximize2, CheckCircle2, Loader2, RefreshCw } from 'lucide-react';
 import { TicketStatusBadge } from './TicketStatusBadge';
 
 interface TicketDetailsModalProps {
   ticket: any;
   onClose: () => void;
+  onStatusUpdate?: () => void;
 }
 
-export function TicketDetailsModal({ ticket, onClose }: TicketDetailsModalProps) {
+export function TicketDetailsModal({ ticket, onClose, onStatusUpdate }: TicketDetailsModalProps) {
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [statusState, setStatusState] = useState(ticket?.status || 'pending');
 
   if (!ticket) return null;
+
+  const handleUpdateStatus = async (newStatus: string) => {
+    setIsUpdating(true);
+    try {
+      const res = await fetch('/api/feedback', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: ticket.id, status: newStatus }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to update ticket status');
+      }
+
+      setStatusState(newStatus);
+      if (onStatusUpdate) {
+        onStatusUpdate();
+      }
+    } catch (err: any) {
+      console.error('Failed to acknowledge ticket:', err);
+      alert(err.message || 'Failed to update status');
+    } finally {
+      setIsUpdating(false);
+    }
+  };
 
   return (
     <>
@@ -33,7 +62,7 @@ export function TicketDetailsModal({ ticket, onClose }: TicketDetailsModalProps)
                 <h2 className="text-lg font-bold text-foreground">
                   Ticket #{ticket.id.substring(0, 8)}
                 </h2>
-                <TicketStatusBadge status={ticket.status} />
+                <TicketStatusBadge status={statusState} />
               </div>
               <p className="text-xs font-medium text-text-secondary">
                 Submitted by <span className="font-semibold text-text-primary">{ticket.submitted_by_name || 'Anonymous'}</span> • {new Date(ticket.created_at).toLocaleString()}
@@ -155,6 +184,45 @@ export function TicketDetailsModal({ ticket, onClose }: TicketDetailsModalProps)
               </div>
             )}
           </div>
+
+          {/* Footer Actions */}
+          <div className="p-4 border-t border-border bg-muted/40 flex items-center justify-between gap-3">
+            <div className="text-xs text-text-secondary font-medium">
+              Status: <span className="font-bold text-text-primary uppercase">{statusState}</span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {['pending', 'analyzing', 'planning'].includes(statusState) ? (
+                <button
+                  type="button"
+                  onClick={() => handleUpdateStatus('deployed')}
+                  disabled={isUpdating}
+                  className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs shadow-md transition-all disabled:opacity-50"
+                >
+                  {isUpdating ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                  Acknowledge (Mark as Solved)
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => handleUpdateStatus('pending')}
+                  disabled={isUpdating}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-slate-200 dark:bg-slate-800 text-text-primary hover:bg-slate-300 rounded-xl font-bold text-xs transition-all disabled:opacity-50"
+                >
+                  {isUpdating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                  Re-open Ticket
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 bg-surface hover:bg-muted text-text-primary border border-border rounded-xl font-bold text-xs transition-all"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+
         </div>
       </div>
 
