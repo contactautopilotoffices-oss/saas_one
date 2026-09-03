@@ -214,6 +214,28 @@ const DieselAnalyticsDashboard: React.FC<DieselAnalyticsDashboardProps> = ({ pro
         fetchData();
     }, [fetchData]);
 
+    // Live updates: a diesel reading logged anywhere for this property (e.g. via NFC
+    // tap quick-log) refreshes the dashboard immediately instead of waiting for a manual reload.
+    useEffect(() => {
+        if (!isValidId(propertyId)) return;
+
+        const channel = supabase
+            .channel(`diesel-readings-${propertyId}`)
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'diesel_readings', filter: `property_id=eq.${propertyId}` },
+                () => {
+                    invalidateCache();
+                    fetchData();
+                }
+            )
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
+    }, [propertyId, supabase, invalidateCache, fetchData]);
+
     // Derived Metrics
     const metrics = useMemo(() => {
         const filterFn = (r: DieselReading) => {
