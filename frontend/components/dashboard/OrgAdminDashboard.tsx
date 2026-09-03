@@ -6,7 +6,7 @@ import {
     Search, Plus, Filter, LogOut, ChevronRight, MapPin, Edit, Trash2, X, Check, UsersRound,
     Coffee, IndianRupee, FileDown, ChevronDown, Fuel, Menu, Upload, FileBarChart, Zap, Package, ClipboardCheck, Scan, Key,
     AlertCircle, CheckCircle2, Clock, GitBranch, DoorOpen, MessageCircle, Send, Loader2, CalendarDays, Calendar, Wrench, ShoppingCart, Sun, Moon, Droplets, TrendingUp, Smartphone,
-    MessageSquarePlus, Bot, Gauge, Cpu, FolderLock
+    MessageSquarePlus, Bot, Gauge, Cpu, FolderLock, Layers
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
@@ -940,7 +940,7 @@ const OrgAdminDashboard = () => {
         router.replace(`${window.location.pathname}?${params.toString()}`, { scroll: false });
     };
 
-    const handleTabChange = (tab: Tab, filter: string = 'all', dateFrom?: string, dateTo?: string) => {
+    const handleTabChange = (tab: Tab, filter: string = 'all', dateFrom?: string, dateTo?: string, procurementTab?: string) => {
         setActiveTab(tab);
         setPendingStatusFilter(filter);
         setSidebarOpen(false);
@@ -950,6 +950,14 @@ const OrgAdminDashboard = () => {
             params.set('filter', filter);
         } else {
             params.delete('filter');
+        }
+
+        // Deep-link straight into a Procurement sub-tab (e.g. Payment Urgency Tracker,
+        // Payment Tracker) instead of always landing on its default "All Orders" view.
+        if (tab === 'procurement' && procurementTab) {
+            params.set('procurement_tab', procurementTab);
+        } else {
+            params.delete('procurement_tab');
         }
 
         if (dateFrom && dateTo) {
@@ -1271,6 +1279,26 @@ const OrgAdminDashboard = () => {
                             >
                                 <ShoppingCart className="w-4 h-4" />
                                 Procurement
+                            </button>
+                            <button
+                                onClick={() => handleTabChange('procurement', 'all', undefined, undefined, 'urgency-tracker')}
+                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'procurement' && searchParams.get('procurement_tab') === 'urgency-tracker'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                    }`}
+                            >
+                                <Layers className="w-4 h-4" />
+                                Payment Urgency Tracker
+                            </button>
+                            <button
+                                onClick={() => handleTabChange('procurement', 'all', undefined, undefined, 'payment-tracker')}
+                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'procurement' && searchParams.get('procurement_tab') === 'payment-tracker'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                    }`}
+                            >
+                                <IndianRupee className="w-4 h-4" />
+                                Payment Tracker
                             </button>
                             <button
                                 onClick={() => handleTabChange('checklist')}

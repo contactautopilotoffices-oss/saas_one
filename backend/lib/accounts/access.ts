@@ -14,7 +14,11 @@ const ORG_ADMIN_ROLES = ['org_super_admin', 'org_admin', 'master_admin'];
 // NOTE: property_admin is deliberately NOT a procurement role here. Property admins run
 // a site, not the purchase ledger, and must not reach the Payment Tracker at all.
 const PROCUREMENT_ROLES = ['purchase_manager', 'purchase_executive', 'procurement'];
-const VIEW_ROLES = [...new Set([...ORG_ADMIN_ROLES, ...PROCUREMENT_ROLES, 'accounts'])];
+// ops_super_admin is view-only here — the electricity checker role oversees payment
+// status but must not inherit align/complete authority (see the role's own doc comment
+// in 20260804000002_electricity_validation_and_ops_role.sql). It stays out of
+// ALIGN_ROLES/COMPLETE_ROLES below on purpose.
+const VIEW_ROLES = [...new Set([...ORG_ADMIN_ROLES, ...PROCUREMENT_ROLES, 'accounts', 'ops_super_admin'])];
 const ALIGN_ROLES = [...new Set([...ORG_ADMIN_ROLES, ...PROCUREMENT_ROLES, 'accounts'])];
 const COMPLETE_ROLES = ['accounts', 'org_super_admin', 'master_admin'];
 

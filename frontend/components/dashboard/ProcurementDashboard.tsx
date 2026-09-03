@@ -142,12 +142,18 @@ export default function ProcurementDashboard() {
         try {
             const orgId = user?.user_metadata?.organization_id;
 
-            // 1. Pending Vendor Requirement Tickets count
+            // 1. Pending Vendor Requirement Tickets count — "pending" means anything short
+            // of arranged, matching ProcurementVendorTicketsTab's own pendingCount (status
+            // !== 'vendor_arranged', nulls included). The old filter only matched the
+            // literal status 'pending_vendor_arrangement' or null, but tickets are actually
+            // stamped 'vendor_requested', so this always read 0. .neq() alone isn't enough
+            // either — SQL's three-valued logic drops NULLs from a neq filter, which the
+            // JS !== comparison the tab uses does not.
             const vendorQuery = supabase
                 .from('tickets')
                 .select('id', { count: 'exact', head: true })
                 .eq('needs_vendor_procurement', true)
-                .or('vendor_procurement_status.eq.pending_vendor_arrangement,vendor_procurement_status.is.null');
+                .or('vendor_procurement_status.is.null,vendor_procurement_status.neq.vendor_arranged');
 
             // 2. Pending Monthly Requisitions count (submitted / pending_approval)
             let requisitionsQuery = supabase

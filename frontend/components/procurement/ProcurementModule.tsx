@@ -16,9 +16,10 @@ import MonthlyRequisitionsTab from './MonthlyRequisitionsTab';
 import SitePricingAdminTab from './SitePricingAdminTab';
 import PropertyBudgetsTab from './PropertyBudgetsTab';
 import PaymentUrgencyTrackerTab from './payment-urgency/PaymentUrgencyTrackerTab';
+import FinanceOverview from '../accounts/FinanceOverview';
 import { useAuth } from '@/frontend/context/AuthContext';
 
-type TabType = 'orders' | 'urgency-tracker' | 'requisitions' | 'site-budgets' | 'site-pricing' | 'catalog' | 'po-generator' | 'settings';
+type TabType = 'orders' | 'urgency-tracker' | 'payment-tracker' | 'requisitions' | 'site-budgets' | 'site-pricing' | 'catalog' | 'po-generator' | 'settings';
 
 function ProcurementModuleSkeleton() {
     return (
@@ -85,6 +86,11 @@ export default function ProcurementModule({
     const isProcurementUser = isSuperAdmin || userRole.includes('procurement') || userRole === 'org_admin';
     const canManageCatalogAndPricing = isSuperAdmin || isProcurementUser;
     const canViewUrgencyTracker = isSuperAdmin || isProcurementUser;
+    // The unified Payment Tracker (POs, alignment, payment status) — accounts + procurement
+    // already see it via isProcurementUser; ops_super_admin is added here view-only, mirroring
+    // the same allowance in backend/lib/accounts/access.ts and frontend/lib/accounts/roles.ts.
+    // FinanceOverviewInner enforces the real access/action boundary server-side regardless.
+    const canViewPaymentTracker = isProcurementUser || userRole === 'ops_super_admin' || userRole === 'accounts';
 
     const fetchProperties = useCallback(async () => {
         if (!orgId) return;
@@ -153,7 +159,7 @@ export default function ProcurementModule({
         if (typeof window !== 'undefined') {
             const urlParams = new URLSearchParams(window.location.search);
             const tabParam = urlParams.get('procurement_tab') || urlParams.get('subtab');
-            if (tabParam && ['orders', 'urgency-tracker', 'requisitions', 'site-budgets', 'site-pricing', 'catalog', 'po-generator', 'settings'].includes(tabParam)) {
+            if (tabParam && ['orders', 'urgency-tracker', 'payment-tracker', 'requisitions', 'site-budgets', 'site-pricing', 'catalog', 'po-generator', 'settings'].includes(tabParam)) {
                 setActiveTab(tabParam as TabType);
             }
         }
@@ -162,13 +168,14 @@ export default function ProcurementModule({
     const TABS = useMemo(() => [
         { id: 'orders', label: 'All Orders', icon: List, show: true, count: counts.orders },
         { id: 'urgency-tracker', label: 'Urgency Tracker (P1-P3)', icon: Layers, show: canViewUrgencyTracker, count: 0 },
+        { id: 'payment-tracker', label: 'Payment Tracker', icon: IndianRupee, show: canViewPaymentTracker, count: 0 },
         { id: 'requisitions', label: 'Monthly Requisitions', icon: FileSpreadsheet, show: true, count: 0 },
         { id: 'site-budgets', label: 'Property Budgets', icon: IndianRupee, show: canManageCatalogAndPricing, count: 0 },
         { id: 'site-pricing', label: 'Site Pricing & Aliases', icon: DollarSign, show: canManageCatalogAndPricing, count: 0 },
         { id: 'catalog', label: 'Manage Items Master', icon: ShoppingCart, show: canManageCatalogAndPricing, count: 0 },
         { id: 'po-generator', label: 'PO Generator', icon: FileText, show: canManageCatalogAndPricing || userRole === 'org_admin', count: 0 },
         { id: 'settings', label: 'Settings', icon: Settings, show: isSuperAdmin, count: 0 },
-    ], [counts.orders, canViewUrgencyTracker, canManageCatalogAndPricing, userRole, isSuperAdmin]);
+    ], [counts.orders, canViewUrgencyTracker, canViewPaymentTracker, canManageCatalogAndPricing, userRole, isSuperAdmin]);
 
     if (isInitialLoading) {
         return <ProcurementModuleSkeleton />;
@@ -231,6 +238,10 @@ export default function ProcurementModule({
                         propertyId={propertyId}
                         isSuperAdmin={isSuperAdmin}
                     />
+                )}
+
+                {activeTab === 'payment-tracker' && canViewPaymentTracker && (
+                    <FinanceOverview />
                 )}
 
                 {activeTab === 'requisitions' && (

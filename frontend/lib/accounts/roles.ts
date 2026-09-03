@@ -4,7 +4,8 @@
 const ORG_ADMIN = new Set(['org_super_admin', 'org_admin', 'master_admin']);
 // property_admin is intentionally excluded — see backend/lib/accounts/access.ts.
 const PROCUREMENT = new Set(['purchase_manager', 'purchase_executive', 'procurement']);
-const VIEW = new Set([...ORG_ADMIN, ...PROCUREMENT, 'accounts']);
+// ops_super_admin: view-only, same reasoning as backend/lib/accounts/access.ts.
+const VIEW = new Set([...ORG_ADMIN, ...PROCUREMENT, 'accounts', 'ops_super_admin']);
 const ALIGN = new Set([...ORG_ADMIN, ...PROCUREMENT, 'accounts']);
 const COMPLETE = new Set(['accounts', 'org_super_admin', 'master_admin']);
 
