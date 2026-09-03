@@ -142,7 +142,10 @@ export async function GET(request: NextRequest) {
                 [...siteTotals].map(([id, t]) => [id, serialiseTotals(t)]),
             ),
             line_totals: Object.fromEntries(lineTotals),
-            grand: rollUpGrand(siteTotals),
+            // serialised like the site totals: the client type has always declared
+            // utilisation_pct on the grand, and the matrix's grand-total cell called
+            // .toFixed() on it — sending it unserialised crashed the whole page.
+            grand: serialiseTotals(rollUpGrand(siteTotals)),
         });
     }
 

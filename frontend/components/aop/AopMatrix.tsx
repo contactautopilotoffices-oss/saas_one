@@ -254,7 +254,7 @@ export default function AopMatrix({ orgId, data, onApplyCell, onCommitted, onOpe
                                     All sites
                                 </span>
                                 <span className="block text-[10px] font-bold tabular-nums text-text-tertiary mt-0.5">
-                                    {grand.utilisation_pct === null ? '—' : `${grand.utilisation_pct.toFixed(0)}%`}
+                                    {grand.utilisation_pct == null ? '—' : `${grand.utilisation_pct.toFixed(0)}%`}
                                 </span>
                             </th>
                         </tr>

@@ -116,52 +116,72 @@ export interface AopDimensions {
 export const UNPROVISIONED = Symbol('aop-unprovisioned');
 export type Unprovisioned = typeof UNPROVISIONED;
 
+/** PostgREST's own page size; a .range() wider than db.max-rows cannot raise the ceiling. */
+const PAGE = 1000;
+const MAX_ROWS = 200_000;
+
+/**
+ * Page through PostgREST until a short page comes back.
+ *
+ * An explicit .range(0, 99999) does NOT do this. `db.max-rows` (1000 on this project) is a
+ * server-side ceiling: range can narrow below it, never above it. Relying on range meant
+ * loadCells returned 1000 of 1899 entries — April vanished from the month list entirely and
+ * May came back 45% short, which the trend chart then plotted as a real collapse.
+ *
+ * `build` must return a fresh query each call: Supabase builders are single-use once awaited.
+ */
+async function fetchAllRows<T>(build: () => any): Promise<T[]> {
+    const out: T[] = [];
+    for (let from = 0; from < MAX_ROWS; from += PAGE) {
+        const { data, error } = await build().range(from, from + PAGE - 1);
+        if (error) throw error;
+        const rows = (data || []) as T[];
+        out.push(...rows);
+        if (rows.length < PAGE) break;
+    }
+    return out;
+}
+
 /**
  * Sites, line items and the distinct months that hold data.
  *
- * Every read carries an explicit .range(). PostgREST silently truncates at 1000 rows and
- * this dataset is 16 sites x 43 lines x N months — a truncated matrix would render as a
- * grid full of blanks with no error anywhere, which is the worst possible failure for a
- * financial report.
+ * The entries read is paged: this dataset is 16 sites x 43 lines x N months and already
+ * exceeds one page, and a truncated matrix renders as a grid full of blanks with no error
+ * anywhere — the worst possible failure for a financial report.
  */
 export async function loadDimensions(orgId: string): Promise<AopDimensions | Unprovisioned> {
-    const [siteRes, lineRes, monthRes] = await Promise.all([
-        supabaseAdmin
-            .from('aop_sites')
-            .select('id, code, name, city, property_id, sort_order')
-            .eq('organization_id', orgId)
-            .eq('is_active', true)
-            .order('sort_order')
-            .range(0, 999),
-        supabaseAdmin
-            .from('aop_line_items')
-            .select('id, code, name, kind, unit, feed_source, sort_order')
-            .eq('organization_id', orgId)
-            .order('sort_order')
-            .range(0, 999),
-        supabaseAdmin
-            .from('aop_entries')
-            .select('period_month')
-            .eq('organization_id', orgId)
-            .order('period_month', { ascending: false })
-            .range(0, 99999),
-    ]);
+    try {
+        const [sites, lineItems, monthRows] = await Promise.all([
+            fetchAllRows<AopSite>(() =>
+                supabaseAdmin
+                    .from('aop_sites')
+                    .select('id, code, name, city, property_id, sort_order')
+                    .eq('organization_id', orgId)
+                    .eq('is_active', true)
+                    .order('sort_order')),
+            fetchAllRows<AopLineItem>(() =>
+                supabaseAdmin
+                    .from('aop_line_items')
+                    .select('id, code, name, kind, unit, feed_source, sort_order')
+                    .eq('organization_id', orgId)
+                    .order('sort_order')),
+            fetchAllRows<{ period_month: string }>(() =>
+                supabaseAdmin
+                    .from('aop_entries')
+                    .select('period_month')
+                    .eq('organization_id', orgId)
+                    .order('period_month', { ascending: false })),
+        ]);
 
-    const firstError = siteRes.error || lineRes.error || monthRes.error;
-    if (firstError) {
-        if (isMissingRelation(firstError)) return UNPROVISIONED;
-        throw new Error(firstError.message);
+        const months = [...new Set(monthRows.map(r => String(r.period_month).slice(0, 10)))]
+            .sort()
+            .reverse();
+
+        return { sites, lineItems, months };
+    } catch (error: any) {
+        if (isMissingRelation(error)) return UNPROVISIONED;
+        throw new Error(error?.message || 'Failed to load AOP dimensions');
     }
-
-    const months = [...new Set((monthRes.data || []).map(r => String(r.period_month).slice(0, 10)))]
-        .sort()
-        .reverse();
-
-    return {
-        sites: (siteRes.data || []) as AopSite[],
-        lineItems: (lineRes.data || []) as AopLineItem[],
-        months,
-    };
 }
 
 export async function loadCells(
@@ -170,18 +190,21 @@ export async function loadCells(
 ): Promise<Map<string, AopCell[]> | Unprovisioned> {
     if (!months.length) return new Map();
 
-    const { data, error } = await supabaseAdmin
-        .from('aop_entries')
-        .select('id, site_id, line_item_id, period_month, budget, actual, saving, remarks, source')
-        .eq('organization_id', orgId)
-        .in('period_month', months)
-        // 16 x 43 x 3 = 2064 today, and grows a further 688 every month. The default cap
-        // of 1000 was already breached before this module existed.
-        .range(0, 99999);
-
-    if (error) {
+    // 16 x 43 x 3 = 2064 today, and grows a further 688 every month — several pages.
+    // Ordered so paging is stable: without an ORDER BY, which rows land on which page is
+    // physical-order-dependent and can shift between requests.
+    let data: any[];
+    try {
+        data = await fetchAllRows<any>(() =>
+            supabaseAdmin
+                .from('aop_entries')
+                .select('id, site_id, line_item_id, period_month, budget, actual, saving, remarks, source')
+                .eq('organization_id', orgId)
+                .in('period_month', months)
+                .order('id', { ascending: true }));
+    } catch (error: any) {
         if (isMissingRelation(error)) return UNPROVISIONED;
-        throw new Error(error.message);
+        throw new Error(error?.message || 'Failed to load AOP cells');
     }
 
     const byMonth = new Map<string, AopCell[]>();
