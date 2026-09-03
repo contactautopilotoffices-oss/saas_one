@@ -76,6 +76,53 @@ export async function POST(request: NextRequest) {
     });
     if (!plan.ok) return NextResponse.json({ error: plan.error }, { status: plan.status });
 
+    // --- Duplicate-payment guard ---------------------------------------------------
+    // Matched on po_number, NOT po_id: migration 20260731000001 dropped the unique
+    // constraint on (organization_id, po_number) because Zoho does not guarantee PO
+    // numbers are unique, so the SAME purchase order can exist as several rows. Keying
+    // this check on po_id alone would miss exactly the case it exists to catch — paying
+    // the same PO twice through two different imported rows.
+    //
+    // This warns, it does not block: two POs legitimately sharing a number is possible
+    // for the same reason. The caller re-sends with acknowledge_duplicate to proceed.
+    const { data: priorPayments } = await supabaseAdmin
+        .from('po_payments')
+        .select('id, po_id, tranche_no, requested_amount, paid_amount, status, aligned_at, completed_at, payment_date, utr_no')
+        .eq('organization_id', access.organizationId)
+        .eq('po_number', po.po_number)
+        .neq('status', 'cancelled')
+        .order('tranche_no', { ascending: true });
+
+    const prior = priorPayments || [];
+    if (prior.length && body.acknowledge_duplicate !== true) {
+        const settled = prior.filter((p) => p.status === 'aligned' || p.status === 'completed');
+        const committed = prior.reduce((s, p) => s + Number(p.requested_amount || 0), 0);
+        const poAmount = Number(po.po_amount || 0);
+        return NextResponse.json({
+            error: 'duplicate_payment_suspected',
+            // Everything the confirmation dialog needs to state the case in specifics
+            // rather than a generic "are you sure".
+            duplicate: {
+                po_number: po.po_number,
+                po_amount: poAmount,
+                already_committed: committed,
+                fully_covered: poAmount > 0 && committed >= poAmount - 0.5,
+                // A different row carrying the same PO number is the strongest signal
+                // that this is a genuine double-payment rather than a further tranche.
+                other_po_rows: prior.some((p) => p.po_id !== po.id),
+                payments: prior.map((p) => ({
+                    tranche_no: p.tranche_no,
+                    status: p.status,
+                    requested_amount: Number(p.requested_amount || 0),
+                    paid_amount: p.paid_amount == null ? null : Number(p.paid_amount),
+                    utr_no: p.utr_no,
+                    on: p.payment_date || p.completed_at || p.aligned_at,
+                })),
+                settled_count: settled.length,
+            },
+        }, { status: 409 });
+    }
+
     // Next tranche number for this PO (ignoring cancelled).
     const { data: existing } = await supabaseAdmin
         .from('po_payments').select('tranche_no').eq('po_id', po.id).neq('status', 'cancelled')

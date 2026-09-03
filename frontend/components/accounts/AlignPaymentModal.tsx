@@ -2,11 +2,31 @@
 
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Loader2 } from 'lucide-react';
+import { X, Loader2, AlertTriangle } from 'lucide-react';
 import { PurchaseOrder, PAYMENT_TERMS, inr } from '@/frontend/lib/accounts/roles';
 import { TRANCHE_PRESETS } from '@/frontend/lib/accounts/trackerTypes';
 
 interface Props { po: PurchaseOrder; onClose: () => void; onDone: () => void; }
+
+interface DuplicateWarning {
+    po_number: string;
+    po_amount: number;
+    already_committed: number;
+    fully_covered: boolean;
+    other_po_rows: boolean;
+    settled_count: number;
+    payments: {
+        tranche_no: number;
+        status: string;
+        requested_amount: number;
+        paid_amount: number | null;
+        utr_no: string | null;
+        on: string | null;
+    }[];
+}
+
+const shortDate = (iso: string | null) =>
+    iso ? new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 
 export default function AlignPaymentModal({ po, onClose, onDone }: Props) {
     const pending = po.pending_amount ?? po.po_amount;
@@ -24,6 +44,9 @@ export default function AlignPaymentModal({ po, onClose, onDone }: Props) {
     const [remarks, setRemarks] = useState('');
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    // Set when the API answers 409 duplicate_payment_suspected — the modal then shows what
+    // is already on record against this PO number and asks for an explicit go-ahead.
+    const [duplicate, setDuplicate] = useState<DuplicateWarning | null>(null);
 
     const setFromPercent = (p: number) => {
         setPercent(p);
@@ -35,7 +58,7 @@ export default function AlignPaymentModal({ po, onClose, onDone }: Props) {
         setPercent(po.po_amount > 0 && n > 0 ? Math.round((n / po.po_amount) * 10000) / 100 : null);
     };
 
-    const submit = async () => {
+    const submit = async (acknowledgeDuplicate = false) => {
         if (!amount || Number(amount) <= 0) { setError('Enter an amount to align'); return; }
         setSaving(true); setError(null);
         try {
@@ -45,8 +68,13 @@ export default function AlignPaymentModal({ po, onClose, onDone }: Props) {
                     po_id: po.id, requested_amount: Number(amount), payment_term: term || null,
                     gst_hold: gstHold ? Number(gstHold) : 0, tds: tds ? Number(tds) : 0, remarks: remarks || null,
                     percent_of_po: percent && percent > 0 ? percent : null,
+                    ...(acknowledgeDuplicate ? { acknowledge_duplicate: true } : {}),
                 }),
             });
+            if (res.status === 409) {
+                const e = await res.json().catch(() => ({}));
+                if (e?.error === 'duplicate_payment_suspected' && e.duplicate) { setDuplicate(e.duplicate); return; }
+            }
             if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || 'Failed to align'); }
             onDone();
         } catch (e) { setError(e instanceof Error ? e.message : 'Failed to align'); }
@@ -66,6 +94,46 @@ export default function AlignPaymentModal({ po, onClose, onDone }: Props) {
                 </div>
 
                 <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+                    {duplicate && (
+                        <div className="rounded-xl border-2 border-amber-400/60 bg-amber-50 dark:bg-amber-500/10 p-4">
+                            <div className="flex items-start gap-2.5">
+                                <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                                <div className="min-w-0">
+                                    <p className="text-sm font-bold text-amber-900 dark:text-amber-200">
+                                        {duplicate.fully_covered
+                                            ? 'This PO already appears fully paid.'
+                                            : 'This PO already has a payment on record.'}
+                                    </p>
+                                    <p className="text-xs text-amber-800/90 dark:text-amber-200/80 mt-1">
+                                        {duplicate.settled_count > 0
+                                            ? `${duplicate.settled_count} payment${duplicate.settled_count > 1 ? 's have' : ' has'} already been aligned or completed against ${duplicate.po_number}.`
+                                            : `A payment is already registered against ${duplicate.po_number}.`}
+                                        {duplicate.other_po_rows && ' Some of it sits on a different PO record carrying the same number.'}
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div className="mt-3 rounded-lg bg-white/70 dark:bg-black/20 divide-y divide-amber-200/60 text-xs">
+                                {duplicate.payments.map(p => (
+                                    <div key={`${p.tranche_no}-${p.on}`} className="flex items-center justify-between gap-3 px-3 py-2">
+                                        <span className="font-semibold text-text-primary">
+                                            #{p.tranche_no} · {p.status}
+                                        </span>
+                                        <span className="text-text-secondary tabular-nums">
+                                            {inr(p.paid_amount ?? p.requested_amount)} · {shortDate(p.on)}
+                                            {p.utr_no ? ` · UTR ${p.utr_no}` : ''}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+
+                            <p className="mt-3 text-xs font-semibold text-amber-900 dark:text-amber-200">
+                                Already committed {inr(duplicate.already_committed)} of {inr(duplicate.po_amount)}.
+                                Do you still want to raise this payment?
+                            </p>
+                        </div>
+                    )}
+
                     <div className="bg-surface-elevated rounded-xl p-3 text-sm">
                         <div className="flex justify-between"><span className="text-text-tertiary">Vendor</span><span className="text-text-primary font-medium">{po.vendor_name || '—'}</span></div>
                         <div className="flex justify-between mt-1"><span className="text-text-tertiary">PO amount</span><span className="text-text-primary font-medium">{inr(po.po_amount)}</span></div>
@@ -113,9 +181,15 @@ export default function AlignPaymentModal({ po, onClose, onDone }: Props) {
 
                 <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border bg-surface-elevated">
                     <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-text-secondary hover:bg-muted rounded-xl">Cancel</button>
-                    <button onClick={submit} disabled={saving} className="inline-flex items-center gap-1.5 px-5 py-2 bg-primary text-white rounded-xl text-sm font-bold hover:bg-primary/90 disabled:opacity-50">
-                        {saving && <Loader2 className="w-4 h-4 animate-spin" />} Send to Accounts
-                    </button>
+                    {duplicate ? (
+                        <button onClick={() => submit(true)} disabled={saving} className="inline-flex items-center gap-1.5 px-5 py-2 bg-amber-600 text-white rounded-xl text-sm font-bold hover:bg-amber-700 disabled:opacity-50">
+                            {saving && <Loader2 className="w-4 h-4 animate-spin" />} Align anyway
+                        </button>
+                    ) : (
+                        <button onClick={() => submit()} disabled={saving} className="inline-flex items-center gap-1.5 px-5 py-2 bg-primary text-white rounded-xl text-sm font-bold hover:bg-primary/90 disabled:opacity-50">
+                            {saving && <Loader2 className="w-4 h-4 animate-spin" />} Send to Accounts
+                        </button>
+                    )}
                 </div>
             </div>
         </div>,
