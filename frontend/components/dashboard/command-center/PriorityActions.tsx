@@ -10,7 +10,6 @@ import {
   Users,
   ShieldAlert,
   MoreVertical,
-  ChevronRight,
 } from 'lucide-react';
 import {
   priorityActionsMeta,
@@ -294,46 +293,30 @@ export default function PriorityActions({
   } : null;
   return (
     <section>
-      {/* Section header on the dark canvas */}
+      {/* Row label. The band head above already names the horizon ("Ball by ball"); this
+          names the row inside it and carries the open count. Ink tokens, not white: the
+          host renders this board on a white <main>, not the dark .cc-canvas shell, and the
+          band head owns the top spacing so this header adds none of its own. */}
       <div
         style={{
           display: 'flex',
           alignItems: 'center',
-          gap: 10,
-          margin: '20px 2px 12px',
+          gap: 8,
+          margin: '0 2px 10px',
         }}
       >
         <span
           style={{
-            fontSize: 12,
+            fontSize: 10.5,
             fontWeight: 700,
             letterSpacing: '0.12em',
             textTransform: 'uppercase',
-            color: '#fff',
+            color: 'var(--cc-ink-2)',
           }}
         >
           {priorityActionsMeta.label}
         </span>
         <span className="cc-badge">{priorityActionsMeta.count}</span>
-        <button
-          type="button"
-          aria-label="Next priority actions"
-          style={{
-            marginLeft: 'auto',
-            width: 30,
-            height: 30,
-            borderRadius: 999,
-            border: '1px solid rgba(255,255,255,0.25)',
-            background: 'rgba(255,255,255,0.08)',
-            color: '#fff',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            cursor: 'pointer',
-          }}
-        >
-          <ChevronRight size={15} strokeWidth={2.2} />
-        </button>
       </div>
 
       <div

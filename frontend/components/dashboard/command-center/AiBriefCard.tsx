@@ -55,7 +55,9 @@ export default function AiBriefCard() {
   const aop = aopQ.data?.provisioned ? aopQ.data : null;
   const mailbox = mailboxQ.data?.provisioned ? mailboxQ.data : null;
 
-  const loading = ticketsQ.loading;
+  // orgId resolves in an effect, so treat "scope not known yet" as loading rather than
+  // letting the card flash an error for a fetch that was never started.
+  const loading = !orgId || ticketsQ.loading;
   const live = !!t;
 
   let paragraphs: React.ReactNode[] | null = null;

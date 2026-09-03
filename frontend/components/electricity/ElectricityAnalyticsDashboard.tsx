@@ -3,7 +3,9 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     TrendingUp, Download, Zap, AlertTriangle,
-    BarChart3, Plus, X, IndianRupee, Activity, ChevronDown, ShieldCheck, Calendar
+    BarChart3, Plus, X, IndianRupee, Activity, ChevronDown, ShieldCheck, Calendar,
+    Timer, ListChecks, Table2, Inbox, ClipboardCheck, Flag, Wallet, TrendingDown, Scale,
+    FileDown, Loader2, RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useParams } from 'next/navigation';
@@ -11,8 +13,19 @@ import { createClient } from '@/frontend/utils/supabase/client';
 import ElectricityStaffDashboard from './ElectricityStaffDashboard';
 import GridTariffModal from './GridTariffModal';
 import ElectricityOCRModule from './ElectricityOCRModule';
+import ElectricityCycleTracker from './ElectricityCycleTracker';
+import ElectricityBillDeadlines from './ElectricityBillDeadlines';
+import ElectricityBillRegister from './ElectricityBillRegister';
+import ElectricityBillInbox from './ElectricityBillInbox';
+import ElectricityValidationQueue from './ElectricityValidationQueue';
+import ElectricityDisputeTracker from './ElectricityDisputeTracker';
+import ElectricityPaymentScenarioForm from './ElectricityPaymentScenarioForm';
+import ElectricityDiscountPerformance from './ElectricityDiscountPerformance';
+import ElectricityReconciliation from './ElectricityReconciliation';
 import { ResponsiveContainer, Tooltip, XAxis, Area, AreaChart, YAxis, CartesianGrid } from 'recharts';
 import { useDataCache } from '@/frontend/context/DataCacheContext';
+import { useAuth } from '@/frontend/context/AuthContext';
+import type { TrackerPayload } from '@/frontend/lib/electricity/trackerTypes';
 
 interface ElectricityMeter {
     id: string;
@@ -51,13 +64,58 @@ interface ElectricityAnalyticsDashboardProps {
 
 const isValidId = (id?: string) => !!id && id !== 'undefined' && id !== 'null' && id !== 'all';
 
+// Mirrors backend/lib/electricity/access.ts, which is what actually enforces this — every
+// /api/electricity route 403s outside these roles. Gating here only keeps tabs that would
+// dead-end in a 403 out of the strip. 'owner' is absent for the same reason it is absent
+// there: an owner without one of these roles is refused by the API.
+const ELECTRICITY_ROLES = ['org_super_admin', 'master_admin', 'accounts', 'procurement', 'ops_super_admin'];
+const SUPER_ADMIN_ROLES = ['org_super_admin', 'master_admin'];
+
+type BillTab = 'cycle' | 'deadlines' | 'register' | 'inbox' | 'validation' | 'disputes' | 'payments' | 'discount' | 'reconciliation';
+type Tab = 'overview' | BillTab;
+
+// Order follows the money's path: what the meters cost (overview), the clock on the
+// early-payment discount, then bills as they arrive, get checked, get argued over, get paid.
+const TABS: { key: Tab; label: string; icon: typeof ListChecks }[] = [
+    { key: 'overview', label: 'Analytics', icon: BarChart3 },
+    { key: 'cycle', label: 'Cycle & target', icon: Timer },
+    { key: 'deadlines', label: 'Deadlines', icon: ListChecks },
+    { key: 'register', label: 'Register', icon: Table2 },
+    { key: 'inbox', label: 'Inbox', icon: Inbox },
+    { key: 'validation', label: 'Validation', icon: ClipboardCheck },
+    { key: 'disputes', label: 'Disputes', icon: Flag },
+    { key: 'payments', label: 'Payments', icon: Wallet },
+    { key: 'discount', label: 'Discount', icon: TrendingDown },
+    { key: 'reconciliation', label: 'Reconciliation', icon: Scale },
+];
+
+const INCOMPLETE_PAYLOAD = 'The tracker responded without this section. Refresh, and if it persists the tracker migrations are only partly applied.';
+
+const TabNotice: React.FC<{ title: string; detail?: string; onRetry?: () => void }> = ({ title, detail, onRetry }) => (
+    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-10 text-center">
+        <AlertTriangle className="w-6 h-6 mx-auto mb-3 text-amber-500" />
+        <p className="text-sm font-bold text-slate-900">{title}</p>
+        {detail && <p className="text-xs font-medium text-slate-500 mt-2 max-w-md mx-auto">{detail}</p>}
+        {onRetry && (
+            <button
+                onClick={onRetry}
+                className="mt-4 px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition-all"
+            >
+                Try again
+            </button>
+        )}
+    </div>
+);
+
 const ElectricityAnalyticsDashboard: React.FC<ElectricityAnalyticsDashboardProps> = ({ propertyId: propIdFromProps, orgId, properties = [] }) => {
     const params = useParams();
     const propertyId = propIdFromProps || (params?.propertyId as string);
     const supabase = useMemo(() => createClient(), []);
     const { getCachedData, setCachedData, invalidateCache } = useDataCache();
+    const { membership } = useAuth();
 
     // UI State
+    const [tab, setTab] = useState<Tab>('overview');
     const [viewMode, setViewMode] = useState<'main' | 'meter'>('main');
     const [selectedMeterId, setSelectedMeterId] = useState<string>('all');
     const [costTimeframe, setCostTimeframe] = useState<'today' | 'month'>('month');
@@ -90,6 +148,40 @@ const ElectricityAnalyticsDashboard: React.FC<ElectricityAnalyticsDashboardProps
 
     const [activeTariff, setActiveTariff] = useState<number>(0);
     const [isLoading, setIsLoading] = useState(true);
+
+    // Bill Tracker State — a second, independent lifecycle. It must NOT share isLoading:
+    // that one gates the readings skeleton, and folding the two together would hide the
+    // bill tabs behind a meter-readings fetch they do not depend on.
+    const [tracker, setTracker] = useState<TrackerPayload | null>(null);
+    const [trackerLoading, setTrackerLoading] = useState(false);
+    const [trackerRefreshing, setTrackerRefreshing] = useState(false);
+    const [trackerError, setTrackerError] = useState<string | null>(null);
+    const [reportMonth, setReportMonth] = useState(new Date().toISOString().slice(0, 7));
+
+    // PropertyAdminDashboard mounts this with propertyId only. Recovering the org from the
+    // membership is the only thing that keeps the bill tabs reachable from that mount; the
+    // API re-resolves and re-authorises the org anyway, so a wrong guess only ever 403s.
+    const billOrgId = useMemo(() => {
+        if (isValidId(orgId)) return orgId as string;
+        const prop = (membership?.properties || []).find(p => p.id === propertyId);
+        return prop?.organization_id || membership?.org_id || '';
+    }, [orgId, propertyId, membership]);
+
+    // Scoped to the org whose bills these tabs would load — access.ts collects roles the
+    // same way, per organization, not across every membership the user holds.
+    const orgRoles = useMemo(() => {
+        const scoped = (membership?.all_org_memberships || [])
+            .filter(m => m.org_id === billOrgId)
+            .map(m => m.role);
+        if (membership?.org_role && membership.org_id === billOrgId) scoped.push(membership.org_role);
+        return scoped.filter(Boolean) as string[];
+    }, [membership, billOrgId]);
+
+    const isMasterAdmin = !!membership?.is_master_admin;
+    const canSeeBills = !!billOrgId && (isMasterAdmin || orgRoles.some(r => ELECTRICITY_ROLES.includes(r)));
+    // Mirrors the server check in POST /api/electricity/targets — hiding the button is
+    // courtesy, the 403 there is the enforcement.
+    const canSetTarget = isMasterAdmin || orgRoles.some(r => SUPER_ADMIN_ROLES.includes(r));
 
     // Fetch Initial Data
     const fetchData = useCallback(async () => {
@@ -233,6 +325,37 @@ const ElectricityAnalyticsDashboard: React.FC<ElectricityAnalyticsDashboardProps
     useEffect(() => {
         fetchData();
     }, [fetchData]);
+
+    // One call feeds Deadlines, Register, Inbox accounts, Discount and Reconciliation.
+    const loadTracker = useCallback(async (quiet = false) => {
+        if (!billOrgId) return;
+        if (quiet) setTrackerRefreshing(true); else setTrackerLoading(true);
+        setTrackerError(null);
+        try {
+            const res = await fetch(`/api/electricity/tracker?org_id=${billOrgId}`);
+            const payload = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(payload?.error || 'Could not load the electricity tracker');
+            setTracker(payload as TrackerPayload);
+        } catch (e) {
+            setTrackerError(e instanceof Error ? e.message : 'Could not load the electricity tracker');
+        } finally {
+            setTrackerLoading(false);
+            setTrackerRefreshing(false);
+        }
+    }, [billOrgId]);
+
+    // Deferred on purpose: analytics is the default tab and most of its audience never
+    // opens a bill tab, so the tracker query stays unpaid until one is. trackerError is a
+    // dependency so a failed load settles instead of retrying on every render.
+    useEffect(() => {
+        if (tab !== 'overview' && !tracker && !trackerLoading && !trackerError) void loadTracker();
+    }, [tab, tracker, trackerLoading, trackerError, loadTracker]);
+
+    // Membership resolves after first paint; a tab selected before it lands could otherwise
+    // outlive the access that allowed it.
+    useEffect(() => {
+        if (!canSeeBills && tab !== 'overview') setTab('overview');
+    }, [canSeeBills, tab]);
 
     const meterLayoutMap = useMemo(() => {
         const map: Record<string, { sheetName: string, locationName: string }> = {};
@@ -387,94 +510,226 @@ const ElectricityAnalyticsDashboard: React.FC<ElectricityAnalyticsDashboardProps
         ? metrics.custom.units
         : (unitsTimeframe === 'today' ? metrics.today.units : metrics.month.units);
 
-    if (isLoading) return (
-        <div className="space-y-8 animate-pulse">
-            {/* Skeleton Header */}
-            <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-                <div>
-                    <div className="h-8 w-64 bg-slate-200 rounded-lg" />
-                    <div className="flex items-center gap-3 mt-3">
-                        <div className="h-5 w-32 bg-slate-200 rounded-full" />
-                        <div className="h-4 w-40 bg-slate-100 rounded" />
-                    </div>
-                </div>
-                <div className="h-9 w-48 bg-slate-200 rounded-lg" />
+    const flaggedMonths = tracker?.reconciliation?.rows?.filter(r => r.flagged).length || 0;
+
+    const renderBillTab = () => {
+        // These four fetch their own data and carry their own loading/error/empty guards.
+        if (tab === 'cycle') return <ElectricityCycleTracker orgId={billOrgId} canSetTarget={canSetTarget} />;
+        if (tab === 'validation') return <ElectricityValidationQueue orgId={billOrgId} />;
+        if (tab === 'disputes') return <ElectricityDisputeTracker orgId={billOrgId} />;
+        if (tab === 'payments') return <ElectricityPaymentScenarioForm orgId={billOrgId} />;
+
+        // The rest render straight from the tracker payload and destructure their prop on
+        // the first line, so nothing below may mount before the payload is on hand.
+        if (trackerLoading) return (
+            <div className="flex items-center justify-center py-24 text-slate-400">
+                <Loader2 className="w-6 h-6 animate-spin" />
+            </div>
+        );
+        if (trackerError) return <TabNotice title={trackerError} onRetry={() => void loadTracker()} />;
+        if (!tracker?.provisioned) return (
+            <TabNotice
+                title="The electricity bill tracker is not set up yet"
+                detail={tracker?.reason || 'Apply the electricity bill migrations, then import the bill workbook to populate it.'}
+            />
+        );
+
+        const registerRows = tracker.register?.rows;
+        const reconciliation = tracker.reconciliation;
+        const accounts = tracker.accounts || [];
+
+        // Inbox sits above the empty-bills guard on purpose: zero bills is the exact state
+        // it explains (a PDF that failed to parse or matched no account never becomes one).
+        if (tab === 'inbox') return <ElectricityBillInbox orgId={billOrgId} accounts={accounts} />;
+
+        if (!tracker.months?.length) return (
+            <TabNotice
+                title="No bills imported yet"
+                detail="The tables exist but hold no bills. Import the electricity bill workbook, or let the mailbox pipeline deliver the first PDF."
+            />
+        );
+
+        switch (tab) {
+            case 'deadlines':
+                return tracker.deadlines
+                    ? <ElectricityBillDeadlines deadlines={tracker.deadlines} />
+                    : <TabNotice title="Deadlines are unavailable" detail={INCOMPLETE_PAYLOAD} />;
+            case 'register':
+                return Array.isArray(registerRows)
+                    ? (
+                        <ElectricityBillRegister
+                            orgId={billOrgId}
+                            rows={registerRows}
+                            accounts={accounts}
+                            months={tracker.months}
+                            onCommitted={() => void loadTracker(true)}
+                        />
+                    )
+                    : <TabNotice title="The bill register is unavailable" detail={INCOMPLETE_PAYLOAD} />;
+            case 'discount':
+                return tracker.discount_performance?.totals
+                    ? <ElectricityDiscountPerformance performance={tracker.discount_performance} />
+                    : <TabNotice title="Discount performance is unavailable" detail={INCOMPLETE_PAYLOAD} />;
+            case 'reconciliation':
+                return Array.isArray(reconciliation?.rows)
+                    ? <ElectricityReconciliation orgId={billOrgId} reconciliation={reconciliation} bills={registerRows || []} />
+                    : <TabNotice title="Reconciliation is unavailable" detail={INCOMPLETE_PAYLOAD} />;
+            default:
+                return null;
+        }
+    };
+
+    // Rendered above both the skeleton and the live view so switching tabs never waits on
+    // the readings fetch.
+    const tabBar = canSeeBills ? (
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 overflow-x-auto no-scrollbar">
+                {TABS.map(t => (
+                    <button
+                        key={t.key}
+                        onClick={() => setTab(t.key)}
+                        className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors ${tab === t.key ? 'text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
+                    >
+                        {tab === t.key && (
+                            <motion.div layoutId="electricity-tab-pill" className="absolute inset-0 bg-white rounded-lg shadow-sm" />
+                        )}
+                        <t.icon className="relative w-3.5 h-3.5" />
+                        <span className="relative">{t.label}</span>
+                        {t.key === 'reconciliation' && flaggedMonths > 0 && (
+                            <span className="relative ml-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-black bg-red-50 text-red-600">
+                                {flaggedMonths}
+                            </span>
+                        )}
+                    </button>
+                ))}
             </div>
 
-            {/* Skeleton 3-Tile Layout */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {/* Tile 1: Cost Skeleton */}
-                <div className="bg-[#ecfdf5] rounded-2xl p-6 border border-emerald-100">
-                    <div className="flex justify-between items-start mb-6">
-                        <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 bg-emerald-100 rounded-full" />
-                            <div className="space-y-1.5">
-                                <div className="h-3 w-20 bg-emerald-100 rounded" />
-                                <div className="h-3 w-12 bg-emerald-100 rounded" />
-                            </div>
-                        </div>
-                        <div className="h-7 w-28 bg-emerald-100/50 rounded-lg" />
+            {tab !== 'overview' && (
+                <div className="flex items-center gap-2">
+                    {/* The report month is not a data filter — it only picks which month's
+                        PDF to generate, so it lives inside the download control rather than
+                        beside the views' own month filters. */}
+                    <div className="flex items-stretch rounded-xl border border-slate-200 bg-white overflow-hidden">
+                        <label className="flex items-center gap-1.5 pl-3 pr-2 bg-slate-50 text-[10px] font-black uppercase tracking-wider text-slate-400">
+                            Report
+                            <input
+                                type="month"
+                                value={reportMonth}
+                                onChange={(e) => setReportMonth(e.target.value)}
+                                aria-label="Month to generate the PDF report for"
+                                className="bg-transparent py-1.5 text-[11px] font-bold text-slate-700 outline-none normal-case tracking-normal"
+                            />
+                        </label>
+                        <a
+                            href={`/api/electricity/report?org_id=${billOrgId}&month=${reportMonth}`}
+                            className="flex items-center gap-1.5 px-3 text-xs font-bold text-slate-600 hover:text-slate-900 hover:bg-slate-50 transition-colors border-l border-slate-200"
+                        >
+                            <FileDown className="w-4 h-4" /> Download
+                        </a>
                     </div>
-                    <div className="h-8 w-32 bg-emerald-200/50 rounded-lg mt-4" />
-                    <div className="h-1.5 w-12 bg-emerald-200 rounded-full mt-4 mb-4" />
-                    <div className="h-3 w-24 bg-emerald-100 rounded mt-2" />
+                    <button
+                        onClick={() => void loadTracker(true)}
+                        className="p-2 rounded-xl border border-slate-200 bg-white text-slate-600 hover:text-slate-900 hover:bg-slate-50 transition-colors"
+                        aria-label="Refresh bill tracker"
+                    >
+                        <RefreshCw className={`w-4 h-4 ${trackerRefreshing ? 'animate-spin' : ''}`} />
+                    </button>
                 </div>
+            )}
+        </div>
+    ) : null;
 
-                {/* Tile 2: Units Skeleton */}
-                <div className="bg-[#eff6ff] rounded-2xl p-6 border border-blue-100">
-                    <div className="flex justify-between items-start mb-6">
-                        <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 bg-blue-100 rounded-full" />
-                            <div className="space-y-1.5">
-                                <div className="h-3 w-16 bg-blue-100 rounded" />
-                                <div className="h-3 w-20 bg-blue-100 rounded" />
-                            </div>
-                        </div>
-                        <div className="h-7 w-28 bg-blue-100/50 rounded-lg" />
-                    </div>
-                    <div className="h-8 w-36 bg-blue-200/50 rounded-lg mt-4" />
-                    <div className="h-1.5 w-12 bg-blue-200 rounded-full mt-4 mb-4" />
-                    <div className="h-3 w-28 bg-blue-100 rounded mt-2" />
-                </div>
-
-                {/* Tile 3: Averages Skeleton */}
-                <div className="bg-[#fff7ed] rounded-2xl p-6 border border-orange-100">
-                    <div className="flex items-center gap-3 mb-6">
-                        <div className="w-10 h-10 bg-orange-100 rounded-full" />
-                        <div className="space-y-1.5">
-                            <div className="h-3 w-14 bg-orange-100 rounded" />
-                            <div className="h-3 w-18 bg-orange-100 rounded" />
-                        </div>
-                    </div>
-                    <div className="space-y-5">
-                        <div>
-                            <div className="h-7 w-24 bg-orange-200/50 rounded-lg" />
-                            <div className="h-1 w-8 bg-orange-200 rounded-full mt-2" />
-                        </div>
-                        <div>
-                            <div className="h-6 w-28 bg-orange-200/40 rounded-lg" />
-                            <div className="h-1 w-8 bg-orange-200 rounded-full mt-2" />
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            {/* Skeleton Trends Section */}
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-                <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
+    if (isLoading && tab === 'overview') return (
+        <div className="space-y-8">
+            {tabBar}
+            <div className="space-y-8 animate-pulse">
+                {/* Skeleton Header */}
+                <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
                     <div>
-                        <div className="h-5 w-44 bg-slate-200 rounded" />
-                        <div className="h-4 w-56 bg-slate-100 rounded mt-2" />
+                        <div className="h-8 w-64 bg-slate-200 rounded-lg" />
+                        <div className="flex items-center gap-3 mt-3">
+                            <div className="h-5 w-32 bg-slate-200 rounded-full" />
+                            <div className="h-4 w-40 bg-slate-100 rounded" />
+                        </div>
                     </div>
-                    <div className="flex items-center gap-4">
-                        <div className="h-8 w-32 bg-slate-100 rounded-lg" />
-                        <div className="h-8 w-28 bg-slate-100 rounded-lg" />
+                    <div className="h-9 w-48 bg-slate-200 rounded-lg" />
+                </div>
+
+                {/* Skeleton 3-Tile Layout */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    {/* Tile 1: Cost Skeleton */}
+                    <div className="bg-[#ecfdf5] rounded-2xl p-6 border border-emerald-100">
+                        <div className="flex justify-between items-start mb-6">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-emerald-100 rounded-full" />
+                                <div className="space-y-1.5">
+                                    <div className="h-3 w-20 bg-emerald-100 rounded" />
+                                    <div className="h-3 w-12 bg-emerald-100 rounded" />
+                                </div>
+                            </div>
+                            <div className="h-7 w-28 bg-emerald-100/50 rounded-lg" />
+                        </div>
+                        <div className="h-8 w-32 bg-emerald-200/50 rounded-lg mt-4" />
+                        <div className="h-1.5 w-12 bg-emerald-200 rounded-full mt-4 mb-4" />
+                        <div className="h-3 w-24 bg-emerald-100 rounded mt-2" />
+                    </div>
+
+                    {/* Tile 2: Units Skeleton */}
+                    <div className="bg-[#eff6ff] rounded-2xl p-6 border border-blue-100">
+                        <div className="flex justify-between items-start mb-6">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-blue-100 rounded-full" />
+                                <div className="space-y-1.5">
+                                    <div className="h-3 w-16 bg-blue-100 rounded" />
+                                    <div className="h-3 w-20 bg-blue-100 rounded" />
+                                </div>
+                            </div>
+                            <div className="h-7 w-28 bg-blue-100/50 rounded-lg" />
+                        </div>
+                        <div className="h-8 w-36 bg-blue-200/50 rounded-lg mt-4" />
+                        <div className="h-1.5 w-12 bg-blue-200 rounded-full mt-4 mb-4" />
+                        <div className="h-3 w-28 bg-blue-100 rounded mt-2" />
+                    </div>
+
+                    {/* Tile 3: Averages Skeleton */}
+                    <div className="bg-[#fff7ed] rounded-2xl p-6 border border-orange-100">
+                        <div className="flex items-center gap-3 mb-6">
+                            <div className="w-10 h-10 bg-orange-100 rounded-full" />
+                            <div className="space-y-1.5">
+                                <div className="h-3 w-14 bg-orange-100 rounded" />
+                                <div className="h-3 w-18 bg-orange-100 rounded" />
+                            </div>
+                        </div>
+                        <div className="space-y-5">
+                            <div>
+                                <div className="h-7 w-24 bg-orange-200/50 rounded-lg" />
+                                <div className="h-1 w-8 bg-orange-200 rounded-full mt-2" />
+                            </div>
+                            <div>
+                                <div className="h-6 w-28 bg-orange-200/40 rounded-lg" />
+                                <div className="h-1 w-8 bg-orange-200 rounded-full mt-2" />
+                            </div>
+                        </div>
                     </div>
                 </div>
-                <div className="h-[300px] w-full flex items-end gap-2 px-4">
-                    {[40, 65, 35, 80, 55, 70, 45].map((h, i) => (
-                        <div key={i} className="flex-1 bg-slate-100 rounded-t-md" style={{ height: `${h}%` }} />
-                    ))}
+
+                {/* Skeleton Trends Section */}
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
+                        <div>
+                            <div className="h-5 w-44 bg-slate-200 rounded" />
+                            <div className="h-4 w-56 bg-slate-100 rounded mt-2" />
+                        </div>
+                        <div className="flex items-center gap-4">
+                            <div className="h-8 w-32 bg-slate-100 rounded-lg" />
+                            <div className="h-8 w-28 bg-slate-100 rounded-lg" />
+                        </div>
+                    </div>
+                    <div className="h-[300px] w-full flex items-end gap-2 px-4">
+                        {[40, 65, 35, 80, 55, 70, 45].map((h, i) => (
+                            <div key={i} className="flex-1 bg-slate-100 rounded-t-md" style={{ height: `${h}%` }} />
+                        ))}
+                    </div>
                 </div>
             </div>
         </div>
@@ -482,314 +737,325 @@ const ElectricityAnalyticsDashboard: React.FC<ElectricityAnalyticsDashboardProps
 
     return (
         <div className="space-y-8 animate-in fade-in duration-500">
-            {/* Header Area */}
-            <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-                <div>
-                    <div className="flex items-center gap-3">
-                        {activeTariff > 0 ? (
-                            <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full border border-emerald-100">
-                                Active Tariff: ₹{activeTariff}/kWh
-                            </span>
-                        ) : (
-                            <div className="flex items-center gap-2">
-                                <span className="text-xs font-bold text-amber-600 bg-amber-50 px-2 py-1 rounded-full border border-amber-100 flex items-center gap-1.5 ">
-                                    <AlertTriangle className="w-3 h-3" />
-                                    No Active Tariff
+            {tab === 'overview' && (
+                <>
+                    {/* Header Area */}
+                    <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+                        <div>
+                            <div className="flex items-center gap-3">
+                                {activeTariff > 0 ? (
+                                    <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full border border-emerald-100">
+                                        Active Tariff: ₹{activeTariff}/kWh
+                                    </span>
+                                ) : (
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-xs font-bold text-amber-600 bg-amber-50 px-2 py-1 rounded-full border border-amber-100 flex items-center gap-1.5 ">
+                                            <AlertTriangle className="w-3 h-3" />
+                                            No Active Tariff
+                                        </span>
+                                        <span className="text-[10px] text-slate-400 font-medium">Costs will show as ₹0</span>
+                                    </div>
+                                )}
+                                <span className="text-xs font-medium text-slate-400">
+                                    Updates daily based on logs
                                 </span>
-                                <span className="text-[10px] text-slate-400 font-medium">Costs will show as ₹0</span>
                             </div>
-                        )}
-                        <span className="text-xs font-medium text-slate-400">
-                            Updates daily based on logs
-                        </span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                        {propertyId && propertyId !== 'all' && (
+                            <div className="flex items-center gap-3">
+                                {propertyId && propertyId !== 'all' && (
+                                    <button
+                                        onClick={() => setShowTariffModal(true)}
+                                        className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-50 transition-colors shadow-sm"
+                                    >
+                                        <Plus className="w-4 h-4" />
+                                        Set Tariff
+                                    </button>
+                                )}
+                                <button
+                                    onClick={() => setShowLogModal(true)}
+                                    className="flex items-center gap-2 px-6 py-2.5 bg-primary text-white rounded-xl text-sm font-bold hover:opacity-90 transition-all shadow-lg shadow-primary/20"
+                                >
+                                    <Activity className="w-5 h-5" />
+                                    Log Entry
+                                </button>
+                                <button
+                                    onClick={() => setShowOCRCenter(true)}
+                                    className="flex items-center gap-2 px-4 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-black transition-all shadow-lg shadow-slate-900/10"
+                                >
+                                    <ShieldCheck className="w-5 h-5 text-emerald-400" />
+                                    OCR Insights
+                                </button>
+                            </div>
+
+                            {/* Date Range Filter */}
+                            <div className="flex items-center gap-2 mt-3">
+                                <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1.5">
+                                    <Calendar className="w-4 h-4 text-slate-400" />
+                                    <input
+                                        type="date"
+                                        value={pendingDateFrom}
+                                        max={pendingDateTo || todayStr}
+                                        onChange={(e) => setPendingDateFrom(e.target.value)}
+                                        className="text-xs font-medium text-slate-700 bg-transparent border-none outline-none focus:ring-0"
+                                    />
+                                    <span className="text-xs text-slate-400">to</span>
+                                    <input
+                                        type="date"
+                                        value={pendingDateTo}
+                                        min={pendingDateFrom}
+                                        max={todayStr}
+                                        onChange={(e) => setPendingDateTo(e.target.value)}
+                                        className="text-xs font-medium text-slate-700 bg-transparent border-none outline-none focus:ring-0"
+                                    />
+                                </div>
+                                <button
+                                    onClick={() => {
+                                        if (pendingDateFrom && pendingDateTo) {
+                                            setDateFrom(pendingDateFrom);
+                                            setDateTo(pendingDateTo);
+                                            setIsCustomRange(true);
+                                        }
+                                    }}
+                                    disabled={!pendingDateFrom || !pendingDateTo}
+                                    className="px-3 py-1.5 text-xs font-bold rounded-lg bg-primary text-white hover:bg-primary-dark transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                    Apply
+                                </button>
+                                {isCustomRange && (
+                                    <button
+                                        onClick={() => {
+                                            setIsCustomRange(false);
+                                            setDateFrom('');
+                                            setDateTo('');
+                                            setPendingDateFrom('');
+                                            setPendingDateTo('');
+                                        }}
+                                        className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition-all"
+                                    >
+                                        Reset
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Scope Toggle */}
+                        <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-lg border border-slate-200">
                             <button
-                                onClick={() => setShowTariffModal(true)}
-                                className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-50 transition-colors shadow-sm"
+                                onClick={() => { setViewMode('main'); setSelectedMeterId('all'); }}
+                                className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all ${viewMode === 'main' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                             >
-                                <Plus className="w-4 h-4" />
-                                Set Tariff
+                                Main
                             </button>
-                        )}
-                        <button
-                            onClick={() => setShowLogModal(true)}
-                            className="flex items-center gap-2 px-6 py-2.5 bg-primary text-white rounded-xl text-sm font-bold hover:opacity-90 transition-all shadow-lg shadow-primary/20"
-                        >
-                            <Activity className="w-5 h-5" />
-                            Log Entry
-                        </button>
-                        <button
-                            onClick={() => setShowOCRCenter(true)}
-                            className="flex items-center gap-2 px-4 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-black transition-all shadow-lg shadow-slate-900/10"
-                        >
-                            <ShieldCheck className="w-5 h-5 text-emerald-400" />
-                            OCR Insights
-                        </button>
-                    </div>
-
-                    {/* Date Range Filter */}
-                    <div className="flex items-center gap-2 mt-3">
-                        <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1.5">
-                            <Calendar className="w-4 h-4 text-slate-400" />
-                            <input
-                                type="date"
-                                value={pendingDateFrom}
-                                max={pendingDateTo || todayStr}
-                                onChange={(e) => setPendingDateFrom(e.target.value)}
-                                className="text-xs font-medium text-slate-700 bg-transparent border-none outline-none focus:ring-0"
-                            />
-                            <span className="text-xs text-slate-400">to</span>
-                            <input
-                                type="date"
-                                value={pendingDateTo}
-                                min={pendingDateFrom}
-                                max={todayStr}
-                                onChange={(e) => setPendingDateTo(e.target.value)}
-                                className="text-xs font-medium text-slate-700 bg-transparent border-none outline-none focus:ring-0"
-                            />
-                        </div>
-                        <button
-                            onClick={() => {
-                                if (pendingDateFrom && pendingDateTo) {
-                                    setDateFrom(pendingDateFrom);
-                                    setDateTo(pendingDateTo);
-                                    setIsCustomRange(true);
-                                }
-                            }}
-                            disabled={!pendingDateFrom || !pendingDateTo}
-                            className="px-3 py-1.5 text-xs font-bold rounded-lg bg-primary text-white hover:bg-primary-dark transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                        >
-                            Apply
-                        </button>
-                        {isCustomRange && (
-                            <button
-                                onClick={() => {
-                                    setIsCustomRange(false);
-                                    setDateFrom('');
-                                    setDateTo('');
-                                    setPendingDateFrom('');
-                                    setPendingDateTo('');
-                                }}
-                                className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition-all"
-                            >
-                                Reset
-                            </button>
-                        )}
-                    </div>
-                </div>
-
-                {/* Scope Toggle */}
-                <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-lg border border-slate-200">
-                    <button
-                        onClick={() => { setViewMode('main'); setSelectedMeterId('all'); }}
-                        className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all ${viewMode === 'main' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                    >
-                        Main
-                    </button>
-                    <div className="relative">
-                        <button
-                            onClick={() => { setViewMode('meter'); if (meters.length && selectedMeterId === 'all') setSelectedMeterId(meters[0].id); }}
-                            className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-1 ${viewMode === 'meter' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                        >
-                            {viewMode === 'meter' && selectedMeterId !== 'all' 
-                                ? (() => {
-                                    const m = meters.find(m => m.id === selectedMeterId);
-                                    if (!m) return 'Meter-wise';
-                                    const layout = meterLayoutMap[m.id];
-                                    return layout ? `${m.name} (${layout.sheetName} - ${layout.locationName})` : m.name;
-                                })()
-                                : 'Meter-wise'
-                            }
-                            {viewMode === 'meter' && <ChevronDown className="w-3 h-3" />}
-                        </button>
-                        {/* Meter Dropdown (Simple implementation) */}
-                        {viewMode === 'meter' && (
-                            <select
-                                className="absolute inset-0 opacity-0 cursor-pointer"
-                                value={selectedMeterId}
-                                onChange={(e) => setSelectedMeterId(e.target.value)}
-                            >
-                                {meters.map(m => {
-                                    const layout = meterLayoutMap[m.id];
-                                    const displayName = layout ? `${m.name} (${layout.sheetName} - ${layout.locationName})` : m.name;
-                                    return (
-                                        <option key={m.id} value={m.id}>{displayName}</option>
-                                    );
-                                })}
-                            </select>
-                        )}
-                    </div>
-                </div>
-            </div>
-
-            {/* 3-Tile Layout */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {/* Tile 1: Cost (Primary) */}
-                <div className="bg-[#ecfdf5] rounded-2xl p-5 md:p-4 shadow-sm border border-emerald-100 relative flex flex-col items-center justify-center md:h-[150px]">
-                    <div className="absolute top-4 left-4">
-                        <span className="p-2.5 md:p-2 bg-emerald-50 rounded-full text-emerald-600 flex items-center justify-center">
-                            <IndianRupee className="w-5 h-5 md:w-4 md:h-4" />
-                        </span>
-                    </div>
-                    <div className="absolute top-4 right-4 text-right">
-                        <span className="text-xs md:text-[10px] font-bold text-slate-700 uppercase tracking-widest block">ELECTRICITY COST</span>
-                        {!isCustomRange && (
-                            <div className="flex bg-slate-100/50 rounded-lg p-0.5 mt-1 justify-end">
-                                <button onClick={() => setCostTimeframe('today')} className={`px-2 py-0.5 text-[8px] font-bold rounded-md transition-all ${costTimeframe === 'today' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-400 hover:text-emerald-600'}`}>Today</button>
-                                <button onClick={() => setCostTimeframe('month')} className={`px-2 py-0.5 text-[8px] font-bold rounded-md transition-all ${costTimeframe === 'month' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-400 hover:text-emerald-600'}`}>Month</button>
-                            </div>
-                        )}
-                    </div>
-                    <div className="text-center mt-6">
-                        <div className="text-3xl md:text-4xl font-black text-slate-900 tracking-tight">
-                            {fmtCost(displayCost, displayUnits)}
-                        </div>
-                        <p className="text-[10px] md:text-[9px] font-medium text-slate-500 mt-1 uppercase tracking-wide truncate">
-                            {isCustomRange
-                                ? `${dateFrom} to ${dateTo}`
-                                : (costTimeframe === 'today' ? 'Total today' : 'Total this month')}
-                        </p>
-                    </div>
-                </div>
-
-                {/* Tile 2: Units (Secondary) */}
-                <div className="bg-[#eff6ff] rounded-2xl p-5 md:p-4 shadow-sm border border-blue-100 relative flex flex-col items-center justify-center md:h-[150px]">
-                    <div className="absolute top-4 left-4">
-                        <span className="p-2.5 md:p-2 bg-blue-50 rounded-full text-blue-600 flex items-center justify-center">
-                            <Zap className="w-5 h-5 md:w-4 md:h-4" />
-                        </span>
-                    </div>
-                    <div className="absolute top-4 right-4 text-right">
-                        <span className="text-xs md:text-[10px] font-bold text-slate-700 uppercase tracking-widest block">UNITS CONSUMED</span>
-                        {!isCustomRange && (
-                            <div className="flex bg-slate-100/50 rounded-lg p-0.5 mt-1 justify-end">
-                                <button onClick={() => setUnitsTimeframe('today')} className={`px-2 py-0.5 text-[8px] font-bold rounded-md transition-all ${unitsTimeframe === 'today' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-blue-600'}`}>Today</button>
-                                <button onClick={() => setUnitsTimeframe('month')} className={`px-2 py-0.5 text-[8px] font-bold rounded-md transition-all ${unitsTimeframe === 'month' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-blue-600'}`}>Month</button>
-                            </div>
-                        )}
-                    </div>
-                    <div className="text-center mt-6">
-                        <div className="text-3xl md:text-4xl font-black text-slate-900 tracking-tight">
-                            {fmtUnits(displayUnits)}
-                        </div>
-                        <p className="text-[10px] md:text-[9px] font-medium text-slate-500 mt-1 uppercase tracking-wide truncate">
-                            {isCustomRange
-                                ? `${dateFrom} to ${dateTo}`
-                                : (unitsTimeframe === 'today' ? 'Total consumption' : 'Total consumption')}
-                        </p>
-                    </div>
-                </div>
-
-                {/* Tile 3: Averages */}
-                <div className="bg-[#fff7ed] rounded-2xl p-5 md:p-4 shadow-sm border border-orange-100 relative flex flex-col items-center justify-center md:h-[150px]">
-                    <div className="absolute top-4 left-4">
-                        <span className="p-2.5 md:p-2 bg-orange-50 rounded-full text-orange-500 flex items-center justify-center">
-                            <BarChart3 className="w-5 h-5 md:w-4 md:h-4" />
-                        </span>
-                    </div>
-                    <div className="absolute top-4 right-4 text-right">
-                        <span className="text-xs md:text-[10px] font-bold text-slate-700 uppercase tracking-widest block">DAILY AVERAGE</span>
-                    </div>
-                    <div className="w-full px-8 mt-6">
-                        <div className="space-y-3 md:space-y-2">
-                            <div className="flex justify-between items-end">
-                                <span className="text-[10px] md:text-[9px] text-slate-500 block">Avg Daily Cost</span>
-                                <div className="text-xl md:text-lg font-black text-slate-900 leading-none">{fmtCost(metrics.averages.cost, metrics.averages.units)}</div>
-                            </div>
-                            <div className="h-px w-full bg-slate-100" />
-                            <div className="flex justify-between items-end">
-                                <span className="text-[10px] md:text-[9px] text-slate-500 block">Avg Daily Units</span>
-                                <div className="text-xl md:text-lg font-black text-slate-900 flex items-baseline gap-1 leading-none">
-                                {fmtUnits(metrics.averages.units)}
+                            <div className="relative">
+                                <button
+                                    onClick={() => { setViewMode('meter'); if (meters.length && selectedMeterId === 'all') setSelectedMeterId(meters[0].id); }}
+                                    className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-1 ${viewMode === 'meter' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                                >
+                                    {viewMode === 'meter' && selectedMeterId !== 'all' 
+                                        ? (() => {
+                                            const m = meters.find(m => m.id === selectedMeterId);
+                                            if (!m) return 'Meter-wise';
+                                            const layout = meterLayoutMap[m.id];
+                                            return layout ? `${m.name} (${layout.sheetName} - ${layout.locationName})` : m.name;
+                                        })()
+                                        : 'Meter-wise'
+                                    }
+                                    {viewMode === 'meter' && <ChevronDown className="w-3 h-3" />}
+                                </button>
+                                {/* Meter Dropdown (Simple implementation) */}
+                                {viewMode === 'meter' && (
+                                    <select
+                                        className="absolute inset-0 opacity-0 cursor-pointer"
+                                        value={selectedMeterId}
+                                        onChange={(e) => setSelectedMeterId(e.target.value)}
+                                    >
+                                        {meters.map(m => {
+                                            const layout = meterLayoutMap[m.id];
+                                            const displayName = layout ? `${m.name} (${layout.sheetName} - ${layout.locationName})` : m.name;
+                                            return (
+                                                <option key={m.id} value={m.id}>{displayName}</option>
+                                            );
+                                        })}
+                                    </select>
+                                )}
                             </div>
                         </div>
                     </div>
-                </div>
-            </div>
-            </div>
 
-            {/* Trends Section */}
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-                <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
-                    <div>
-                        <h3 className="text-lg font-bold text-slate-900">Consumption Trends</h3>
-                        <p className="text-sm text-slate-500">
-                            {isCustomRange
-                                ? `Showing data from ${dateFrom} to ${dateTo}`
-                                : 'Analyze usage patterns over time'}
-                        </p>
+                    {/* 3-Tile Layout */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {/* Tile 1: Cost (Primary) */}
+                        <div className="bg-[#ecfdf5] rounded-2xl p-5 md:p-4 shadow-sm border border-emerald-100 relative flex flex-col items-center justify-center md:h-[150px]">
+                            <div className="absolute top-4 left-4">
+                                <span className="p-2.5 md:p-2 bg-emerald-50 rounded-full text-emerald-600 flex items-center justify-center">
+                                    <IndianRupee className="w-5 h-5 md:w-4 md:h-4" />
+                                </span>
+                            </div>
+                            <div className="absolute top-4 right-4 text-right">
+                                <span className="text-xs md:text-[10px] font-bold text-slate-700 uppercase tracking-widest block">ELECTRICITY COST</span>
+                                {!isCustomRange && (
+                                    <div className="flex bg-slate-100/50 rounded-lg p-0.5 mt-1 justify-end">
+                                        <button onClick={() => setCostTimeframe('today')} className={`px-2 py-0.5 text-[8px] font-bold rounded-md transition-all ${costTimeframe === 'today' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-400 hover:text-emerald-600'}`}>Today</button>
+                                        <button onClick={() => setCostTimeframe('month')} className={`px-2 py-0.5 text-[8px] font-bold rounded-md transition-all ${costTimeframe === 'month' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-400 hover:text-emerald-600'}`}>Month</button>
+                                    </div>
+                                )}
+                            </div>
+                            <div className="text-center mt-6">
+                                <div className="text-3xl md:text-4xl font-black text-slate-900 tracking-tight">
+                                    {fmtCost(displayCost, displayUnits)}
+                                </div>
+                                <p className="text-[10px] md:text-[9px] font-medium text-slate-500 mt-1 uppercase tracking-wide truncate">
+                                    {isCustomRange
+                                        ? `${dateFrom} to ${dateTo}`
+                                        : (costTimeframe === 'today' ? 'Total today' : 'Total this month')}
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Tile 2: Units (Secondary) */}
+                        <div className="bg-[#eff6ff] rounded-2xl p-5 md:p-4 shadow-sm border border-blue-100 relative flex flex-col items-center justify-center md:h-[150px]">
+                            <div className="absolute top-4 left-4">
+                                <span className="p-2.5 md:p-2 bg-blue-50 rounded-full text-blue-600 flex items-center justify-center">
+                                    <Zap className="w-5 h-5 md:w-4 md:h-4" />
+                                </span>
+                            </div>
+                            <div className="absolute top-4 right-4 text-right">
+                                <span className="text-xs md:text-[10px] font-bold text-slate-700 uppercase tracking-widest block">UNITS CONSUMED</span>
+                                {!isCustomRange && (
+                                    <div className="flex bg-slate-100/50 rounded-lg p-0.5 mt-1 justify-end">
+                                        <button onClick={() => setUnitsTimeframe('today')} className={`px-2 py-0.5 text-[8px] font-bold rounded-md transition-all ${unitsTimeframe === 'today' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-blue-600'}`}>Today</button>
+                                        <button onClick={() => setUnitsTimeframe('month')} className={`px-2 py-0.5 text-[8px] font-bold rounded-md transition-all ${unitsTimeframe === 'month' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-blue-600'}`}>Month</button>
+                                    </div>
+                                )}
+                            </div>
+                            <div className="text-center mt-6">
+                                <div className="text-3xl md:text-4xl font-black text-slate-900 tracking-tight">
+                                    {fmtUnits(displayUnits)}
+                                </div>
+                                <p className="text-[10px] md:text-[9px] font-medium text-slate-500 mt-1 uppercase tracking-wide truncate">
+                                    {isCustomRange
+                                        ? `${dateFrom} to ${dateTo}`
+                                        : (unitsTimeframe === 'today' ? 'Total consumption' : 'Total consumption')}
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Tile 3: Averages */}
+                        <div className="bg-[#fff7ed] rounded-2xl p-5 md:p-4 shadow-sm border border-orange-100 relative flex flex-col items-center justify-center md:h-[150px]">
+                            <div className="absolute top-4 left-4">
+                                <span className="p-2.5 md:p-2 bg-orange-50 rounded-full text-orange-500 flex items-center justify-center">
+                                    <BarChart3 className="w-5 h-5 md:w-4 md:h-4" />
+                                </span>
+                            </div>
+                            <div className="absolute top-4 right-4 text-right">
+                                <span className="text-xs md:text-[10px] font-bold text-slate-700 uppercase tracking-widest block">DAILY AVERAGE</span>
+                            </div>
+                            <div className="w-full px-8 mt-6">
+                                <div className="space-y-3 md:space-y-2">
+                                    <div className="flex justify-between items-end">
+                                        <span className="text-[10px] md:text-[9px] text-slate-500 block">Avg Daily Cost</span>
+                                        <div className="text-xl md:text-lg font-black text-slate-900 leading-none">{fmtCost(metrics.averages.cost, metrics.averages.units)}</div>
+                                    </div>
+                                    <div className="h-px w-full bg-slate-100" />
+                                    <div className="flex justify-between items-end">
+                                        <span className="text-[10px] md:text-[9px] text-slate-500 block">Avg Daily Units</span>
+                                        <div className="text-xl md:text-lg font-black text-slate-900 flex items-baseline gap-1 leading-none">
+                                        {fmtUnits(metrics.averages.units)}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
-                    <div className="flex items-center gap-4">
-                        {/* Metric Toggle */}
-                        <div className="flex bg-slate-100 rounded-lg p-1">
-                            <button onClick={() => setTrendMetric('cost')} className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-2 ${trendMetric === 'cost' ? 'bg-white text-primary shadow-sm' : 'text-slate-500'}`}>
-                                <IndianRupee className="w-3 h-3" /> Cost
-                            </button>
-                            <button onClick={() => setTrendMetric('units')} className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-2 ${trendMetric === 'units' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
-                                <Zap className="w-3 h-3" /> Units
-                            </button>
+                    </div>
+
+                    {/* Trends Section */}
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                        <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
+                            <div>
+                                <h3 className="text-lg font-bold text-slate-900">Consumption Trends</h3>
+                                <p className="text-sm text-slate-500">
+                                    {isCustomRange
+                                        ? `Showing data from ${dateFrom} to ${dateTo}`
+                                        : 'Analyze usage patterns over time'}
+                                </p>
+                            </div>
+                            <div className="flex items-center gap-4">
+                                {/* Metric Toggle */}
+                                <div className="flex bg-slate-100 rounded-lg p-1">
+                                    <button onClick={() => setTrendMetric('cost')} className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-2 ${trendMetric === 'cost' ? 'bg-white text-primary shadow-sm' : 'text-slate-500'}`}>
+                                        <IndianRupee className="w-3 h-3" /> Cost
+                                    </button>
+                                    <button onClick={() => setTrendMetric('units')} className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-2 ${trendMetric === 'units' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
+                                        <Zap className="w-3 h-3" /> Units
+                                    </button>
+                                </div>
+                                {/* Period Toggle */}
+                                <div className="flex gap-2">
+                                    <button onClick={() => setTrendPeriod('7D')} className={`px-3 py-1.5 text-xs font-bold rounded-lg border ${trendPeriod === '7D' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}>7 Days</button>
+                                    <button onClick={() => setTrendPeriod('30D')} className={`px-3 py-1.5 text-xs font-bold rounded-lg border ${trendPeriod === '30D' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}>30 Days</button>
+                                </div>
+                            </div>
                         </div>
-                        {/* Period Toggle */}
-                        <div className="flex gap-2">
-                            <button onClick={() => setTrendPeriod('7D')} className={`px-3 py-1.5 text-xs font-bold rounded-lg border ${trendPeriod === '7D' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}>7 Days</button>
-                            <button onClick={() => setTrendPeriod('30D')} className={`px-3 py-1.5 text-xs font-bold rounded-lg border ${trendPeriod === '30D' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}>30 Days</button>
+
+                        {/* Chart */}
+                        <div className="h-[300px] w-full">
+                            {chartData.every(d => d[trendMetric] === 0) ? (
+                                <div className="h-full flex flex-col items-center justify-center text-slate-400">
+                                    <TrendingUp className="w-12 h-12 mb-2 opacity-20" />
+                                    <p className="font-medium">No data logged for selected period</p>
+                                </div>
+                            ) : (
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <AreaChart data={chartData}>
+                                        <defs>
+                                            <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
+                                                <stop offset="5%" stopColor={trendMetric === 'cost' ? '#3b82f6' : '#64748b'} stopOpacity={0.1} />
+                                                <stop offset="95%" stopColor={trendMetric === 'cost' ? '#3b82f6' : '#64748b'} stopOpacity={0} />
+                                            </linearGradient>
+                                        </defs>
+                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                        <XAxis
+                                            dataKey="date"
+                                            tick={{ fontSize: 12, fill: '#64748b' }}
+                                            axisLine={false}
+                                            tickLine={false}
+                                            tickMargin={10}
+                                        />
+                                        <YAxis
+                                            tick={{ fontSize: 12, fill: '#64748b' }}
+                                            axisLine={false}
+                                            tickLine={false}
+                                            tickFormatter={(val) => trendMetric === 'cost' ? `₹${val}` : val}
+                                        />
+                                        <Tooltip
+                                            contentStyle={{ backgroundColor: '#1e293b', border: 'none', borderRadius: '8px', color: '#fff' }}
+                                            itemStyle={{ color: '#fff' }}
+                                            cursor={{ stroke: '#cbd5e1', strokeDasharray: '4 4' }}
+                                        />
+                                        <Area
+                                            type="monotone"
+                                            dataKey={trendMetric}
+                                            stroke={trendMetric === 'cost' ? '#3b82f6' : '#64748b'}
+                                            fillOpacity={1}
+                                            fill="url(#colorValue)"
+                                            strokeWidth={3}
+                                        />
+                                    </AreaChart>
+                                </ResponsiveContainer>
+                            )}
                         </div>
                     </div>
-                </div>
+                </>
+            )}
 
-                {/* Chart */}
-                <div className="h-[300px] w-full">
-                    {chartData.every(d => d[trendMetric] === 0) ? (
-                        <div className="h-full flex flex-col items-center justify-center text-slate-400">
-                            <TrendingUp className="w-12 h-12 mb-2 opacity-20" />
-                            <p className="font-medium">No data logged for selected period</p>
-                        </div>
-                    ) : (
-                        <ResponsiveContainer width="100%" height="100%">
-                            <AreaChart data={chartData}>
-                                <defs>
-                                    <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="5%" stopColor={trendMetric === 'cost' ? '#3b82f6' : '#64748b'} stopOpacity={0.1} />
-                                        <stop offset="95%" stopColor={trendMetric === 'cost' ? '#3b82f6' : '#64748b'} stopOpacity={0} />
-                                    </linearGradient>
-                                </defs>
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                <XAxis
-                                    dataKey="date"
-                                    tick={{ fontSize: 12, fill: '#64748b' }}
-                                    axisLine={false}
-                                    tickLine={false}
-                                    tickMargin={10}
-                                />
-                                <YAxis
-                                    tick={{ fontSize: 12, fill: '#64748b' }}
-                                    axisLine={false}
-                                    tickLine={false}
-                                    tickFormatter={(val) => trendMetric === 'cost' ? `₹${val}` : val}
-                                />
-                                <Tooltip
-                                    contentStyle={{ backgroundColor: '#1e293b', border: 'none', borderRadius: '8px', color: '#fff' }}
-                                    itemStyle={{ color: '#fff' }}
-                                    cursor={{ stroke: '#cbd5e1', strokeDasharray: '4 4' }}
-                                />
-                                <Area
-                                    type="monotone"
-                                    dataKey={trendMetric}
-                                    stroke={trendMetric === 'cost' ? '#3b82f6' : '#64748b'}
-                                    fillOpacity={1}
-                                    fill="url(#colorValue)"
-                                    strokeWidth={3}
-                                />
-                            </AreaChart>
-                        </ResponsiveContainer>
-                    )}
-                </div>
-            </div>
+            {tab !== 'overview' && (
+                <motion.div key={tab} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
+                    {renderBillTab()}
+                </motion.div>
+            )}
 
-            {/* CTA Bar */}
-            {propertyId && propertyId !== 'undefined' && (
+            {/* CTA Bar — logging a meter reading and exporting readings both belong to the
+                analytics view; a bill tab has its own report control in the tab bar. */}
+            {tab === 'overview' && propertyId && propertyId !== 'undefined' && (
                 <div className="fixed bottom-6 right-6 z-40 flex flex-col gap-3">
                     <button
                         onClick={() => setShowLogModal(true)}

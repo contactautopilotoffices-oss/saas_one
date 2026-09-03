@@ -2037,20 +2037,38 @@
      layered to fake natural light — never a single 8-px-blur generic drop.
      Inset hairline rings are always added so the card edge stays crisp."
      The inset ring is present at EVERY level; that is what keeps a white card
-     legible on a near-white canvas without a heavy border. */
-  --cc-ring: 0 0 0 1px #00000014 inset;
+     legible on a near-white canvas without a heavy border.
+
+     Shadow ink: was literal black (#00000014 / #0000000a / #00000005). Aliased
+     to --foreground at the same alphas. In light mode this is a no-op to the
+     eye — --foreground #1A2332 at 2–8% composites within one step of pure
+     black at the same alpha. The surfaces these land on (.cc-card, .cc-stats,
+     .cc-rail-btn) all paint `background: var(--surface)`, which DOES flip with
+     the theme, so the ink must flip with it: in .dark the ring becomes a light
+     rim on a dark card instead of an invisible dark hairline. */
+  --cc-ring: 0 0 0 1px color-mix(in srgb, var(--foreground) 8%, transparent) inset;
   --cc-elev-1: var(--cc-ring);
-  --cc-elev-2: var(--cc-ring), 0 1px 1px #00000005, 0 2px 2px #0000000a;
-  --cc-elev-3: var(--cc-ring), 0 2px 2px #0000000a, 0 8px 8px -8px #0000000a;
-  --cc-elev-4: var(--cc-ring), 0 2px 2px #0000000a, 0 8px 16px -4px #0000000a;
+  --cc-elev-2: var(--cc-ring),
+    0 1px 1px color-mix(in srgb, var(--foreground) 2%, transparent),
+    0 2px 2px color-mix(in srgb, var(--foreground) 4%, transparent);
+  --cc-elev-3: var(--cc-ring),
+    0 2px 2px color-mix(in srgb, var(--foreground) 4%, transparent),
+    0 8px 8px -8px color-mix(in srgb, var(--foreground) 4%, transparent);
+  --cc-elev-4: var(--cc-ring),
+    0 2px 2px color-mix(in srgb, var(--foreground) 4%, transparent),
+    0 8px 16px -4px color-mix(in srgb, var(--foreground) 4%, transparent);
 
   /* --- Geometry -------------------------------------------------------------
      vercel/DESIGN.md: --geist-gap is 24px exactly; card interior 16px on the
      denser template grid. binance/DESIGN.md: "most surfaces sit at 6–12px"
-     radius, 12px vertical row padding in dense lists. */
-  --cc-gap: 24px;
-  --cc-pad: 16px;
-  --cc-radius: 16px;
+     radius, 12px vertical row padding in dense lists.
+     The three that have an exact counterpart in the app scale are aliased to
+     it; --cc-radius-sm (8px) and --cc-row-pad (12px) have none (--radius-sm is
+     6px, and --radius-md 12px is a radius, not a padding), so they stay
+     literal rather than being bent to a near-miss token. */
+  --cc-gap: var(--space-3);    /* 24px */
+  --cc-pad: var(--space-2);    /* 16px */
+  --cc-radius: var(--radius-lg); /* 16px */
   --cc-radius-sm: 8px;
   --cc-row-pad: 12px;
 
@@ -2069,8 +2087,10 @@
   --cc-num-track: -0.3px;
 
   /* --- Header band ---------------------------------------------------------- */
-  --cc-header-from: #5A737A;   /* --primary-dark  */
-  --cc-header-to:   #708F96;   /* --primary       */
+  /* Were literal copies of the two brand tokens; aliased so a brand change
+     reaches the header band too. */
+  --cc-header-from: var(--primary-dark);
+  --cc-header-to:   var(--primary);
 }
 
 @layer components {
@@ -2445,7 +2465,17 @@
   --cc-ease: cubic-bezier(0.19, 1, 0.22, 1);
   --cc-dur: 300ms;
 
-  /* Card glass */
+  /* Card glass — DELIBERATELY NOT ALIASED. Read before "fixing" these.
+     This board paints a LIGHT glass card in EVERY theme (see the .dark note
+     below, which inverts --cc-ink to compensate). Every white-ish app token
+     flips dark under .dark — --card #FFFFFF → #121A1D, --surface #FFFFFF →
+     #121A1D, --text-inverse light → dark — so aliasing --cc-card-bg or
+     --cc-card-border to one of them would turn the glass black in dark mode
+     and land dark ink on a dark card. There is no always-white token in this
+     file to resolve them to. Same for the rgba(15,23,42,·) shadow inks below:
+     the card under them is fixed-light, so its shadow must stay fixed-dark,
+     which rules out --foreground. These five literals are the audited
+     exception set; everything else in this block resolves to a token. */
   --cc-card-bg: rgba(255, 255, 255, 0.94);
   --cc-card-blur: 14px;
   --cc-card-radius: 18px;
@@ -2456,11 +2486,19 @@
     0 4px 8px -2px rgba(15, 23, 42, 0.05),
     0 16px 32px -12px rgba(15, 23, 42, 0.18);
 
-  /* Ink on light glass */
-  --cc-ink: #1e2a30;
-  --cc-ink-2: #5b6b73;
-  --cc-ink-3: #8a99a1;
-  --cc-hairline: rgba(30, 42, 48, 0.08);
+  /* Ink on light glass — one source of truth: the app's --text-primary (:root,
+     top of this file), so the board reads with the same ink as every other
+     dashboard instead of its own near-black.
+     Tiers 2/3 are alpha steps off tier 1 rather than --text-secondary /
+     --text-tertiary because those composite to 4.36:1 / 2.5:1 on this 0.94-alpha
+     card — under the 4.5 AA floor the Council ladder further down is calibrated
+     against. 72% holds that floor at 4.9:1, matching the value it replaces.
+     --cc-hairline keeps its 8% weight: no app border token is this dark
+     (--border-subtle #F1F5F9 is indistinguishable from the card surface). */
+  --cc-ink: var(--text-primary);
+  --cc-ink-2: color-mix(in srgb, var(--cc-ink) 72%, transparent);
+  --cc-ink-3: color-mix(in srgb, var(--cc-ink) 46%, transparent);
+  --cc-hairline: color-mix(in srgb, var(--cc-ink) 8%, transparent);
 
   /* Severity palette — mapped to the app's brand tokens (app/globals.css :root) */
   --cc-red: var(--error);       /* #EF4444 rgb(239, 68, 68)   */
@@ -2470,10 +2508,24 @@
   --cc-blue: var(--info);       /* #3B82F6 rgb(59, 130, 246)  */
   --cc-purple: var(--secondary);/* #AA895F rgb(170, 137, 95) — warm tan, used by the AI Brief chip */
 
-  /* Rail */
+  /* Rail — the two colours are the same audited exception as the card glass:
+     a fixed DARK rail carrying fixed light text, in every theme. --foreground
+     and --text-inverse both flip, which would invert the rail into a pale bar
+     with white-on-white labels under .dark. --cc-rail-w is geometry with no
+     counterpart in the app scale. */
   --cc-rail-w: 208px;
   --cc-rail-bg: rgba(28, 36, 38, 0.45);
   --cc-rail-text: rgba(255, 255, 255, 0.62);
+}
+
+/* Dark mode: the board and the Agent Council both paint their own LIGHT card
+   surface in EVERY theme (--cc-card-bg below is 94% white over a fixed dark
+   canvas; --council-surface-* are #ffffff), so the ink ladder above must stay
+   dark-on-light or it lands white-on-white. --text-inverse is the app's ink for
+   exactly that case. Must sit after the :root above — same specificity, so
+   source order decides. */
+.dark {
+  --cc-ink: var(--text-inverse);
 }
 
 /* --- Canvas ---------------------------------------------------------------- */

@@ -6,9 +6,10 @@
  * BUDGET NOTE (shared GROQ_API_KEY): this key also powers ticket classification, meter
  * OCR, catalog bulk-upload, call coaching and the master-admin chatbot, and Groq's free
  * tier is a 100,000-token DAILY organisation-wide budget. Bills are 1–2 page extractions
- * (~1–3k tokens each) at mailbox volume (a handful a day), so this stays well inside the
- * envelope — but if the mailbox ever starts receiving bulk mail, gate this behind its own
- * key the way mailboxDigest.ts gates its classifier behind OPENAI_API_KEY.
+ * (~1–3k tokens each, plus a few hundred for the Bill Master block) at mailbox volume (a
+ * handful a day), so this stays well inside the envelope — but if the mailbox ever starts
+ * receiving bulk mail, gate this behind its own key the way mailboxDigest.ts gates its
+ * classifier behind OPENAI_API_KEY.
  *
  * PARSING PATH: board PDFs are almost always digital (text layer), so the primary path
  * extracts text with pdfjs-dist and sends TEXT to the model. If the PDF is scanned (no
@@ -24,7 +25,50 @@ const TIMEOUT_MS = 30_000;
 const MAX_PAGES = 2;        // the money block is on page 1–2 of every board bill we have seen
 const TEXT_CHAR_LIMIT = 12_000;
 
-export interface ParsedBill {
+/**
+ * Bill Master (20260826000001_electricity_bill_master.sql) — the bill as printed, beyond
+ * the amounts needed to pay it.
+ *
+ * Every member is optional because a ParsedBill can also be rebuilt from a stored
+ * ocr_payload written before this block existed (payloadToParsedBill in
+ * app/api/electricity/documents/route.ts). The two absent states are NOT the same, and the
+ * ingest patch treats them differently:
+ *   undefined — never extracted; leave whatever is in the column alone.
+ *   null      — the parser looked at this bill and could not read the field.
+ */
+export interface BillMasterFields {
+    /** Board's own invoice number, for Accounts matching and dispute references. */
+    billNumber?: string | null;
+    /** Meter serial as printed — the physical meter, not the consumer/account number. */
+    meterNo?: string | null;
+    /** Registered name on the connection: decides whether we pay it or recover it. */
+    consumerName?: string | null;
+    tariffCategory?: string | null;
+    sanctionedLoadKw?: number | null;
+    contractDemandKva?: number | null;
+    recordedDemandKva?: number | null;
+    powerFactor?: number | null;
+    /** True service window; billing_month is only the bucket it falls in. */
+    billingPeriodStart?: string | null;
+    billingPeriodEnd?: string | null;
+    previousReading?: number | null;
+    currentReading?: number | null;
+    previousReadingDate?: string | null;
+    currentReadingDate?: string | null;
+    /** CT/PT ratio: (current − previous) × this = billed units. */
+    multiplyingFactor?: number | null;
+    energyCharges?: number | null;
+    fixedCharges?: number | null;
+    electricityDuty?: number | null;
+    taxAmount?: number | null;
+    fuelSurcharge?: number | null;
+    otherCharges?: number | null;
+    adjustments?: number | null;
+    arrears?: number | null;
+    interestCharges?: number | null;
+}
+
+export interface ParsedBill extends BillMasterFields {
     provider: string | null;
     consumerNumber: string | null;
     /** 1st of the billing month, YYYY-MM-DD. */
@@ -63,9 +107,10 @@ const EMPTY_PARSED: ParsedBill = {
 
 const SYSTEM_PROMPT = `You extract structured fields from Indian electricity board bills (BESCOM, Adani, Tata Power, MSEDCL, BEST, etc).
 
-Return ONLY a valid JSON object with TWO keys, "fields" and "confidence":
+Return ONLY a valid JSON object with THREE keys, "fields", "confidence" and "master":
 {"fields": {"provider": string|null, "consumer_number": string|null, "billing_month": "YYYY-MM-DD"|null, "bill_date": "YYYY-MM-DD"|null, "due_date": "YYYY-MM-DD"|null, "total_amount": number|null, "early_payment_date": "YYYY-MM-DD"|null, "early_payment_amount": number|null, "after_due_amount": number|null, "billed_units": number|null, "billed_units_unit": "kWh"|"kVAh"|string|null},
- "confidence": {"provider": 0-100, "consumer_number": 0-100, "billing_month": 0-100, "bill_date": 0-100, "due_date": 0-100, "total_amount": 0-100, "early_payment_date": 0-100, "early_payment_amount": 0-100, "after_due_amount": 0-100, "billed_units": 0-100, "billed_units_unit": 0-100}}
+ "confidence": {"provider": 0-100, "consumer_number": 0-100, "billing_month": 0-100, "bill_date": 0-100, "due_date": 0-100, "total_amount": 0-100, "early_payment_date": 0-100, "early_payment_amount": 0-100, "after_due_amount": 0-100, "billed_units": 0-100, "billed_units_unit": 0-100},
+ "master": {"bill_number": string|null, "meter_no": string|null, "consumer_name": string|null, "tariff_category": string|null, "sanctioned_load_kw": number|null, "contract_demand_kva": number|null, "recorded_demand_kva": number|null, "power_factor": number|null, "billing_period_start": "YYYY-MM-DD"|null, "billing_period_end": "YYYY-MM-DD"|null, "previous_reading": number|null, "current_reading": number|null, "previous_reading_date": "YYYY-MM-DD"|null, "current_reading_date": "YYYY-MM-DD"|null, "multiplying_factor": number|null, "energy_charges": number|null, "fixed_charges": number|null, "electricity_duty": number|null, "tax_amount": number|null, "fuel_surcharge": number|null, "other_charges": number|null, "adjustments": number|null, "arrears": number|null, "interest_charges": number|null}}
 
 RULES:
 1. consumer_number is the connection/consumer/account number printed on the bill, digits only where possible.
@@ -79,7 +124,11 @@ RULES:
    - 60-89:  read it, but the label was ambiguous or the layout unusual.
    - 1-59:   partly obscured, smudged, inferred from context, or you had to pick between candidates.
    - 0:      could not read it at all (the field is null).
-   Do NOT give every field the same score. A bill whose total is crisp but whose meter reading is smudged must score total_amount high and billed_units low.`;
+   Do NOT give every field the same score. A bill whose total is crisp but whose meter reading is smudged must score total_amount high and billed_units low.
+8. "master" is the bill as printed. Score nothing in it — "confidence" covers "fields" only.
+9. meter_no is the METER serial number, which is a different number from consumer_number. Return null rather than repeating the consumer number.
+10. billing_period_start/end are the service period the bill covers (e.g. "18/06/2026 to 17/07/2026"), which is usually not a calendar month. previous_reading and current_reading are the meter readings as printed, BEFORE the multiplying factor. multiplying_factor is the CT/PT ratio; return null when the bill does not print one — never assume 1.
+11. The charge heads are signed: return a credit, refund or negative adjustment as a NEGATIVE number. arrears is the unpaid balance carried forward from earlier bills — never fold it into energy_charges. Put any head with no matching key into other_charges.`;
 
 /** Field keys carried in field_confidence, in the order the Inbox displays them. */
 export const OCR_FIELDS = [
@@ -124,7 +173,10 @@ export async function parseBillPdf(pdfBytes: Buffer): Promise<BillOcrResult> {
     const fieldSrc = (nested ? raw.fields : raw) as Record<string, unknown>;
     const confSrc = nested ? raw.confidence : undefined;
 
-    const parsed = normalise(fieldSrc);
+    // raw.master is read off the envelope in both shapes: nested puts it beside "fields",
+    // flat puts it beside the fields themselves, and a model that omits it leaves the Bill
+    // Master columns untouched rather than blanked.
+    const parsed = normalise(fieldSrc, raw?.master);
     parsed.fieldConfidence = normaliseConfidence(confSrc, parsed);
 
     // Roll up to the weakest critical field — see the note on ParsedBill.confidence.
@@ -278,16 +330,37 @@ export function weakestField(confidence: Record<string, number>): { field: strin
     return worst;
 }
 
+const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+
+const date = (v: unknown) => {
+    const s = str(v);
+    return s && /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+};
+
+/**
+ * Any finite number, sign included. Blank and the sheets' '-' placeholder parse to null
+ * rather than 0 — Number('') is 0, and a zero that means "not printed" would show up as a
+ * bill with no energy charge at all.
+ */
+const signed = (v: unknown) => {
+    if (v === null || v === undefined) return null;
+    const s = String(v).replace(/[,₹\s]/g, '');
+    if (!s) return null;
+    const n = Number(s);
+    return Number.isFinite(n) ? n : null;
+};
+
+/** Readings, loads and ratios: zero is legitimate (a fresh meter), negative is not. */
+const nonNegative = (v: unknown) => {
+    const n = signed(v);
+    return n !== null && n >= 0 ? n : null;
+};
+
 /** Coerce the model's loose output into typed fields; anything unusable becomes null. */
-function normalise(f: Record<string, unknown>): ParsedBill {
-    const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+function normalise(f: Record<string, unknown>, masterSrc?: unknown): ParsedBill {
     const num = (v: unknown) => {
-        const n = typeof v === 'number' ? v : Number(String(v ?? '').replace(/[,₹\s]/g, ''));
-        return Number.isFinite(n) && n > 0 ? n : null;
-    };
-    const date = (v: unknown) => {
-        const s = str(v);
-        return s && /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+        const n = signed(v);
+        return n !== null && n > 0 ? n : null;
     };
     const month = date(f.billing_month);
 
@@ -306,5 +379,45 @@ function normalise(f: Record<string, unknown>): ParsedBill {
         billedUnits: num(f.billed_units),
         billedUnitsUnit: str(f.billed_units_unit),
         confidence: num(f.confidence),
+        ...normaliseMaster(masterSrc),
+    };
+}
+
+/**
+ * The Bill Master block. Returns {} — not a set of nulls — when the model sent no master
+ * object, so a parse that never looked cannot overwrite figures already on the bill.
+ *
+ * Charge heads keep their sign (a credit adjustment is negative); readings, loads and the
+ * multiplying factor reject negatives, which are always a misread rather than a real value.
+ */
+function normaliseMaster(raw: unknown): BillMasterFields {
+    if (!raw || typeof raw !== 'object') return {};
+    const m = raw as Record<string, unknown>;
+
+    return {
+        billNumber: str(m.bill_number),
+        meterNo: str(m.meter_no),
+        consumerName: str(m.consumer_name),
+        tariffCategory: str(m.tariff_category),
+        sanctionedLoadKw: nonNegative(m.sanctioned_load_kw),
+        contractDemandKva: nonNegative(m.contract_demand_kva),
+        recordedDemandKva: nonNegative(m.recorded_demand_kva),
+        powerFactor: nonNegative(m.power_factor),
+        billingPeriodStart: date(m.billing_period_start),
+        billingPeriodEnd: date(m.billing_period_end),
+        previousReading: nonNegative(m.previous_reading),
+        currentReading: nonNegative(m.current_reading),
+        previousReadingDate: date(m.previous_reading_date),
+        currentReadingDate: date(m.current_reading_date),
+        multiplyingFactor: nonNegative(m.multiplying_factor),
+        energyCharges: signed(m.energy_charges),
+        fixedCharges: signed(m.fixed_charges),
+        electricityDuty: signed(m.electricity_duty),
+        taxAmount: signed(m.tax_amount),
+        fuelSurcharge: signed(m.fuel_surcharge),
+        otherCharges: signed(m.other_charges),
+        adjustments: signed(m.adjustments),
+        arrears: signed(m.arrears),
+        interestCharges: signed(m.interest_charges),
     };
 }

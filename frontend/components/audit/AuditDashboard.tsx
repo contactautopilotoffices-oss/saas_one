@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import InternalAuditView from './InternalAuditView';
+import DocumentBank from './DocumentBank';
 
 interface AuditItem {
     id: string;
@@ -38,7 +39,7 @@ export default function AuditDashboard({ organizationId, propertyId, isDark = tr
     const [isLoading, setIsLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState<'all' | 'compliant' | 'missing'>('all');
-    const [view, setView] = useState<'digital' | 'internal'>('digital');
+    const [view, setView] = useState<'digital' | 'internal' | 'documents'>('digital');
 
     useEffect(() => {
         fetchAudit();
@@ -125,7 +126,7 @@ export default function AuditDashboard({ organizationId, propertyId, isDark = tr
                         <div>
                             <h1 className="text-xl font-black uppercase tracking-tight text-slate-900">Compliance Audit</h1>
                             <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
-                                {view === 'digital' ? 'PPM Digital Verification Engine' : 'Internal Audit Checklist'}
+                                {view === 'digital' ? 'PPM Digital Verification Engine' : view === 'internal' ? 'Internal Audit Checklist' : 'Searchable Compliance Vault'}
                             </p>
                         </div>
                     </div>
@@ -137,11 +138,17 @@ export default function AuditDashboard({ organizationId, propertyId, isDark = tr
                         >
                             Digital Audit
                         </button>
-                        <button 
+                        <button
                             onClick={() => setView('internal')}
                             className={`px-4 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${view === 'internal' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
                         >
                             Internal Audit
+                        </button>
+                        <button
+                            onClick={() => setView('documents')}
+                            className={`px-4 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${view === 'documents' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
+                        >
+                            Document Bank
                         </button>
                     </div>
                 </div>
@@ -173,6 +180,8 @@ export default function AuditDashboard({ organizationId, propertyId, isDark = tr
             <div className="flex-1 overflow-auto p-6 bg-slate-50">
                 {view === 'internal' ? (
                     <InternalAuditView organizationId={organizationId} propertyId={propertyId || ''} />
+                ) : view === 'documents' ? (
+                    <DocumentBank organizationId={organizationId} propertyId={propertyId || ''} />
                 ) : (
                     <AnimatePresence mode="wait">
                         {isLoading ? (

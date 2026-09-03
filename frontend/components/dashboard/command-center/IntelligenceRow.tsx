@@ -380,7 +380,9 @@ export default function IntelligenceRow({
     pipelineValue: po?.pipelineValue ?? PURCHASE_ORDERS.pipelineValue,
     pipelinePct: po?.pipelinePct ?? PURCHASE_ORDERS.pipelinePct,
     completedThisMonth: po?.completedThisMonth ?? 355,
-    cancelled: PURCHASE_ORDERS.footer[1].value, // no cancelled source yet — mock
+    // PoStats has no cancelled count. Printing the mock 6 next to live totals put an
+    // invented figure under a green "Live" tag, which is worse than an em dash.
+    cancelled: po ? '—' : PURCHASE_ORDERS.footer[1].value,
   };
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 16 }}>
@@ -546,9 +548,15 @@ export default function IntelligenceRow({
               {MR.avgFulfilment}
             </div>
           </div>
-          <LineSpark data={MATERIAL_REQUESTS.spark} color="var(--cc-amber)" />
+          {/* MrStats carries no series and no category/vendor breakdown, so on a live
+              card the mock trend and the named vendor below were fabrications sitting
+              under a green "Live" tag — "ABC Lighting" reads as someone to go chase. */}
+          {!mr && <LineSpark data={MATERIAL_REQUESTS.spark} color="var(--cc-amber)" />}
         </div>
-        <FooterGrid items={MATERIAL_REQUESTS.footer} cols={2} />
+        <FooterGrid
+          items={mr ? MATERIAL_REQUESTS.footer.map((f) => ({ ...f, value: '—' })) : MATERIAL_REQUESTS.footer}
+          cols={2}
+        />
       </div>
 
       {/* 5 — Purchase Orders */}

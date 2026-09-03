@@ -107,6 +107,10 @@
     {
       "path": "/api/cron/electricity-monthly-report",
       "schedule": "0 5 5 * *"
+    },
+    {
+      "path": "/api/cron/agent-heartbeat",
+      "schedule": "*/10 * * * *"
     }
   ]
 }

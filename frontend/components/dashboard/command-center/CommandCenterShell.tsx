@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import {
@@ -114,19 +114,43 @@ function PropertySelector({
   );
 }
 
-export default function CommandCenterShell({
+type ShellProps = {
+  userName: string;
+  userEmail: string;
+  orgId?: string;
+  /**
+   * Controlled property scope. When the host owns the selection (OrgAdminDashboard
+   * does — its tab bodies all read its `selectedPropertyId`), pass both of these and
+   * the shell stops keeping — and URL-persisting — a second copy that would drift.
+   */
+  selectedPropertyId?: string;
+  onPropertyChange?: (id: string) => void;
+  children: React.ReactNode;
+};
+
+/** True inside a shell that has already drawn the rail + header. */
+const InsideShellContext = React.createContext(false);
+
+export default function CommandCenterShell(props: ShellProps) {
+  // OrgAdminDashboard wraps every tab in one shell, and its overview tab renders
+  // <CommandCenter/>, which carries a shell of its own. The inner one steps aside so
+  // the chrome keeps its element identity across tab switches — a second shell here
+  // would remount the rail (flash + a duplicate properties query) on every nav click.
+  const insideShell = useContext(InsideShellContext);
+  if (insideShell) return <>{props.children}</>;
+  return <ShellChrome {...props} />;
+}
+
+function ShellChrome({
   userName,
   userEmail,
   // Optional so the /cc-preview/* harness pages keep compiling; falls back to
   // the preview org id. Production callers (CommandCenter) always pass it.
   orgId = '211e1330-ad83-446d-941f-dcea48396798',
+  selectedPropertyId: controlledPropertyId,
+  onPropertyChange,
   children,
-}: {
-  userName: string;
-  userEmail: string;
-  orgId?: string;
-  children: React.ReactNode;
-}) {
+}: ShellProps) {
   const searchParams = useSearchParams();
   const supabase = useMemo(() => createClient(), []);
   const { signOut } = useAuth();
@@ -135,9 +159,10 @@ export default function CommandCenterShell({
   // Property scope — 'all' or a property id. Mirrors the legacy dashboard,
   // which restores selectedPropertyId from the `propertyId` query param, and
   // the selection is synced back into that same param so deep links keep it.
-  const [selectedPropertyId, setSelectedPropertyId] = useState(
+  const [ownPropertyId, setOwnPropertyId] = useState(
     () => searchParams.get('propertyId') ?? 'all'
   );
+  const selectedPropertyId = controlledPropertyId ?? ownPropertyId;
   const [properties, setProperties] = useState<PropertyOption[]>([]);
 
   useEffect(() => {
@@ -162,7 +187,13 @@ export default function CommandCenterShell({
   );
 
   const handlePropertyChange = (id: string) => {
-    setSelectedPropertyId(id);
+    // Controlled: the host already persists the scope its own way, so writing the
+    // param here too would race its router.replace.
+    if (onPropertyChange) {
+      onPropertyChange(id);
+      return;
+    }
+    setOwnPropertyId(id);
     const params = new URLSearchParams(window.location.search);
     if (id === 'all') params.delete('propertyId');
     else params.set('propertyId', id);
@@ -171,6 +202,7 @@ export default function CommandCenterShell({
   };
 
   return (
+    <InsideShellContext.Provider value={true}>
     <div className="cc-canvas">
       {/* ---- Left rail ---- */}
       <aside className="cc-rail">
@@ -279,5 +311,6 @@ export default function CommandCenterShell({
         onConfirm={signOut}
       />
     </div>
+    </InsideShellContext.Provider>
   );
 }

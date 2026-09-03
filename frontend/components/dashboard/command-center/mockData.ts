@@ -12,8 +12,31 @@ import { useEffect, useState } from 'react';
 export function useCommandCenterOrgId(): string | null {
   const [orgId, setOrgId] = useState<string | null>(null);
   useEffect(() => {
-    const v = document.querySelector('[data-org]')?.getAttribute('data-org') || '';
-    setOrgId(/^[0-9a-f-]{36}$/i.test(v) ? v : null);
+    const read = () => {
+      const v = document.querySelector('[data-org]')?.getAttribute('data-org') || '';
+      return /^[0-9a-f-]{36}$/i.test(v) ? v : null;
+    };
+
+    const first = read();
+    if (first) { setOrgId(first); return; }
+
+    // The host stamps `data-org` from an ASYNC org fetch, so on first paint the attribute
+    // is still the empty-string placeholder. A one-shot read here therefore stuck at null
+    // forever — the effect never runs again — and every card without an orgId prop then
+    // passed `null` to useWidgetData, which starts no request and reports loading:false.
+    // The cards read that as "loaded, no data" and showed a fetch error for a fetch that
+    // was never attempted. Watch until the real id lands instead.
+    const observer = new MutationObserver(() => {
+      const v = read();
+      if (v) { setOrgId(v); observer.disconnect(); }
+    });
+    observer.observe(document.body, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ['data-org'],
+    });
+    return () => observer.disconnect();
   }, []);
   return orgId;
 }

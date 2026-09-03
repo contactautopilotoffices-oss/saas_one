@@ -15,6 +15,30 @@ import {
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 
+/**
+ * USD -> INR conversion for the "Estimated Cost" tile.
+ * STATIC APPROXIMATION, not a live rate — /api/admin/ai-metrics reports cost in
+ * USD and this dashboard shows rupees. It will drift; this constant is the one
+ * place to change it. Used by the Estimated Cost MetricCard's value and by its
+ * own subtitle, so the two can never disagree.
+ */
+const USD_TO_INR = 83;
+
+/** Rendered wherever a figure is genuinely unknown. An unknown number is not zero. */
+const UNKNOWN = '—';
+
+/** null for anything that is not a real number (undefined, null, NaN, a string). */
+const num = (v: unknown): number | null =>
+    typeof v === 'number' && Number.isFinite(v) ? v : null;
+
+/** a / b, or null when either side is unknown or the denominator is zero. */
+const ratio = (a: unknown, b: unknown): number | null => {
+    const x = num(a);
+    const y = num(b);
+    if (x === null || y === null || y === 0) return null;
+    return x / y;
+};
+
 interface MetricCardProps {
     title: string;
     value: string | number;
@@ -75,6 +99,18 @@ export default function AIInsightsDashboard({ isDark = true }: { isDark?: boolea
         );
     }
 
+    /* Every figure below is null when the metrics call returned nothing usable.
+       None of them fall back to 0 — an absent metric is not a measurement of zero. */
+    const invocations = num(stats?.llm_invocations);
+    const llmShare = ratio(stats?.llm_invocations, stats?.total_invocations);
+    const avgLatency = num(stats?.avg_latency);
+    const totalTokens = num(stats?.total_tokens);
+    const completionShare = ratio(stats?.completion_tokens, stats?.total_tokens);
+    const costUsd = num(stats?.estimated_cost_usd);
+    const costPerTriage = ratio(stats?.estimated_cost_usd, stats?.llm_invocations);
+
+    const latencyLabel = avgLatency === null ? UNKNOWN : `${avgLatency.toFixed(0)}ms`;
+
     return (
         <div className="space-y-6">
             {/* Header */}
@@ -98,15 +134,17 @@ export default function AIInsightsDashboard({ isDark = true }: { isDark?: boolea
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <MetricCard
                     title="Total AI Invocations"
-                    value={stats?.llm_invocations || 0}
-                    subValue={`${(((stats?.llm_invocations || 0) / (stats?.total_invocations || 1)) * 100).toFixed(1)}% of total tickets`}
+                    value={invocations ?? UNKNOWN}
+                    subValue={llmShare === null
+                        ? 'Share of total tickets unknown'
+                        : `${(llmShare * 100).toFixed(1)}% of total tickets`}
                     icon={<Cpu className="w-5 h-5" />}
                     color="text-primary"
                     isDark={isDark}
                 />
                 <MetricCard
                     title="Avg API Latency"
-                    value={`${stats?.avg_latency?.toFixed(0) || 0}ms`}
+                    value={latencyLabel}
                     subValue="Target: < 2000ms"
                     icon={<Clock className="w-5 h-5" />}
                     color="text-info"
@@ -114,16 +152,18 @@ export default function AIInsightsDashboard({ isDark = true }: { isDark?: boolea
                 />
                 <MetricCard
                     title="Total Tokens Used"
-                    value={((stats?.total_tokens || 0) / 1000).toFixed(1) + 'k'}
-                    subValue={`${((stats?.completion_tokens || 0) / (stats?.total_tokens || 1) * 100).toFixed(1)}% Completion`}
+                    value={totalTokens === null ? UNKNOWN : `${(totalTokens / 1000).toFixed(1)}k`}
+                    subValue={completionShare === null
+                        ? 'Completion share unknown'
+                        : `${(completionShare * 100).toFixed(1)}% Completion`}
                     icon={<Zap className="w-5 h-5" />}
                     color="text-warning"
                     isDark={isDark}
                 />
                 <MetricCard
                     title="Estimated Cost"
-                    value={`₹${(stats?.estimated_cost_usd * 83).toFixed(2) || '0.00'}`}
-                    subValue="Converted from USD (1$ = ₹83)"
+                    value={costUsd === null ? UNKNOWN : `₹${(costUsd * USD_TO_INR).toFixed(2)}`}
+                    subValue={`Converted from USD (1$ = ₹${USD_TO_INR})`}
                     icon={<IndianRupee className="w-5 h-5" />}
                     color="text-success"
                     isDark={isDark}
@@ -141,22 +181,31 @@ export default function AIInsightsDashboard({ isDark = true }: { isDark?: boolea
                     <div className="h-[240px] flex items-end justify-between gap-1 px-2">
                         {(!dailyUsage || dailyUsage.length === 0) ? (
                             <div className="w-full flex items-center justify-center h-full italic text-xs text-slate-500">No data for period</div>
-                        ) : dailyUsage.map((day, idx) => (
+                        ) : dailyUsage.map((day, idx) => {
+                            const calls = num(day?.calls);
+                            // A day with no usable count sits at the floor height rather than
+                            // animating to NaN, and says so in the tooltip.
+                            const barHeight = Math.max(20, ((calls ?? 0) / 10) * 100);
+                            const dateLabel = typeof day?.date === 'string'
+                                ? day.date.split('-').slice(1).join('/')
+                                : UNKNOWN;
+                            return (
                             <div key={idx} className="flex-1 flex flex-col items-center gap-2 group cursor-help">
                                 <div className="w-full relative">
                                     <motion.div
                                         initial={{ height: 0 }}
-                                        animate={{ height: Math.max(20, (day.calls / 10) * 100) }}
+                                        animate={{ height: barHeight }}
                                         className={`w-full rounded-t-lg ${isDark ? 'bg-primary/40 group-hover:bg-primary/60' : 'bg-primary/20 group-hover:bg-primary/40'} transition-colors relative min-h-[4px]`}
                                     >
                                         <div className="absolute -top-8 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap bg-black text-white text-[9px] font-bold px-2 py-1 rounded">
-                                            {day.calls} calls
+                                            {calls === null ? 'calls unknown' : `${calls} calls`}
                                         </div>
                                     </motion.div>
                                 </div>
-                                <span className="text-[9px] font-black text-slate-500 rotate-45 mt-2 origin-left">{day.date.split('-').slice(1).join('/')}</span>
+                                <span className="text-[9px] font-black text-slate-500 rotate-45 mt-2 origin-left">{dateLabel}</span>
                             </div>
-                        ))}
+                            );
+                        })}
                     </div>
                 </div>
 
@@ -171,7 +220,9 @@ export default function AIInsightsDashboard({ isDark = true }: { isDark?: boolea
                                 <span className={`text-[10px] font-black uppercase tracking-widest ${isDark ? 'text-error' : 'text-error'}`}>System Latency</span>
                             </div>
                             <p className={`text-[11px] font-medium leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                                Groq's Llama 3.3 70B is currently averaging <strong className="text-white">{(stats?.avg_latency || 0).toFixed(0)}ms</strong> per request. High situational reasoning complexity detected.
+                                {avgLatency === null
+                                    ? <>Groq&apos;s Llama 3.3 70B latency is <strong className="text-white">{UNKNOWN}</strong> — no measurement returned for this period.</>
+                                    : <>Groq&apos;s Llama 3.3 70B is currently averaging <strong className="text-white">{latencyLabel}</strong> per request. High situational reasoning complexity detected.</>}
                             </p>
                         </div>
 
@@ -181,7 +232,7 @@ export default function AIInsightsDashboard({ isDark = true }: { isDark?: boolea
                                 <span className={`text-[10px] font-black uppercase tracking-widest ${isDark ? 'text-primary-light' : 'text-primary'}`}>Cost Efficiency</span>
                             </div>
                             <p className={`text-[11px] font-medium leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                                Average cost per triage: <strong className="text-white">${((stats?.estimated_cost_usd || 0) / (stats?.llm_invocations || 1)).toFixed(5)}</strong>. Hybrid strategy is saving approximately <strong className="text-success">$2.40/day</strong> vs Full LLM.
+                                Average cost per triage: <strong className="text-white">{costPerTriage === null ? UNKNOWN : `$${costPerTriage.toFixed(5)}`}</strong>.
                             </p>
                         </div>
                     </div>

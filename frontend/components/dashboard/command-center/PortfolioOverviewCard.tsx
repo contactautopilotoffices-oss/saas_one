@@ -67,7 +67,9 @@ export default function PortfolioOverviewCard() {
   const q = useWidgetData<CcTicketsSummary>(
     orgId ? `/api/organizations/${orgId}/tickets-summary?period=all` : null, 5 * 60_000);
 
-  const loading = q.loading;
+  // orgId resolves in an effect, so treat "scope not known yet" as loading rather than
+  // letting the card flash an error for a fetch that was never started.
+  const loading = !orgId || q.loading;
   const live = !!q.data?.properties?.length;
 
   const rows: BuildingRow[] = live

@@ -1862,7 +1862,7 @@ const formatTimeAgo = (date: Date) => {
     return 'Just now';
 };
 
-const StatCard = ({ title, value, icon: Icon, color, bg }: any) => (
+const StatCard = ({ title, value, icon: Icon, color, bg, breakdown }: any) => (
     <div className="bg-white p-6 rounded-3xl border border-border shadow-sm">
         {Icon && (
             <div className={`w-12 h-12 ${bg} ${color} rounded-2xl flex items-center justify-center mb-4`}>
@@ -1871,6 +1871,16 @@ const StatCard = ({ title, value, icon: Icon, color, bg }: any) => (
         )}
         <h3 className="text-text-tertiary font-bold text-xs uppercase tracking-widest mb-1">{title}</h3>
         <p className="text-3xl font-black text-text-primary">{value}</p>
+        {breakdown && breakdown.length > 0 && (
+            <div className="mt-4 pt-4 border-t border-border space-y-1.5">
+                {breakdown.map((b: any) => (
+                    <div key={b.label} className="flex items-center justify-between gap-2 text-xs">
+                        <span className="text-text-tertiary font-medium truncate">{b.label}</span>
+                        <span className="text-text-secondary font-bold shrink-0">{b.value}</span>
+                    </div>
+                ))}
+            </div>
+        )}
     </div>
 );
 
@@ -2063,6 +2073,18 @@ const VendorRevenueTab = memo(function VendorRevenueTab({ propertyId }: { proper
         return acc + getVendorEntriesInRange(v).length;
     }, 0);
 
+    const revenueBreakdown = vendors
+        .map((v) => {
+            const entries = getVendorEntriesInRange(v);
+            const revenue = entries.reduce((sum: number, r: any) => sum + (Number(r.revenue_amount) || 0), 0);
+            return { label: v.shop_name, revenue, commission: revenue * ((v.commission_rate || 0) / 100) };
+        })
+        .filter((b) => b.revenue > 0)
+        .sort((a, b) => b.revenue - a.revenue);
+
+    const perVendorRevenue = revenueBreakdown.map((b) => ({ label: b.label, value: `₹${b.revenue.toLocaleString('en-IN')}` }));
+    const perVendorCommission = revenueBreakdown.map((b) => ({ label: b.label, value: `₹${Math.round(b.commission).toLocaleString('en-IN')}` }));
+
     const isSingleDay = startDate === endDate;
 
     if (isLoading) return <div className="p-12 text-center text-slate-400 font-bold">Loading Revenue Data...</div>;
@@ -2077,6 +2099,7 @@ const VendorRevenueTab = memo(function VendorRevenueTab({ propertyId }: { proper
                     icon={IndianRupee}
                     color="text-blue-600"
                     bg="bg-blue-50"
+                    breakdown={perVendorRevenue}
                 />
                 <StatCard
                     title="Total Commission"
@@ -2084,6 +2107,7 @@ const VendorRevenueTab = memo(function VendorRevenueTab({ propertyId }: { proper
                     icon={Calendar}
                     color="text-emerald-600"
                     bg="bg-emerald-50"
+                    breakdown={perVendorCommission}
                 />
                 <StatCard
                     title="Logged Daily Entries"

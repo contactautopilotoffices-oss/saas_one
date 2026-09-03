@@ -2,6 +2,11 @@ import type { LucideIcon } from 'lucide-react';
 import {
   LayoutDashboard,
   Sparkles,
+  Gauge,
+  Bot,
+  Network,
+  ListChecks,
+  PhoneCall,
   Ticket,
   CalendarDays,
   Users,
@@ -30,11 +35,21 @@ import {
  *   `tab`, `filter` and `propertyId` from the query string on mount).
  * - Procurement is its own route (`/{orgId}/procurement-management`).
  * - Budget vs Actual is the AOP module (`/{orgId}/aop`).
- * - Invoices / Payments live in the Accounts workspace (`/{orgId}/accounts`).
+ * - Invoices / Payments live in the Accounts workspace (`/{orgId}/accounts`), which is
+ *   also where the electricity payment queue (the open-bill money at risk) lives.
+ * - Organization Progress and the wider OEM console (agent registry, data bundles,
+ *   council log) both render as console TABS — `?tab=org_progress` and
+ *   `?tab=org_efficiency`. Standalone `/{orgId}/org-progress` and
+ *   `/{orgId}/org-efficiency` pages still exist, but they live in the (dashboard)
+ *   route group and so paint the staff sidebar. Linking them from this rail threw
+ *   the super admin out of their own console; always route these two via tab().
  * - Settings is `/{orgId}/settings`.
  * - Purchase Mailbox, AI Brief (full view), Waste Management and Documents
  *   have no page yet — those items come back `disabled` instead of pointing
  *   at a dead anchor.
+ * - Agents have no route of their own: the Agent Console is a card on the
+ *   Command Center board, and Ira's digest is API-rendered HTML
+ *   (`cardLinks.agentDigest`), which the rail's next/link cannot route to.
  */
 
 export type NavItem = {
@@ -57,6 +72,14 @@ export type CardLinks = {
   viewDg: string;
   viewAllBuildings: string;
   viewFullBrief?: string;
+  /** Full Organization Progress tracker — the glance card only summarises it. */
+  orgProgress: string;
+  viewVisitors: string;
+  viewVendors: string;
+  /** Open electricity bills sit in the Accounts payment queue, not the electricity tab. */
+  viewElectricityBills: string;
+  /** Ira's digest, served as HTML by the API route. Open it with a plain anchor. */
+  agentDigest?: string;
 };
 
 export type NavMap = {
@@ -77,8 +100,28 @@ export function buildNavMap(orgId: string, propertyId?: string): NavMap {
       label: 'Overview',
       items: [
         { label: 'Command Center', icon: LayoutDashboard, href: `${org}/dashboard`, active: true },
+        // Was `${org}/org-progress` — a page in the (dashboard) route group, which
+        // renders the *staff* DashboardSidebar. Clicking Org Progress from inside the
+        // super-admin console therefore threw the user out of the console into staff
+        // chrome. It is a console tab; link it as one.
+        { label: 'Org Progress', icon: Gauge, href: tab('org_progress') },
         // No full AI Brief page exists yet.
         { label: 'AI Brief', icon: Sparkles, disabled: true },
+      ],
+    },
+    {
+      label: 'Agents',
+      items: [
+        // The console is a card on the Command Center board, not its own route.
+        { label: 'Agent Console', icon: Bot, href: `${org}/dashboard` },
+        // The OEM console's Agents & Council tab — agent registry, data bundles,
+        // generated prompts and the council log. A real page, previously unlinked.
+        { label: 'Agents & Council', icon: Network, href: tab('org_efficiency') },
+        // Digest is API-rendered HTML (app/api/ira/daily-digest) — the card opens it
+        // with a plain anchor; there is no page for the rail to route to.
+        { label: 'Ira — Daily Digest', icon: ListChecks, disabled: true },
+        // Pratiksha is voice-call templates only; nothing to open yet.
+        { label: 'Pratiksha', icon: PhoneCall, disabled: true },
       ],
     },
     {
@@ -132,6 +175,14 @@ export function buildNavMap(orgId: string, propertyId?: string): NavMap {
     viewDg: tab('diesel'),
     viewAllBuildings: tab('properties'),
     viewFullBrief: undefined, // no full brief page yet
+    // The glance card only summarises the meter; the full tracker is a console tab.
+    orgProgress: tab('org_progress'),
+    viewVisitors: tab('visitors'),
+    viewVendors: tab('vendors'),
+    // Open bills are settled from the Accounts payment queue, not the electricity tab —
+    // the electricity tab logs consumption, Accounts is where money moves.
+    viewElectricityBills: `${org}/accounts`,
+    agentDigest: '/api/ira/daily-digest',
   };
 
   return { rail, cardLinks };

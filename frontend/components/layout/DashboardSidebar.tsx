@@ -41,6 +41,15 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
     const isBdSuperAdmin = checkBdSuperAdmin(user?.email, membership?.org_role);
     const isCrmRoute = pathname?.split('/').includes('crm') ?? false;
     const isBDRole = (userRole === 'bd_rep' || userRole === 'bd_admin' || isBdSuperAdmin) && isCrmRoute;
+    // The email allowlist says WHO may see the BD portal, not WHERE. Gating chrome on the
+    // allowlist alone put BD Command Center branding and CRM actions on every non-CRM page
+    // for these three users — an org super admin opening /org-progress got a CRM sidebar.
+    // isBDRole already pairs the allowlist with isCrmRoute; chrome must do the same.
+    const showBdChrome = isBdSuperAdmin && isCrmRoute;
+    // An org super admin landing on a non-CRM page was being labelled "Staff Dashboard"
+    // because the label had only three branches and staff was the fallback. Their console
+    // has a name; use it.
+    const isOrgSuperAdmin = userRole === 'org_super_admin' || membership?.org_role === 'org_super_admin';
 
     // Finance (Petty Cash + Payment Tracker) now lives in its own Accounts
     // workspace chrome — it is no longer injected into this shared sidebar.
@@ -78,8 +87,11 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
 
         if (userRole === 'org_super_admin') {
             items.push({ label: 'Water Analytics', href: `/${orgId}/dashboard?tab=water`, icon: Droplets, domain: 'dashboards' as const });
-            items.push({ label: 'Org Progress Meter', href: `/${orgId}/org-progress`, icon: Gauge, domain: 'dashboards' as const });
-            items.push({ label: 'Org Efficiency', href: `/${orgId}/org-efficiency`, icon: TrendingUp, domain: 'dashboards' as const });
+            // Both render as tabs of the super-admin console. Linking the standalone
+            // /org-progress and /org-efficiency pages instead dropped the user into the
+            // (dashboard) route group and its staff sidebar.
+            items.push({ label: 'Org Progress Meter', href: `/${orgId}/dashboard?tab=org_progress`, icon: Gauge, domain: 'dashboards' as const });
+            items.push({ label: 'Org Efficiency', href: `/${orgId}/dashboard?tab=org_efficiency`, icon: TrendingUp, domain: 'dashboards' as const });
         }
 
         // Ops Super Admin — electricity checker workspace: validation queue, disputes, reports.
@@ -182,7 +194,7 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
                         <img src="/autopilot-logo-new.png" alt="Logo" className="h-10 w-auto object-contain" />
                         <div className="px-3 py-1 bg-primary/5 rounded-full border border-primary/10">
                             <p className="text-[10px] text-primary font-black uppercase tracking-[0.2em]">
-                                {isBdSuperAdmin ? 'BD Command Center' : isBDRole ? 'CRM Dashboard' : 'Staff Dashboard'}
+                                {showBdChrome ? 'BD Command Center' : isBDRole ? 'CRM Dashboard' : isOrgSuperAdmin ? 'Super Admin Console' : 'Staff Dashboard'}
                             </p>
                         </div>
                     </div>
@@ -288,7 +300,7 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
                 {/* Bottom Section */}
                 <div className="p-4 space-y-3 border-t border-border flex-shrink-0 bg-surface">
                     {/* User Profile */}
-                    {user?.user_metadata?.role !== 'org_super_admin' && !isBdSuperAdmin && (
+                    {user?.user_metadata?.role !== 'org_super_admin' && !showBdChrome && (
                         <div className="px-3 py-3 rounded-[var(--radius-lg)] border border-border/5">
                             <div className="flex items-center gap-3">
                                 {user?.user_metadata?.user_photo_url || user?.user_metadata?.avatar_url ? (
@@ -316,7 +328,7 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
 
                     {/* Action Buttons */}
                     <div className="space-y-1">
-                        {isBdSuperAdmin && (
+                        {showBdChrome && (
                             <Link
                                 href={`/${orgId}/crm/help`}
                                 onClick={handleLinkClick}
@@ -337,7 +349,7 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
                         </div>
                         <div className="flex items-center gap-2">
                             <Link
-                                href={(isCrmRoute || isBDRole || userRole === 'bd_admin' || userRole === 'bd_rep' || userRole === 'bd_super_admin' || isBdSuperAdmin) ? `/${orgId}/crm/settings?tab=profile` : `/${orgId}/settings`}
+                                href={(isCrmRoute || isBDRole || userRole === 'bd_admin' || userRole === 'bd_rep' || userRole === 'bd_super_admin') ? `/${orgId}/crm/settings?tab=profile` : `/${orgId}/settings`}
                                 onClick={handleLinkClick}
                                 className="flex-1 flex items-center gap-2 px-3 py-2.5 lg:py-2 rounded-[var(--radius-md)] text-text-secondary hover:text-text-primary hover:bg-surface-elevated transition-smooth"
                             >

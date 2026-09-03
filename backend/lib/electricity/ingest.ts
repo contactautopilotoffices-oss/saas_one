@@ -352,6 +352,7 @@ export async function upsertBillFromParsed(
         document_id: documentId,
         updated_at: new Date().toISOString(),
     };
+    const master = masterFigures(parsed);
 
     // A bill the parser was unsure about parks in needs_manual_entry rather than moving on
     // to validation — the pipeline must not build a payment decision on a guessed figure.
@@ -360,15 +361,20 @@ export async function upsertBillFromParsed(
     if (existing) {
         const keepStatus = existing.workflow_status
             && !['ingested', 'needs_manual_entry', 'parsed'].includes(existing.workflow_status);
-        const { error } = await supabaseAdmin.from('electricity_bills').update({
-            ...figures,
-            ...(keepStatus ? {} : { workflow_status: parsedStatus }),
-        }).eq('id', existing.id);
+        const patch = { ...figures, ...(keepStatus ? {} : { workflow_status: parsedStatus }) };
+
+        let { error } = await supabaseAdmin.from('electricity_bills')
+            .update({ ...patch, ...master }).eq('id', existing.id);
+        if (isUnknownColumn(error) && Object.keys(master).length > 0) {
+            warnMasterColumnsMissing(error);
+            ({ error } = await supabaseAdmin.from('electricity_bills')
+                .update(patch).eq('id', existing.id));
+        }
         if (error) console.error('[ElectricityIngest] bill update failed:', error.message);
         return existing.id;
     }
 
-    const { data: inserted, error } = await supabaseAdmin.from('electricity_bills').insert({
+    const row = {
         organization_id: orgId,
         account_id: account.id,
         billing_month: parsed.billingMonth,
@@ -376,10 +382,78 @@ export async function upsertBillFromParsed(
         source: 'ocr',
         workflow_status: parsedStatus,
         received_at: receivedAt ?? new Date().toISOString(),
-    }).select('id').single();
+    };
+
+    let { data: inserted, error } = await supabaseAdmin.from('electricity_bills')
+        .insert({ ...row, ...master }).select('id').single();
+    if (isUnknownColumn(error) && Object.keys(master).length > 0) {
+        warnMasterColumnsMissing(error);
+        ({ data: inserted, error } = await supabaseAdmin.from('electricity_bills')
+            .insert(row).select('id').single());
+    }
     if (error) {
         console.error('[ElectricityIngest] bill insert failed:', error.message);
         return null;
     }
     return inserted?.id ?? null;
+}
+
+/**
+ * Bill Master columns, carrying only the keys the parser actually extracted.
+ *
+ * undefined means the parse never looked at that field — a payload stored before the master
+ * block existed, or a manual link from the Inbox — so the column is omitted and keeps
+ * whatever is already there. A parser that looked and failed sends null, which does
+ * overwrite: "we read this bill and it has no arrears" is a fact worth recording.
+ */
+function masterFigures(parsed: ParsedBill): Record<string, unknown> {
+    const byColumn: Record<string, unknown> = {
+        bill_number: parsed.billNumber,
+        meter_no: parsed.meterNo,
+        consumer_name: parsed.consumerName,
+        tariff_category: parsed.tariffCategory,
+        sanctioned_load_kw: parsed.sanctionedLoadKw,
+        contract_demand_kva: parsed.contractDemandKva,
+        recorded_demand_kva: parsed.recordedDemandKva,
+        power_factor: parsed.powerFactor,
+        billing_period_start: parsed.billingPeriodStart,
+        billing_period_end: parsed.billingPeriodEnd,
+        previous_reading: parsed.previousReading,
+        current_reading: parsed.currentReading,
+        previous_reading_date: parsed.previousReadingDate,
+        current_reading_date: parsed.currentReadingDate,
+        multiplying_factor: parsed.multiplyingFactor,
+        energy_charges: parsed.energyCharges,
+        fixed_charges: parsed.fixedCharges,
+        electricity_duty: parsed.electricityDuty,
+        tax_amount: parsed.taxAmount,
+        fuel_surcharge: parsed.fuelSurcharge,
+        other_charges: parsed.otherCharges,
+        adjustments: parsed.adjustments,
+        arrears: parsed.arrears,
+        interest_charges: parsed.interestCharges,
+    };
+
+    const out: Record<string, unknown> = {};
+    for (const [column, value] of Object.entries(byColumn)) {
+        if (value !== undefined) out[column] = value;
+    }
+    return out;
+}
+
+/**
+ * PostgREST rejects the WHOLE write when it meets a column it does not know (PGRST204),
+ * rather than dropping the unknown keys. So a deploy that lands before
+ * 20260826000001_electricity_bill_master.sql is applied would stop ingesting bills
+ * altogether. Retry without the master block instead: a bill with no meter number is
+ * yesterday's behaviour and is recoverable by a re-parse, a bill that never arrived is not.
+ * Same fallback shape as app/api/tickets/[id]/tag-vendor/route.ts.
+ */
+function isUnknownColumn(error: { code?: string } | null): boolean {
+    return !!error && (error.code === 'PGRST204' || error.code === '42703');
+}
+
+function warnMasterColumnsMissing(error: { message?: string } | null) {
+    console.warn('[ElectricityIngest] bill master columns missing, retrying without them '
+        + '(apply 20260826000001_electricity_bill_master.sql):', error?.message);
 }
