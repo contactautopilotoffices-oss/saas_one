@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { X, ExternalLink, Code2, AlertTriangle, MessageSquare, Cpu, Github, Maximize2, CheckCircle2, Loader2, RefreshCw } from 'lucide-react';
 import { TicketStatusBadge } from './TicketStatusBadge';
+import { SLABreachDetailsCard } from '@/frontend/components/tickets/SLABreachDetailsCard';
 
 interface TicketDetailsModalProps {
   ticket: any;
@@ -173,6 +174,11 @@ export function TicketDetailsModal({ ticket, onClose, onStatusUpdate }: TicketDe
               </div>
             )}
             
+            {/* SLA Breach Breakdown */}
+            {ticket.sla_deadline && (
+              <SLABreachDetailsCard ticket={ticket} />
+            )}
+
             {/* Failure Reason */}
             {ticket.failure_reason && (
               <div className="p-4 bg-rose-500/10 rounded-xl border border-rose-500/20 text-sm text-rose-600 dark:text-rose-400 flex items-start gap-3">

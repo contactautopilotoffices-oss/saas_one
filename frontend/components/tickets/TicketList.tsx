@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { Clock, AlertTriangle, CheckCircle, User, MapPin, ChevronRight } from 'lucide-react';
 import Link from 'next/link';
+import { SLABadge } from './SLABreachDetailsCard';
 
 interface Ticket {
     id: string;
@@ -197,11 +198,15 @@ export default function TicketList({
                                 </div>
 
                                 {/* SLA */}
-                                {slaStatus && (
-                                    <span className={`text-xs ${slaStatus.color}`}>
-                                        {slaStatus.text}
-                                    </span>
-                                )}
+                                <div className="flex items-center gap-2">
+                                    <SLABadge slaDeadline={ticket.sla_deadline} isBreached={ticket.sla_breached} />
+                                    {slaStatus && (
+                                        <span className={`text-xs ${slaStatus.color}`}>
+                                            {slaStatus.text}
+                                        </span>
+                                    )}
+                                </div>
+
 
                                 <ChevronRight className="w-4 h-4 text-gray-500" />
                             </div>

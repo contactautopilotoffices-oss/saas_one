@@ -60,6 +60,7 @@ import ProcurementCatalogModal from "@/frontend/components/procurement/Procureme
 import ConfirmModal from "@/frontend/components/ui/ConfirmModal";
 import { Toast } from "@/frontend/components/ui/Toast";
 import ProcurementComparativeFlow from "@/frontend/components/dashboard/ProcurementComparativeFlow";
+import { SLABreachDetailsCard } from "@/frontend/components/tickets/SLABreachDetailsCard";
 
 // Types
 interface Ticket {
@@ -2177,6 +2178,10 @@ export default function TicketDetailPage() {
                 {ticket.description || "No description provided."}
               </p>
             </div>
+
+            {/* SLA Breach Breakdown Card */}
+            <SLABreachDetailsCard ticket={ticket} />
+
 
             {/* 1. Context Cards */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

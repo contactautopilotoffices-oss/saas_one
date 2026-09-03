@@ -18,3 +18,16 @@ export const parseDate = (d: string | null | undefined): Date | null => {
         return null;
     }
 };
+
+/**
+ * Formats a duration in milliseconds to a human readable string (e.g. '2h 15m' or '45m').
+ */
+export function formatDuration(ms: number): string {
+    if (ms <= 0) return '0m';
+    const totalMinutes = Math.floor(ms / 60000);
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    return `${minutes}m`;
+}

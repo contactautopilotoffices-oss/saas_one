@@ -101,7 +101,7 @@ export async function GET(request: NextRequest) {
 
         let selectStr = `
                 id, ticket_number, title, status, priority, created_at, internal, raised_by, assigned_to,
-                resolved_at,
+                resolved_at, sla_deadline, sla_breached, sla_hours, total_paused_minutes, sla_pause_reason,
                 category:issue_categories(id, code, name),
                 skill_group:skill_groups(id, code, name),
                 creator:users!raised_by(id, full_name, email, user_photo_url, property_memberships(role, property_id)),
@@ -112,6 +112,7 @@ export async function GET(request: NextRequest) {
                 ticket_escalation_logs(id, escalated_at, from_employee:users!from_employee_id(full_name, user_photo_url), to_employee:users!to_employee_id(full_name, user_photo_url)),
                 material_requests${materialsRequired === 'true' ? '!inner' : ''}(id)
             `;
+
 
         let query = queryClient
             .from('tickets')

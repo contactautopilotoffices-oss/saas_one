@@ -7,7 +7,7 @@
 import type React from 'react';
 import {
     PhoneCall, CalendarClock, Trophy, XCircle, Circle,
-    Ban, Zap,
+    Ban, Zap, PhoneOff,
 } from 'lucide-react';
 import { WarmFlameIcon, ColdFaceIcon, HotFaceIcon } from '@/frontend/components/crm/icons/StageFaceIcons';
 
@@ -40,6 +40,7 @@ const MAP: Record<string, StageVisual> = {
     'hot':           { icon: HotFaceIcon,   color: '#EF4444', size: 'lg', group: 'visit' },
     'future':        { icon: CalendarClock, color: '#8B5CF6', size: 'lg', group: 'visit' },
     'cold':          { icon: ColdFaceIcon,  color: '#38BDF8', size: 'lg', group: 'visit' },
+    'not responsive':{ icon: PhoneOff,      color: '#94A3B8', size: 'lg', group: 'visit' },
     'lost':          { icon: XCircle,       color: '#64748B', size: 'lg', group: 'terminal' },
     'disqualified':  { icon: Ban,           color: '#EF4444', size: 'lg', group: 'terminal' },
     'won':           { icon: Trophy,        color: '#22C55E', size: 'lg', group: 'terminal' },
