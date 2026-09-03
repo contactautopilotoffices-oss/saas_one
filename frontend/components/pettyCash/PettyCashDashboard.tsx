@@ -8,8 +8,9 @@ import { createClient } from '@/frontend/utils/supabase/client';
 import { pettyCashCaps, PC_STATUS_META, PettyCashRequest, inr } from '@/frontend/lib/pettyCash/roles';
 import NewRequestModal from './NewRequestModal';
 import RequestDetailDrawer from './RequestDetailDrawer';
+import PettyCashTracker from './PettyCashTracker';
 
-type Tab = 'mine' | 'approvals' | 'disbursements' | 'all';
+type Tab = 'mine' | 'approvals' | 'disbursements' | 'all' | 'tracker';
 
 function StatusBadge({ status }: { status: string }) {
     const m = PC_STATUS_META[status] || { label: status, color: '#6B7280' };
@@ -33,6 +34,7 @@ export default function PettyCashDashboard() {
         if (caps.canApprove) t.push({ key: 'approvals', label: 'Approvals' });
         if (caps.canDisburse) t.push({ key: 'disbursements', label: 'Disbursements' });
         if (caps.isAdmin || caps.canDisburse) t.push({ key: 'all', label: 'All / Ledger' });
+        if (caps.isAdmin || caps.canDisburse) t.push({ key: 'tracker', label: 'Tracker' });
         return t;
     }, [caps]);
 
@@ -122,6 +124,10 @@ export default function PettyCashDashboard() {
                 </button>
             </div>
 
+            {tab === 'tracker' ? (
+                <PettyCashTracker propertyId={propertyFilter || undefined} />
+            ) : (
+            <>
             {/* Filters */}
             <div className="flex items-center gap-2 flex-wrap">
                 <div className="relative flex-1 min-w-[200px] max-w-sm">
@@ -150,7 +156,7 @@ export default function PettyCashDashboard() {
                     <table className="w-full">
                         <thead>
                             <tr className="bg-surface-elevated border-b border-border text-left">
-                                {['Request', 'Requester', 'Property', 'Category', 'Amount', 'Status', 'Raised', ''].map((h, i) => (
+                                {['Request', 'Requester', 'Cash with', 'Property', 'Category', 'Amount', 'Status', 'Raised', ''].map((h, i) => (
                                     <th key={i} className="px-4 py-3 text-xs font-bold text-text-secondary uppercase tracking-wide">{h}</th>
                                 ))}
                             </tr>
@@ -174,6 +180,11 @@ export default function PettyCashDashboard() {
                                             <p className="text-xs text-text-secondary truncate max-w-[220px]">{r.purpose}</p>
                                         </td>
                                         <td className="px-4 py-3 text-sm text-text-primary">{r.requester?.full_name || '—'}</td>
+                                        <td className="px-4 py-3 text-sm">
+                                            {r.recipient_name
+                                                ? <span className="text-text-primary">{r.recipient_name}{r.recipient_phone ? <span className="block text-[11px] text-text-tertiary">{r.recipient_phone}</span> : null}</span>
+                                                : <span className="text-text-tertiary">Requester</span>}
+                                        </td>
                                         <td className="px-4 py-3 text-sm text-text-secondary">{r.property?.name || '—'}</td>
                                         <td className="px-4 py-3 text-sm text-text-secondary">{r.category || '—'}</td>
                                         <td className="px-4 py-3 text-sm font-bold text-text-primary">{inr(r.amount_requested)}</td>
@@ -187,6 +198,8 @@ export default function PettyCashDashboard() {
                     </table>
                 </div>
             </div>
+            </>
+            )}
 
             <NewRequestModal
                 open={showNew}

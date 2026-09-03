@@ -24,14 +24,21 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     if (!req) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-    const [docsRes, actRes] = await Promise.all([
+    const [docsRes, actRes, reconRes] = await Promise.all([
         supabaseAdmin.from('petty_cash_documents').select('*').eq('request_id', id).order('created_at', { ascending: false }),
         supabaseAdmin.from('petty_cash_activity')
             .select('*, actor:users!petty_cash_activity_actor_id_fkey(id, full_name)')
             .eq('request_id', id).order('created_at', { ascending: true }),
+        // Disbursed vs bills vs cash returned — the numbers finance closes against.
+        supabaseAdmin.from('petty_cash_settlement_status').select('*').eq('request_id', id).maybeSingle(),
     ]);
 
-    return NextResponse.json({ request: req, documents: docsRes.data || [], activity: actRes.data || [] });
+    return NextResponse.json({
+        request: req,
+        documents: docsRes.data || [],
+        activity: actRes.data || [],
+        reconciliation: reconRes.data || null,
+    });
 }
 
 // PATCH /api/petty-cash/[id] — action-dispatched lifecycle transitions
@@ -64,14 +71,26 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    // Settlement documents
+    // Settlement documents. A settlement bill now carries its own value/date/vendor —
+    // that is what turns the attachment pile into a ledger the disbursed amount can
+    // actually be reconciled against (see petty_cash_settlement_status).
     if (action === 'settle' && Array.isArray(body.documents) && body.documents.length) {
-        await supabaseAdmin.from('petty_cash_documents').insert(
-            body.documents.map((d: { file_url: string; file_name?: string; file_type?: string }) => ({
+        // `url` accepted alongside `file_url`: the upload route returns the former, so
+        // every settlement bill was silently failing the NOT NULL on file_url.
+        const rows = body.documents
+            .map((d: { file_url?: string; url?: string; file_name?: string; file_type?: string; amount?: number | string | null; bill_date?: string | null; vendor?: string | null }) => ({
                 request_id: id, organization_id: access.organizationId, stage: 'settlement',
-                file_url: d.file_url, file_name: d.file_name ?? null, file_type: d.file_type ?? null, uploaded_by: access.user.id,
-            })),
-        );
+                file_url: d.file_url || d.url, file_name: d.file_name ?? null, file_type: d.file_type ?? null, uploaded_by: access.user.id,
+                amount: d.amount == null || d.amount === '' ? null : Number(d.amount),
+                bill_date: d.bill_date || null,
+                vendor: d.vendor?.trim() || null,
+            }))
+            .filter((r: { file_url?: string }) => !!r.file_url);
+
+        if (rows.length) {
+            const { error: docErr } = await supabaseAdmin.from('petty_cash_documents').insert(rows);
+            if (docErr) console.error('Petty cash settlement document attach error:', docErr);
+        }
     }
 
     await supabaseAdmin.from('petty_cash_activity').insert({

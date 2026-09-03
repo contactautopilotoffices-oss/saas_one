@@ -5,7 +5,8 @@ import { createPortal } from 'react-dom';
 import { X, Loader2, FileText, Upload, CheckCircle2, Clock } from 'lucide-react';
 import { useAuth } from '@/frontend/context/AuthContext';
 import {
-    PettyCashRequest, PettyCashDocument, PettyCashActivity, PC_STATUS_META, PC_PAYMENT_MODES, inr,
+    PettyCashRequest, PettyCashDocument, PettyCashActivity, PettyCashReconciliation,
+    PC_STATUS_META, PC_PAYMENT_MODES, inr,
 } from '@/frontend/lib/pettyCash/roles';
 import type { PettyCashCaps } from '@/frontend/lib/pettyCash/roles';
 
@@ -26,11 +27,12 @@ const ACTION_LABEL: Record<ActionKey, string> = {
 export default function RequestDetailDrawer({ request, caps, onClose, onChanged }: Props) {
     const { user } = useAuth();
     const [docs, setDocs] = useState<PettyCashDocument[]>([]);
+    const [recon, setRecon] = useState<PettyCashReconciliation | null>(null);
     const [activity, setActivity] = useState<PettyCashActivity[]>([]);
     const [loading, setLoading] = useState(false);
     const [action, setAction] = useState<ActionKey | null>(null);
     const [form, setForm] = useState<Record<string, string>>({});
-    const [settleDocs, setSettleDocs] = useState<{ url: string; file_name: string; file_type: string }[]>([]);
+    const [settleDocs, setSettleDocs] = useState<{ url: string; file_name: string; file_type: string; amount?: string; bill_date?: string; vendor?: string }[]>([]);
     const [uploading, setUploading] = useState(false);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -42,9 +44,31 @@ export default function RequestDetailDrawer({ request, caps, onClose, onChanged 
         setLoading(true);
         try {
             const res = await fetch(`/api/petty-cash/${request.id}`);
-            if (res.ok) { const d = await res.json(); setDocs(d.documents || []); setActivity(d.activity || []); }
+            if (res.ok) { const d = await res.json(); setDocs(d.documents || []); setActivity(d.activity || []); setRecon(d.reconciliation || null); }
         } finally { setLoading(false); }
     }, [request]);
+
+    // Finance accepting/rejecting one bill. The API hands back the recomputed
+    // reconciliation, so the accounted % moves with the decision.
+    const reviewBill = async (docId: string, reviewStatus: 'accepted' | 'rejected') => {
+        let remarks: string | null = null;
+        if (reviewStatus === 'rejected') {
+            remarks = window.prompt('Why is this bill being rejected?')?.trim() || null;
+            if (!remarks) return;
+        }
+        setBusy(true); setError(null);
+        try {
+            const res = await fetch(`/api/petty-cash/documents/${docId}`, {
+                method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ review_status: reviewStatus, review_remarks: remarks }),
+            });
+            if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || 'Could not review the bill'); }
+            const d = await res.json();
+            setDocs(prev => prev.map(x => (x.id === docId ? { ...x, ...d.document } : x)));
+            if (d.reconciliation) setRecon(d.reconciliation);
+        } catch (e) { setError(e instanceof Error ? e.message : 'Could not review the bill'); }
+        finally { setBusy(false); }
+    };
 
     useEffect(() => { if (open) { setAction(null); setForm({}); setSettleDocs([]); setError(null); load(); } }, [open, load]);
 
@@ -141,6 +165,11 @@ export default function RequestDetailDrawer({ request, caps, onClose, onChanged 
                     {/* Details */}
                     <div className="bg-surface-elevated rounded-xl p-4">
                         <Row k="Requester" v={request.requester?.full_name || '—'} />
+                        <Row k="Cash handed to" v={
+                            request.recipient_name
+                                ? <span>{request.recipient_name}{request.recipient_phone ? <span className="text-text-tertiary"> · {request.recipient_phone}</span> : null}</span>
+                                : <span className="text-text-tertiary">Requester</span>
+                        } />
                         <Row k="Property" v={request.property?.name || '—'} />
                         <Row k="Type" v={request.request_type} />
                         <Row k="Department" v={request.department || '—'} />
@@ -161,17 +190,78 @@ export default function RequestDetailDrawer({ request, caps, onClose, onChanged 
                         )}
                     </div>
 
-                    {/* Documents */}
+                    {/* Reconciliation — is this float closed out. Only meaningful once cash
+                        has actually gone out, so it stays hidden before disbursement. */}
+                    {recon && recon.disbursed > 0 && request.paid_at && (
+                        <div className="rounded-xl border border-border p-4">
+                            <div className="flex items-center justify-between mb-2">
+                                <p className="text-xs font-bold text-text-secondary uppercase tracking-wide">Accounted for</p>
+                                <span className={`text-sm font-black tabular-nums ${recon.unaccounted > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                                    {recon.accounted_pct == null ? '—' : `${recon.accounted_pct}%`}
+                                </span>
+                            </div>
+                            <div className="h-2 rounded-full bg-muted overflow-hidden">
+                                <div className={recon.unaccounted > 0 ? 'h-full bg-amber-500' : 'h-full bg-emerald-500'}
+                                    style={{ width: `${Math.min(100, Math.max(0, recon.accounted_pct ?? 0))}%` }} />
+                            </div>
+                            <div className="grid grid-cols-2 gap-x-4 gap-y-1 mt-3 text-xs">
+                                <span className="text-text-tertiary">Disbursed</span><span className="text-right tabular-nums text-text-primary">{inr(recon.disbursed)}</span>
+                                <span className="text-text-tertiary">Bills ({recon.bills_count})</span><span className="text-right tabular-nums text-text-primary">{inr(recon.bills_total)}</span>
+                                <span className="text-text-tertiary">Cash returned</span><span className="text-right tabular-nums text-text-primary">{inr(recon.amount_returned)}</span>
+                                {recon.unaccounted > 0 && (
+                                    <>
+                                        <span className="font-bold text-amber-700">Unaccounted</span>
+                                        <span className="text-right tabular-nums font-bold text-amber-700">{inr(recon.unaccounted)}</span>
+                                    </>
+                                )}
+                            </div>
+                            {recon.bills_pending_review > 0 && (
+                                <p className="text-[11px] text-text-tertiary mt-2">{recon.bills_pending_review} bill(s) awaiting finance review.</p>
+                            )}
+                            {recon.bills_rejected > 0 && (
+                                <p className="text-[11px] text-red-600 mt-1">{recon.bills_rejected} bill(s) rejected — excluded from the total above.</p>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Documents. Settlement bills render as ledger lines with their value,
+                        and finance can accept/reject each one — a rejected bill stops
+                        counting as accounted for. */}
                     {docs.length > 0 && (
                         <div>
                             <p className="text-xs font-bold text-text-secondary uppercase tracking-wide mb-2">Documents</p>
                             <div className="space-y-1.5">
                                 {docs.map(d => (
-                                    <a key={d.id} href={d.file_url} target="_blank" rel="noopener noreferrer"
-                                        className="flex items-center gap-2 text-sm text-primary bg-surface-elevated rounded-lg px-3 py-2 hover:bg-muted">
-                                        <FileText className="w-4 h-4" /> <span className="flex-1 truncate">{d.file_name || 'Document'}</span>
-                                        <span className="text-[10px] uppercase text-text-tertiary">{d.stage}</span>
-                                    </a>
+                                    <div key={d.id} className="bg-surface-elevated rounded-lg px-3 py-2">
+                                        <div className="flex items-center gap-2 text-sm">
+                                            <FileText className="w-4 h-4 text-primary shrink-0" />
+                                            <a href={d.file_url} target="_blank" rel="noopener noreferrer" className="flex-1 truncate text-primary hover:underline">
+                                                {d.file_name || 'Document'}
+                                            </a>
+                                            {d.amount != null && <span className="tabular-nums font-bold text-text-primary">{inr(d.amount)}</span>}
+                                            <span className="text-[10px] uppercase text-text-tertiary">{d.stage}</span>
+                                        </div>
+                                        {(d.vendor || d.bill_date || d.review_status === 'rejected') && (
+                                            <p className="text-[11px] text-text-tertiary mt-0.5 pl-6">
+                                                {[d.vendor, d.bill_date ? new Date(d.bill_date).toLocaleDateString('en-IN') : null]
+                                                    .filter(Boolean).join(' · ')}
+                                                {d.review_status === 'rejected' && <span className="text-red-600 font-semibold"> · Rejected{d.review_remarks ? `: ${d.review_remarks}` : ''}</span>}
+                                                {d.review_status === 'accepted' && <span className="text-emerald-600 font-semibold"> · Accepted</span>}
+                                            </p>
+                                        )}
+                                        {caps.canDisburse && d.stage === 'settlement' && d.amount != null && (
+                                            <div className="flex items-center gap-2 mt-1.5 pl-6">
+                                                <button onClick={() => reviewBill(d.id, 'accepted')} disabled={busy || d.review_status === 'accepted'}
+                                                    className="text-[11px] font-bold px-2 py-0.5 rounded-md border border-emerald-500/40 text-emerald-700 hover:bg-emerald-500/10 disabled:opacity-40">
+                                                    Accept
+                                                </button>
+                                                <button onClick={() => reviewBill(d.id, 'rejected')} disabled={busy || d.review_status === 'rejected'}
+                                                    className="text-[11px] font-bold px-2 py-0.5 rounded-md border border-red-500/40 text-red-700 hover:bg-red-500/10 disabled:opacity-40">
+                                                    Reject
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
                                 ))}
                             </div>
                         </div>
@@ -241,7 +331,35 @@ export default function RequestDetailDrawer({ request, caps, onClose, onChanged 
                                             {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />} Upload bills
                                             <input type="file" multiple className="hidden" onChange={e => uploadFiles(e.target.files)} accept="application/pdf,image/*,.csv,.xls,.xlsx" />
                                         </label>
-                                        {settleDocs.length > 0 && <p className="text-xs text-text-tertiary">{settleDocs.length} file(s) attached</p>}
+                                        {/* Each bill carries its own value — that is what makes the float
+                                            reconcilable instead of one self-declared "actual spent". */}
+                                        {settleDocs.length > 0 && (
+                                            <div className="space-y-1.5">
+                                                {settleDocs.map((d, i) => (
+                                                    <div key={i} className="bg-surface-elevated rounded-lg p-2 space-y-1.5">
+                                                        <div className="flex items-center gap-2 text-xs text-text-secondary">
+                                                            <FileText className="w-3.5 h-3.5 shrink-0" />
+                                                            <span className="flex-1 truncate">{d.file_name}</span>
+                                                        </div>
+                                                        <div className="grid grid-cols-3 gap-1.5">
+                                                            <input type="number" placeholder="Amount ₹" value={d.amount ?? ''}
+                                                                onChange={e => setSettleDocs(prev => prev.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))}
+                                                                className={`${field} py-1.5 text-xs`} />
+                                                            <input type="date" value={d.bill_date ?? ''}
+                                                                onChange={e => setSettleDocs(prev => prev.map((x, j) => j === i ? { ...x, bill_date: e.target.value } : x))}
+                                                                className={`${field} py-1.5 text-xs`} />
+                                                            <input placeholder="Vendor" value={d.vendor ?? ''}
+                                                                onChange={e => setSettleDocs(prev => prev.map((x, j) => j === i ? { ...x, vendor: e.target.value } : x))}
+                                                                className={`${field} py-1.5 text-xs`} />
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                                <p className="text-[11px] text-text-tertiary">
+                                                    Bills total {inr(settleDocs.reduce((s, d) => s + Number(d.amount || 0), 0))}
+                                                    {' '}of {inr(request.paid_amount ?? request.approved_amount ?? request.amount_requested)} disbursed.
+                                                </p>
+                                            </div>
+                                        )}
                                     </>
                                 )}
                                 {(action === 'reject' || action === 'send_back' || action === 'close' || action === 'cancel' || action === 'approve' || action === 'settle') && (

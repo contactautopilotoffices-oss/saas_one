@@ -95,6 +95,43 @@ export async function POST(request: NextRequest) {
     if (!body.purpose?.trim()) return NextResponse.json({ error: 'purpose is required' }, { status: 400 });
 
     const asDraft = body.status === 'draft';
+
+    // --- Open-advance gate ---------------------------------------------------------
+    // PRD §6.3: an approver must see the requester's open advances and overdue
+    // settlements before more cash goes out. Nothing enforced this, so a custodian
+    // sitting on an unaccounted float could draw another one immediately.
+    //
+    // A warning with the numbers attached, not a hard stop: genuine same-day second
+    // floats happen, and blocking outright would push people back to cash off-system,
+    // which is the outcome this module exists to prevent. Drafts never trigger it.
+    if (!asDraft && body.acknowledge_open_advances !== true) {
+        const { data: open } = await supabaseAdmin
+            .from('petty_cash_settlement_status')
+            .select('request_no, disbursed, accounted, unaccounted, accounted_pct, days_outstanding, status')
+            .eq('organization_id', access.organizationId)
+            .eq('requester_id', access.user.id)
+            .eq('is_open_advance', true)
+            .order('days_outstanding', { ascending: false, nullsFirst: false });
+
+        if (open && open.length) {
+            return NextResponse.json({
+                error: 'open_advance_outstanding',
+                open_advances: {
+                    count: open.length,
+                    total_unaccounted: open.reduce((s, r) => s + Number(r.unaccounted || 0), 0),
+                    requests: open.map((r) => ({
+                        request_no: r.request_no,
+                        status: r.status,
+                        disbursed: Number(r.disbursed || 0),
+                        accounted: Number(r.accounted || 0),
+                        unaccounted: Number(r.unaccounted || 0),
+                        accounted_pct: r.accounted_pct == null ? null : Number(r.accounted_pct),
+                        days_outstanding: r.days_outstanding,
+                    })),
+                },
+            }, { status: 409 });
+        }
+    }
     const { data: created, error } = await supabaseAdmin
         .from('petty_cash_requests')
         .insert({
@@ -109,6 +146,9 @@ export async function POST(request: NextRequest) {
             payment_mode: body.payment_mode ?? null,
             expected_date: body.expected_date || null,
             vendor_name: body.vendor_name ?? null,
+            // Who physically takes the cash — often not the person filing the request.
+            recipient_name: body.recipient_name?.trim() || null,
+            recipient_phone: body.recipient_phone?.trim() || null,
             status: asDraft ? 'draft' : 'submitted',
             remarks: body.remarks ?? null,
         })
@@ -121,18 +161,29 @@ export async function POST(request: NextRequest) {
     }
 
     // Attach any documents uploaded during creation.
+    //
+    // `url` is accepted alongside `file_url` because /api/petty-cash/upload returns the
+    // former and the client posts that object back verbatim — so every insert here was
+    // failing the NOT NULL on file_url, unchecked, and no attachment ever landed.
     if (Array.isArray(body.documents) && body.documents.length) {
-        await supabaseAdmin.from('petty_cash_documents').insert(
-            body.documents.map((d: { file_url: string; file_name?: string; file_type?: string }) => ({
+        const rows = body.documents
+            .map((d: { file_url?: string; url?: string; file_name?: string; file_type?: string }) => ({
                 request_id: created.id,
                 organization_id: access.organizationId,
                 stage: 'request',
-                file_url: d.file_url,
+                file_url: d.file_url || d.url,
                 file_name: d.file_name ?? null,
                 file_type: d.file_type ?? null,
                 uploaded_by: access.user.id,
-            })),
-        );
+            }))
+            .filter((r: { file_url?: string }) => !!r.file_url);
+
+        if (rows.length) {
+            const { error: docErr } = await supabaseAdmin.from('petty_cash_documents').insert(rows);
+            // Never fails the request — the money movement matters more than the
+            // attachment — but it must not vanish silently the way it used to.
+            if (docErr) console.error('Petty cash CREATE document attach error:', docErr);
+        }
     }
 
     await supabaseAdmin.from('petty_cash_activity').insert({

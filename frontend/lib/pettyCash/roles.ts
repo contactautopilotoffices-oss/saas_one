@@ -70,6 +70,9 @@ export interface PettyCashRequest {
     payment_mode?: string | null;
     expected_date?: string | null;
     vendor_name?: string | null;
+    /** Custodian — who physically receives the cash. Often not the requester. */
+    recipient_name?: string | null;
+    recipient_phone?: string | null;
     status: string;
     approved_amount?: number | null;
     approved_at?: string | null;
@@ -95,6 +98,34 @@ export interface PettyCashRequest {
 
 export interface PettyCashDocument {
     id: string; request_id: string; stage: string; file_url: string; file_name?: string | null; file_type?: string | null; created_at: string;
+    /** Settlement bills carry their own value/date/vendor; other attachments leave these null. */
+    amount?: number | null;
+    bill_date?: string | null;
+    vendor?: string | null;
+    review_status?: 'pending' | 'accepted' | 'rejected';
+    review_remarks?: string | null;
+    reviewed_at?: string | null;
+}
+
+/** One row of petty_cash_settlement_status — disbursed vs bills vs cash returned. */
+export interface PettyCashReconciliation {
+    request_id: string;
+    disbursed: number;
+    bills_total: number;
+    bills_count: number;
+    bills_pending_review: number;
+    bills_rejected: number;
+    amount_returned: number;
+    accounted: number;
+    unaccounted: number;
+    accounted_pct: number | null;
+    is_open_advance: boolean;
+    days_outstanding: number | null;
+    recipient_name?: string | null;
+    recipient_phone?: string | null;
+    property_name?: string | null;
+    request_no?: string;
+    status?: string;
 }
 export interface PettyCashActivity {
     id: string; action: string; from_status?: string | null; to_status?: string | null; remark?: string | null; created_at: string;

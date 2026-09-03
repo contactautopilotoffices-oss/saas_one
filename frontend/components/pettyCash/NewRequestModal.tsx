@@ -2,8 +2,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Upload, Loader2, FileText, Trash2 } from 'lucide-react';
-import { PC_CATEGORIES, PC_PAYMENT_MODES, PC_DEPARTMENTS } from '@/frontend/lib/pettyCash/roles';
+import { X, Upload, Loader2, FileText, Trash2, AlertTriangle } from 'lucide-react';
+import { PC_CATEGORIES, PC_PAYMENT_MODES, PC_DEPARTMENTS, inr } from '@/frontend/lib/pettyCash/roles';
 
 interface Props {
     open: boolean;
@@ -13,6 +13,20 @@ interface Props {
 }
 
 interface PendingDoc { url: string; file_name: string; file_type: string; }
+
+interface OpenAdvances {
+    count: number;
+    total_unaccounted: number;
+    requests: {
+        request_no: string;
+        status: string;
+        disbursed: number;
+        accounted: number;
+        unaccounted: number;
+        accounted_pct: number | null;
+        days_outstanding: number | null;
+    }[];
+}
 
 export default function NewRequestModal({ open, properties, onClose, onCreated }: Props) {
     const [propertyId, setPropertyId] = useState('');
@@ -24,17 +38,23 @@ export default function NewRequestModal({ open, properties, onClose, onCreated }
     const [paymentMode, setPaymentMode] = useState('Cash');
     const [expectedDate, setExpectedDate] = useState('');
     const [vendorName, setVendorName] = useState('');
+    const [recipientName, setRecipientName] = useState('');
+    const [recipientPhone, setRecipientPhone] = useState('');
     const [docs, setDocs] = useState<PendingDoc[]>([]);
     const [uploading, setUploading] = useState(false);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    // Set when the API answers 409 open_advance_outstanding — the previous float has not
+    // been fully accounted for yet, and the requester has to see that before drawing more.
+    const [openAdvances, setOpenAdvances] = useState<OpenAdvances | null>(null);
 
     useEffect(() => {
         if (!open) return;
         setPropertyId(properties.length === 1 ? properties[0].id : '');
         setRequestType('advance'); setDepartment(''); setCategory(''); setAmount('');
         setPurpose(''); setPaymentMode('Cash'); setExpectedDate(''); setVendorName('');
-        setDocs([]); setError(null);
+        setRecipientName(''); setRecipientPhone('');
+        setDocs([]); setError(null); setOpenAdvances(null);
     }, [open, properties]);
 
     const handleUpload = async (files: FileList | null) => {
@@ -50,7 +70,7 @@ export default function NewRequestModal({ open, properties, onClose, onCreated }
         } finally { setUploading(false); }
     };
 
-    const handleSubmit = async () => {
+    const handleSubmit = async (acknowledgeOpenAdvances = false) => {
         if (!propertyId) { setError('Choose a property'); return; }
         if (!amount || Number(amount) <= 0) { setError('Enter a valid amount'); return; }
         if (!purpose.trim()) { setError('Describe the purpose'); return; }
@@ -62,8 +82,14 @@ export default function NewRequestModal({ open, properties, onClose, onCreated }
                     property_id: propertyId, request_type: requestType, department, category,
                     amount_requested: Number(amount), purpose: purpose.trim(), payment_mode: paymentMode,
                     expected_date: expectedDate || null, vendor_name: vendorName || null, documents: docs,
+                    recipient_name: recipientName || null, recipient_phone: recipientPhone || null,
+                    ...(acknowledgeOpenAdvances ? { acknowledge_open_advances: true } : {}),
                 }),
             });
+            if (res.status === 409) {
+                const e = await res.json().catch(() => ({}));
+                if (e?.error === 'open_advance_outstanding' && e.open_advances) { setOpenAdvances(e.open_advances); return; }
+            }
             if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || 'Failed to create request'); }
             onCreated();
         } catch (e) { setError(e instanceof Error ? e.message : 'Failed to create request'); }
@@ -147,6 +173,22 @@ export default function NewRequestModal({ open, properties, onClose, onCreated }
                         </div>
                     </div>
 
+                    {/* Custodian — who physically takes the cash. Left blank it stays the
+                        requester, but naming a person is what makes the ledger traceable
+                        when a supervisor draws cash for someone else to spend. */}
+                    <div className="grid grid-cols-2 gap-3">
+                        <div>
+                            <label className={label}>Cash handed to</label>
+                            <input value={recipientName} onChange={e => setRecipientName(e.target.value)}
+                                placeholder="Name of the person receiving" className={field} />
+                        </div>
+                        <div>
+                            <label className={label}>Their phone</label>
+                            <input value={recipientPhone} onChange={e => setRecipientPhone(e.target.value)}
+                                placeholder="10-digit mobile" inputMode="tel" className={field} />
+                        </div>
+                    </div>
+
                     {/* Documents */}
                     <div>
                         <label className={label}>Supporting documents</label>
@@ -168,15 +210,55 @@ export default function NewRequestModal({ open, properties, onClose, onCreated }
                         )}
                     </div>
 
+                    {openAdvances && (
+                        <div className="rounded-xl border-2 border-amber-400/60 bg-amber-50 dark:bg-amber-500/10 p-4">
+                            <div className="flex items-start gap-2.5">
+                                <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                                <div className="min-w-0">
+                                    <p className="text-sm font-bold text-amber-900 dark:text-amber-200">
+                                        {openAdvances.count === 1 ? 'An earlier advance is still open.' : `${openAdvances.count} earlier advances are still open.`}
+                                    </p>
+                                    <p className="text-xs text-amber-800/90 dark:text-amber-200/80 mt-1">
+                                        {inr(openAdvances.total_unaccounted)} of cash already drawn has no bills or returned balance against it yet.
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="mt-3 rounded-lg bg-white/70 dark:bg-black/20 divide-y divide-amber-200/60 text-xs">
+                                {openAdvances.requests.map(r => (
+                                    <div key={r.request_no} className="flex items-center justify-between gap-3 px-3 py-2">
+                                        <span className="font-semibold text-text-primary">
+                                            {r.request_no}
+                                            {r.days_outstanding != null && <span className="text-text-tertiary font-normal"> · {r.days_outstanding}d open</span>}
+                                        </span>
+                                        <span className="text-text-secondary tabular-nums">
+                                            {inr(r.unaccounted)} unaccounted
+                                            {r.accounted_pct != null && ` · ${r.accounted_pct}% accounted`}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                            <p className="mt-3 text-xs font-semibold text-amber-900 dark:text-amber-200">
+                                Settle those first if you can. Raise this anyway only if the new float is genuinely separate.
+                            </p>
+                        </div>
+                    )}
+
                     {error && <p className="text-sm text-red-600">{error}</p>}
                 </div>
 
                 <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border bg-surface-elevated">
                     <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-text-secondary hover:bg-muted rounded-xl">Cancel</button>
-                    <button onClick={handleSubmit} disabled={saving || uploading}
-                        className="inline-flex items-center gap-1.5 px-5 py-2 bg-primary text-white rounded-xl text-sm font-bold hover:bg-primary/90 disabled:opacity-50">
-                        {saving && <Loader2 className="w-4 h-4 animate-spin" />} Submit request
-                    </button>
+                    {openAdvances ? (
+                        <button onClick={() => handleSubmit(true)} disabled={saving || uploading}
+                            className="inline-flex items-center gap-1.5 px-5 py-2 bg-amber-600 text-white rounded-xl text-sm font-bold hover:bg-amber-700 disabled:opacity-50">
+                            {saving && <Loader2 className="w-4 h-4 animate-spin" />} Raise anyway
+                        </button>
+                    ) : (
+                        <button onClick={() => handleSubmit()} disabled={saving || uploading}
+                            className="inline-flex items-center gap-1.5 px-5 py-2 bg-primary text-white rounded-xl text-sm font-bold hover:bg-primary/90 disabled:opacity-50">
+                            {saving && <Loader2 className="w-4 h-4 animate-spin" />} Submit request
+                        </button>
+                    )}
                 </div>
             </div>
         </div>,
