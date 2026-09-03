@@ -330,7 +330,7 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
             }
 
             // For cross-level changes (property ↔ org), refetch all users
-            const ORG_LEVEL_ROLES = ['org_super_admin'];
+            const ORG_LEVEL_ROLES = ['org_super_admin', 'ops_super_admin'];
             const wasPropertyLevel = !!user?.propertyRole && !user?.orgRole;
             const wasOrgLevel = !!user?.orgRole;
             const isNowOrgLevel = ORG_LEVEL_ROLES.includes(newRole);
@@ -390,7 +390,7 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
 
     const roleOptions = propertyId
         ? ['property_admin', 'staff', 'mst', 'security', 'soft_service_manager', 'tenant']
-        : ['org_super_admin', 'property_admin', 'staff', 'mst', 'security', 'soft_service_manager', 'super_tenant', 'tenant'];
+        : ['org_super_admin', 'ops_super_admin', 'property_admin', 'staff', 'mst', 'security', 'soft_service_manager', 'super_tenant', 'tenant'];
 
     const formatRole = (role: string) => {
         if (role === 'tenant') return 'Client';

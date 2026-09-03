@@ -6,7 +6,7 @@ import {
     Search, Plus, Filter, LogOut, ChevronRight, MapPin, Edit, Trash2, X, Check, UsersRound,
     Coffee, IndianRupee, FileDown, ChevronDown, Fuel, Menu, Upload, FileBarChart, Zap, Package, ClipboardCheck, Scan, Key,
     AlertCircle, CheckCircle2, Clock, GitBranch, DoorOpen, MessageCircle, Send, Loader2, CalendarDays, Calendar, Wrench, ShoppingCart, Sun, Moon, Droplets, TrendingUp, Smartphone,
-    MessageSquarePlus, Bot, Gauge
+    MessageSquarePlus, Bot, Gauge, Cpu, FolderLock
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
@@ -37,6 +37,7 @@ import PropertyFeaturesModal from './PropertyFeaturesModal';
 import EscalationHierarchyBuilder from '@/frontend/components/escalation/EscalationHierarchyBuilder';
 import AdminRoomManager from '@/frontend/components/meeting-rooms/AdminRoomManager';
 import PPMModule from '@/frontend/components/ppm/PPMModule';
+import DocumentBank from '@/frontend/components/audit/DocumentBank';
 import VendorManagement from '@/frontend/components/vendors/VendorManagement';
 import { UniversalSearch } from '@/frontend/components/shared/UniversalSearch';
 import TicketFlowMap from '../ops/TicketFlowMap';
@@ -53,9 +54,34 @@ import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
 import OrgProgressTracker from '@/frontend/components/org-efficiency/OrgProgressTracker';
 import OrgEfficiencyMeter from '@/frontend/components/org-efficiency/OrgEfficiencyMeter';
 import CommandCenter from '@/frontend/components/dashboard/command-center/CommandCenter';
+import AgentConsole from '@/frontend/components/agents/AgentConsole';
+import AgentPulse from '@/frontend/components/agents/AgentPulse';
+import type { ModuleKey } from '@/frontend/types/agentRuntime';
 
 // Types
-type Tab = 'overview' | 'properties' | 'requests' | 'reports' | 'visitors' | 'settings' | 'profile' | 'revenue' | 'users' | 'diesel_logger' | 'diesel' | 'electricity_logger' | 'electricity' | 'stock_reports' | 'checklist' | 'super_tenants' | 'escalation' | 'rooms' | 'ppm' | 'vendors' | 'procurement' | 'roster' | 'water_logger' | 'water' | 'guest_experience' | 'ai_tickets' | 'org_progress' | 'org_efficiency';
+type Tab = 'overview' | 'properties' | 'requests' | 'reports' | 'visitors' | 'settings' | 'profile' | 'revenue' | 'users' | 'diesel_logger' | 'diesel' | 'electricity_logger' | 'electricity' | 'stock_reports' | 'checklist' | 'super_tenants' | 'escalation' | 'rooms' | 'ppm' | 'vendors' | 'procurement' | 'roster' | 'water_logger' | 'water' | 'guest_experience' | 'ai_tickets' | 'org_progress' | 'org_efficiency' | 'agent_console' | 'document_bank';
+
+/**
+ * AGENT PULSE MOUNTS — tab -> canonical module slug.
+ *
+ * `oem_agent_runs.module` is free text with no CHECK, so a strip mounted with a
+ * slug nothing ever writes renders empty forever and reports no error. This map
+ * is the only place a slug is typed in this file: `satisfies Partial<Record<Tab,
+ * ModuleKey>>` makes both halves checked — an unknown tab name or a module slug
+ * that is not in AGENT_MODULES (frontend/types/agentRuntime.ts, the one
+ * canonical vocabulary) is a COMPILE ERROR, not a silently dead strip.
+ */
+const AGENT_PULSE_BY_TAB = {
+    procurement: 'procurement',
+    roster: 'roster',
+    requests: 'tickets',
+    reports: 'reports',
+    diesel: 'diesel',
+    electricity: 'electricity',
+    checklist: 'sop',
+    ppm: 'ppm',
+    vendors: 'vendors',
+} as const satisfies Partial<Record<Tab, ModuleKey>>;
 
 interface Property {
     id: string;
@@ -197,7 +223,9 @@ const OrgAdminDashboard = () => {
     // Restore showRequestsList, filter, and selectedPropertyId from URL on mount/back navigation
     useEffect(() => {
         const tab = searchParams.get('tab') as Tab;
-        if (tab) setActiveTab(tab);
+        // No ?tab= means overview: `/{orgId}/dashboard` is the board. Leaving the
+        // previous tab in place made a bare dashboard link a no-op on back navigation.
+        setActiveTab(tab || 'overview');
         
         const filter = searchParams.get('filter');
         if (filter) setPendingStatusFilter(filter);
@@ -287,6 +315,82 @@ const OrgAdminDashboard = () => {
     const activeProperty = selectedPropertyId === 'all'
         ? null
         : properties.find(p => p.id === selectedPropertyId);
+
+    // Property selector pill + dropdown — shared between the per-tab header and the
+    // Dashboard/Overview header, so both scope the same way and never drift apart.
+    const renderPropertySelector = () => properties.length > 0 && (
+        <div className="hidden lg:block relative">
+            <button
+                onClick={() => setIsSelectorOpen(!isSelectorOpen)}
+                className="flex items-center gap-3 bg-surface-elevated border border-border rounded-xl px-4 py-2.5 hover:border-primary transition-all group min-w-[200px]"
+            >
+                <div className="w-6 h-6 rounded-lg bg-background flex items-center justify-center overflow-hidden">
+                    {activeProperty && activeProperty.image_url ? (
+                        <img src={activeProperty.image_url} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                        <Building2 className="w-3.5 h-3.5 text-text-tertiary" />
+                    )}
+                </div>
+                <span className="text-sm font-body font-medium text-text-primary flex-1 text-left">
+                    {selectedPropertyId === 'all' ? 'All Properties' : activeProperty?.name}
+                </span>
+                <ChevronDown className={`w-4 h-4 text-text-tertiary transition-transform ${isSelectorOpen ? 'rotate-180' : ''}`} />
+            </button>
+
+            <AnimatePresence>
+                {isSelectorOpen && (
+                    <>
+                        <div
+                            className="fixed inset-0 z-[60]"
+                            onClick={() => setIsSelectorOpen(false)}
+                        />
+                        <motion.div
+                            initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                            className="absolute right-0 mt-2 w-72 bg-surface-elevated rounded-2xl shadow-2xl border border-border z-[70] overflow-hidden"
+                        >
+                            <div className="p-2 border-b border-border">
+                                <button
+                                    onClick={() => { handlePropertyChange('all'); setIsSelectorOpen(false); }}
+                                    className={`w-full flex items-center gap-3 p-2 rounded-xl transition-colors ${selectedPropertyId === 'all' ? 'bg-primary text-text-inverse' : 'text-text-secondary hover:bg-background'}`}
+                                >
+                                    <div className="w-8 h-8 rounded-lg bg-background flex items-center justify-center">
+                                        <LayoutDashboard className="w-4 h-4" />
+                                    </div>
+                                    <div className="text-left">
+                                        <p className="text-xs font-black uppercase tracking-tight">All Properties</p>
+                                        <p className="text-[10px] text-text-tertiary font-body font-medium">{properties.length} Locations</p>
+                                    </div>
+                                </button>
+                            </div>
+                            <div className="max-h-64 overflow-y-auto p-2 space-y-1">
+                                {properties.map(prop => (
+                                    <button
+                                        key={prop.id}
+                                        onClick={() => { handlePropertyChange(prop.id); setIsSelectorOpen(false); }}
+                                        className={`w-full flex items-center gap-3 p-2 rounded-xl transition-colors ${selectedPropertyId === prop.id ? 'bg-primary text-text-inverse' : 'text-text-secondary hover:bg-background'}`}
+                                    >
+                                        <div className="w-8 h-8 rounded-lg bg-background flex items-center justify-center overflow-hidden">
+                                            {prop.image_url ? (
+                                                <img src={prop.image_url} alt="" className="w-full h-full object-cover" />
+                                            ) : (
+                                                <Building2 className="w-4 h-4 text-slate-400" />
+                                            )}
+                                        </div>
+                                        <div className="text-left overflow-hidden">
+                                            <p className="text-xs font-black uppercase tracking-tight truncate">{prop.name}</p>
+                                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{prop.code}</p>
+                                        </div>
+                                    </button>
+                                ))}
+                            </div>
+                        </motion.div>
+                    </>
+                )}
+            </AnimatePresence>
+        </div>
+    );
 
     const allPropertyIds = useMemo(() => properties.map(p => p.id), [properties]);
 
@@ -407,7 +511,7 @@ const OrgAdminDashboard = () => {
     // Restore tab from URL
     useEffect(() => {
         const tab = searchParams.get('tab');
-        if (tab && ['overview', 'properties', 'requests', 'reports', 'visitors', 'settings', 'profile', 'revenue', 'users', 'diesel_logger', 'diesel', 'electricity_logger', 'electricity', 'stock_reports', 'checklist', 'super_tenants', 'escalation', 'rooms', 'ppm', 'vendors', 'procurement', 'roster', 'water_logger', 'water', 'guest_experience'].includes(tab)) {
+        if (tab && ['overview', 'properties', 'requests', 'reports', 'visitors', 'settings', 'profile', 'revenue', 'users', 'diesel_logger', 'diesel', 'electricity_logger', 'electricity', 'stock_reports', 'checklist', 'super_tenants', 'escalation', 'rooms', 'ppm', 'vendors', 'procurement', 'roster', 'water_logger', 'water', 'guest_experience', 'agent_console'].includes(tab)) {
             setActiveTab(tab as Tab);
         }
     }, [searchParams]);
@@ -823,12 +927,14 @@ const OrgAdminDashboard = () => {
         setEscalationPropertyId(id);
         setRoomsPropertyId(id);
 
+        // `propertyId`, not `property`: that is the param the restore effect above
+        // reads, so the selector survives a reload or a back-navigation.
         const pId = id;
         const params = new URLSearchParams(window.location.search);
         if (pId !== 'all') {
-            params.set('property', pId);
+            params.set('propertyId', pId);
         } else {
-            params.delete('property');
+            params.delete('propertyId');
         }
         
         router.replace(`${window.location.pathname}?${params.toString()}`, { scroll: false });
@@ -863,31 +969,14 @@ const OrgAdminDashboard = () => {
         router.replace(`${window.location.pathname}?${params.toString()}`, { scroll: false });
     };
 
-    // COMMAND CENTER — the default super-admin surface (from the electricity
-    // branch). Gated on the tab rather than hard-coded `true`: an explicit
-    // ?tab= request falls through to the legacy layout below, which is where
-    // Organization Progress and Org Efficiency live. Hard-coding true would
-    // make those unreachable.
-    // NB: typed `boolean`, not a literal, so TS does not mark the legacy code
-    // below as unreachable — that resets control-flow narrowing and turns
-    // hundreds of dormant lines into spurious "possibly null" errors.
+    // COMMAND CENTER — the body of the Overview tab, and nothing else. This dashboard
+    // keeps its own chrome: the sidebar, the shared header, the tabs and the ?tab= URLs
+    // are untouched, and only the content of <main> swaps to the board on overview.
+    // NB: typed `boolean`, not a literal, so TS does not narrow `activeTab` inside the
+    // branches below — narrowing would turn the dormant `activeTab === 'overview'`
+    // comparisons into non-overlapping-type errors and reset control-flow analysis
+    // across hundreds of lines.
     const showCommandCenter: boolean = activeTab === 'overview';
-    if (showCommandCenter) {
-        return (
-            <CommandCenter
-                userName={user?.user_metadata?.full_name || 'Super Admin'}
-                userEmail={user?.email || ''}
-                orgId={org?.id ?? ''}
-            />
-        );
-    }
-
-    if (!org && !isLoading) return (
-        <div className="p-10 text-center">
-            <h2 className="text-xl font-bold text-red-600">Error Loading Dashboard</h2>
-            <p className="text-slate-600 mt-2">{errorMsg || 'Organization not found.'}</p>
-        </div>
-    );
 
     return (
         <div className="min-h-screen bg-background flex font-inter text-foreground">
@@ -1002,6 +1091,16 @@ const OrgAdminDashboard = () => {
                             >
                                 <TrendingUp className="w-4 h-4" />
                                 Org Efficiency
+                            </button>
+                            <button
+                                onClick={() => handleTabChange('agent_console')}
+                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'agent_console'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                    }`}
+                            >
+                                <Cpu className="w-4 h-4" />
+                                Agent Console
                             </button>
                             <button
                                 onClick={() => handleTabChange('requests')}
@@ -1193,6 +1292,19 @@ const OrgAdminDashboard = () => {
                                 <CalendarDays className="w-4 h-4" />
                                 PPM
                             </button>
+                            {/* The vault is reachable at PPM > Digital Audit > Document Bank —
+                                three stateful clicks with nothing on the way naming "documents".
+                                This is a direct entry to the same component, not a second copy. */}
+                            <button
+                                onClick={() => handleTabChange('document_bank')}
+                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'document_bank'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                    }`}
+                            >
+                                <FolderLock className="w-4 h-4" />
+                                Document Bank
+                            </button>
                             <button
                                 onClick={() => handleTabChange('escalation')}
                                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'escalation'
@@ -1306,7 +1418,38 @@ const OrgAdminDashboard = () => {
             />
 
             {/* Main Content */}
-            <main id="main-scroll-container" className={`flex-1 min-w-0 w-full lg:ml-72 bg-white transition-all duration-300 overflow-y-auto ${activeTab === 'overview' ? '' : activeTab === 'requests' ? 'pt-16 lg:pt-0 lg:p-12' : 'pt-16 lg:pt-0 p-4 md:p-8 lg:p-12'}`}>
+            <main id="main-scroll-container" className={`flex-1 min-w-0 w-full lg:ml-72 bg-white transition-all duration-300 overflow-y-auto ${activeTab === 'overview' ? 'p-4 md:p-6 lg:p-8' : activeTab === 'requests' ? 'pt-16 lg:pt-0 lg:p-12' : 'pt-16 lg:pt-0 p-4 md:p-8 lg:p-12'}`}>
+
+            {/* Overview IS the Command Center board — same tab, same URL, same chrome;
+                only what sits inside <main> changes. It gets its own thin header (not the
+                shared one below, which is skipped for this tab) so the property selector
+                that scopes every other tab is available here too — the board's cards read
+                the same selectedPropertyId via the propertyId prop. */}
+            {showCommandCenter ? (
+                <>
+                    <div className="flex items-center justify-between gap-4 mb-6">
+                        <div>
+                            <h1 className="text-2xl md:text-3xl font-display font-semibold text-text-primary tracking-tight">Dashboard</h1>
+                            <p className="hidden md:block text-text-tertiary text-xs font-body font-medium mt-1">
+                                Here&apos;s what&apos;s happening across your portfolio today.
+                            </p>
+                        </div>
+                        {renderPropertySelector()}
+                    </div>
+                    <CommandCenter
+                        userName={user?.user_metadata?.full_name || 'Super Admin'}
+                        userEmail={user?.email || ''}
+                        orgId={org?.id ?? ''}
+                        propertyId={selectedPropertyId === 'all' ? undefined : selectedPropertyId}
+                    />
+                </>
+            ) : !org && !isLoading ? (
+                <div className="p-10 text-center">
+                    <h2 className="text-xl font-bold text-red-600">Error Loading Dashboard</h2>
+                    <p className="text-slate-600 mt-2">{errorMsg || 'Organization not found.'}</p>
+                </div>
+            ) : (
+            <>
 
                 {/* Shared Header for all tabs except Overview (which has its own high-fidelity header) */}
                 {activeTab !== 'overview' && (
@@ -1327,79 +1470,7 @@ const OrgAdminDashboard = () => {
                         <div className="flex items-center gap-4">
 
                             {/* Property Selector for Requests/Other tabs */}
-                            {properties.length > 0 && (
-                                <div className="hidden lg:block relative">
-                                    <button
-                                        onClick={() => setIsSelectorOpen(!isSelectorOpen)}
-                                        className="flex items-center gap-3 bg-surface-elevated border border-border rounded-xl px-4 py-2.5 hover:border-primary transition-all group min-w-[200px]"
-                                    >
-                                        <div className="w-6 h-6 rounded-lg bg-background flex items-center justify-center overflow-hidden">
-                                            {activeProperty && activeProperty.image_url ? (
-                                                <img src={activeProperty.image_url} alt="" className="w-full h-full object-cover" />
-                                            ) : (
-                                                <Building2 className="w-3.5 h-3.5 text-text-tertiary" />
-                                            )}
-                                        </div>
-                                        <span className="text-sm font-body font-medium text-text-primary flex-1 text-left">
-                                            {selectedPropertyId === 'all' ? 'All Properties' : activeProperty?.name}
-                                        </span>
-                                        <ChevronDown className={`w-4 h-4 text-text-tertiary transition-transform ${isSelectorOpen ? 'rotate-180' : ''}`} />
-                                    </button>
-
-                                    <AnimatePresence>
-                                        {isSelectorOpen && (
-                                            <>
-                                                <div
-                                                    className="fixed inset-0 z-[60]"
-                                                    onClick={() => setIsSelectorOpen(false)}
-                                                />
-                                                <motion.div
-                                                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                                                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                                                    exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                                                    className="absolute right-0 mt-2 w-72 bg-surface-elevated rounded-2xl shadow-2xl border border-border z-[70] overflow-hidden"
-                                                >
-                                                    <div className="p-2 border-b border-border">
-                                                        <button
-                                                            onClick={() => { handlePropertyChange('all'); setIsSelectorOpen(false); }}
-                                                            className={`w-full flex items-center gap-3 p-2 rounded-xl transition-colors ${selectedPropertyId === 'all' ? 'bg-primary text-text-inverse' : 'text-text-secondary hover:bg-background'}`}
-                                                        >
-                                                            <div className="w-8 h-8 rounded-lg bg-background flex items-center justify-center">
-                                                                <LayoutDashboard className="w-4 h-4" />
-                                                            </div>
-                                                            <div className="text-left">
-                                                                <p className="text-xs font-black uppercase tracking-tight">All Properties</p>
-                                                                <p className="text-[10px] text-text-tertiary font-body font-medium">{properties.length} Locations</p>
-                                                            </div>
-                                                        </button>
-                                                    </div>
-                                                    <div className="max-h-64 overflow-y-auto p-2 space-y-1">
-                                                        {properties.map(prop => (
-                                                            <button
-                                                                key={prop.id}
-                                                                onClick={() => { handlePropertyChange(prop.id); setIsSelectorOpen(false); }}
-                                                                className={`w-full flex items-center gap-3 p-2 rounded-xl transition-colors ${selectedPropertyId === prop.id ? 'bg-primary text-text-inverse' : 'text-text-secondary hover:bg-background'}`}
-                                                            >
-                                                                <div className="w-8 h-8 rounded-lg bg-background flex items-center justify-center overflow-hidden">
-                                                                    {prop.image_url ? (
-                                                                        <img src={prop.image_url} alt="" className="w-full h-full object-cover" />
-                                                                    ) : (
-                                                                        <Building2 className="w-4 h-4 text-slate-400" />
-                                                                    )}
-                                                                </div>
-                                                                <div className="text-left overflow-hidden">
-                                                                    <p className="text-xs font-black uppercase tracking-tight truncate">{prop.name}</p>
-                                                                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{prop.code}</p>
-                                                                </div>
-                                                            </button>
-                                                        ))}
-                                                    </div>
-                                                </motion.div>
-                                            </>
-                                        )}
-                                    </AnimatePresence>
-                                </div>
-                            )}
+                            {renderPropertySelector()}
 
                             {/* Requests View Switcher */}
                             {activeTab === 'requests' && (
@@ -1487,7 +1558,16 @@ const OrgAdminDashboard = () => {
                                 isSummariesLoading={isSummariesLoading}
                             />
                         </div>
-                        {activeTab === 'procurement' && org && <ProcurementModule key="procurement-admin" orgId={org.id} isAdmin={true} properties={properties} />}
+                        {/* AGENT PROVIDENCE. Every module tab opens with one line saying which agentic
+                            employees are working this module and when they last moved. AgentPulse renders
+                            NOTHING when the runtime is unprovisioned or no agent claims the module, so it
+                            is safe on every tab and never invents a presence. */}
+                        {activeTab === 'procurement' && org && (
+                            <>
+                                <AgentPulse orgId={org.id} module={AGENT_PULSE_BY_TAB.procurement} consoleTab="agent_console" className="mb-3" />
+                                <ProcurementModule key="procurement-admin" orgId={org.id} isAdmin={true} properties={properties} />
+                            </>
+                        )}
                         {activeTab === 'roster' && selectedPropertyId === 'all' && (
                             <div className="flex flex-col items-center justify-center py-16 text-center">
                                 <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mb-4">
@@ -1497,7 +1577,12 @@ const OrgAdminDashboard = () => {
                                 <p className="text-sm text-gray-500 max-w-xs">Please select a specific property from the dropdown above to view the roster.</p>
                             </div>
                         )}
-                        {activeTab === 'roster' && selectedPropertyId !== 'all' && <RosterDashboard propertyId={selectedPropertyId} />}
+                        {activeTab === 'roster' && selectedPropertyId !== 'all' && (
+                            <>
+                                <AgentPulse orgId={org?.id} module={AGENT_PULSE_BY_TAB.roster} consoleTab="agent_console" className="mb-3" />
+                                <RosterDashboard propertyId={selectedPropertyId} />
+                            </>
+                        )}
                         {activeTab === 'water_logger' && selectedPropertyId === 'all' && (
                             <div className="flex flex-col items-center justify-center py-16 text-center">
                                 <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mb-4">
@@ -1534,6 +1619,10 @@ const OrgAdminDashboard = () => {
                         )}
                         {activeTab === 'org_progress' && <OrgProgressTracker key="org-progress-tab" />}
                         {activeTab === 'org_efficiency' && <OrgEfficiencyMeter key="org-efficiency-tab" />}
+                        {/* Agentic employee console — a TAB of this dashboard, not a route of its own.
+                            Registry, sandbox, live activity, uptime, reliability profile, reinforcement
+                            and credentials all live behind it. */}
+                        {activeTab === 'agent_console' && <AgentConsole key="agent-console-tab" orgId={org?.id ?? ''} />}
                         {activeTab === 'ai_tickets' && <AITicketsDashboard propertyId={selectedPropertyId === 'all' ? undefined : selectedPropertyId} />}
                         {activeTab === 'revenue' && <RevenueTab key="revenue-tab" properties={properties} selectedPropertyId={selectedPropertyId} />}
                         {activeTab === 'properties' && (
@@ -1550,6 +1639,12 @@ const OrgAdminDashboard = () => {
                             />
                         )}
                         <div className="w-full min-w-0 max-w-full overflow-x-hidden" style={{ display: activeTab === 'requests' ? 'block' : 'none' }}>
+                            {/* Gated on activeTab, not on the wrapper: this block stays mounted with
+                                display:none on every other tab, and an always-mounted pulse would keep
+                                polling from screens that are not showing it. */}
+                            {activeTab === 'requests' && (
+                                <AgentPulse orgId={org?.id} module={AGENT_PULSE_BY_TAB.requests} consoleTab="agent_console" className="mb-3" />
+                            )}
                             {requestsView === 'list' ? (
                                 <TicketsView
                                     propertyId={selectedPropertyId === 'all' ? undefined : selectedPropertyId}
@@ -1585,6 +1680,7 @@ const OrgAdminDashboard = () => {
 
                         {activeTab === 'reports' && org && (
                             <div key="reports-tab" className="space-y-6">
+                                <AgentPulse orgId={org.id} module={AGENT_PULSE_BY_TAB.reports} consoleTab="agent_console" />
                                 <ImportReportsView
                                     organizationId={org.id}
                                     propertyId={selectedPropertyId === 'all' ? undefined : selectedPropertyId}
@@ -1616,11 +1712,14 @@ const OrgAdminDashboard = () => {
                         )}
 
                         {activeTab === 'diesel' && (
-                            <DieselAnalyticsDashboard
-                                key="diesel-tab"
-                                propertyId={selectedPropertyId === 'all' ? undefined : selectedPropertyId}
-                                orgId={org?.id}
-                            />
+                            <>
+                                <AgentPulse orgId={org?.id} module={AGENT_PULSE_BY_TAB.diesel} consoleTab="agent_console" className="mb-3" />
+                                <DieselAnalyticsDashboard
+                                    key="diesel-tab"
+                                    propertyId={selectedPropertyId === 'all' ? undefined : selectedPropertyId}
+                                    orgId={org?.id}
+                                />
+                            </>
                         )}
 
                         {activeTab === 'electricity_logger' && selectedPropertyId === 'all' && (
@@ -1637,12 +1736,15 @@ const OrgAdminDashboard = () => {
                         )}
 
                         {activeTab === 'electricity' && (
-                            <ElectricityAnalyticsDashboard
-                                key="electricity-tab"
-                                propertyId={selectedPropertyId === 'all' ? undefined : selectedPropertyId}
-                                orgId={org?.id}
-                                properties={properties}
-                            />
+                            <>
+                                <AgentPulse orgId={org?.id} module={AGENT_PULSE_BY_TAB.electricity} consoleTab="agent_console" className="mb-3" />
+                                <ElectricityAnalyticsDashboard
+                                    key="electricity-tab"
+                                    propertyId={selectedPropertyId === 'all' ? undefined : selectedPropertyId}
+                                    orgId={org?.id}
+                                    properties={properties}
+                                />
+                            </>
                         )}
 
                         {activeTab === 'stock_reports' && org && (
@@ -1661,6 +1763,7 @@ const OrgAdminDashboard = () => {
 
                         {activeTab === 'checklist' && (
                             <div key="checklist-tab" className="w-full min-h-screen bg-slate-50/50">
+                                <AgentPulse orgId={org?.id} module={AGENT_PULSE_BY_TAB.checklist} consoleTab="agent_console" className="mb-3" />
                                 <SOPDashboard
                                     propertyId={checklistPropertyId === 'all' ? undefined : checklistPropertyId}
                                     propertyIds={checklistPropertyId === 'all' ? allPropertyIds : undefined}
@@ -1724,6 +1827,7 @@ const OrgAdminDashboard = () => {
 
                         {activeTab === 'ppm' && org && (
                             <div className="w-full min-h-screen bg-white">
+                                <AgentPulse orgId={org.id} module={AGENT_PULSE_BY_TAB.ppm} consoleTab="agent_console" className="mb-3" />
                                 <PPMModule
                                     organizationId={org.id}
                                     propertyId={selectedPropertyId !== 'all' ? selectedPropertyId : undefined}
@@ -1732,8 +1836,18 @@ const OrgAdminDashboard = () => {
                             </div>
                         )}
 
+                        {activeTab === 'document_bank' && org && (
+                            <div className="w-full min-h-screen bg-white">
+                                <DocumentBank
+                                    organizationId={org.id}
+                                    propertyId={selectedPropertyId !== 'all' ? selectedPropertyId : ''}
+                                />
+                            </div>
+                        )}
+
                         {activeTab === 'vendors' && org && (
                             <div className="w-full min-h-screen bg-white">
+                                <AgentPulse orgId={org.id} module={AGENT_PULSE_BY_TAB.vendors} consoleTab="agent_console" className="mb-3" />
                                 <VendorManagement organizationId={org.id} />
                             </div>
                         )}
@@ -1824,9 +1938,11 @@ const OrgAdminDashboard = () => {
                         )}
                     </motion.div>
                 </AnimatePresence>
+            </>
+            )}
             </main>
 
-            {/* Modals */}
+            {/* Modals — outside the tab branches so they stay mounted on every tab */}
             {
                 (showCreatePropModal || editingProperty) && (
                     <PropertyModal

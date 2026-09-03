@@ -53,10 +53,11 @@ const days = (iso: string | null): number =>
     iso ? Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000)) : 0;
 
 export async function GET(
-    _request: NextRequest,
+    request: NextRequest,
     { params }: { params: Promise<{ orgId: string }> },
 ) {
     const { orgId } = await params;
+    const propertyId = new URL(request.url).searchParams.get('property_id');
 
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
@@ -80,12 +81,18 @@ export async function GET(
         }
     }
 
-    const { data, error } = await supabaseAdmin
+    let query = supabaseAdmin
         .from('material_requests')
         .select('id, ticket_id, property_id, status, created_at, assignee_uid, budget_type')
         .eq('organization_id', orgId)
         .order('created_at', { ascending: false })
         .range(0, HARD_LIMIT - 1);
+    // Scoped to one property for the command-center board's property selector — by_property
+    // below is a top-N ranking across the whole org, too coarse to derive a single site's
+    // exact totals from, so this filters at the source instead.
+    if (propertyId) query = query.eq('property_id', propertyId);
+
+    const { data, error } = await query;
 
     if (error) {
         // Table absent = the procurement schema was never applied on this environment.

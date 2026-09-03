@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
         const adminClient = createAdminClient()
 
         // Org-level roles that belong in organization_memberships
-        const ORG_LEVEL_ROLES = ['org_super_admin', 'super_tenant'];
+        const ORG_LEVEL_ROLES = ['org_super_admin', 'super_tenant', 'ops_super_admin'];
         // Property-level roles that belong in property_memberships
         const PROPERTY_LEVEL_ROLES = ['property_admin', 'staff', 'mst', 'security', 'tenant'];
 

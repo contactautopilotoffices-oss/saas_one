@@ -21,6 +21,12 @@ interface TicketsPayload {
   pending_validation: number;
   sla_breached: number;
   urgent_open: number;
+  /** Per-property breakdown — the route does not compute sla_breached per property, so a
+   *  scoped view's `breached` is always 0 (matches the legacy dashboard's own behavior). */
+  properties?: Array<{
+    property_id: string; open: number; in_progress: number; pending_validation: number;
+    resolved: number; urgent_open: number; total: number;
+  }>;
 }
 
 interface MailboxPayload {
@@ -55,6 +61,8 @@ interface MrPayload {
 interface AopPayload {
   provisioned: boolean;
   current: { month: string; budget: number; actual: number; saving: number; utilisation_pct: number | null } | null;
+  /** Per-site breakdown for the current month — used to scope Budget Health to one property. */
+  sites?: Array<{ property_id: string | null; budget: number; actual: number; saving: number; utilisation_pct: number | null }>;
 }
 
 /* ---------- view shapes consumed by the cards ---------- */
@@ -111,7 +119,13 @@ export interface QueryState {
 
 const shortAddress = (a: string | null) => (a || 'unknown').split('@')[0];
 
-export function useCommandCenterData(orgId: string | null) {
+/**
+ * @param propertyId When set, scopes the cards that carry a per-property breakdown
+ *   (tickets, budget, material requests) to that one property instead of the whole
+ *   portfolio. Mailbox and Purchase Orders stay org-wide: neither mailbox_threads nor
+ *   po_payments carries a property_id, so there is nothing to scope them by yet.
+ */
+export function useCommandCenterData(orgId: string | null, propertyId: string | null = null) {
   const ticketsQ = useWidgetData<TicketsPayload>(
     orgId ? `/api/organizations/${orgId}/tickets-summary?period=all` : null, 5 * 60_000);
   const mailboxQ = useWidgetData<MailboxPayload>(
@@ -119,20 +133,27 @@ export function useCommandCenterData(orgId: string | null) {
   const accountsQ = useWidgetData<AccountsPayload>(
     orgId ? `/api/accounts/summary?org_id=${orgId}&period=month` : null, 5 * 60_000);
   const mrQ = useWidgetData<MrPayload>(
-    orgId ? `/api/organizations/${orgId}/material-requests-summary` : null, 2 * 60_000);
+    orgId ? `/api/organizations/${orgId}/material-requests-summary${propertyId ? `?property_id=${propertyId}` : ''}` : null, 2 * 60_000);
   const aopQ = useWidgetData<AopPayload>(
     orgId ? `/api/aop/summary?org_id=${orgId}` : null, 5 * 60_000);
 
-  /* Tickets at Risk (PriorityActions) */
+  /* Tickets at Risk (PriorityActions) — scoped to one property by looking up its slice of
+     the same org-wide payload, same as the legacy dashboard's displayTicketStats. */
   let tickets: TicketsRisk | null = null;
   if (ticketsQ.data) {
     const d = ticketsQ.data;
-    const active = d.open_tickets + d.in_progress + d.pending_validation;
-    tickets = {
-      atRisk: d.urgent_open,
-      breached: d.sla_breached,
-      withinSla: Math.max(0, active - d.sla_breached),
-    };
+    if (propertyId) {
+      const p = d.properties?.find((x) => x.property_id === propertyId);
+      const active = (p?.open ?? 0) + (p?.in_progress ?? 0) + (p?.pending_validation ?? 0);
+      tickets = { atRisk: p?.urgent_open ?? 0, breached: 0, withinSla: active };
+    } else {
+      const active = d.open_tickets + d.in_progress + d.pending_validation;
+      tickets = {
+        atRisk: d.urgent_open,
+        breached: d.sla_breached,
+        withinSla: Math.max(0, active - d.sla_breached),
+      };
+    }
   }
 
   /* Purchase Mailbox (PriorityActions) + Mail Digest (BottomRow) — one endpoint, shared cache */
@@ -190,12 +211,24 @@ export function useCommandCenterData(orgId: string | null) {
 
   /* Budget Health (PriorityActions) + Budget vs Actual side column (BottomRow) */
   let budget: BudgetStats | null = null;
-  const cur = aopQ.data?.provisioned ? aopQ.data.current : null;
-  if (cur) {
-    budget = {
-      utilizedPct: Math.round(cur.utilisation_pct ?? 0),
-      overspendRisk: inr(Math.max(0, -cur.saving), { compact: true }),
-    };
+  if (propertyId) {
+    const site = aopQ.data?.provisioned
+      ? aopQ.data.sites?.find((s) => s.property_id === propertyId)
+      : null;
+    if (site) {
+      budget = {
+        utilizedPct: Math.round(site.utilisation_pct ?? 0),
+        overspendRisk: inr(Math.max(0, -site.saving), { compact: true }),
+      };
+    }
+  } else {
+    const cur = aopQ.data?.provisioned ? aopQ.data.current : null;
+    if (cur) {
+      budget = {
+        utilizedPct: Math.round(cur.utilisation_pct ?? 0),
+        overspendRisk: inr(Math.max(0, -cur.saving), { compact: true }),
+      };
+    }
   }
 
   return {
