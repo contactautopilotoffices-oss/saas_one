@@ -228,206 +228,31 @@ export default function OnboardingPage() {
         setError('');
 
         try {
-            // Use the user from AuthContext directly — avoids session issues with Google OAuth
-            // where the server-side session exchange may not be reflected in client getUser()
-            const authUser = user;
-
             // Resolve Property ID
             let finalPropId = selectedProperty.id;
             if (finalPropId === 'default') {
                 const { data: realProp } = await supabase.from('properties').select('id').eq('organization_id', AUTOPILOT_ORG_ID).limit(1).maybeSingle();
                 if (realProp) finalPropId = realProp.id;
-                else throw new Error("No properties found for this organization.");
             }
 
-            // Ensure Org ID is resolved before insertion
-            let targetOrgId = AUTOPILOT_ORG_ID;
-            if (!targetOrgId || targetOrgId === 'undefined') {
-                const { data: org } = await supabase.from('organizations').select('id').or('code.eq.autopilot,name.ilike.%autopilot%').limit(1).maybeSingle();
-                if (org) targetOrgId = org.id;
-            }
-
-            // 1️⃣ Insert property membership
-            const finalRole = (selectedRole === 'staff' && selectedSkills.includes('soft_service_manager'))
-                ? 'soft_service_manager'
-                : selectedRole;
-
-            const { error: membershipError } = await supabase
-                .from('property_memberships')
-                .insert({
-                    user_id: authUser.id,
-                    organization_id: targetOrgId,
-                    property_id: finalPropId,
-                    role: finalRole as any,
-                    is_active: true
-                });
-
-            if (membershipError) {
-                // Ignore duplicate key errors, throw others
-                if (!membershipError.message.toLowerCase().includes('duplicate key')) {
-                    console.error('Membership insert failed:', {
-                        message: membershipError.message,
-                        code: (membershipError as any).code,
-                        details: (membershipError as any).details,
-                        hint: (membershipError as any).hint,
-                    });
-                    throw membershipError;
-                }
-            }
-
-            // 1.2️⃣ If procurement role, ALSO insert into organization_memberships for global access
-            if (selectedRole === 'procurement') {
-                const { error: orgMemError } = await supabase
-                    .from('organization_memberships')
-                    .insert({
-                        user_id: authUser.id,
-                        organization_id: targetOrgId,
-                        role: 'procurement'
-                    });
-
-                if (orgMemError && !orgMemError.message.toLowerCase().includes('duplicate key')) {
-                    console.error('Org-level membership failed for procurement:', orgMemError);
-                }
-            }
-
-            // 1.3️⃣ BD (CRM) roles are organization-scoped — also grant org-level
-            //       membership so CRM access resolves by organization, not property.
-            if (selectedRole === 'bd_rep' || selectedRole === 'bd_admin') {
-                const { error: bdOrgErr } = await supabase
-                    .from('organization_memberships')
-                    .insert({
-                        user_id: authUser.id,
-                        organization_id: targetOrgId,
-                        role: selectedRole,
-                        is_active: true
-                    });
-                if (bdOrgErr && !bdOrgErr.message.toLowerCase().includes('duplicate key')) {
-                    console.error('Org-level membership failed for BD role:', bdOrgErr);
-                }
-            }
-
-            // 1.5️⃣ Insert into vendors if role is vendor
-            if (selectedRole === 'vendor') {
-                const { data: dbUser } = await supabase
-                    .from('users')
-                    .select('full_name')
-                    .eq('id', authUser.id)
-                    .maybeSingle();
-
-                const { error: vendorError } = await supabase
-                    .from('vendors')
-                    .insert({
-                        user_id: authUser.id,
-                        property_id: finalPropId,
-                        shop_name: `${userName}'s Shop`, // Temporary name
-                        vendor_name: dbUser?.full_name || userName,
-                        commission_rate: 10, // Default 10%
-                        status: 'active'
-                    });
-
-                if (vendorError) {
-                    // Ignore duplicate key errors
-                    if (!vendorError.message.toLowerCase().includes('duplicate key')) {
-                        console.error('Vendor record creation failed:', vendorError);
-                        throw vendorError;
-                    }
-                }
-            }
-
-            // 1.7️⃣ Insert into mst_skills (shared skill mapping)
-            if (selectedSkills.length > 0) {
-                const skillsToInsert = selectedSkills.map(code => ({
-                    user_id: authUser.id,
-                    skill_code: code
-                }));
-                const { error: mstSkillError } = await supabase
-                    .from('mst_skills')
-                    .insert(skillsToInsert);
-
-                if (mstSkillError && !mstSkillError.message.toLowerCase().includes('duplicate key')) {
-                    console.error('MST Skills insert failed:', mstSkillError);
-                }
-            }
-
-            // 2️⃣ Insert Resolver Stats (if skills selected)
-            // NOTE: "Staff Technical" accounts are treated as BMS accounts and are NOT stored in resolver_stats.
-            // Strict Filter based on User Request:
-            // MST -> technical, plumbing, vendor
-            // Staff -> soft_services
-            if (selectedSkills.length > 0) {
-                const VALID_MST_SKILLS = ['technical', 'plumbing', 'vendor'];
-                const VALID_STAFF_SKILLS = ['soft_services'];
-
-                const skillsForResolver = selectedRole === 'mst'
-                    ? selectedSkills.filter(skill => VALID_MST_SKILLS.includes(skill))
-                    : (selectedRole === 'staff' ? selectedSkills.filter(skill => VALID_STAFF_SKILLS.includes(skill)) : []);
-
-                if (skillsForResolver.length > 0) {
-                    // Fetch skill group IDs (Global/Active check)
-                    const { data: skillGroups, error: skillError } = await supabase
-                        .from('skill_groups')
-                        .select('id, code')
-                        .eq('is_active', true)
-                        .in('code', skillsForResolver);
-
-                    if (skillError) {
-                        console.error('Failed to fetch skill groups:', JSON.stringify(skillError, null, 2));
-                    } else if (skillGroups && skillGroups.length > 0) {
-                        const statsToInsert = skillGroups.map(sg => ({
-                            user_id: authUser.id,
-                            property_id: finalPropId,
-                            skill_group_id: sg.id,
-                            current_floor: 1,
-                            avg_resolution_minutes: 60,
-                            total_resolved: 0,
-                            is_available: true
-                        }));
-
-                        const { error: statsError } = await supabase
-                            .from('resolver_stats')
-                            .insert(statsToInsert);
-
-                        if (statsError && !statsError.message.toLowerCase().includes('duplicate key')) {
-                            console.error('Failed to insert resolver stats:', statsError);
-                        }
-                    }
-                }
-            }
-
-            // 3️⃣ Update user profile with phone (if filled) and onboarding status
-            const nameFromMetadata = authUser.user_metadata?.full_name || authUser.user_metadata?.name;
-            const profileUpdate: any = { 
-                onboarding_completed: true,
-                // Ensure name is ALWAYS saved to the DB, plugging the Google OAuth loophole
-                ...(nameFromMetadata ? { full_name: nameFromMetadata } : {})
-            };
-            
-            const cleanPhone = phoneNumber.trim();
-            if (cleanPhone.length >= 10) {
-                profileUpdate.phone = cleanPhone;
-            }
-
-            const { error: userUpdateError } = await supabase
-                .from('users')
-                .update(profileUpdate)
-                .eq('id', authUser.id);
-
-            if (userUpdateError) {
-                console.error('User update failed:', userUpdateError);
-                throw userUpdateError;
-            }
-
-            // Sync with metadata for fallback
-            await supabase.auth.updateUser({
-                data: { onboarding_completed: true }
+            const response = await fetch('/api/onboarding/complete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    selectedPropertyId: finalPropId,
+                    selectedRole,
+                    selectedSkills,
+                    phoneNumber,
+                    userName
+                })
             });
 
-            // 4️⃣ Send welcome WhatsApp message if phone was provided
-            if (cleanPhone.length >= 10) {
-                fetch('/api/users/send-welcome', { method: 'POST' }).catch(() => {});
+            const result = await response.json();
+            if (!response.ok) {
+                throw new Error(result.error || 'Failed to complete setup.');
             }
 
-            // 5️⃣ Refresh membership cache so the new role is picked up immediately
+            // Refresh membership cache so state is updated
             await refreshMembership();
 
             setShowFireworks(true);
@@ -442,8 +267,8 @@ export default function OnboardingPage() {
 
     const handleFireworksComplete = () => {
         setShowFireworks(false);
-        // Onboarding is only for sign up. After completion, go to login.
-        router.push('/login');
+        // After onboarding completion, user is directed to the Waiting for Approval screen
+        router.push('/waiting-approval');
     };
 
     const nextStep = () => {

@@ -38,6 +38,18 @@ export default function OrgLayout({
             try {
                 const supabase = createClient();
 
+                // Check user approval status
+                const { data: userProfile } = await supabase
+                    .from('users')
+                    .select('is_master_admin, is_approved, approval_status')
+                    .eq('id', user.id)
+                    .maybeSingle();
+
+                if (!userProfile?.is_master_admin && (userProfile?.is_approved === false || userProfile?.approval_status === 'pending')) {
+                    router.replace('/waiting-approval');
+                    return;
+                }
+
                 // Check if user has organization membership for this org
                 const { data: membership, error } = await supabase
                     .from('organization_memberships')

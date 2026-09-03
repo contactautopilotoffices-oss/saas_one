@@ -48,10 +48,23 @@ const DEFAULT_WHATSAPP_TEMPLATES: Record<string, WhatsAppTemplate> = {
     // CRM Leads
     lead_created: { campaign_name: 'crm_lead_created_v1', params: ['user_name', 'company_name', 'contact_person', 'phone', 'source', 'property_interest'] },
     lead_assigned: { campaign_name: 'crm_lead_assigned_v1', params: ['user_name', 'company_name', 'contact_person', 'phone', 'property_interest', 'next_followup'] },
-    reminder_lead_followup: { campaign_name: 'reminder_lead_followup', params: ['company_name', 'contact_person', 'followup_date'] }
+    reminder_lead_followup: { campaign_name: 'reminder_lead_followup', params: ['company_name', 'contact_person', 'followup_date'] },
+
+    // User Onboarding & Approvals
+    user_pending_approval: { campaign_name: 'user_pending_approval_v1', params: ['user_name', 'applicant_name', 'email', 'property', 'role'] },
+    user_approved: { campaign_name: 'user_approved_v1', params: ['user_name', 'property', 'approver_name'] }
 };
 
 const TEMPLATE_CATEGORIES = [
+    {
+        title: 'User Onboarding & Approvals',
+        icon: UserCheck,
+        color: 'text-emerald-600 bg-emerald-50',
+        events: [
+            { key: 'user_pending_approval', label: '1. New User Registration Pending Approval (To Admins)' },
+            { key: 'user_approved', label: '2. User Approval Confirmation (To Applicant)' }
+        ]
+    },
     {
         title: 'Monthly Requisitions & Procurement',
         icon: FileSpreadsheet,

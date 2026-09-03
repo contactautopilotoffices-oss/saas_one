@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
             userId = newAuth.user.id;
         }
 
-        // 3. Upsert user in `users` table
+        // 3. Upsert user in `users` table with pending approval
         const { error: userUpsertErr } = await supabaseAdmin
             .from('users')
             .upsert({
@@ -78,14 +78,16 @@ export async function POST(request: NextRequest) {
                 email: cleanEmail,
                 full_name: name,
                 phone: cleanPhone || null,
-                onboarding_completed: true
+                onboarding_completed: true,
+                is_approved: false,
+                approval_status: 'pending'
             }, { onConflict: 'id' });
 
         if (userUpsertErr) {
             console.error('[Tenant Signup] User table upsert error:', userUpsertErr);
         }
 
-        // 4. Create property membership (tenant is strictly a property-level role)
+        // 4. Create property membership (is_active: false pending Property Admin approval)
         const { error: propMemErr } = await supabaseAdmin
             .from('property_memberships')
             .upsert({
@@ -93,18 +95,31 @@ export async function POST(request: NextRequest) {
                 property_id: propertyId,
                 organization_id: property.organization_id,
                 role: 'tenant',
-                is_active: true
+                is_active: false
             }, { onConflict: 'user_id,property_id' });
 
         if (propMemErr && !propMemErr.message?.toLowerCase().includes('duplicate')) {
             console.error('[Tenant Signup] Property membership error:', propMemErr);
         }
 
-        const redirectUrl = `/property/${propertyId}/tenant`;
+        // 5. Notify Property Admin and configured omnichannel recipients
+        try {
+            const { NotificationService } = await import('@/backend/services/NotificationService');
+            await NotificationService.afterUserRegisteredPendingApproval({
+                userId,
+                propertyId,
+                organizationId: property.organization_id,
+                requestedRole: 'tenant'
+            });
+        } catch (notifErr) {
+            console.error('[Tenant Signup] Notification error:', notifErr);
+        }
+
+        const redirectUrl = `/waiting-approval`;
 
         return NextResponse.json({
             success: true,
-            message: `Account set up successfully for ${property.name}!`,
+            message: `Registration submitted! Awaiting administrator approval for ${property.name}.`,
             email: cleanEmail,
             redirectUrl
         }, { status: 200 });

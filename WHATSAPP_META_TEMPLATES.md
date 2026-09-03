@@ -1233,6 +1233,69 @@ Please follow up with the pending vendor partners for timely submission.
 
 ---
 
+## 10. User Onboarding & Approvals Suite
+
+### Template 25: `user_pending_approval_v1` (New User Registration Pending Approval)
+*(Sent to Org Super Admins and Property Admins immediately when a new user registers and completes onboarding)*
+
+- **Template Name:** `user_pending_approval_v1`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Text` &rarr; `New User Awaiting Approval 🔔`
+- **Body:**
+```text
+Hello {{1}},
+
+A new user has completed onboarding and is awaiting your review:
+
+👤 Name: {{2}}
+📧 Email: {{3}}
+🏢 Property: {{4}}
+💼 Requested Role: {{5}}
+
+Please review and approve this user in your User Management dashboard.
+```
+- **Footer:** `AutoPilot User Management`
+- **Button Type:** `Call to Action (Website URL)`
+  - **Button Text:** `Review User`
+  - **URL Type:** `Static` &rarr; `https://autopilotoffices.com/dashboard`
+- **Sample Values:**
+  - `{{1}}`: `Saniel Golechha`
+  - `{{2}}`: `Amith M`
+  - `{{3}}`: `amith.m@worksquare.in`
+  - `{{4}}`: `SS Plaza`
+  - `{{5}}`: `Property Admin`
+
+---
+
+### Template 26: `user_approved_v1` (User Account Approved Confirmation)
+*(Sent to the applicant once an administrator approves their account to notify them of full dashboard access)*
+
+- **Template Name:** `user_approved_v1`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Text` &rarr; `Account Approved! 🎉`
+- **Body:**
+```text
+Hello {{1}},
+
+Great news! Your account for {{2}} has been reviewed and approved by {{3}}.
+
+You now have full access to your workplace dashboard.
+
+Click below to sign in to your dashboard.
+```
+- **Footer:** `AutoPilot Offices`
+- **Button Type:** `Call to Action (Website URL)`
+  - **Button Text:** `Log In to Dashboard`
+  - **URL Type:** `Static` &rarr; `https://autopilotoffices.com/login`
+- **Sample Values:**
+  - `{{1}}`: `Amith M`
+  - `{{2}}`: `SS Plaza`
+  - `{{3}}`: `Saniel Golechha`
+
+---
+
 ### Automated Voice Call Alert Prompt (Plivo / Bolna AI)
 When the **Voice** channel toggle is activated in Omnichannel settings:
 - **Neural Speaker Voice:** `Polly.Aditi` (Indian English Female) or `Polly.Raveena`

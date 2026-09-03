@@ -50,6 +50,12 @@ export default function PropertyLayout({
                     return;
                 }
 
+                // 1.5 USER APPROVAL GATE
+                if (membership?.is_approved === false) {
+                    router.replace('/waiting-approval');
+                    return;
+                }
+
                 // 2. DIRECT PROPERTY MEMBERSHIP (Pre-fetched)
                 const directMatch = membership?.properties.find(p => p.id === propertyId);
                 if (directMatch) {

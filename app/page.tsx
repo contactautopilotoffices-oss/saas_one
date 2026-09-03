@@ -47,6 +47,12 @@ export default function Home() {
                     return;
                 }
 
+                // 1.5 Check approval status: unapproved users must wait for admin approval
+                if (!membership?.is_master_admin && membership?.is_approved === false) {
+                    router.replace('/waiting-approval');
+                    return;
+                }
+
                 // 2. CRM guard — single source of truth (mirrors the login handler).
                 // Business-development (CRM) users must ALWAYS land on the CRM view and
                 // NEVER fall through to an FMS dashboard. If the user has a CRM role and

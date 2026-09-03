@@ -1,5 +1,6 @@
--- Migration: 20260903_user_approval_flow.sql
--- Adds user approval workflow fields and migrates existing users to approved.
+-- ========================================================
+-- USER APPROVAL FLOW & AUDIT TRAIL MIGRATION
+-- ========================================================
 
 -- 1. Add approval columns to public.users
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS is_approved boolean DEFAULT false;
@@ -8,34 +9,34 @@ ALTER TABLE public.users ADD COLUMN IF NOT EXISTS approved_by uuid REFERENCES pu
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS approved_at timestamptz;
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS rejection_reason text;
 
--- 2. Add constraint for approval_status if not already present
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint WHERE conname = 'check_user_approval_status'
-    ) THEN
-        ALTER TABLE public.users
-        ADD CONSTRAINT check_user_approval_status
-        CHECK (approval_status IN ('pending', 'approved', 'rejected'));
-    END IF;
-END $$;
-
--- 3. Create indexes for fast querying of pending users
-CREATE INDEX IF NOT EXISTS idx_users_approval_status ON public.users (is_approved, approval_status);
-CREATE INDEX IF NOT EXISTS idx_users_approved_by ON public.users (approved_by);
-
--- 4. Auto-approve all existing users so zero existing users are locked out
+-- 2. Auto-approve all existing users to ensure zero disruption
 UPDATE public.users
 SET is_approved = true,
     approval_status = 'approved',
-    approved_at = COALESCE(approved_at, now())
+    approved_at = COALESCE(created_at, now())
 WHERE is_approved IS NOT TRUE;
 
--- 5. Master admins must always be approved
+-- 3. Master admin should always be approved
 UPDATE public.users
 SET is_approved = true,
-    approval_status = 'approved'
+    approval_status = 'approved',
+    approved_at = now()
 WHERE is_master_admin = true;
 
--- 6. Reload schema cache for PostgREST
+-- 4. Add indexes for performance
+CREATE INDEX IF NOT EXISTS idx_users_approval ON public.users (is_approved, approval_status);
+CREATE INDEX IF NOT EXISTS idx_users_approved_by ON public.users (approved_by);
+
+-- 5. RLS policies for property_memberships and organization_memberships
+DROP POLICY IF EXISTS "pm_insert_own" ON public.property_memberships;
+CREATE POLICY "pm_insert_own" ON public.property_memberships
+FOR INSERT TO authenticated
+WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS "om_insert_own" ON public.organization_memberships;
+CREATE POLICY "om_insert_own" ON public.organization_memberships
+FOR INSERT TO authenticated
+WITH CHECK (user_id = auth.uid());
+
+-- 6. Reload PostgREST schema cache
 NOTIFY pgrst, 'reload schema';

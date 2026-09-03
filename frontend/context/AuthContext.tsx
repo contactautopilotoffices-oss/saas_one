@@ -11,6 +11,10 @@ interface UserMembership {
     org_role: string | null;
     is_master_admin: boolean;
     onboarding_completed: boolean;
+    is_approved: boolean;
+    approval_status: string;
+    approved_by: string | null;
+    approved_at: string | null;
     error?: boolean;
     all_org_memberships: {
         org_id: string;
@@ -113,7 +117,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     .then(res => { if (res.error) throw res.error; return res.data; }),
                 supabase
                     .from('users')
-                    .select('is_master_admin, onboarding_completed')
+                    .select('is_master_admin, onboarding_completed, is_approved, approval_status, approved_by, approved_at')
                     .eq('id', userId)
                     .maybeSingle()
                     .then(res => { if (res.error) throw res.error; return res.data; })
@@ -131,12 +135,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
             const primaryOrg = sortedOrgs[0];
 
+            const approvedFlag = !!profileData?.is_master_admin || profileData?.is_approved === true || profileData?.approval_status === 'approved';
+
             const membershipData: UserMembership = {
                 org_id: (primaryOrg?.organization as any)?.id || null,
                 org_name: (primaryOrg?.organization as any)?.name || null,
                 org_role: primaryOrg?.role || null,
                 is_master_admin: !!profileData?.is_master_admin,
                 onboarding_completed: !!profileData?.onboarding_completed,
+                is_approved: approvedFlag,
+                approval_status: profileData?.approval_status || (approvedFlag ? 'approved' : 'pending'),
+                approved_by: profileData?.approved_by || null,
+                approved_at: profileData?.approved_at || null,
                 // Include all org memberships for access checks in layouts
                 all_org_memberships: (orgData as any[])?.map((m: any) => ({
                     org_id: (m.organization as any)?.id,
@@ -163,6 +173,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 org_role: null,
                 is_master_admin: false,
                 onboarding_completed: false,
+                is_approved: false,
+                approval_status: 'pending',
+                approved_by: null,
+                approved_at: null,
                 all_org_memberships: [],
                 properties: [],
                 error: true

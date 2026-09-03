@@ -208,7 +208,7 @@ function AuthContent() {
                 // Check if new user -> route to onboarding
                 const { data: userProfile } = await supabase
                     .from('users')
-                    .select('id, is_master_admin, full_name')
+                    .select('id, is_master_admin, full_name, is_approved, approval_status, onboarding_completed')
                     .eq('id', authUser.id)
                     .maybeSingle();
 
@@ -220,6 +220,13 @@ function AuthContent() {
                 // If existing user, complete normal post-auth route resolution
                 if (userProfile.is_master_admin) {
                     router.replace(redirectPath && redirectPath !== '/' ? redirectPath : '/master');
+                    return;
+                }
+
+                // Check approval status for OTP login
+                const isOtpApproved = userProfile.is_approved === true || userProfile.approval_status === 'approved';
+                if (!isOtpApproved) {
+                    router.replace('/waiting-approval');
                     return;
                 }
                 
@@ -264,7 +271,7 @@ function AuthContent() {
                 // ✅ Step 1: Fetch user FIRST (and ONLY user)
                 const { data: userProfile, error: profileError } = await supabase
                     .from('users')
-                    .select('id, is_master_admin')
+                    .select('id, is_master_admin, is_approved, approval_status, onboarding_completed')
                     .eq('id', authUser.id)
                     .single();
 
@@ -280,6 +287,13 @@ function AuthContent() {
                     } else {
                         router.replace('/master');
                     }
+                    return;
+                }
+
+                // ✅ Step 2.5: User Approval Check
+                const isApproved = userProfile.is_approved === true || userProfile.approval_status === 'approved';
+                if (!isApproved) {
+                    router.replace('/waiting-approval');
                     return;
                 }
 

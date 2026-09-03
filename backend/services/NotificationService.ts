@@ -5,6 +5,7 @@ import { WhatsAppQueueService } from './WhatsAppQueueService';
 import { EmailService } from './EmailService';
 import { EventProcessor } from './EventProcessor';
 import { EmailRecipientResolver } from './EmailRecipientResolver';
+import { WhatsAppRecipientResolver } from './WhatsAppRecipientResolver';
 
 
 export interface NotificationPayload {
@@ -1541,6 +1542,293 @@ export class NotificationService {
             });
         } catch (err) {
             console.error('[NS] afterLeadCreated error:', err);
+        }
+    }
+
+    /**
+     * Dispatched when a new user registers and is waiting for approval.
+     * Uses the omnichannel notification matrix to notify configured roles and explicitly selected user_ids.
+     */
+    static async afterUserRegisteredPendingApproval(params: {
+        userId: string;
+        propertyId?: string;
+        organizationId?: string;
+        requestedRole?: string;
+    }) {
+        try {
+            const { userId, propertyId, requestedRole = 'member' } = params;
+
+            // Fetch user info
+            const { data: user, error: userError } = await supabaseAdmin
+                .from('users')
+                .select('id, full_name, email, phone')
+                .eq('id', userId)
+                .single();
+
+            if (userError || !user) {
+                console.error('[NS] afterUserRegisteredPendingApproval: user not found', userError);
+                return;
+            }
+
+            // Resolve Property & Org
+            let orgId = params.organizationId;
+            let propertyName = '';
+
+            if (propertyId) {
+                const { data: prop } = await supabaseAdmin
+                    .from('properties')
+                    .select('name, organization_id')
+                    .eq('id', propertyId)
+                    .maybeSingle();
+
+                if (prop) {
+                    propertyName = prop.name;
+                    if (!orgId) orgId = prop.organization_id;
+                }
+            }
+
+            if (!orgId) {
+                // Fallback to default autopilot org
+                orgId = process.env.NEXT_PUBLIC_AUTOPILOT_ORG_ID || undefined;
+            }
+
+            const formatRole = (r: string) => {
+                if (r === 'property_admin') return 'Property Admin';
+                if (r === 'tenant') return 'Client / Tenant';
+                if (r === 'staff') return 'Soft Services Staff';
+                if (r === 'mst') return 'Maintenance Staff (MST)';
+                if (r === 'procurement') return 'Procurement';
+                if (r === 'vendor') return 'Vendor';
+                return r.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+            };
+
+            const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'https://autopilotoffices.com').replace(/\/$/, '');
+            const roleLabel = formatRole(requestedRole);
+
+            // 1. Resolve WhatsApp recipients using the omnichannel matrix
+            if (orgId) {
+                try {
+                    const waResult = await WhatsAppRecipientResolver.resolveRecipients({
+                        organizationId: orgId,
+                        propertyId,
+                        featureKey: 'user_pending_approval',
+                    });
+
+                    if (waResult.enabled && waResult.users.length > 0) {
+                        const message = [
+                            `*🔔 New User Awaiting Approval*`,
+                            ``,
+                            `A new user has completed onboarding and is waiting for administrator approval.`,
+                            ``,
+                            `👤 *Name:* ${user.full_name}`,
+                            `📧 *Email:* ${user.email}`,
+                            propertyName ? `🏢 *Property:* ${propertyName}` : '',
+                            `💼 *Requested Role:* ${roleLabel}`,
+                            user.phone ? `📱 *Phone:* ${user.phone}` : '',
+                            ``,
+                            `Review & approve user in User Management:`,
+                            `🔗 ${APP_URL}/org/${orgId}/dashboard?tab=users`
+                        ].filter(Boolean).join('\n');
+
+                        for (const targetUser of waResult.users) {
+                            if (targetUser.phone) {
+                                WhatsAppService.send(targetUser.phone, {
+                                    message,
+                                    templateName: 'user_pending_approval_v1',
+                                    templateParams: [
+                                        targetUser.name || 'Admin',
+                                        user.full_name || 'New User',
+                                        user.email || '',
+                                        propertyName || 'AutoPilot',
+                                        roleLabel
+                                    ],
+                                    deepLink: `/org/${orgId}/dashboard?tab=users`
+                                });
+                            }
+                        }
+                    }
+                } catch (waErr) {
+                    console.error('[NS] WhatsApp dispatch failed for user_pending_approval:', waErr);
+                }
+
+                // 2. Resolve Email recipients using the omnichannel matrix
+                try {
+                    const emailResult = await EmailRecipientResolver.resolveRecipients({
+                        organizationId: orgId,
+                        propertyId,
+                        featureKey: 'user_pending_approval',
+                    });
+
+                    if (emailResult.enabled && emailResult.emails.length > 0) {
+                        for (const email of emailResult.emails) {
+                            await EmailService.sendGenericNotificationEmail({
+                                emailTo: email,
+                                subject: `🔔 New User Pending Approval: ${user.full_name} (${roleLabel})`,
+                                title: `New User Registration Awaiting Approval`,
+                                htmlBody: `
+                                    <div style="font-family: sans-serif; line-height: 1.6; color: #333;">
+                                        <p>A new user has registered and is awaiting approval:</p>
+                                        <table style="border-collapse: collapse; width: 100%; margin: 16px 0;">
+                                            <tr><td style="padding: 6px; font-weight: bold;">Name:</td><td style="padding: 6px;">${user.full_name}</td></tr>
+                                            <tr><td style="padding: 6px; font-weight: bold;">Email:</td><td style="padding: 6px;">${user.email}</td></tr>
+                                            ${propertyName ? `<tr><td style="padding: 6px; font-weight: bold;">Property:</td><td style="padding: 6px;">${propertyName}</td></tr>` : ''}
+                                            <tr><td style="padding: 6px; font-weight: bold;">Role:</td><td style="padding: 6px;">${roleLabel}</td></tr>
+                                            ${user.phone ? `<tr><td style="padding: 6px; font-weight: bold;">Phone:</td><td style="padding: 6px;">${user.phone}</td></tr>` : ''}
+                                        </table>
+                                        <p><a href="${APP_URL}/org/${orgId}/dashboard?tab=users" style="display:inline-block; padding: 10px 20px; background: #000; color: #fff; text-decoration: none; border-radius: 8px; font-weight: bold;">Open User Management to Approve</a></p>
+                                    </div>
+                                `
+                            });
+                        }
+                    }
+                } catch (emailErr) {
+                    console.error('[NS] Email dispatch failed for user_pending_approval:', emailErr);
+                }
+            }
+
+            // 3. In-App Notification to Org / Property Admins
+            const adminUserIds = new Set<string>();
+            if (orgId) {
+                const { data: orgAdmins } = await supabaseAdmin
+                    .from('organization_memberships')
+                    .select('user_id')
+                    .eq('organization_id', orgId)
+                    .in('role', ['org_super_admin', 'admin', 'owner'])
+                    .eq('is_active', true);
+                (orgAdmins || []).forEach(m => adminUserIds.add(String(m.user_id)));
+            }
+
+            if (propertyId) {
+                const { data: propAdmins } = await supabaseAdmin
+                    .from('property_memberships')
+                    .select('user_id')
+                    .eq('property_id', propertyId)
+                    .eq('role', 'property_admin')
+                    .eq('is_active', true);
+                (propAdmins || []).forEach(m => adminUserIds.add(String(m.user_id)));
+            }
+
+            if (adminUserIds.size > 0) {
+                await this.sendToMany(Array.from(adminUserIds), {
+                    organizationId: orgId,
+                    propertyId,
+                    type: 'USER_PENDING_APPROVAL',
+                    title: '⏳ New User Awaiting Approval',
+                    message: `${user.full_name} registered as ${roleLabel}${propertyName ? ' for ' + propertyName : ''}. Tap to review.`,
+                    deepLink: orgId ? `/org/${orgId}/dashboard?tab=users` : `/property/${propertyId}/dashboard`,
+                    priority: 'HIGH'
+                });
+            }
+
+        } catch (err) {
+            console.error('[NS] afterUserRegisteredPendingApproval error:', err);
+        }
+    }
+
+    /**
+     * Dispatched when an administrator approves a pending user.
+     * Sends approval confirmation to the applicant via WhatsApp, Email, and in-app.
+     */
+    static async afterUserApproved(params: {
+        userId: string;
+        approverId: string;
+        propertyId?: string;
+        organizationId?: string;
+    }) {
+        try {
+            const { userId, approverId, propertyId, organizationId } = params;
+
+            // Fetch approved user and approver
+            const [userRes, approverRes] = await Promise.all([
+                supabaseAdmin.from('users').select('id, full_name, email, phone').eq('id', userId).single(),
+                supabaseAdmin.from('users').select('id, full_name').eq('id', approverId).single()
+            ]);
+
+            const user = userRes.data;
+            const approver = approverRes.data;
+            if (!user) return;
+
+            const approverName = approver?.full_name || 'an Administrator';
+            let propertyName = '';
+
+            if (propertyId) {
+                const { data: prop } = await supabaseAdmin
+                    .from('properties')
+                    .select('name')
+                    .eq('id', propertyId)
+                    .maybeSingle();
+                if (prop) propertyName = prop.name;
+            }
+
+            const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'https://autopilotoffices.com').replace(/\/$/, '');
+
+            // 1. WhatsApp confirmation to the approved user
+            if (user.phone) {
+                const waMessage = [
+                    `*🎉 Account Approved!*`,
+                    ``,
+                    `Hi *${user.full_name}*,`,
+                    `Your account${propertyName ? ' for *' + propertyName + '*' : ''} has been approved by *${approverName}*.`,
+                    ``,
+                    `You now have full access to your workspace dashboard.`,
+                    ``,
+                    `Sign in to access your dashboard:`,
+                    `🔗 ${APP_URL}/login`
+                ].join('\n');
+
+                try {
+                    WhatsAppService.send(user.phone, {
+                        message: waMessage,
+                        templateName: 'user_approved_v1',
+                        templateParams: [
+                            user.full_name || 'User',
+                            propertyName || 'AutoPilot',
+                            approverName
+                        ],
+                        deepLink: '/login'
+                    });
+                } catch (waErr) {
+                    console.error('[NS] WhatsApp dispatch failed for user_approved:', waErr);
+                }
+            }
+
+            // 2. Email confirmation to the approved user
+            if (user.email) {
+                try {
+                    await EmailService.sendGenericNotificationEmail({
+                        emailTo: user.email,
+                        subject: `🎉 Account Approved - Welcome to ${propertyName || 'Autopilot'}`,
+                        title: `Your Account Has Been Approved!`,
+                        htmlBody: `
+                            <div style="font-family: sans-serif; line-height: 1.6; color: #333;">
+                                <p>Hi <strong>${user.full_name}</strong>,</p>
+                                <p>Great news! Your account registration${propertyName ? ' for <strong>' + propertyName + '</strong>' : ''} has been reviewed and approved by <strong>${approverName}</strong>.</p>
+                                <p>You now have full access to your workspace and tools.</p>
+                                <p style="margin: 24px 0;">
+                                    <a href="${APP_URL}/login" style="display:inline-block; padding: 12px 24px; background: #22c55e; color: #fff; text-decoration: none; border-radius: 8px; font-weight: bold;">Log In to Dashboard</a>
+                                </p>
+                            </div>
+                        `
+                    });
+                } catch (emailErr) {
+                    console.error('[NS] Email dispatch failed for user_approved:', emailErr);
+                }
+            }
+
+            // 3. In-App Notification
+            await this.send({
+                userId: user.id,
+                propertyId,
+                organizationId,
+                type: 'USER_APPROVED',
+                title: 'Account Approved! 🎉',
+                message: `Your account${propertyName ? ' for ' + propertyName : ''} has been approved by ${approverName}. You now have full access.`,
+                deepLink: '/login',
+                priority: 'HIGH'
+            });
+
+        } catch (err) {
+            console.error('[NS] afterUserApproved error:', err);
         }
     }
 }

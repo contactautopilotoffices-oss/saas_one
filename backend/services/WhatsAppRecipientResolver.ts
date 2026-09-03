@@ -52,7 +52,10 @@ const ALIAS_MAP: Record<string, string> = {
     ppm: 'reminder_ppm',
     ppm_reminder: 'reminder_ppm',
     cafeteria_revenue: 'vendor_revenue_recorded',
-    vendor_revenue: 'vendor_revenue_recorded'
+    vendor_revenue: 'vendor_revenue_recorded',
+    user_management: 'user_pending_approval',
+    user_pending_approval: 'user_pending_approval',
+    user_approved: 'user_approved'
 };
 
 export const DEFAULT_WHATSAPP_SERVICE_CONFIG: Record<string, FeatureWhatsAppConfig> = {
@@ -92,7 +95,9 @@ export const DEFAULT_WHATSAPP_SERVICE_CONFIG: Record<string, FeatureWhatsAppConf
     reminder_ppm: { enabled: true, roles: ['property_admin', 'org_super_admin'], user_ids: [], reminder_minutes: 1440 },
     lead_created: { enabled: true, roles: ['sales', 'org_super_admin'], user_ids: [] },
     lead_assigned: { enabled: true, roles: [], user_ids: [], notify_assignee: true },
-    crm_leads: { enabled: true, roles: ['sales', 'org_super_admin'], user_ids: [] }
+    crm_leads: { enabled: true, roles: ['sales', 'org_super_admin'], user_ids: [] },
+    user_pending_approval: { enabled: true, roles: ['org_super_admin', 'property_admin'], user_ids: [] },
+    user_approved: { enabled: true, roles: [], user_ids: [], notify_requester: true }
 };
 
 export const WhatsAppRecipientResolver = {

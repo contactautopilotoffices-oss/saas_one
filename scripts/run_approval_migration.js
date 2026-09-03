@@ -11,7 +11,8 @@ async function runMigration() {
     }
 
     const pool = new Pool({
-        connectionString: process.env.DATABASE_URL
+        connectionString: process.env.DATABASE_URL,
+        ssl: { rejectUnauthorized: false }
     });
 
     try {
@@ -23,7 +24,7 @@ async function runMigration() {
 
         // Verify users columns
         const res = await pool.query(`
-            SELECT column_name, data_type, column_default, is_nullable
+            SELECT column_name, data_type, column_default 
             FROM information_schema.columns 
             WHERE table_name = 'users' AND column_name IN ('is_approved', 'approval_status', 'approved_by', 'approved_at', 'rejection_reason')
             ORDER BY ordinal_position;
@@ -31,13 +32,15 @@ async function runMigration() {
         console.log('Columns in users:');
         console.table(res.rows);
 
-        // Check user approval counts
+        // Check user counts
         const countRes = await pool.query(`
-            SELECT approval_status, is_approved, count(*) 
-            FROM users 
-            GROUP BY approval_status, is_approved;
+            SELECT 
+                COUNT(*) as total_users,
+                COUNT(*) FILTER (WHERE is_approved = true) as approved_users,
+                COUNT(*) FILTER (WHERE is_approved = false) as pending_users
+            FROM public.users;
         `);
-        console.log('User status breakdown:');
+        console.log('User approval status summary:');
         console.table(countRes.rows);
 
     } catch (err) {

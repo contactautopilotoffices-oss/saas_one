@@ -65,6 +65,7 @@ export interface NotificationMatrix {
     meeting_rooms?: ModuleConfig;
     ppm?: ModuleConfig;
     crm_leads?: ModuleConfig;
+    user_management?: ModuleConfig;
     [moduleKey: string]: ModuleConfig | undefined;
 }
 
@@ -484,6 +485,26 @@ const MODULES_META: ModuleMeta[] = [
                 hasContextual: { approver: true }
             }
         ]
+    },
+    {
+        id: 'user_management',
+        name: 'User Onboarding & Approvals',
+        description: 'Automated omnichannel alerts for new user registrations awaiting approval, and applicant approval confirmations.',
+        icon: UserCheck,
+        color: 'text-emerald-600 bg-emerald-50 border-emerald-100',
+        events: [
+            {
+                key: 'user_pending_approval',
+                name: 'New User Registration (Pending Approval)',
+                description: 'Sent immediately to designated administrators and selected users when someone signs up and completes onboarding.',
+            },
+            {
+                key: 'user_approved',
+                name: 'User Approval Confirmation',
+                description: 'Sent to the applicant once an administrator approves their account to notify them of dashboard access.',
+                hasContextual: { requester: true }
+            }
+        ]
     }
 ];
 
@@ -532,6 +553,10 @@ const DEFAULT_NOTIFICATION_MATRIX: NotificationMatrix = {
         vendor_revenue_recorded: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: ['property_admin', 'org_super_admin', 'accounts'], user_ids: [], notify_requester: true },
         vendor_revenue_reminder: { channels: { email: false, whatsapp: true, push: true, voice: false }, roles: ['property_admin'], user_ids: [], notify_assignee: true, notify_requester: true, schedule_time: '18:00', frequency: 'daily' },
         vendor_revenue_pending_digest: { channels: { email: true, whatsapp: true, push: false, voice: false }, roles: ['property_admin', 'org_super_admin', 'accounts'], user_ids: [] }
+    },
+    user_management: {
+        user_pending_approval: { channels: { email: true, whatsapp: true, push: true }, roles: ['org_super_admin', 'property_admin'], user_ids: [] },
+        user_approved: { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [], notify_requester: true }
     }
 };
 
