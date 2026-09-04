@@ -8,7 +8,7 @@ import {
     UserCheck, X, Building, Search, UserPlus, ChevronDown,
     User, Ticket, Wrench, Clock, FileText, Truck, Layers,
     ClipboardCheck, BarChart3, ShoppingBag, Eye, Copy,
-    Phone, PhoneCall, Volume2, Sparkles, Play, ShieldAlert, Activity
+    Phone, PhoneCall, Volume2, Sparkles, Play, ShieldAlert, Activity, QrCode
 } from 'lucide-react';
 import { createClient } from '@/frontend/utils/supabase/client';
 import VoiceAnomalyDashboard from '@/frontend/components/admin/VoiceAnomalyDashboard';
@@ -65,7 +65,9 @@ export interface NotificationMatrix {
     meeting_rooms?: ModuleConfig;
     ppm?: ModuleConfig;
     crm_leads?: ModuleConfig;
+    cafeteria_revenue?: ModuleConfig;
     user_management?: ModuleConfig;
+    facility_requests?: ModuleConfig;
     [moduleKey: string]: ModuleConfig | undefined;
 }
 
@@ -505,6 +507,25 @@ const MODULES_META: ModuleMeta[] = [
                 hasContextual: { requester: true }
             }
         ]
+    },
+    {
+        id: 'facility_requests',
+        name: 'Facility QR Requests',
+        description: 'Instant multi-channel alerts sent to internal maintenance staff and managers when an issue is reported via facility QR code.',
+        icon: QrCode,
+        color: 'text-sky-600 bg-sky-50 border-sky-100',
+        events: [
+            {
+                key: 'facility_request_created',
+                name: 'New Facility Request (QR Scanned)',
+                description: 'Sent immediately to designated maintenance staff, MST, and property admins to dispatch resolution.',
+            },
+            {
+                key: 'facility_request_resolved',
+                name: 'Facility Request Resolved',
+                description: 'Sent to designated property managers when an on-ground staff member marks the facility request as resolved.',
+            }
+        ]
     }
 ];
 
@@ -557,6 +578,10 @@ const DEFAULT_NOTIFICATION_MATRIX: NotificationMatrix = {
     user_management: {
         user_pending_approval: { channels: { email: true, whatsapp: true, push: true }, roles: ['org_super_admin', 'property_admin'], user_ids: [] },
         user_approved: { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [], notify_requester: true }
+    },
+    facility_requests: {
+        facility_request_created: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin', 'staff', 'mst'], user_ids: [], notify_assignee: true },
+        facility_request_resolved: { channels: { email: false, whatsapp: true, push: true }, roles: ['property_admin'], user_ids: [] }
     }
 };
 

@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@lib/supabase/admin';
 import { checkRateLimit, getClientIP } from '@/frontend/utils/rate-limiter';
+import { NotificationService } from '@/backend/services/NotificationService';
 import { z } from 'zod';
 
 const guestRequestSchema = z.object({
     zoneId: z.string().min(1),
     sig: z.string().min(1),
     guestName: z.string().min(1).max(100),
+    processName: z.string().max(100).optional().nullable().or(z.literal('')),
     guestPhone: z.string().max(50).optional().nullable().or(z.literal('')),
     guestEmail: z.string().email().max(255).optional().nullable().or(z.literal('')),
     description: z.string().min(1).max(1000),
@@ -42,7 +44,7 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: 'Invalid payload data', details: parseResult.error.flatten() }, { status: 400 });
         }
         
-        const { zoneId, sig, guestName, guestPhone, guestEmail, description, photoUrls, deviceInfo, locationData } = parseResult.data;
+        const { zoneId, sig, guestName, processName, guestPhone, guestEmail, description, photoUrls, deviceInfo, locationData } = parseResult.data;
 
         // 3. Verify the signature matches the zone in the database
         const { data: zone, error: zoneError } = await supabaseAdmin
@@ -59,9 +61,8 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: 'Invalid QR signature' }, { status: 401 });
         }
 
-        // 2. Perform AI Categorization (Placeholder for now)
-        // In the future, send 'description' to OpenAI or GROQ to get category
-        const aiCategory = 'General'; 
+        // Category / Process designation
+        const categoryName = processName?.trim() || 'General';
 
         // 3. Insert the guest request using Service Role to bypass RLS
         const { data: request, error: insertError } = await supabaseAdmin
@@ -76,7 +77,7 @@ export async function POST(req: NextRequest) {
                 photo_urls: photoUrls || [],
                 device_info: deviceInfo || {},
                 location_data: locationData || {},
-                ai_category: aiCategory,
+                ai_category: categoryName,
                 status: 'PENDING'
             })
             .select()
@@ -86,6 +87,11 @@ export async function POST(req: NextRequest) {
             console.error('Error inserting guest request:', insertError);
             return NextResponse.json({ error: 'Failed to submit request' }, { status: 500 });
         }
+
+        // Trigger Omnichannel Notifications (WhatsApp, Email, In-App / Push) asynchronously
+        NotificationService.afterFacilityRequestCreated(request.id).catch(notifErr => {
+            console.error('[submit-guest-request] Failed to dispatch omnichannel notifications:', notifErr);
+        });
 
         return NextResponse.json({ success: true, data: request });
     } catch (error: any) {

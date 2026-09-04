@@ -1831,4 +1831,172 @@ export class NotificationService {
             console.error('[NS] afterUserApproved error:', err);
         }
     }
+
+    /**
+     * Dispatched when a new facility request is submitted via QR code scan.
+     * Uses the omnichannel matrix (facility_requests -> facility_request_created)
+     * to notify configured roles and users across WhatsApp, Email, and Push/In-App.
+     */
+    static async afterFacilityRequestCreated(guestRequestId: string) {
+        try {
+            const { data: request, error } = await supabaseAdmin
+                .from('guest_requests')
+                .select(`
+                    *,
+                    qr_facility_zones (
+                        zone_name,
+                        floor
+                    ),
+                    properties (
+                        id,
+                        name,
+                        organization_id
+                    )
+                `)
+                .eq('id', guestRequestId)
+                .single();
+
+            if (error || !request) {
+                console.error('[NS] afterFacilityRequestCreated: request not found', error);
+                return;
+            }
+
+            const property = request.properties as any;
+            const zone = request.qr_facility_zones as any;
+            const orgId = property?.organization_id || process.env.NEXT_PUBLIC_AUTOPILOT_ORG_ID;
+            const propertyId = request.property_id;
+            const propertyName = property?.name || 'Facility';
+            const zoneName = zone?.zone_name || 'Designated Area';
+            const floor = zone?.floor ? `${zone.floor}` : '';
+            const locationStr = floor ? `${zoneName} (${floor})` : zoneName;
+            const ticketNumber = request.ticket_number || `GR-${request.id.substring(0, 6).toUpperCase()}`;
+            const photoUrl = request.photo_urls?.[0]
+                ? `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/guest-photos/${request.photo_urls[0]}`
+                : null;
+
+            const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'https://app.saasone.com').replace(/\/$/, '');
+            const dashboardDeepLink = orgId && propertyId ? `/${orgId}/properties/${propertyId}/guest-requests` : '/guest-requests';
+            const dashboardFullUrl = `${APP_URL}${dashboardDeepLink}`;
+
+            const processName = request.ai_category || 'Facility Request';
+
+            // 1. WhatsApp Dispatch via Omnichannel Matrix
+            if (orgId) {
+                try {
+                    const waResult = await WhatsAppRecipientResolver.resolveRecipients({
+                        organizationId: orgId,
+                        propertyId,
+                        featureKey: 'facility_request_created'
+                    });
+
+                    if (waResult.enabled && waResult.users.length > 0) {
+                        const message = [
+                            `*🏢 New Facility Request Raised*`,
+                            ``,
+                            `🎫 *Ticket:* #${ticketNumber}`,
+                            `⚙️ *Process:* ${processName}`,
+                            `📍 *Location:* ${locationStr}`,
+                            `🏢 *Property:* ${propertyName}`,
+                            `📝 *Issue:* ${request.description}`,
+                            `👤 *Reported By:* ${request.guest_name || 'Visitor'}`,
+                            ``,
+                            `⚠️ Please dispatch on-duty staff immediately to inspect and resolve this issue:`,
+                            `🔗 ${dashboardFullUrl}`
+                        ].join('\n');
+
+                        const templateName = photoUrl ? 'facility_request_created_v1_media' : 'facility_request_created_v1';
+
+                        for (const targetUser of waResult.users) {
+                            if (targetUser.phone) {
+                                WhatsAppService.send(targetUser.phone, {
+                                    message,
+                                    templateName,
+                                    templateParams: [
+                                        targetUser.name || 'Team',
+                                        ticketNumber,
+                                        processName,
+                                        locationStr,
+                                        propertyName,
+                                        request.description,
+                                        request.guest_name || 'Visitor'
+                                    ],
+                                    mediaUrl: photoUrl || undefined,
+                                    mediaType: photoUrl ? 'image' : undefined,
+                                    deepLink: dashboardDeepLink
+                                });
+                            }
+                        }
+                    }
+                } catch (waErr) {
+                    console.error('[NS] WhatsApp dispatch failed for facility_request_created:', waErr);
+                }
+
+                // 2. Email Dispatch via Omnichannel Matrix
+                try {
+                    const emailResult = await EmailRecipientResolver.resolveRecipients({
+                        organizationId: orgId,
+                        propertyId,
+                        featureKey: 'facility_request_created'
+                    });
+
+                    if (emailResult.enabled && emailResult.emails.length > 0) {
+                        for (const email of emailResult.emails) {
+                            if (email) {
+                                EmailService.sendGenericNotificationEmail({
+                                    emailTo: email,
+                                    subject: `[Facility Request] #${ticketNumber} - ${locationStr} at ${propertyName}`,
+                                    title: `New Facility Request Raised`,
+                                    htmlBody: `
+                                        <p>A new facility issue was reported via QR code scan:</p>
+                                        <table style="width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px;">
+                                            <tr><td style="padding: 6px; font-weight: bold; width: 140px;">Ticket #:</td><td style="padding: 6px;">${ticketNumber}</td></tr>
+                                            <tr><td style="padding: 6px; font-weight: bold;">Location:</td><td style="padding: 6px;">${locationStr}</td></tr>
+                                            <tr><td style="padding: 6px; font-weight: bold;">Property:</td><td style="padding: 6px;">${propertyName}</td></tr>
+                                            <tr><td style="padding: 6px; font-weight: bold;">Reported By:</td><td style="padding: 6px;">${request.guest_name || 'Visitor'}</td></tr>
+                                            <tr><td style="padding: 6px; font-weight: bold;">Details:</td><td style="padding: 6px;">${request.description}</td></tr>
+                                        </table>
+                                        ${photoUrl ? `<div style="margin: 15px 0;"><img src="${photoUrl}" alt="Issue Photo" style="max-width: 100%; max-height: 280px; border-radius: 8px;" /></div>` : ''}
+                                        <p><a href="${dashboardFullUrl}" style="display:inline-block; padding: 10px 20px; background: #708F96; color: #fff; text-decoration: none; border-radius: 8px; font-weight: bold;">View in Guest Requests</a></p>
+                                    `
+                                });
+                            }
+                        }
+                    }
+                } catch (emailErr) {
+                    console.error('[NS] Email dispatch failed for facility_request_created:', emailErr);
+                }
+            }
+
+            // 3. In-App & Push Notification to Assigned Staff / Admins
+            try {
+                const recipientUserIds = new Set<string>();
+                if (propertyId) {
+                    const { data: propMembers } = await supabaseAdmin
+                        .from('property_memberships')
+                        .select('user_id')
+                        .eq('property_id', propertyId)
+                        .in('role', ['property_admin', 'staff', 'mst'])
+                        .eq('is_active', true);
+                    (propMembers || []).forEach(m => recipientUserIds.add(String(m.user_id)));
+                }
+
+                if (recipientUserIds.size > 0) {
+                    await this.sendToMany(Array.from(recipientUserIds), {
+                        organizationId: orgId,
+                        propertyId,
+                        type: 'TICKET_CREATED',
+                        title: `🏢 Facility Request #${ticketNumber}`,
+                        message: `${locationStr}: ${request.description.substring(0, 80)}`,
+                        deepLink: dashboardDeepLink,
+                        priority: 'HIGH'
+                    });
+                }
+            } catch (inAppErr) {
+                console.error('[NS] In-App / Push dispatch failed for facility_request_created:', inAppErr);
+            }
+        } catch (err) {
+            console.error('[NS] afterFacilityRequestCreated error:', err);
+        }
+    }
 }
+

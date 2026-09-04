@@ -25,6 +25,7 @@ This document contains the revised, copy-paste ready message template copy for A
 7. [CRM Sales Leads](#7-crm-sales-leads)
 8. [FMS Welcome & Onboarding Broadcast](#8-fms-welcome--onboarding-broadcast)
 9. [Cafeteria & Food Vendor Revenue Suite](#9-cafeteria--food-vendor-revenue-suite)
+10. [Facility QR Requests Suite](#10-facility-qr-requests-suite)
 
 ---
 
@@ -1304,5 +1305,112 @@ When the **Voice** channel toggle is activated in Omnichannel settings:
 ```text
 Hi {{user_name}}, this is Pratiksha from the Operations team. This is a quick reminder that today's revenue for {{shop_name}} at {{property_name}} has not been recorded yet. Please open the AutoPilot app and submit your sales figures before the day ends.
 ```
+
+---
+
+## 10. Facility QR Requests Suite
+
+### Template 10A: `facility_request_created_v1` (Text-Only / Default when NO photo is attached)
+- **Template Name:** `facility_request_created_v1`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Text` &rarr; `New Facility Request 🏢`
+- **Body:**
+```text
+Hello {{1}},
+
+A new facility issue has been reported via QR scan on AutoPilot.
+
+🎫 Ticket ID: #{{2}}
+⚙️ Process Name: {{3}}
+📍 Location: {{4}}
+🏢 Property: {{5}}
+📝 Issue Details: {{6}}
+👤 Reported By: {{7}}
+
+Please dispatch on-duty staff immediately to inspect and resolve this issue.
+```
+- **Footer:** `AutoPilot Facility Management`
+- **Button Type:** `Call to Action (Dynamic URL)`
+  - **Button Text:** `View Request`
+  - **URL Type:** `Dynamic` &rarr; `https://app.saasone.com/{{8}}`
+- **Sample Values:**
+  - `{{1}}`: `Operations Team`
+  - `{{2}}`: `GR-MAF-WSH-001`
+  - `{{3}}`: `Facility Request`
+  - `{{4}}`: `Washroom (1st Floor)`
+  - `{{5}}`: `D Mafatlal Chambers`
+  - `{{6}}`: `Water leakage in tap near washbasin`
+  - `{{7}}`: `Amit Verma`
+  - `{{8}}` *(Dynamic URL Path)*: `guest-requests`
+
+---
+
+### Template 10B: `facility_request_created_v1_media` (Used automatically when Photo is attached)
+- **Template Name:** `facility_request_created_v1_media`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Media` &rarr; Select **`Image`** *(Upload sample issue photo)*
+- **Body:** *(Identical to Template 10A)*
+```text
+Hello {{1}},
+
+A new facility issue has been reported via QR scan on AutoPilot.
+
+🎫 Ticket ID: #{{2}}
+⚙️ Process Name: {{3}}
+📍 Location: {{4}}
+🏢 Property: {{5}}
+📝 Issue Details: {{6}}
+👤 Reported By: {{7}}
+
+Please dispatch on-duty staff immediately to inspect and resolve this issue.
+```
+- **Footer:** `AutoPilot Facility Management`
+- **Button Type:** `Call to Action (Dynamic URL)`
+  - **Button Text:** `View Request`
+  - **URL Type:** `Dynamic` &rarr; `https://app.saasone.com/{{8}}`
+- **Sample Values:**
+  - `{{1}}`: `Operations Team`
+  - `{{2}}`: `GR-MAF-WSH-001`
+  - `{{3}}`: `Facility Request`
+  - `{{4}}`: `Washroom (1st Floor)`
+  - `{{5}}`: `D Mafatlal Chambers`
+  - `{{6}}`: `Water leakage in tap near washbasin`
+  - `{{7}}`: `Amit Verma`
+  - `{{8}}` *(Dynamic URL Path)*: `guest-requests`
+
+---
+
+### Template 10C: `facility_request_resolved_v1` (Sent when request is marked RESOLVED)
+- **Template Name:** `facility_request_resolved_v1`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Text` &rarr; `Facility Issue Resolved ✅`
+- **Body:**
+```text
+Hello {{1}},
+
+The facility issue has been addressed and marked as resolved on AutoPilot.
+
+🎫 Ticket ID: #{{2}}
+📍 Location: {{3}}
+🏢 Property: {{4}}
+👷 Resolved By: {{5}}
+
+Thank you for ensuring prompt maintenance service!
+```
+- **Footer:** `AutoPilot Facility Management`
+- **Button Type:** `Call to Action (Dynamic URL)`
+  - **Button Text:** `View Details`
+  - **URL Type:** `Dynamic` &rarr; `https://app.saasone.com/{{6}}`
+- **Sample Values:**
+  - `{{1}}`: `Property Admin`
+  - `{{2}}`: `GR-MAF-WSH-001`
+  - `{{3}}`: `Washroom (1st Floor)`
+  - `{{4}}`: `D Mafatlal Chambers`
+  - `{{5}}`: `Sunil Kumar (MST)`
+  - `{{6}}` *(Dynamic URL Path)*: `guest-requests`
+
 
 

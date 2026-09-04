@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
     MessageSquare, Check, Save, Loader2, CheckCircle2, AlertCircle,
     Send, Info, Server, MessageCircle, ExternalLink, Ticket,
-    ShoppingCart, Calendar, UserCheck, Wrench, FileSpreadsheet, ShieldCheck
+    ShoppingCart, Calendar, UserCheck, Wrench, FileSpreadsheet, ShieldCheck, QrCode
 } from 'lucide-react';
 import { createClient } from '@/frontend/utils/supabase/client';
 
@@ -52,7 +52,12 @@ const DEFAULT_WHATSAPP_TEMPLATES: Record<string, WhatsAppTemplate> = {
 
     // User Onboarding & Approvals
     user_pending_approval: { campaign_name: 'user_pending_approval_v1', params: ['user_name', 'applicant_name', 'email', 'property', 'role'] },
-    user_approved: { campaign_name: 'user_approved_v1', params: ['user_name', 'property', 'approver_name'] }
+    user_approved: { campaign_name: 'user_approved_v1', params: ['user_name', 'property', 'approver_name'] },
+
+    // Facility QR Requests
+    facility_request_created: { campaign_name: 'facility_request_created_v1', params: ['user_name', 'ticket_number', 'process_name', 'location', 'property', 'description', 'reported_by'] },
+    facility_request_created_media: { campaign_name: 'facility_request_created_v1_media', params: ['user_name', 'ticket_number', 'process_name', 'location', 'property', 'description', 'reported_by'], is_media: true },
+    facility_request_resolved: { campaign_name: 'facility_request_resolved_v1', params: ['user_name', 'ticket_number', 'zone_name', 'property', 'resolved_by'] }
 };
 
 const TEMPLATE_CATEGORIES = [
@@ -108,6 +113,16 @@ const TEMPLATE_CATEGORIES = [
             { key: 'lead_created', label: 'New CRM Lead' },
             { key: 'lead_assigned', label: 'Lead Assigned to Agent' },
             { key: 'reminder_lead_followup', label: 'Lead Follow-up Reminder' }
+        ]
+    },
+    {
+        title: 'Facility QR Requests',
+        icon: QrCode,
+        color: 'text-sky-600 bg-sky-50',
+        events: [
+            { key: 'facility_request_created', label: '1. Facility Request Created (Text Only)' },
+            { key: 'facility_request_created_media', label: '2. Facility Request Created (With Photo Media)' },
+            { key: 'facility_request_resolved', label: '3. Facility Request Resolved' }
         ]
     }
 ];
