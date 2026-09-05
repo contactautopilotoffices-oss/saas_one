@@ -564,7 +564,7 @@ export function composePlan(input: ComposePlanInput): AgentPlan {
     if (missing.length) {
         notes.push(
             `${missing.length} tool${missing.length > 1 ? 's are' : ' is'} not configured on this deployment: ` +
-            missing.map((t) => `${t.label} (needs ${t.requires.join(', ')})`).join('; ') +
+            missing.map((t) => `${t.label} (needs ${t.requires.map((r) => r.split('|').join(' or ')).join(', ')})`).join('; ') +
             '. Steps using them cannot run until the keys are set.',
         );
     }

@@ -15,6 +15,7 @@
  */
 
 import { useMemo, useState } from 'react';
+import AgentFlowCanvas from '@/frontend/components/agents/AgentFlowCanvas';
 import {
     AlertTriangle, ArrowRight, CheckCircle2, CircleHelp, Database, Globe,
     GitBranch, PenLine, Send, ShieldCheck, Sparkles, Users, Wrench, XCircle,
@@ -89,6 +90,7 @@ export default function AgentPlanCanvas({ plan }: { plan: AgentPlan }) {
     const cols = useMemo(() => columnsOf(plan.steps), [plan.steps]);
     const [answers, setAnswers] = useState<Record<string, string>>({});
     const [selected, setSelected] = useState<string | null>(null);
+    const [editing, setEditing] = useState(false);
 
     const required = plan.slots.filter((s) => s.required);
     const answered = required.filter((s) => (answers[s.key] ?? '').trim().length > 0).length;
@@ -216,11 +218,21 @@ export default function AgentPlanCanvas({ plan }: { plan: AgentPlan }) {
                 </div>
             </section>
 
-            {/* ---- 2. the graph ------------------------------------------- */}
+            {/* ---- 2. the graph — editable ---------------------------------- */}
             <section className="rounded-[16px] border border-border bg-card p-4">
-                <h4 className="mb-3 text-[12px] font-semibold uppercase tracking-wide text-text-tertiary">
-                    The workflow · {plan.steps.length} steps
-                </h4>
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <h4 className="text-[12px] font-semibold uppercase tracking-wide text-text-tertiary">
+                        The workflow · {plan.steps.length} steps
+                    </h4>
+                    <button type="button" onClick={() => setEditing((v) => !v)}
+                        className="rounded-md border border-border bg-card px-2.5 py-1 text-[11.5px] font-medium hover:border-primary/40">
+                        {editing ? 'Read-only view' : 'Edit the flow'}
+                    </button>
+                </div>
+                {editing && (
+                    <AgentFlowCanvas steps={plan.steps} tools={plan.tools} />
+                )}
+                {!editing && (
                 <div className="overflow-x-auto pb-2">
                     <div className="flex items-stretch gap-3" style={{ minWidth: 'min-content' }}>
                         {cols.map((col, ci) => (
@@ -291,6 +303,7 @@ export default function AgentPlanCanvas({ plan }: { plan: AgentPlan }) {
                         ))}
                     </div>
                 </div>
+                )}
             </section>
 
             {/* ---- 3. tools + roles --------------------------------------- */}

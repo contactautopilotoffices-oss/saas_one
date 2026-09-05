@@ -194,7 +194,7 @@ export async function composePlanWithModel(input: ModelPlanInput): Promise<Agent
     if (missing.length) {
         notes.push(
             `${missing.length} tool${missing.length > 1 ? 's are' : ' is'} not configured: ` +
-            missing.map((t) => `${t.label} (needs ${t.requires.join(' or ')})`).join('; ') + '.',
+            missing.map((t) => `${t.label} (needs ${t.requires.map((r) => r.split('|').join(' or ')).join(', ')})`).join('; ') + '.',
         );
     }
     if (rejected.length) {
