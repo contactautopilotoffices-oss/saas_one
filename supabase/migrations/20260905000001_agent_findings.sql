@@ -66,8 +66,6 @@ CREATE INDEX IF NOT EXISTS idx_oem_findings_key
 
 COMMENT ON COLUMN public.oem_agent_findings.finding_key IS
     'Stable across scans. The detector must derive it from the problem (vendor + invoice + PO set), never from a timestamp or row order, or closure never sticks.';
-COMMENT ON COLUMN public.oem_agent_finding_events.proof_path IS
-    'Supabase storage path under the po_documents bucket, namespaced <org>/findings/<finding_id>/. Sign on read with signPoDocument(); never store a signed URL.';
 COMMENT ON COLUMN public.oem_agent_findings.reopened_count IS
     'Incremented when a finding previously marked done is seen again. High values mean the fix is not holding.';
 
@@ -95,6 +93,9 @@ CREATE TABLE IF NOT EXISTS public.oem_agent_finding_events (
 
 CREATE INDEX IF NOT EXISTS idx_oem_finding_events_finding
     ON public.oem_agent_finding_events (finding_id, created_at DESC);
+
+COMMENT ON COLUMN public.oem_agent_finding_events.proof_path IS
+    'Supabase storage path under the po_documents bucket, namespaced <org>/findings/<finding_id>/. Sign on read with signPoDocument(); never store a signed URL.';
 
 -- --- RLS: same org-member model as the rest of the agent runtime ------------
 ALTER TABLE public.oem_agent_findings ENABLE ROW LEVEL SECURITY;
