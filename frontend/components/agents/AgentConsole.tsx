@@ -58,8 +58,9 @@ import {
     ThumbsUp,
     Timer,
     Wand2,
-    X, Workflow,} from 'lucide-react';
+    X, Workflow, Send,} from 'lucide-react';
 import AgentPlanCanvas, { type AgentPlan } from '@/frontend/components/agents/AgentPlanCanvas';
+import AgentDelivery from '@/frontend/components/agents/AgentDelivery';
 
 /** What POST /api/agents/optimize returns. */
 interface OptimizeResult {
@@ -174,10 +175,11 @@ interface ComposeResponse {
     error?: string;
 }
 
-type DetailTab = 'configure' | 'activity' | 'uptime' | 'profile' | 'reinforcement' | 'credentials';
+type DetailTab = 'configure' | 'delivery' | 'activity' | 'uptime' | 'profile' | 'reinforcement' | 'credentials';
 
 const TABS: Array<{ key: DetailTab; label: string; Icon: React.ElementType }> = [
     { key: 'configure', label: 'Configure', Icon: Wand2 },
+    { key: 'delivery', label: 'Delivery', Icon: Send },
     { key: 'activity', label: 'Activity', Icon: Activity },
     { key: 'uptime', label: 'Uptime', Icon: Timer },
     { key: 'profile', label: 'Profile', Icon: Gauge },
@@ -667,6 +669,15 @@ export default function AgentConsole({ orgId }: AgentConsoleProps) {
                                                 onSaved={() => void load(true)}
                                             />
                                         </div>
+                                    )}
+                                    {tab === 'delivery' && (
+                                        <AgentDelivery
+                                            key={selected.agent_key}
+                                            orgId={orgId}
+                                            agentKey={selected.agent_key}
+                                            runtime={(selected.runtime ?? {}) as never}
+                                            onSaved={() => void load(true)}
+                                        />
                                     )}
                                     {tab === 'activity' && <AgentActivity orgId={orgId} agentKey={selected.agent_key} />}
                                     {tab === 'uptime' && <AgentUptime orgId={orgId} agentKey={selected.agent_key} />}

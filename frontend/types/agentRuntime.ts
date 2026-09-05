@@ -527,7 +527,47 @@ export interface AgentQuietHours {
 }
 
 /** oem_agents.runtime — the operator-editable schedule and safety envelope. */
+/** Where an agent sends from and reads replies at. Per-agent, not per-deployment. */
+export interface AgentInboxConfig {
+    /** From address on outbound mail. */
+    from?: string;
+    /** Reply-To. MUST be a mailbox the poller can read, or replies land nowhere. */
+    reply_to?: string;
+    /** The mailbox the reply poller actually reads. */
+    poll_address?: string;
+    /** How far back each poll looks. Overlap is cheap; a gap loses an answer. */
+    lookback_hours?: number;
+}
+
+/**
+ * Who receives which slice of a scan.
+ *
+ * `roles` is the base split — the same finding says different things to a CEO
+ * and to procurement. `sites` narrows it further: a Bengaluru finding goes to
+ * whoever owns Bengaluru, not to every procurement address in the company.
+ * A site with no entry falls back to the role address.
+ */
+export interface AgentRecipientConfig {
+    roles?: {
+        ceo?: string[];
+        procurement?: string[];
+        technical?: string[];
+    };
+    /** property name or code -> addresses that own it. */
+    sites?: Record<string, string[]>;
+}
+
+/** Whether the agent answers a reply, and to what. */
+export interface AgentRespondConfig {
+    enabled?: boolean;
+    /** Dispositions that earn a reply back. Typically the ones that ask something. */
+    on?: Array<'need_info' | 'blocked'>;
+}
+
 export interface AgentRuntimeConfig {
+    inbox?: AgentInboxConfig;
+    recipients?: AgentRecipientConfig;
+    respond?: AgentRespondConfig;
     schedule_cron?: string;
     timezone?: string;
     quiet_hours?: AgentQuietHours;

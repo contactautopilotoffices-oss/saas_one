@@ -156,7 +156,33 @@ const TRANSITIONS: Record<AgentStatus, AgentStatus[]> = {
     retired: ['draft', 'shadow'],
 };
 
+const EmailList = z.array(z.string().trim().email().max(160)).max(25);
+
 const RuntimeSchema = z.looseObject({
+    // --- delivery. Per-agent, editable from the console, never from env. -----
+    inbox: z
+        .looseObject({
+            from: z.string().trim().email().max(160).nullish(),
+            reply_to: z.string().trim().email().max(160).nullish(),
+            poll_address: z.string().trim().email().max(160).nullish(),
+            lookback_hours: z.number().int().min(1).max(168).nullish(),
+        })
+        .nullish(),
+    recipients: z
+        .looseObject({
+            roles: z
+                .looseObject({ ceo: EmailList.nullish(), procurement: EmailList.nullish(), technical: EmailList.nullish() })
+                .nullish(),
+            // property name/code -> who owns it. Falls back to the role list.
+            sites: z.record(z.string().trim().max(120), EmailList).nullish(),
+        })
+        .nullish(),
+    respond: z
+        .looseObject({
+            enabled: z.boolean().nullish(),
+            on: z.array(z.enum(['need_info', 'blocked'])).max(2).nullish(),
+        })
+        .nullish(),
     schedule_cron: z.string().trim().max(120).nullish(),
     timezone: z.string().trim().max(64).nullish(),
     quiet_hours: z
