@@ -103,7 +103,7 @@ export async function collectIraReplies(
         // 4. Their words.
         let body = msg.summary ?? '';
         try {
-            const full = await ZohoMailService.getMessageContent(msg.messageId);
+            const full = await ZohoMailService.getMessageContent(msg.messageId, msg.folderId);
             if (full?.content) body = full.content;
         } catch {
             // Fall back to the summary rather than losing the reply entirely.

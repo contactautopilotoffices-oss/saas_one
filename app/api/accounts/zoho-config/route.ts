@@ -6,9 +6,9 @@ import { resolveAccountsAccess, isAccountsAccessError, readOrgId } from '@/backe
 // (The org id is stored per-org in accounts_zoho_config; these are global .env.)
 function credsPresent(): boolean {
     return !!(
-        (process.env.ZOHO_BOOKS_CLIENT_ID || process.env.ZOHO_CLIENT_ID) &&
-        (process.env.ZOHO_BOOKS_CLIENT_SECRET || process.env.ZOHO_CLIENT_SECRET) &&
-        (process.env.ZOHO_BOOKS_REFRESH_TOKEN || process.env.ZOHO_REFRESH_TOKEN)
+        Boolean(process.env.ZOHO_BOOKS_CLIENT_ID) &&
+        Boolean(process.env.ZOHO_BOOKS_CLIENT_SECRET) &&
+        Boolean(process.env.ZOHO_BOOKS_REFRESH_TOKEN)
     );
 }
 

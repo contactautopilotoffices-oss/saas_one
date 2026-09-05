@@ -8,12 +8,15 @@ export class ZohoService {
      * fix when a refresh token is rotated.
      */
     static async getAccessToken(): Promise<{ token: string; apiDomain: string }> {
-        // Books sync uses its own client (a Self Client with ZohoBooks.* scopes) so it
-        // stays independent of the SSO login client in ZOHO_CLIENT_ID. Falls back to the
-        // shared vars when the Books-specific ones aren't set.
-        const clientId = process.env.ZOHO_BOOKS_CLIENT_ID || process.env.ZOHO_CLIENT_ID;
-        const clientSecret = process.env.ZOHO_BOOKS_CLIENT_SECRET || process.env.ZOHO_CLIENT_SECRET;
-        const refreshToken = process.env.ZOHO_BOOKS_REFRESH_TOKEN || process.env.ZOHO_REFRESH_TOKEN;
+        // NO FALLBACK TO ZOHO_CLIENT_ID. That variable is the SSO LOGIN client
+        // (app/api/auth/zoho/route.ts, scope 'openid profile email') — it has no
+        // ZohoBooks scopes at all. Falling back to it produced the worst failure
+        // mode available: a credential that authenticates and then cannot read a
+        // purchase order, reported as a generic refresh failure. Books credentials
+        // are required explicitly, and their absence says so.
+        const clientId = process.env.ZOHO_BOOKS_CLIENT_ID;
+        const clientSecret = process.env.ZOHO_BOOKS_CLIENT_SECRET;
+        const refreshToken = process.env.ZOHO_BOOKS_REFRESH_TOKEN;
 
         if (!clientId || !clientSecret || !refreshToken) {
             throw new Error("Zoho credentials missing in .env");

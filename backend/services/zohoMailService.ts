@@ -241,14 +241,31 @@ export class ZohoMailService {
      * Kept out of the list endpoints deliberately: bodies are big, and the purchase
      * digest intentionally never persists them (see mailboxDigest.ts privacy note).
      */
+    /**
+     * Zoho's content endpoint requires the FOLDER in the path:
+     *   /api/accounts/{acct}/folders/{folderId}/messages/{id}/content
+     *
+     * Without it Zoho answers 404 URL_RULE_NOT_CONFIGURED, which reads like a
+     * permission or setup problem and is neither — the grant already carries
+     * ZohoMail.messages.ALL. Verified against a live message: the folder-less
+     * form 404s, the folder form returns the body.
+     *
+     * folderId comes off the message from listMessages(). It is optional only so
+     * existing callers keep compiling; without it this still 404s, so pass it.
+     */
     static async getMessageContent(
         messageId: string,
+        folderId?: string | null,
         prefix: ZohoMailEnv = 'ZOHO_MAIL',
     ): Promise<{ subject: string; content: string; fromAddress: string }> {
         const { token, apiDomain } = await this.getAccessToken(prefix);
         const acct = await this.accountId(token, apiDomain, prefix);
 
-        const res = await fetch(`${apiDomain}/api/accounts/${acct}/messages/${messageId}/content`, {
+        const path = folderId
+            ? `${apiDomain}/api/accounts/${acct}/folders/${folderId}/messages/${messageId}/content`
+            : `${apiDomain}/api/accounts/${acct}/messages/${messageId}/content`;
+
+        const res = await fetch(path, {
             headers: { 'Authorization': `Zoho-oauthtoken ${token}` },
         });
         const data = await res.json().catch(() => null);
