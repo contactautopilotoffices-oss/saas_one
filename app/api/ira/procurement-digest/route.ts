@@ -21,7 +21,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { dailyRunKey, withAgentRun } from '@/backend/lib/agents/instrument';
-import { fixtureFindings } from '@/backend/lib/ira/procurement/detect';
+import { scanPurchaseOrders } from '@/backend/lib/ira/procurement/detectLive';
+import { windowFor, CADENCES, type Cadence } from '@/backend/lib/ira/procurement/cadence';
+import { applyPriorDispositions, rememberFindings, loadDispositionStatuses } from '@/backend/lib/ira/procurement/memory';
+import { replyTag, taggedSubject } from '@/backend/lib/ira/procurement/reply';
+import type { Finding } from '@/backend/lib/ira/procurement/types';
 import { routeFindings } from '@/backend/lib/ira/procurement/router';
 import type { RecipientKey } from '@/backend/lib/ira/procurement/types';
 import { renderRecipientEmail } from '@/backend/lib/ira/procurement/render';
@@ -38,6 +42,37 @@ const KEYS: RecipientKey[] = ['ceo', 'procurement', 'technical'];
 
 function isKey(v: string): v is RecipientKey {
     return (KEYS as string[]).includes(v);
+}
+
+const AGENT_KEY = 'ira';
+
+/** Where replies come back to. Unset = no reply box, buttons only. */
+function replyAddress(): string | null {
+    return (process.env.IRA_REPLY_TO || process.env.IRA_FROM_EMAIL || process.env.SMTP_SENDER_EMAIL || '').trim() || null;
+}
+
+/**
+ * The scan, end to end: window -> live SQL -> what people already answered ->
+ * persist -> route.
+ *
+ * Order matters and is not arbitrary. Prior dispositions are applied BEFORE
+ * anything is emailed, so a line closed yesterday is never raised again today;
+ * and findings are remembered AFTER that filter, so `last_seen_at` reflects what
+ * the scan actually saw rather than what it chose to report.
+ */
+async function runScan(orgId: string, cadence: Cadence, now: Date) {
+    const window = windowFor(cadence, now);
+    const { findings: raw, stats } = await scanPurchaseOrders(orgId, window.to, window);
+
+    const memory = await applyPriorDispositions(orgId, AGENT_KEY, raw);
+    const findings: Finding[] = memory.findings;
+
+    // Persist BEFORE emailing: a reply can arrive within seconds of the send, and
+    // it needs a row to land on.
+    const remembered = await rememberFindings(orgId, AGENT_KEY, null, findings);
+
+    const statuses = await loadDispositionStatuses(orgId, AGENT_KEY, findings.map((f) => f.key));
+    return { window, findings, stats, memory, statuses, remembered };
 }
 
 export async function GET(request: NextRequest) {
@@ -58,7 +93,11 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    const bundles = routeFindings(fixtureFindings());
+    const cadenceParam = (sp.get('cadence') ?? 'daily') as Cadence;
+    const cadence: Cadence = CADENCES.includes(cadenceParam) ? cadenceParam : 'daily';
+
+    const scan = await runScan(orgId, cadence, new Date());
+    const bundles = routeFindings(scan.findings);
 
     await withAgentRun(
         {
@@ -70,11 +109,24 @@ export async function GET(request: NextRequest) {
             runKey: dailyRunKey('ira-procurement-digest-preview'),
         },
         async (step) => {
-            const s = await step('Routing findings to recipients', 'decide');
-            await s.ok({ detail: { recipients: bundles.map((b) => b.recipient.key) } });
+            const s = await step(`Scanning purchase orders · ${scan.window.label}`, 'fetch');
+            await s.ok({ detail: { ...scan.stats, cadence, window: scan.window.label } });
+
+            const r = await step('Routing findings to recipients', 'decide');
+            await r.ok({
+                detail: {
+                    recipients: bundles.map((b) => b.recipient.key),
+                    suppressed: scan.memory.suppressed.length,
+                    reopened: scan.memory.reopened.length,
+                    memory_degraded: scan.memory.degraded,
+                },
+            });
             return {
-                outcome: `${bundles.length} recipient bundle(s) from ${fixtureFindings().length} findings`,
-                grounded: false, // fixture findings, not live SQL — see detect.ts
+                outcome: scan.findings.length === 0
+                    ? `Nothing new in ${scan.window.label}. ${scan.memory.suppressed.length} closed line(s) stayed closed.`
+                    : `${scan.findings.length} finding(s) to ${bundles.length} recipient(s) · ${scan.window.label}`,
+                // Now genuinely derived from rows in zoho_purchase_orders.
+                grounded: true,
             };
         },
     );
@@ -82,7 +134,11 @@ export async function GET(request: NextRequest) {
     if (sp.get('format') === 'json') {
         return NextResponse.json({
             ok: true,
-            grounded: false,
+            grounded: true,
+            cadence,
+            window: { label: scan.window.label, scope: scan.window.scope, from: scan.window.from, to: scan.window.to },
+            stats: scan.stats,
+            memory: { suppressed: scan.memory.suppressed, reopened: scan.memory.reopened, degraded: scan.memory.degraded, persisted: scan.remembered },
             bundles: bundles.map((b) => ({
                 recipient: b.recipient,
                 counts: b.counts,
@@ -119,7 +175,12 @@ export async function GET(request: NextRequest) {
         }
     }
 
-    const { html } = renderRecipientEmail(bundle, orgId, new Date(), links);
+    const subjects: Record<string, string> = {};
+    for (const f of bundle.findings) subjects[f.key] = taggedSubject(f.title, replyTag(orgId, AGENT_KEY, f.key));
+
+    const { html } = renderRecipientEmail(
+        bundle, orgId, new Date(), links, [], replyAddress(), subjects, scan.statuses,
+    );
     return new NextResponse(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
 }
 
@@ -166,7 +227,9 @@ export async function POST(request: NextRequest) {
         );
     }
 
-    const bundles = routeFindings(fixtureFindings());
+    const cadencePost = ((sp.get('cadence') ?? 'daily') as Cadence);
+    const scan = await runScan(orgId, CADENCES.includes(cadencePost) ? cadencePost : 'daily', new Date());
+    const bundles = routeFindings(scan.findings);
     const sent: string[] = [];
     const skipped: string[] = [];
 
@@ -188,7 +251,12 @@ export async function POST(request: NextRequest) {
                     : {};
                 if (!userId) skipped.push(`${bundle.recipient.key}: no userId — sent without feedback links`);
 
-                const { subject, html } = renderRecipientEmail(bundle, orgId, new Date(), links);
+                const subjects: Record<string, string> = {};
+                for (const f of bundle.findings) subjects[f.key] = taggedSubject(f.title, replyTag(orgId, AGENT_KEY, f.key));
+
+                const { subject, html } = renderRecipientEmail(
+                    bundle, orgId, new Date(), links, [], replyAddress(), subjects, scan.statuses,
+                );
                 const s = await step(`Emailing ${bundle.recipient.key}`, 'notify',
                     { recipient: bundle.recipient.key, findings: bundle.counts.total });
                 try {
@@ -204,7 +272,10 @@ export async function POST(request: NextRequest) {
                     await s.fail(e);
                 }
             }
-            return { outcome: `sent ${sent.length}, skipped ${skipped.length}`, grounded: false };
+            return {
+                outcome: `sent ${sent.length}, skipped ${skipped.length} · ${scan.window.label}`,
+                grounded: true,
+            };
         },
     );
 

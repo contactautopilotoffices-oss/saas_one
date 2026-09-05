@@ -150,3 +150,57 @@ export async function rememberFindings(
 
     return error ? { ok: false, error: error.message } : { ok: true };
 }
+
+
+/**
+ * What the team has already answered, for recipients who READ status rather than
+ * set it. This is the executive half of the loop: Saniel sees "Done by Vidya —
+ * credit note CN/2026/118" without touching anything.
+ *
+ * Resolves the responder's name so the email can say who, not a uuid. Never
+ * throws; an unprovisioned or unreachable store yields an empty map and the
+ * emails simply show every line as still open.
+ */
+export async function loadDispositionStatuses(
+    orgId: string,
+    agentKey: string,
+    findingKeys: ReadonlyArray<string>,
+): Promise<Record<string, {
+    disposition: Disposition | null; by: string | null; at: string | null; note: string | null;
+}>> {
+    if (!findingKeys.length) return {};
+
+    const { data, error } = await supabaseAdmin
+        .from('oem_agent_findings')
+        .select('finding_key, disposition, disposition_note, dispositioned_at, dispositioned_by')
+        .eq('organization_id', orgId)
+        .eq('agent_key', agentKey)
+        .in('finding_key', findingKeys.slice(0, 200))
+        .not('disposition', 'is', null);
+
+    if (error || !data?.length) return {};
+
+    // One lookup for every responder, rather than one per finding.
+    const userIds = [...new Set(data.map((r) => r.dispositioned_by).filter(Boolean))] as string[];
+    const names = new Map<string, string>();
+    if (userIds.length) {
+        const { data: users } = await supabaseAdmin
+            .from('users').select('id, full_name').in('id', userIds);
+        for (const u of users ?? []) names.set(String(u.id), String(u.full_name ?? '').split(' ')[0] || 'someone');
+    }
+
+    const out: Record<string, { disposition: Disposition | null; by: string | null; at: string | null; note: string | null }> = {};
+    for (const r of data) {
+        out[String(r.finding_key)] = {
+            disposition: (r.disposition as Disposition) ?? null,
+            by: r.dispositioned_by ? names.get(String(r.dispositioned_by)) ?? null : null,
+            at: r.dispositioned_at
+                ? new Date(String(r.dispositioned_at)).toLocaleDateString('en-IN', {
+                      timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short',
+                  })
+                : null,
+            note: (r.disposition_note as string) ?? null,
+        };
+    }
+    return out;
+}
