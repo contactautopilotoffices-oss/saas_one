@@ -62,6 +62,8 @@ import {
 import AgentPlanCanvas, { type AgentPlan } from '@/frontend/components/agents/AgentPlanCanvas';
 import AgentDelivery from '@/frontend/components/agents/AgentDelivery';
 import Hint from '@/frontend/components/agents/Hint';
+import AgentPreflight from '@/frontend/components/agents/AgentPreflight';
+import AgentFirstRun from '@/frontend/components/agents/AgentFirstRun';
 
 /** What POST /api/agents/optimize returns. */
 interface OptimizeResult {
@@ -702,6 +704,8 @@ export default function AgentConsole({ orgId }: AgentConsoleProps) {
                                 <div className="pt-4">
                                     {tab === 'configure' && (
                                         <div className="flex flex-col gap-4">
+                                            <AgentPreflight orgId={orgId} agentKey={selected.agent_key} />
+                                            <AgentFirstRun orgId={orgId} agentKey={selected.agent_key} />
                                             <RuntimeEnvelope agent={selected} />
                                             <AgentTriView
                                                 key={selected.agent_key}
