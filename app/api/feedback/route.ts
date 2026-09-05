@@ -17,10 +17,22 @@ export async function GET(request: NextRequest) {
         const status = searchParams.get('status');
         const type = searchParams.get('type');
         const orgId = searchParams.get('org_id');
+        const propertyId = searchParams.get('property_id');
         const limit = parseInt(searchParams.get('limit') || '50');
 
         // Use admin client to bypass RLS for fetching (we'll filter manually)
         const admin = createAdminClient();
+
+        // Check user memberships to determine if caller is org admin
+        const { data: orgMems } = await admin
+            .from('organization_memberships')
+            .select('role')
+            .eq('user_id', user.id)
+            .eq('is_active', true);
+
+        const isOrgAdmin = (orgMems || []).some((m: any) =>
+            ['owner', 'org_super_admin', 'org_admin', 'master_admin'].includes(m.role?.toLowerCase())
+        );
 
         let query = admin
             .from('feedback_tickets')
@@ -31,6 +43,24 @@ export async function GET(request: NextRequest) {
         if (status) query = query.eq('status', status);
         if (type) query = query.eq('type', type);
         if (orgId) query = query.eq('organization_id', orgId);
+
+        if (propertyId) {
+            query = query.eq('property_id', propertyId);
+        } else if (!isOrgAdmin) {
+            // Property admin or staff: restrict to assigned properties or own submissions
+            const { data: propMems } = await admin
+                .from('property_memberships')
+                .select('property_id')
+                .eq('user_id', user.id)
+                .eq('is_active', true);
+
+            const assignedPropIds = (propMems || []).map((p: any) => p.property_id).filter(Boolean);
+            if (assignedPropIds.length > 0) {
+                query = query.or(`property_id.in.(${assignedPropIds.join(',')}),submitted_by.eq.${user.id}`);
+            } else {
+                query = query.eq('submitted_by', user.id);
+            }
+        }
 
         const { data, error } = await query;
 
@@ -49,6 +79,53 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
     }
 }
+
+// PATCH /api/feedback — Update ticket status
+export async function PATCH(request: NextRequest) {
+    try {
+        const supabase = await createClient();
+        const { data: { user } } = await supabase.auth.getUser();
+
+        if (!user) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+
+        const body = await request.json();
+        const { id, status, notes } = body;
+
+        if (!id) {
+            return NextResponse.json({ error: 'Ticket ID is required' }, { status: 400 });
+        }
+
+        const admin = createAdminClient();
+        const updateData: any = { updated_at: new Date().toISOString() };
+        if (status) {
+            updateData.status = status;
+            if (['deployed', 'approved', 'rejected'].includes(status)) {
+                updateData.resolved_at = new Date().toISOString();
+            }
+        }
+        if (notes !== undefined) updateData.notes = notes;
+
+        const { data, error } = await admin
+            .from('feedback_tickets')
+            .update(updateData)
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) {
+            console.error('[Feedback PATCH] DB Update Error:', error);
+            return NextResponse.json({ error: error.message }, { status: 500 });
+        }
+
+        return NextResponse.json({ data });
+    } catch (err: any) {
+        console.error('[Feedback PATCH] Unexpected error:', err);
+        return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    }
+}
+
 
 // POST /api/feedback — Submit new feedback
 export async function POST(request: NextRequest) {

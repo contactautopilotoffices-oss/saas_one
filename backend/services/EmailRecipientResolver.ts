@@ -25,10 +25,17 @@ const ALIAS_MAP: Record<string, string> = {
     monthly_requisitions: 'monthly_requisition_uploaded',
     crm_leads: 'lead_created',
     checklists: 'checklist_slot_reminder',
-    ppm: 'reminder_ppm'
+    ppm: 'reminder_ppm',
+    cafeteria_revenue: 'vendor_revenue_recorded',
+    vendor_revenue: 'vendor_revenue_recorded',
+    user_management: 'user_pending_approval',
+    user_pending_approval: 'user_pending_approval',
+    user_approved: 'user_approved'
 };
 
 export const DEFAULT_EMAIL_SERVICE_CONFIG: Record<string, FeatureEmailConfig> = {
+    vendor_revenue_recorded: { enabled: true, roles: ['property_admin', 'org_super_admin', 'accounts'], user_ids: [], notify_requester: true },
+    vendor_revenue_reminder: { enabled: true, roles: ['property_admin'], user_ids: [], notify_assignee: true, notify_requester: true },
     ticket_created: { enabled: true, roles: ['property_admin', 'staff'], user_ids: [], notify_assignee: true, notify_requester: true },
     ticket_assigned: { enabled: true, roles: [], user_ids: [], notify_assignee: true },
     ticket_completed: { enabled: true, roles: [], user_ids: [], notify_requester: true },
@@ -61,7 +68,9 @@ export const DEFAULT_EMAIL_SERVICE_CONFIG: Record<string, FeatureEmailConfig> = 
     reminder_ppm: { enabled: true, roles: ['property_admin', 'org_super_admin'], user_ids: [] },
     lead_created: { enabled: true, roles: ['sales', 'org_super_admin'], user_ids: [] },
     lead_assigned: { enabled: true, roles: [], user_ids: [], notify_assignee: true },
-    crm_leads: { enabled: true, roles: ['org_super_admin'], user_ids: [], notify_assignee: true }
+    crm_leads: { enabled: true, roles: ['org_super_admin'], user_ids: [], notify_assignee: true },
+    user_pending_approval: { enabled: true, roles: ['org_super_admin', 'property_admin'], user_ids: [] },
+    user_approved: { enabled: true, roles: [], user_ids: [], notify_requester: true }
 };
 
 const ORG_SCOPED_ROLES = new Set([
@@ -123,8 +132,8 @@ export const EmailRecipientResolver = {
                 propOverride = matrixRule.property_overrides[propertyId];
             }
 
-            const isEmailEnabled = propOverride
-                ? (propOverride.channels?.email === true)
+            const isEmailEnabled = (propOverride && propOverride.channels && propOverride.channels.email !== undefined)
+                ? (propOverride.channels.email === true)
                 : (matrixRule.channels?.email === true);
 
             featureConfig = {

@@ -4,6 +4,8 @@ import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { EventProcessor } from '@/backend/services/EventProcessor';
 import { NotificationService } from '@/backend/services/NotificationService';
+import { EmailService } from '@/backend/services/EmailService';
+import { getBookingDateTimeIST } from '@/backend/utils/timezone';
 
 /**
  * DELETE /api/meeting-room-bookings/[id]
@@ -34,10 +36,11 @@ async function cancelBooking(bookingId: string, user: any) {
         return { error: 'Booking is already cancelled', status: 400 };
     }
 
-    // Prevent cancellation if the meeting has already started
-    const bookingStart = new Date(`${booking.booking_date}T${booking.start_time}`);
-    if (bookingStart <= new Date()) {
-        return { error: 'Cannot cancel a booking after its start time', status: 400 };
+    // Prevent cancellation if the meeting has already started or is in the past
+    const cleanDate = String(booking.booking_date).split('T')[0];
+    const bookingStart = getBookingDateTimeIST(cleanDate, booking.start_time);
+    if (isNaN(bookingStart.getTime()) || bookingStart <= new Date()) {
+        return { error: 'Cannot cancel a past or already started booking', status: 400 };
     }
 
     const isOwner = booking.user_id === user.id;
@@ -134,7 +137,7 @@ async function cancelBooking(bookingId: string, user: any) {
     try {
         const { data: prop } = await adminSupabase
             .from('properties')
-            .select('organization_id')
+            .select('organization_id, name')
             .eq('id', booking.property_id)
             .single();
 
@@ -145,8 +148,34 @@ async function cancelBooking(bookingId: string, user: any) {
             type: 'booking_cancelled',
             status: 'completed',
         });
+
+        // Send attendee & booker cancellation email
+        const recipientEmails = new Set<string>();
+        if (booking.users?.email) recipientEmails.add(booking.users.email);
+        if (booking.attendee_email?.trim()) {
+            booking.attendee_email
+                .split(/[,;]+/)
+                .map((e: string) => e.trim())
+                .filter((e: string) => e && e.includes('@'))
+                .forEach((e: string) => recipientEmails.add(e));
+        }
+
+        for (const emailTo of Array.from(recipientEmails)) {
+            await EmailService.sendMeetingRoomEmail({
+                emailTo,
+                roomName: booking.meeting_rooms?.name || 'Meeting Room',
+                date: cleanDate,
+                startTime: booking.start_time,
+                endTime: booking.end_time,
+                propertyName: prop?.name || 'Your Property',
+                requesterName: booking.users?.full_name || 'Meeting Host',
+                requesterEmail: booking.users?.email || 'N/A',
+                isCancellation: true,
+                comment: booking.comment || null
+            }).catch(e => console.error('[Booking Cancel API] Cancellation email error:', e));
+        }
     } catch (err) {
-        console.error('Activity log insertion failed:', err);
+        console.error('Activity log or attendee email dispatch failed:', err);
     }
 
     // 7. Trigger cancellation notifications asynchronously

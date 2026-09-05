@@ -304,10 +304,11 @@ const DieselLoggerCard: React.FC<DieselLoggerCardProps> = ({
                             <div className="relative">
                                 <input
                                     type="number"
+                                    step="any"
                                     min="0"
                                     placeholder="0"
                                     value={dieselAdded || ''}
-                                    onChange={(e) => setDieselAdded(e.target.value === '' ? 0 : parseInt(e.target.value, 10))}
+                                    onChange={(e) => setDieselAdded(e.target.value === '' ? 0 : parseFloat(e.target.value))}
                                     className={`w-full p-2.5 rounded-xl ${isDark ? 'bg-[#0d1117] border-slate-600 text-white' : 'bg-white border-slate-300'} border-2 text-base font-bold placeholder:text-slate-400 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-all`}
                                 />
                                 <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400">L</span>

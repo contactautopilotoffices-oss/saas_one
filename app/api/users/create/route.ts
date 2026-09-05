@@ -293,14 +293,21 @@ export async function POST(request: NextRequest) {
             }
         }
 
-        // Save phone number if provided
+        // Update user record: set phone, mark onboarding_completed, and auto-approve since created by an authorized admin
         const { phone } = body;
-        if (phone) {
-            await adminClient
-                .from('users')
-                .update({ phone })
-                .eq('id', userData.user.id);
-        }
+        const userProfileUpdates: any = {
+            onboarding_completed: true,
+            is_approved: true,
+            approval_status: 'approved',
+            approved_by: currentUser.id,
+            approved_at: new Date().toISOString()
+        };
+        if (phone) userProfileUpdates.phone = phone;
+
+        await adminClient
+            .from('users')
+            .update(userProfileUpdates)
+            .eq('id', userData.user.id);
 
         // Send welcome WhatsApp message to new user (best-effort, non-blocking)
         const welcomePhone = phone || null;

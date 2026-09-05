@@ -217,7 +217,22 @@ export default function ElectricitySpreadsheetLogger({ propertyId, isDark = fals
                     });
                 });
                 
-                setReadings(newReadings);
+                setReadings(prev => {
+                    const merged = { ...newReadings };
+                    Object.keys(prev).forEach(dateStr => {
+                        if (!merged[dateStr]) merged[dateStr] = {};
+                        Object.keys(prev[dateStr]).forEach(meterId => {
+                            const prevEntry = prev[dateStr][meterId];
+                            if (prevEntry && (prevEntry.final_reading !== undefined || prevEntry.initial_reading !== undefined)) {
+                                merged[dateStr][meterId] = {
+                                    ...(merged[dateStr][meterId] || {}),
+                                    ...prevEntry
+                                };
+                            }
+                        });
+                    });
+                    return merged;
+                });
                 
                 // Auto-scroll to today
                 setTimeout(() => {

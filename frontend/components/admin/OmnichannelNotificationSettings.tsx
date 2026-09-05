@@ -8,9 +8,11 @@ import {
     UserCheck, X, Building, Search, UserPlus, ChevronDown,
     User, Ticket, Wrench, Clock, FileText, Truck, Layers,
     ClipboardCheck, BarChart3, ShoppingBag, Eye, Copy,
-    Phone, PhoneCall, Volume2, Sparkles, Play
+    Phone, PhoneCall, Volume2, Sparkles, Play, ShieldAlert, Activity, QrCode
 } from 'lucide-react';
 import { createClient } from '@/frontend/utils/supabase/client';
+import VoiceAnomalyDashboard from '@/frontend/components/admin/VoiceAnomalyDashboard';
+import WhatsAppAnomalyDashboard from '@/frontend/components/admin/WhatsAppAnomalyDashboard';
 
 export interface ChannelConfig {
     email: boolean;
@@ -63,6 +65,9 @@ export interface NotificationMatrix {
     meeting_rooms?: ModuleConfig;
     ppm?: ModuleConfig;
     crm_leads?: ModuleConfig;
+    cafeteria_revenue?: ModuleConfig;
+    user_management?: ModuleConfig;
+    facility_requests?: ModuleConfig;
     [moduleKey: string]: ModuleConfig | undefined;
 }
 
@@ -454,6 +459,73 @@ const MODULES_META: ModuleMeta[] = [
                 hasContextual: { assignee: true }
             }
         ]
+    },
+    {
+        id: 'cafeteria_revenue',
+        name: 'Cafeteria & Food Vendor Revenue',
+        description: 'Automated daily revenue tracking, commission calculation alerts, and missing revenue reminder calls.',
+        icon: ShoppingBag,
+        color: 'text-amber-600 bg-amber-50 border-amber-100',
+        events: [
+            {
+                key: 'vendor_revenue_recorded',
+                name: 'Daily Revenue Recorded & Commission Calculated',
+                description: 'Sent when food vendors upload their daily revenue figures for their shop.',
+                hasContextual: { requester: true }
+            },
+            {
+                key: 'vendor_revenue_reminder',
+                name: 'Missing Daily Revenue Reminder & Auto Voice Call',
+                description: 'Sent at your configured daily cutoff time to food vendors who have not uploaded their revenue for today.',
+                isScheduledReport: true,
+                hasContextual: { assignee: true, requester: true }
+            },
+            {
+                key: 'vendor_revenue_pending_digest',
+                name: 'Pending Revenue Daily Team Digest',
+                description: 'Consolidated report sent to managers and accounts listing all food stalls with missing daily revenue.',
+                hasContextual: { approver: true }
+            }
+        ]
+    },
+    {
+        id: 'user_management',
+        name: 'User Onboarding & Approvals',
+        description: 'Automated omnichannel alerts for new user registrations awaiting approval, and applicant approval confirmations.',
+        icon: UserCheck,
+        color: 'text-emerald-600 bg-emerald-50 border-emerald-100',
+        events: [
+            {
+                key: 'user_pending_approval',
+                name: 'New User Registration (Pending Approval)',
+                description: 'Sent immediately to designated administrators and selected users when someone signs up and completes onboarding.',
+            },
+            {
+                key: 'user_approved',
+                name: 'User Approval Confirmation',
+                description: 'Sent to the applicant once an administrator approves their account to notify them of dashboard access.',
+                hasContextual: { requester: true }
+            }
+        ]
+    },
+    {
+        id: 'facility_requests',
+        name: 'Facility QR Requests',
+        description: 'Instant multi-channel alerts sent to internal maintenance staff and managers when an issue is reported via facility QR code.',
+        icon: QrCode,
+        color: 'text-sky-600 bg-sky-50 border-sky-100',
+        events: [
+            {
+                key: 'facility_request_created',
+                name: 'New Facility Request (QR Scanned)',
+                description: 'Sent immediately to designated maintenance staff, MST, and property admins to dispatch resolution.',
+            },
+            {
+                key: 'facility_request_resolved',
+                name: 'Facility Request Resolved',
+                description: 'Sent to designated property managers when an on-ground staff member marks the facility request as resolved.',
+            }
+        ]
     }
 ];
 
@@ -497,6 +569,19 @@ const DEFAULT_NOTIFICATION_MATRIX: NotificationMatrix = {
     crm_leads: {
         lead_created: { channels: { email: true, whatsapp: true, push: true }, roles: ['sales', 'org_super_admin'], user_ids: [] },
         lead_assigned: { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [], notify_assignee: true }
+    },
+    cafeteria_revenue: {
+        vendor_revenue_recorded: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: ['property_admin', 'org_super_admin', 'accounts'], user_ids: [], notify_requester: true },
+        vendor_revenue_reminder: { channels: { email: false, whatsapp: true, push: true, voice: false }, roles: ['property_admin'], user_ids: [], notify_assignee: true, notify_requester: true, schedule_time: '18:00', frequency: 'daily' },
+        vendor_revenue_pending_digest: { channels: { email: true, whatsapp: true, push: false, voice: false }, roles: ['property_admin', 'org_super_admin', 'accounts'], user_ids: [] }
+    },
+    user_management: {
+        user_pending_approval: { channels: { email: true, whatsapp: true, push: true }, roles: ['org_super_admin', 'property_admin'], user_ids: [] },
+        user_approved: { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [], notify_requester: true }
+    },
+    facility_requests: {
+        facility_request_created: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin', 'staff', 'mst'], user_ids: [], notify_assignee: true },
+        facility_request_resolved: { channels: { email: false, whatsapp: true, push: true }, roles: ['property_admin'], user_ids: [] }
     }
 };
 
@@ -517,6 +602,7 @@ const DEFAULT_VOICE_TEMPLATES: Record<string, string> = {
     checklist_overdue_alert: "Hi {{user_name}}, this is Pratiksha from the Operations team with an urgent update. The checklist '{{checklist_title}}' at {{property_name}} was not completed during its scheduled shift. Please review and complete it right away.",
     reminder_ppm: "Hi {{user_name}}, this is Pratiksha from the Operations team. Preventive maintenance for {{system_name}} at {{property_name}} is scheduled for {{due_date}}. Please coordinate with the vendor and arrange site clearance.",
     reminder_ticket_sla: "Hi {{user_name}}, this is Pratiksha from Operations. Service ticket #{{ticket_number}} at {{property_name}} is approaching its resolution SLA deadline. Please take immediate action.",
+    vendor_revenue_reminder: "Hi {{user_name}}, this is Pratiksha from the Operations team. This is a quick reminder that today's revenue for {{shop_name}} at {{property_name}} has not been recorded yet. Please open the AutoPilot app and submit your sales figures before the day ends.",
     test_call: "Hi {{user_name}}, this is Pratiksha from the Operations team. This is a quick test call to confirm that your phone notifications and voice alerts are working properly."
 };
 
@@ -537,6 +623,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
     const [selectedPropertyScope, setSelectedPropertyScope] = useState<string>('global');
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
     const [activeModuleTab, setActiveModuleTab] = useState<string>('tickets');
+    const [mainTab, setMainTab] = useState<'rules' | 'voice_analytics' | 'whatsapp_analytics'>('rules');
 
     // Broadcast Welcome Modal State
     const [showBroadcastModal, setShowBroadcastModal] = useState(false);
@@ -550,7 +637,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
 
     // AI Voice Calling & Test Call Modal State
     const [showTestCallModal, setShowTestCallModal] = useState(false);
-    const [testPhone, setTestPhone] = useState('');
+    const [testPhone, setTestPhone] = useState('7028232515');
     const [testUserName, setTestUserName] = useState('Harsh Patil');
     const [testScript, setTestScript] = useState(DEFAULT_VOICE_TEMPLATES.test_call);
     const [testVoiceId, setTestVoiceId] = useState('Polly.Aditi');
@@ -1173,33 +1260,91 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                 </div>
             </div>
 
-            {/* Scope Selection Bar */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 bg-slate-50 rounded-2xl border border-slate-200">
-                <div className="flex items-center gap-3">
-                    <div className="p-2 bg-indigo-100 text-indigo-600 rounded-xl">
-                        <Building className="w-5 h-5" />
-                    </div>
-                    <div>
-                        <h4 className="font-bold text-slate-900 text-sm">Configuration Scope</h4>
-                        <p className="text-xs text-slate-500">Configure global organization defaults or building-specific override rules.</p>
-                    </div>
-                </div>
-                <div className="flex items-center gap-2">
-                    <span className="text-xs font-semibold text-slate-500">Scope:</span>
-                    <select
-                        value={selectedPropertyScope}
-                        onChange={(e) => setSelectedPropertyScope(e.target.value)}
-                        className="bg-white border border-slate-300 font-bold text-xs text-slate-900 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-primary/20 shadow-xs"
-                    >
-                        <option value="global">🌐 Global (All Properties Default)</option>
-                        {propertiesList.map(p => (
-                            <option key={p.id} value={p.id}>
-                                🏢 {p.name} (Property Override)
-                            </option>
-                        ))}
-                    </select>
-                </div>
+            {/* Navigation Tabs Bar */}
+            <div className="flex items-center gap-2 p-1.5 bg-slate-100/90 rounded-2xl border border-slate-200/90 overflow-x-auto">
+                <button
+                    type="button"
+                    onClick={() => setMainTab('rules')}
+                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
+                        mainTab === 'rules'
+                            ? 'bg-white text-slate-900 shadow-xs ring-1 ring-slate-200'
+                            : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+                    }`}
+                >
+                    <Layers className="w-4 h-4 text-primary" />
+                    <span>Notification Rules & Channels</span>
+                </button>
+                <button
+                    type="button"
+                    onClick={() => setMainTab('voice_analytics')}
+                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
+                        mainTab === 'voice_analytics'
+                            ? 'bg-white text-purple-900 shadow-xs ring-1 ring-purple-200'
+                            : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+                    }`}
+                >
+                    <PhoneCall className="w-4 h-4 text-purple-600" />
+                    <span>🎙️ Voice Telephony & Anomaly Center</span>
+                </button>
+                <button
+                    type="button"
+                    onClick={() => setMainTab('whatsapp_analytics')}
+                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
+                        mainTab === 'whatsapp_analytics'
+                            ? 'bg-white text-emerald-900 shadow-xs ring-1 ring-emerald-200'
+                            : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+                    }`}
+                >
+                    <MessageSquare className="w-4 h-4 text-emerald-600" />
+                    <span>💬 WhatsApp Gateway & Delivery Health</span>
+                </button>
             </div>
+
+            {/* TAB VIEW: Voice Telephony Analytics */}
+            {mainTab === 'voice_analytics' && (
+                <VoiceAnomalyDashboard
+                    organizationId={organizationId}
+                    onTestCallClick={() => setShowTestCallModal(true)}
+                />
+            )}
+
+            {/* TAB VIEW: WhatsApp Delivery & Health Analytics */}
+            {mainTab === 'whatsapp_analytics' && (
+                <WhatsAppAnomalyDashboard
+                    organizationId={organizationId}
+                />
+            )}
+
+            {/* TAB VIEW: Rules & Notification Matrix */}
+            {mainTab === 'rules' && (
+                <>
+                    {/* Scope Selection Bar */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 bg-slate-50 rounded-2xl border border-slate-200">
+                        <div className="flex items-center gap-3">
+                            <div className="p-2 bg-indigo-100 text-indigo-600 rounded-xl">
+                                <Building className="w-5 h-5" />
+                            </div>
+                            <div>
+                                <h4 className="font-bold text-slate-900 text-sm">Configuration Scope</h4>
+                                <p className="text-xs text-slate-500">Configure global organization defaults or building-specific override rules.</p>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs font-semibold text-slate-500">Scope:</span>
+                            <select
+                                value={selectedPropertyScope}
+                                onChange={(e) => setSelectedPropertyScope(e.target.value)}
+                                className="bg-white border border-slate-300 font-bold text-xs text-slate-900 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-primary/20 shadow-xs"
+                            >
+                                <option value="global">🌐 Global (All Properties Default)</option>
+                                {propertiesList.map(p => (
+                                    <option key={p.id} value={p.id}>
+                                        🏢 {p.name} (Property Override)
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    </div>
 
             {/* Modules Accordion Cards */}
             <div className="space-y-6">
@@ -1723,6 +1868,8 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                     Save Notification Matrix
                 </button>
             </div>
+                </>
+            )}
 
             {/* Toast feedback */}
             <AnimatePresence>

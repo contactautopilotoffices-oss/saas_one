@@ -6,6 +6,7 @@ import { Pencil, Trash2, CheckCircle2, XCircle, Share2, Timer, Box } from 'lucid
 import { motion } from 'framer-motion';
 import ShareModal from './ShareModal';
 import { parseDate } from '@/frontend/utils/date';
+import { SLABadge } from '@/frontend/components/tickets/SLABreachDetailsCard';
 
 /**
  * THE Standard Ticket Card Component
@@ -38,6 +39,8 @@ export interface TicketCardProps {
     updatedAt?: string | null; // ISO date string - used when resolvedAt is not set
     propertyName?: string; // Property name for Super Admin view
     escalationChain?: { name: string; avatar?: string | null }[]; // Ordered: [original → ... → current]
+    slaDeadline?: string | null;
+    slaBreached?: boolean;
 
     // Visual hint
     raisedByTenant?: boolean; // yellow border when ticket was raised by a client/tenant (internal === false)
@@ -85,6 +88,8 @@ export default function TicketCard({
     updatedAt,
     propertyName,
     escalationChain,
+    slaDeadline,
+    slaBreached,
     raisedByTenant,
     onClick,
     onEdit,
@@ -117,6 +122,12 @@ export default function TicketCard({
     // Tickets that are fully closed (tenant approved or admin closed)
     const isFullyClosed = ['COMPLETED', 'CLOSED', 'RESOLVED'].includes(normalizedStatus);
     const isCritical = priority?.toUpperCase() === 'CRITICAL' && !isFullyClosed;
+
+    // Real-time SLA breach evaluation
+    const parsedDeadline = slaDeadline ? parseDate(slaDeadline) : null;
+    const computedIsBreached = Boolean(slaBreached) ||
+        (parsedDeadline !== null && parsedDeadline.getTime() < Date.now() && !isResolvedByUs && !isFullyClosed);
+
 
     // Live elapsed timer — counts up every second for active tickets
     // For pending_validation tickets, timer stops (work is done by our side)
@@ -288,6 +299,9 @@ export default function TicketCard({
                 >
                     {status?.replace(/_/g, ' ')}
                 </span>
+
+                <SLABadge slaDeadline={slaDeadline ?? null} isBreached={computedIsBreached} />
+
 
                 {propertyName && (
                     <span className="inline-flex items-center gap-1 px-[clamp(0.4rem,1.5cqw,0.6rem)] py-[clamp(0.15rem,0.5cqw,0.25rem)] bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-full text-[clamp(0.6rem,2.2cqw,0.7rem)] font-semibold">

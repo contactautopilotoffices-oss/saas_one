@@ -29,6 +29,12 @@ interface UserWithMembership {
     is_active: boolean;
     joined_at: string;
     phone?: string;
+    is_approved?: boolean;
+    approval_status?: string;
+    approved_by?: string | null;
+    approved_at?: string | null;
+    rejection_reason?: string | null;
+    approverName?: string | null;
 }
 
 interface UserDirectoryProps {
@@ -131,6 +137,104 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
         setIsLoading(false);
     };
 
+    const [approvingUserId, setApprovingUserId] = useState<string | null>(null);
+
+    const handleApproveUser = async (userToApprove: UserWithMembership) => {
+        setApprovingUserId(userToApprove.id);
+        try {
+            const res = await fetch('/api/users/approve', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    userId: userToApprove.id,
+                    action: 'approve',
+                    propertyId: userToApprove.propertyId || propertyId,
+                })
+            });
+
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to approve user');
+
+            showToast(`User ${userToApprove.full_name} approved! Access unlocked.`);
+            
+            // Instantly update user in local list
+            setUsers(prev => prev.map(u => u.id === userToApprove.id ? {
+                ...u,
+                is_approved: true,
+                approval_status: 'approved',
+                is_active: true,
+                approved_at: data.approvedAt || new Date().toISOString(),
+                approverName: data.approvedBy || 'Administrator'
+            } : u));
+
+            if (selectedUserForProfile?.id === userToApprove.id) {
+                setSelectedUserForProfile(prev => prev ? {
+                    ...prev,
+                    is_approved: true,
+                    approval_status: 'approved',
+                    is_active: true,
+                    approved_at: data.approvedAt || new Date().toISOString(),
+                    approverName: data.approvedBy || 'Administrator'
+                } : null);
+            }
+
+            onUserUpdated?.();
+        } catch (err: any) {
+            showToast(err.message || 'Error approving user', 'error');
+        } finally {
+            setApprovingUserId(null);
+        }
+    };
+
+    const handleRejectUser = async (userToReject: UserWithMembership) => {
+        const reason = window.prompt(`Enter reason for rejecting ${userToReject.full_name}:`, 'Application requirements not met');
+        if (reason === null) return;
+
+        setApprovingUserId(userToReject.id);
+        try {
+            const res = await fetch('/api/users/approve', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    userId: userToReject.id,
+                    action: 'reject',
+                    reason,
+                    propertyId: userToReject.propertyId || propertyId,
+                })
+            });
+
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to reject user');
+
+            showToast(`User ${userToReject.full_name} application rejected`, 'success');
+
+            // Instantly update user in local list
+            setUsers(prev => prev.map(u => u.id === userToReject.id ? {
+                ...u,
+                is_approved: false,
+                approval_status: 'rejected',
+                is_active: false,
+                rejection_reason: reason
+            } : u));
+
+            if (selectedUserForProfile?.id === userToReject.id) {
+                setSelectedUserForProfile(prev => prev ? {
+                    ...prev,
+                    is_approved: false,
+                    approval_status: 'rejected',
+                    is_active: false,
+                    rejection_reason: reason
+                } : null);
+            }
+
+            onUserUpdated?.();
+        } catch (err: any) {
+            showToast(err.message || 'Error rejecting user', 'error');
+        } finally {
+            setApprovingUserId(null);
+        }
+    };
+
     const fetchSuperTenantProperties = async (userId: string) => {
         if (superTenantPropsMap[userId]) return; // already loaded
         try {
@@ -144,7 +248,7 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
         } catch { /* silent */ }
     };
 
-    const fetchUserPropertyAssignments = async (userId: string) => {
+    const fetchUserPropertyAssignments = async (userId: string, defaultPropId?: string, defaultPropName?: string, defaultRole?: string) => {
         if (propAssignPropsMap[userId]) return; // already loaded
         try {
             const { data } = await supabase
@@ -152,11 +256,18 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                 .select('property_id, role, properties(name)')
                 .eq('user_id', userId)
                 .eq('is_active', true);
-            const props = (data || []).map((r: any) => ({
+            let props = (data || []).map((r: any) => ({
                 property_id: r.property_id,
                 name: r.properties?.name || r.property_id,
                 role: r.role,
             }));
+            if (props.length === 0 && defaultPropId) {
+                props = [{
+                    property_id: defaultPropId,
+                    name: defaultPropName || defaultPropId,
+                    role: defaultRole || 'tenant',
+                }];
+            }
             setPropAssignPropsMap(prev => ({ ...prev, [userId]: props }));
         } catch { /* silent */ }
     };
@@ -389,23 +500,77 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
     };
 
     const roleOptions = propertyId
-        ? ['property_admin', 'staff', 'mst', 'security', 'soft_service_manager', 'tenant']
-        : ['org_super_admin', 'ops_super_admin', 'property_admin', 'staff', 'mst', 'security', 'soft_service_manager', 'super_tenant', 'tenant'];
+        ? [
+            'property_admin',
+            'tenant',
+            'staff',
+            'mst',
+            'security',
+            'soft_service_manager',
+            'soft_service_supervisor',
+            'vendor',
+            'procurement',
+            'finance',
+        ]
+        : [
+            'org_super_admin',
+            'ops_super_admin',
+            'property_admin',
+            'tenant',
+            'super_tenant',
+            'staff',
+            'mst',
+            'security',
+            'soft_service_manager',
+            'soft_service_supervisor',
+            'procurement',
+            'finance',
+            'sales',
+            'bd_rep',
+            'vendor',
+        ];
 
     const formatRole = (role: string) => {
-        if (role === 'tenant') return 'Client';
-        if (role === 'super_tenant') return 'Super Client';
+        if (!role) return 'Member';
+        if (role === 'tenant') return 'Client / Tenant';
+        if (role === 'super_tenant') return 'Super Client (Multi-Property)';
+        if (role === 'org_super_admin') return 'Org Super Admin';
+        if (role === 'property_admin') return 'Property Admin';
+        if (role === 'mst') return 'MST (Technician)';
+        if (role === 'soft_service_manager') return 'Soft Service Manager';
+        if (role === 'soft_service_supervisor') return 'Soft Service Supervisor';
+        if (role === 'procurement' || role === 'procurement_user') return 'Procurement';
+        if (role === 'finance' || role === 'accounts') return 'Finance / Accounts';
+        if (role === 'sales' || role === 'sales_executive') return 'Sales / CRM';
+        if (role === 'bd_rep' || role === 'bd_admin' || role === 'bd_super_admin') return 'Business Development';
+        if (role === 'security') return 'Security / Front Desk';
+        if (role === 'vendor') return 'Vendor / Contractor';
         return role.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
     };
+
+    const pendingUsersCount = users.filter(u => 
+        (u.is_approved === false || u.approval_status === 'pending') && u.approval_status !== 'rejected'
+    ).length;
+
+    const approvedUsersCount = users.filter(u => 
+        (u.is_approved === true || u.approval_status === 'approved') && u.approval_status !== 'rejected'
+    ).length;
 
     const filteredUsers = users.filter(u => {
         const matchesSearch = u.full_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
             u.email.toLowerCase().includes(searchQuery.toLowerCase());
         const userRole = u.orgRole || u.propertyRole || '';
         const matchesRole = roleFilter === 'all' || userRole === roleFilter;
+
+        const isUserPending = (u.is_approved === false || u.approval_status === 'pending') && u.approval_status !== 'rejected';
+        const isUserApproved = (u.is_approved === true || u.approval_status === 'approved') && u.approval_status !== 'rejected';
+
         const matchesStatus = statusFilter === 'all' ||
             (statusFilter === 'active' && u.is_active) ||
-            (statusFilter === 'inactive' && !u.is_active);
+            (statusFilter === 'inactive' && !u.is_active) ||
+            (statusFilter === 'pending' && isUserPending) ||
+            (statusFilter === 'approved' && isUserApproved);
+
         const matchesProperty = propertyFilter === 'all' || u.propertyId === propertyFilter;
 
         return matchesSearch && matchesRole && matchesStatus && matchesProperty;
@@ -421,13 +586,18 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                         <span className="px-2.5 py-1 bg-slate-100 text-slate-600 text-[10px] font-black uppercase tracking-wider rounded-lg border border-slate-200">
                             {filteredUsers.length} Users
                         </span>
+                        {pendingUsersCount > 0 && (
+                            <span className="px-2.5 py-1 bg-amber-100 text-amber-800 text-[10px] font-black uppercase tracking-wider rounded-lg border border-amber-300 animate-pulse flex items-center gap-1">
+                                <span>⏳ {pendingUsersCount} Pending Approval</span>
+                            </span>
+                        )}
                     </div>
-                    <p className="text-slate-500 font-medium text-sm mt-1">Manage user access, roles, and permissions.</p>
+                    <p className="text-slate-500 font-medium text-sm mt-1">Manage user access, roles, approvals, and permissions.</p>
                 </div>
                 <div className="flex items-center gap-3">
                     <button
                         onClick={() => setShowClientQRModal(true)}
-                        className="flex items-center gap-2 px-5 py-3 bg-teal-600 hover:bg-teal-700 text-white font-bold text-sm rounded-xl transition-all shadow-md shadow-teal-600/20"
+                        className="flex items-center gap-2 px-5 py-3 bg-teal-600 hover:bg-teal-700 text-white font-bold text-sm rounded-xl transition-all shadow-md shadow-teal-600/20 cursor-pointer"
                     >
                         <QrCode className="w-4 h-4" />
                         Client Onboarding QR
@@ -435,7 +605,6 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                     {orgId && (
                         <button
                             onClick={() => {
-                                // Check if a parent component (like PropertyAdminDashboard) provided a specific modal trigger
                                 const parentTrigger = (onUserUpdated as any)?.__triggerModal;
                                 if (parentTrigger) {
                                     parentTrigger();
@@ -443,7 +612,7 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                                     setShowInviteModal(true);
                                 }
                             }}
-                            className="flex items-center gap-2 px-6 py-3 bg-slate-900 text-white font-black text-sm rounded-xl hover:bg-slate-800 transition-all shadow-lg shadow-slate-200"
+                            className="flex items-center gap-2 px-6 py-3 bg-slate-900 text-white font-black text-sm rounded-xl hover:bg-slate-800 transition-all shadow-lg shadow-slate-200 cursor-pointer"
                         >
                             <UserPlus className="w-4 h-4" />
                             Add Member
@@ -452,13 +621,54 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                 </div>
             </div>
 
+            {/* Quick Status Filter Tabs */}
+            <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 pb-3">
+                <button
+                    onClick={() => setStatusFilter('all')}
+                    className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
+                        statusFilter === 'all'
+                            ? 'bg-slate-900 text-white shadow-md'
+                            : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+                    }`}
+                >
+                    All Users ({users.length})
+                </button>
+                <button
+                    onClick={() => setStatusFilter('pending')}
+                    className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
+                        statusFilter === 'pending'
+                            ? 'bg-amber-500 text-white shadow-md shadow-amber-500/20'
+                            : 'bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200'
+                    }`}
+                >
+                    <span>⏳ Pending Approval</span>
+                    {pendingUsersCount > 0 && (
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                            statusFilter === 'pending' ? 'bg-white text-amber-800' : 'bg-amber-500 text-white'
+                        }`}>
+                            {pendingUsersCount}
+                        </span>
+                    )}
+                </button>
+                <button
+                    onClick={() => setStatusFilter('approved')}
+                    className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
+                        statusFilter === 'approved'
+                            ? 'bg-emerald-700 text-white shadow-md shadow-emerald-700/20'
+                            : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200'
+                    }`}
+                >
+                    Approved ({approvedUsersCount})
+                </button>
+            </div>
+
             {/* Filters */}
             <div className="flex flex-wrap gap-3 items-center">
                 <div className="relative flex-1 min-w-[280px]">
                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                     <input
                         type="text"
-                        placeholder="Search users..."
+                        placeholder="Search by name or email..."
                         className="w-full pl-11 pr-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 focus:border-slate-300 transition-all"
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
@@ -481,7 +691,9 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                     onChange={(e) => setStatusFilter(e.target.value)}
                     className="px-4 py-3 bg-white border border-slate-200 text-slate-700 font-bold text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-200 cursor-pointer"
                 >
-                    <option value="all">All Status</option>
+                    <option value="all">All Statuses</option>
+                    <option value="pending">⏳ Pending Approval</option>
+                    <option value="approved">✓ Approved</option>
                     <option value="active">Active</option>
                     <option value="inactive">Inactive</option>
                 </select>
@@ -589,7 +801,7 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                                                         </>
                                                     )}
                                                 </div>
-                                            ) : orgId && user.propertyRole && !['tenant', 'super_tenant'].includes(user.propertyRole) ? (
+                                            ) : orgId && (user.propertyRole || user.propertyName) && user.orgRole !== 'super_tenant' ? (
                                                 <div className="flex flex-wrap items-center gap-1.5">
                                                     <button
                                                         onClick={() => {
@@ -597,7 +809,7 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                                                                 setExpandedPropAdminUserId(null);
                                                             } else {
                                                                 setExpandedPropAdminUserId(user.id);
-                                                                fetchUserPropertyAssignments(user.id);
+                                                                fetchUserPropertyAssignments(user.id, user.propertyId, user.propertyName, user.propertyRole);
                                                             }
                                                         }}
                                                         className="inline-flex items-center gap-1 px-2.5 py-1 bg-primary/10 text-primary text-[10px] font-black uppercase tracking-wider rounded-lg border border-primary/20 hover:bg-primary/25 transition-smooth"
@@ -607,7 +819,9 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                                                             ? 'Hide Properties'
                                                             : propAssignPropsMap[user.id]
                                                                 ? `Properties (${propAssignPropsMap[user.id].length})`
-                                                                : 'Properties'}
+                                                                : user.propertyName
+                                                                    ? user.propertyName
+                                                                    : 'Properties'}
                                                     </button>
                                                     {expandedPropAdminUserId === user.id && (
                                                         <>
@@ -627,7 +841,11 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                                                                 <span className="text-[10px] text-text-tertiary font-medium">No active properties</span>
                                                             )}
                                                             <button
-                                                                onClick={() => { setPropAssignUser(user); setPropAssignSelectedPropId(''); setPropAssignRole('property_admin'); }}
+                                                                onClick={() => {
+                                                                    setPropAssignUser(user);
+                                                                    setPropAssignSelectedPropId('');
+                                                                    setPropAssignRole(user.propertyRole === 'tenant' ? 'tenant' : (user.propertyRole || 'property_admin'));
+                                                                }}
                                                                 className="inline-flex items-center gap-1 px-2 py-1 bg-surface-elevated text-text-secondary text-[10px] font-black uppercase tracking-wider rounded-lg border border-border hover:bg-muted transition-smooth"
                                                             >
                                                                 <Plus className="w-3 h-3" />
@@ -644,12 +862,54 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                                             ) : null}
 
                                             {/* Status Badge */}
-                                            <span className={`inline-flex items-center px-2.5 py-1 text-[10px] font-black uppercase tracking-wider rounded-lg border ${user.is_active
-                                                ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
-                                                : 'bg-slate-100 text-slate-500 border-slate-200'
-                                                }`}>
-                                                {user.is_active ? 'approved' : 'pending'}
+                                            <span className={`inline-flex items-center px-2.5 py-1 text-[10px] font-black uppercase tracking-wider rounded-lg border ${
+                                                user.approval_status === 'rejected'
+                                                    ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                                    : (user.is_approved || user.approval_status === 'approved')
+                                                        ? user.is_active
+                                                            ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                                                            : 'bg-slate-100 text-slate-600 border-slate-200'
+                                                        : 'bg-amber-50 text-amber-700 border-amber-200'
+                                            }`}>
+                                                {user.approval_status === 'rejected'
+                                                    ? 'Rejected'
+                                                    : (user.is_approved || user.approval_status === 'approved')
+                                                        ? user.is_active ? '✓ Approved' : 'Inactive'
+                                                        : '⏳ Pending Approval'}
                                             </span>
+
+                                            {/* Quick Inline Approval Actions (only show for users actually pending approval) */}
+                                            {((user.is_approved === false || user.approval_status === 'pending') && user.approval_status !== 'rejected') && (
+                                                <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                                                    <button
+                                                        onClick={() => handleApproveUser(user)}
+                                                        disabled={approvingUserId === user.id}
+                                                        title="Approve user registration"
+                                                        className="inline-flex items-center gap-1 px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black uppercase tracking-wider rounded-lg shadow-sm transition-all cursor-pointer disabled:opacity-50"
+                                                    >
+                                                        <Check className="w-3 h-3" />
+                                                        {approvingUserId === user.id ? 'Approving...' : 'Approve'}
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleRejectUser(user)}
+                                                        disabled={approvingUserId === user.id}
+                                                        title="Reject user registration"
+                                                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-600 text-[10px] font-black uppercase tracking-wider rounded-lg border border-rose-200 transition-all cursor-pointer disabled:opacity-50"
+                                                    >
+                                                        <X className="w-3 h-3" />
+                                                        Reject
+                                                    </button>
+                                                </div>
+                                            )}
+
+                                            {/* Approver Audit Info Display */}
+                                            {user.is_approved && user.approverName && (
+                                                <span className="inline-flex items-center gap-1 text-[11px] text-slate-500 font-medium">
+                                                    <Check className="w-3 h-3 text-emerald-600" />
+                                                    Approved by <strong className="text-slate-800 font-bold">{user.approverName}</strong>
+                                                    {user.approved_at && ` on ${new Date(user.approved_at).toLocaleDateString()}`}
+                                                </span>
+                                            )}
 
                                             {/* Edit Role Logic */}
                                             {editingUserId === user.id ? (
@@ -892,6 +1152,7 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                                             className="w-full px-4 py-3 bg-surface-elevated border border-border rounded-xl text-sm font-medium text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
                                         >
                                             <option value="property_admin">Property Admin</option>
+                                            <option value="tenant">Client / Tenant</option>
                                             <option value="staff">Staff</option>
                                             <option value="mst">MST</option>
                                             <option value="security">Security</option>
@@ -1015,6 +1276,70 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                                         </div>
                                     )}
 
+                                    {/* Approval Audit Information */}
+                                    <div className="flex justify-between items-center py-3 border-b border-slate-100">
+                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Approval Status</span>
+                                        <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                                            selectedUserForProfile.approval_status === 'rejected'
+                                                ? 'bg-rose-100 text-rose-800'
+                                                : selectedUserForProfile.is_approved
+                                                    ? 'bg-emerald-100 text-emerald-800'
+                                                    : 'bg-amber-100 text-amber-800'
+                                        }`}>
+                                            {selectedUserForProfile.approval_status === 'rejected'
+                                                ? 'Rejected'
+                                                : selectedUserForProfile.is_approved
+                                                    ? 'Approved'
+                                                    : 'Pending Approval'}
+                                        </span>
+                                    </div>
+
+                                    {selectedUserForProfile.is_approved && selectedUserForProfile.approverName && (
+                                        <div className="flex justify-between items-center py-3 border-b border-slate-100">
+                                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Approved By</span>
+                                            <span className="text-sm font-bold text-slate-900">
+                                                {selectedUserForProfile.approverName}
+                                            </span>
+                                        </div>
+                                    )}
+
+                                    {selectedUserForProfile.approved_at && (
+                                        <div className="flex justify-between items-center py-3 border-b border-slate-100">
+                                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Approved On</span>
+                                            <span className="text-xs font-semibold text-slate-700">
+                                                {new Date(selectedUserForProfile.approved_at).toLocaleString()}
+                                            </span>
+                                        </div>
+                                    )}
+
+                                    {selectedUserForProfile.rejection_reason && (
+                                        <div className="py-2 px-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800">
+                                            <strong>Reason:</strong> {selectedUserForProfile.rejection_reason}
+                                        </div>
+                                    )}
+
+                                    {/* Quick Actions if Pending */}
+                                    {((selectedUserForProfile.is_approved === false || selectedUserForProfile.approval_status === 'pending') && selectedUserForProfile.approval_status !== 'rejected') && (
+                                        <div className="flex gap-2 pt-2">
+                                            <button
+                                                onClick={() => handleApproveUser(selectedUserForProfile)}
+                                                disabled={approvingUserId === selectedUserForProfile.id}
+                                                className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                                            >
+                                                <Check className="w-4 h-4" />
+                                                {approvingUserId === selectedUserForProfile.id ? 'Approving...' : 'Approve Access'}
+                                            </button>
+                                            <button
+                                                onClick={() => handleRejectUser(selectedUserForProfile)}
+                                                disabled={approvingUserId === selectedUserForProfile.id}
+                                                className="px-4 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 font-black text-xs uppercase tracking-wider rounded-xl border border-rose-200 transition-all cursor-pointer disabled:opacity-50"
+                                            >
+                                                <X className="w-4 h-4" />
+                                                Reject
+                                            </button>
+                                        </div>
+                                    )}
+
                                     {canViewReliability && (
                                         <div className="pt-2">
                                             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Reliability</p>
@@ -1025,7 +1350,7 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                                     <div className="pt-4 flex justify-center">
                                         <button
                                             onClick={() => setSelectedUserForProfile(null)}
-                                            className="px-8 py-2.5 bg-slate-900 text-white font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-slate-800 transition-all w-full"
+                                            className="px-8 py-2.5 bg-slate-900 text-white font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-slate-800 transition-all w-full cursor-pointer"
                                         >
                                             Done
                                         </button>

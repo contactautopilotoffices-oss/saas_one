@@ -16,6 +16,7 @@ interface Booking {
     status: 'confirmed' | 'cancelled' | 'completed';
     created_at: string;
     comment?: string;
+    attendee_email?: string;
     meeting_room: {
         name: string;
         photo_url: string;
@@ -139,10 +140,21 @@ const AdminBookingList: React.FC<AdminBookingListProps> = ({ propertyId }) => {
         }
     };
 
-    const canCancel = (bookingUserId: string, bookingStatus: string) => {
-        if (bookingStatus !== 'confirmed') return false;
+    const isBookingPast = (bookingDate: string, startTime: string) => {
+        if (!bookingDate || !startTime) return false;
+        const cleanDate = bookingDate.split('T')[0];
+        const [y, m, d] = cleanDate.split('-').map(Number);
+        const [h, min] = startTime.split(':').map(Number);
+        const utc = Date.UTC(y, m - 1, d, h - 5, min - 30);
+        return !isNaN(utc) && utc <= Date.now();
+    };
+
+    const canCancel = (booking: Booking) => {
+        if (booking.status !== 'confirmed') return false;
+        // Strictly prevent cancelling backdated / already started bookings
+        if (isBookingPast(booking.booking_date, booking.start_time)) return false;
         if (userRole === 'master_admin') return true;
-        if (currentUserId === bookingUserId) return true;
+        if (currentUserId === booking.user_id) return true;
         if (userRole === 'property_admin' || userRole === 'org_super_admin' || userRole === 'org_admin') return true;
         if ((userRole === 'staff' || userRole === 'mst') && isTechnical) return true;
         return false;
@@ -151,19 +163,20 @@ const AdminBookingList: React.FC<AdminBookingListProps> = ({ propertyId }) => {
     const filteredBookings = bookings.filter(booking => {
         const matchesSearch =
             booking.tenant.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            booking.meeting_room.name.toLowerCase().includes(searchTerm.toLowerCase());
+            booking.meeting_room.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            (booking.attendee_email && booking.attendee_email.toLowerCase().includes(searchTerm.toLowerCase()));
         const matchesStatus = statusFilter === 'all' || booking.status === statusFilter;
         const matchesDate = !dateFilter || booking.booking_date === dateFilter;
         return matchesSearch && matchesStatus && matchesDate;
     });
 
-    const getStatusColor = (status: string) => {
-        switch (status) {
-            case 'confirmed': return 'bg-emerald-50 text-emerald-700 border-emerald-100';
-            case 'cancelled': return 'bg-rose-50 text-rose-700 border-rose-100';
-            case 'completed': return 'bg-slate-50 text-slate-700 border-slate-100';
-            default: return 'bg-slate-50 text-slate-700 border-slate-100';
+    const getBookingDisplayStatus = (booking: Booking) => {
+        if (booking.status === 'cancelled') return { label: 'CANCELLED', color: 'bg-rose-50 text-rose-700 border-rose-100' };
+        if (booking.status === 'completed') return { label: 'COMPLETED', color: 'bg-slate-50 text-slate-700 border-slate-100' };
+        if (isBookingPast(booking.booking_date, booking.start_time)) {
+            return { label: 'PAST', color: 'bg-slate-100 text-slate-600 border-slate-200' };
         }
+        return { label: 'CONFIRMED', color: 'bg-emerald-50 text-emerald-700 border-emerald-100' };
     };
 
     const formatTime = (t: string) => {
@@ -181,7 +194,7 @@ const AdminBookingList: React.FC<AdminBookingListProps> = ({ propertyId }) => {
                     <Search className="absolute left-4 md:left-5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 group-focus-within:text-primary transition-colors" />
                     <input
                         type="text"
-                        placeholder="Search by client or room..."
+                        placeholder="Search by client, guest email or room..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                         className="w-full pl-12 md:pl-14 pr-4 md:pr-6 py-3.5 md:py-4 bg-white border border-slate-200 rounded-2xl text-sm font-medium placeholder:text-slate-400 focus:outline-none focus:ring-4 focus:ring-primary/5 transition-all shadow-sm outline-none"
@@ -227,7 +240,9 @@ const AdminBookingList: React.FC<AdminBookingListProps> = ({ propertyId }) => {
             ) : (
                 <div className="grid gap-4">
                     <AnimatePresence mode="popLayout">
-                        {filteredBookings.map((booking) => (
+                        {filteredBookings.map((booking) => {
+                            const displayStatus = getBookingDisplayStatus(booking);
+                            return (
                             <motion.div
                                 key={booking.id}
                                 layout
@@ -262,6 +277,12 @@ const AdminBookingList: React.FC<AdminBookingListProps> = ({ propertyId }) => {
                                                 </span>
                                             </div>
                                         </div>
+                                        {booking.attendee_email && (
+                                            <div className="mt-1 flex items-center gap-1.5 text-xs text-primary font-medium">
+                                                <span className="font-semibold">Invited Guest:</span>
+                                                <span>{booking.attendee_email}</span>
+                                            </div>
+                                        )}
                                         {booking.comment && (
                                             <div className="mt-1.5 text-xs text-slate-500 font-semibold italic uppercase tracking-wide">
                                                 {booking.comment}
@@ -276,12 +297,12 @@ const AdminBookingList: React.FC<AdminBookingListProps> = ({ propertyId }) => {
                                             <User className="w-3.5 h-3.5 text-slate-400" />
                                             <span className="text-xs md:text-sm font-bold text-slate-800">{booking.tenant?.full_name || booking.tenant?.email || 'User'}</span>
                                         </div>
-                                        <span className={`px-3.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border ${getStatusColor(booking.status)}`}>
-                                            {booking.status}
+                                        <span className={`px-3.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border ${displayStatus.color}`}>
+                                            {displayStatus.label}
                                         </span>
                                     </div>
 
-                                    {canCancel(booking.user_id, booking.status) && (
+                                    {canCancel(booking) && (
                                         <button
                                             type="button"
                                             onClick={() => handleCancelBooking(booking.id)}
@@ -304,7 +325,8 @@ const AdminBookingList: React.FC<AdminBookingListProps> = ({ propertyId }) => {
                                     )}
                                 </div>
                             </motion.div>
-                        ))}
+                            );
+                        })}
                     </AnimatePresence>
                 </div>
             )}

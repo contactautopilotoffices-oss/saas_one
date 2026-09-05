@@ -793,7 +793,10 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                                     assigneePhotoUrl={ticket.assignee?.user_photo_url}
                                     photoUrl={ticket.photo_before_url}
                                     propertyName={ticket.property?.name}
+                                    slaDeadline={ticket.sla_deadline}
+                                    slaBreached={ticket.sla_breached}
                                     escalationChain={(() => {
+
                                         const logs = ticket.ticket_escalation_logs;
                                         if (!logs || logs.length === 0) return undefined;
                                         const sorted = [...logs].sort((a, b) => new Date(a.escalated_at).getTime() - new Date(b.escalated_at).getTime());

@@ -51,28 +51,41 @@ function TenantOnboardContent() {
                     setOrgId(prop.organization_id);
                 }
 
-                // Smart Re-scan routing: If user is logged in, check active membership
+                // Smart Re-scan routing: If user is logged in, check approval and active membership
                 if (user) {
-                    const { data: membership } = await supabase
-                        .from('property_memberships')
-                        .select('role')
-                        .eq('user_id', user.id)
-                        .eq('property_id', propertyId)
-                        .eq('is_active', true)
+                    const { data: userProfile } = await supabase
+                        .from('users')
+                        .select('is_approved, approval_status, is_master_admin')
+                        .eq('id', user.id)
                         .maybeSingle();
 
-                    if (membership || user.user_metadata?.role === 'tenant') {
-                        // User already onboarded! Directly route to tenant dashboard
+                    const isUserApproved = userProfile?.is_master_admin || userProfile?.is_approved === true || userProfile?.approval_status === 'approved';
+
+                    const { data: membership } = await supabase
+                        .from('property_memberships')
+                        .select('role, is_active')
+                        .eq('user_id', user.id)
+                        .eq('property_id', propertyId)
+                        .maybeSingle();
+
+                    if (membership && membership.is_active && isUserApproved) {
+                        // User already onboarded and approved! Directly route to tenant dashboard
                         router.replace(`/property/${propertyId}/tenant`);
                         return;
+                    } else if (membership && (!membership.is_active || !isUserApproved)) {
+                        // User registered but awaiting approval
+                        router.replace('/waiting-approval');
+                        return;
                     } else if (prop) {
-                        // User is logged in (e.g. via Google OAuth), provision tenant membership automatically
+                        // User is logged in via OAuth but not yet a member: register pending approval
                         await supabase.from('users').upsert({
                             id: user.id,
                             email: user.email,
                             full_name: user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'Client',
                             role: 'tenant',
                             onboarding_completed: true,
+                            is_approved: false,
+                            approval_status: 'pending',
                             updated_at: new Date().toISOString()
                         }, { onConflict: 'id' });
 
@@ -81,11 +94,23 @@ function TenantOnboardContent() {
                             property_id: propertyId,
                             organization_id: prop.organization_id,
                             role: 'tenant',
-                            is_active: true
+                            is_active: false
                         }, { onConflict: 'user_id,property_id' });
 
+                        // Notify admins
+                        fetch('/api/users/notify-pending', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                userId: user.id,
+                                propertyId,
+                                organizationId: prop.organization_id,
+                                requestedRole: 'tenant'
+                            })
+                        }).catch(() => {});
+
                         await refreshMembership();
-                        router.replace(`/property/${propertyId}/tenant`);
+                        router.replace('/waiting-approval');
                         return;
                     }
                 }

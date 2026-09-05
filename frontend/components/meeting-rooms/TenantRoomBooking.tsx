@@ -58,6 +58,7 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
     const [pendingBooking, setPendingBooking] = useState<{ room: any; slot: any } | null>(null);
     const [isBooking, setIsBooking] = useState(false);
     const [bookingComment, setBookingComment] = useState('');
+    const [attendeeEmail, setAttendeeEmail] = useState('');
     const [bookingError, setBookingError] = useState('');
     const [bookingSuccess, setBookingSuccess] = useState(false);
     const [showHistory, setShowHistory] = useState(false);
@@ -246,6 +247,7 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
         setBookingError('');
         setBookingSuccess(false);
         setBookingComment('');
+        setAttendeeEmail('');
     };
 
     const handleConfirmBook = async () => {
@@ -264,7 +266,8 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
                     date: dateStr,
                     startTime: slot.start,
                     endTime: slot.end,
-                    comment: bookingComment
+                    comment: bookingComment,
+                    attendeeEmail: attendeeEmail.trim() || undefined
                 })
             });
             const data = await res.json();
@@ -276,7 +279,7 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
                 fetchRooms();
                 fetchCredit();
                 fetchMyBookings();
-                setTimeout(() => { setPendingBooking(null); setBookingSuccess(false); }, 1800);
+                setTimeout(() => { setPendingBooking(null); setBookingSuccess(false); setAttendeeEmail(''); }, 1800);
             } else {
                 setBookingError(data.error || 'Failed to create booking');
             }
@@ -554,9 +557,26 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
                                     </div>
                                 </div>
 
+                                {/* Attendee / Guest Email */}
+                                <div className="px-5 py-3 border-b border-border">
+                                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5 block">
+                                        Notify Email / Guest Email (Optional)
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={attendeeEmail}
+                                        onChange={(e) => setAttendeeEmail(e.target.value)}
+                                        placeholder="e.g. user@gmail.com or invitee email..."
+                                        className="w-full px-3 py-2 text-sm bg-muted/50 border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/50"
+                                    />
+                                    <p className="text-[10px] text-muted-foreground mt-1">
+                                        We'll email them the booking confirmation and details.
+                                    </p>
+                                </div>
+
                                 {/* Comment */}
                                 <div className="px-5 py-3 border-b border-border">
-                                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5 block">Comment (Optional)</label>
+                                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5 block">Comment / Notes (Optional)</label>
                                     <textarea
                                         value={bookingComment}
                                         onChange={(e) => setBookingComment(e.target.value)}
@@ -721,7 +741,11 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
                                 ) : historyTab === 'bookings' ? (
                                     <>
                                         {myBookings.map((booking) => {
-                                            const isPast = new Date(`${booking.booking_date}T${booking.end_time}`) < new Date();
+                                            const cleanDate = String(booking.booking_date).split('T')[0];
+                                            const [y, m, d] = cleanDate.split('-').map(Number);
+                                            const [sh, smin] = String(booking.start_time).split(':').map(Number);
+                                            const bookingStartUtc = Date.UTC(y, m - 1, d, sh - 5, smin - 30);
+                                            const isPast = !isNaN(bookingStartUtc) && bookingStartUtc <= Date.now();
                                             const isCancelled = booking.status === 'cancelled';
                                             const statusColor = isCancelled
                                                 ? 'bg-rose-50 text-rose-600 border border-rose-100'
@@ -760,6 +784,11 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
                                                             </div>
                                                             {booking.meeting_room?.location && (
                                                                 <p className="text-[11px] text-muted-foreground mt-1 truncate">{booking.meeting_room.location}</p>
+                                                            )}
+                                                            {booking.attendee_email && (
+                                                                <p className="text-xs text-primary/80 font-medium mt-1">
+                                                                    Invited: <span className="font-semibold">{booking.attendee_email}</span>
+                                                                </p>
                                                             )}
                                                             {booking.comment && (
                                                                 <p className="text-xs text-foreground mt-2 italic bg-muted/30 p-2 rounded-lg border border-border">"{booking.comment}"</p>

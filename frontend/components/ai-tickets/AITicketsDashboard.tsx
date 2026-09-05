@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useParams } from 'next/navigation';
 import { createClient } from '@/frontend/utils/supabase/client';
+import { useAuth } from '@/frontend/context/AuthContext';
 import { TicketStatusBadge } from '@/frontend/components/ai-tickets/TicketStatusBadge';
 import { TicketDetailsModal } from '@/frontend/components/ai-tickets/TicketDetailsModal';
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
@@ -15,6 +16,9 @@ export interface AITicketsDashboardProps {
 export default function AITicketsDashboardView({ propertyId }: AITicketsDashboardProps = {}) {
   const params = useParams();
   const orgId = params?.orgId as string;
+  const urlPropertyId = params?.propertyId as string;
+  const { user, membership } = useAuth();
+  
   const [tickets, setTickets] = useState<any[]>([]);
   const [properties, setProperties] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -28,11 +32,21 @@ export default function AITicketsDashboardView({ propertyId }: AITicketsDashboar
 
   const supabase = createClient();
 
+  // Determine user's property scope
+  const assignedPropertyIds = useMemo(() => {
+    return (membership?.properties || []).map(p => p.id).filter(Boolean);
+  }, [membership]);
+
+  const effectivePropertyId = propertyId || urlPropertyId || (assignedPropertyIds.length === 1 ? assignedPropertyIds[0] : undefined);
+
   const fetchTickets = async () => {
     setLoading(true);
     try {
       // 1. Fetch tickets via API or Supabase client
-      const endpoint = orgId ? `/api/feedback?org_id=${orgId}` : `/api/feedback`;
+      let endpoint = orgId ? `/api/feedback?org_id=${orgId}` : `/api/feedback`;
+      if (effectivePropertyId && effectivePropertyId !== 'all') {
+        endpoint += `${endpoint.includes('?') ? '&' : '?'}property_id=${effectivePropertyId}`;
+      }
       const res = await fetch(endpoint);
       let data: any = {};
       if (res.ok) {
@@ -47,6 +61,9 @@ export default function AITicketsDashboardView({ propertyId }: AITicketsDashboar
         // Fallback to client query if API returns empty
         let query = supabase.from('feedback_tickets').select('*').order('created_at', { ascending: false });
         if (orgId) query = query.eq('organization_id', orgId);
+        if (effectivePropertyId && effectivePropertyId !== 'all') {
+          query = query.eq('property_id', effectivePropertyId);
+        }
         const { data: dbData } = await query;
         ticketsList = dbData || [];
       }
@@ -90,13 +107,31 @@ export default function AITicketsDashboardView({ propertyId }: AITicketsDashboar
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [orgId]);
+  }, [orgId, effectivePropertyId]);
 
   // Property-scoped tickets base list
   const propertyScopedTickets = useMemo(() => {
-    if (!propertyId || propertyId === 'all') return tickets;
-    return tickets.filter(t => t.property_id === propertyId);
-  }, [tickets, propertyId]);
+    const isOrgAdmin = membership?.all_org_memberships?.some(m =>
+      ['owner', 'org_super_admin', 'org_admin', 'master_admin'].includes(m.role?.toLowerCase())
+    ) || membership?.is_master_admin;
+
+    if (isOrgAdmin) {
+      if (!effectivePropertyId || effectivePropertyId === 'all') return tickets;
+      return tickets.filter(t => t.property_id === effectivePropertyId);
+    }
+
+    // Property Admin or staff: filter by effective property or assigned properties or own submission
+    if (effectivePropertyId && effectivePropertyId !== 'all') {
+      return tickets.filter(t => t.property_id === effectivePropertyId || t.submitted_by === user?.id);
+    }
+
+    if (assignedPropertyIds.length > 0) {
+      return tickets.filter(t => (t.property_id && assignedPropertyIds.includes(t.property_id)) || t.submitted_by === user?.id);
+    }
+
+    return tickets.filter(t => t.submitted_by === user?.id);
+  }, [tickets, effectivePropertyId, assignedPropertyIds, membership, user?.id]);
+
 
   // Filtered tickets
   const filteredTickets = useMemo(() => {
@@ -356,6 +391,9 @@ export default function AITicketsDashboardView({ propertyId }: AITicketsDashboar
         <TicketDetailsModal 
           ticket={selectedTicket}
           onClose={() => setSelectedTicket(null)}
+          onStatusUpdate={() => {
+            fetchTickets();
+          }}
         />
       )}
 

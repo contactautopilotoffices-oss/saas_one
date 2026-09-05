@@ -175,8 +175,7 @@ export async function GET(request: NextRequest) {
                 if (t.planned_date !== expDateKey) {
                     // Task is due on a different date than this property's configured alert lead time
                     outsideLeadTime++;
-                    continue;
-                }
+                    continue;                }
 
                 const groupKey = `${propId}__${t.planned_date}`;
                 if (!groupedTasks.has(groupKey)) {
@@ -290,24 +289,29 @@ export async function GET(request: NextRequest) {
                         }
                     });
 
-                    // C. Dispatch Voice Call if voice channel is enabled in Omnichannel matrix
+// C. Dispatch Voice Call if voice channel is enabled in Omnichannel matrix
                     try {
-                        const isVoiceEnabled = activePpmRule?.channels?.voice === true;
+                        const isVoiceEnabled = (activePpmRule?.channels?.voice !== undefined)
+                            ? (activePpmRule.channels.voice === true)
+                            : (ppmRule?.channels?.voice === true);
                         if (isVoiceEnabled && resolvedUsers.length > 0) {
                             const { data: propData } = await supabaseAdmin.from('properties').select('name').eq('id', propId).maybeSingle();
                             const propertyName = propData?.name || 'Site Property';
 
+                            const seenVoicePhones = new Set<string>();
                             for (const u of resolvedUsers) {
-                                if (u.phone) {
+                                const cleanPhone = u.phone ? VoiceCallingService.formatPhone(u.phone) : '';
+                                if (cleanPhone && cleanPhone.length >= 10 && !seenVoicePhones.has(cleanPhone)) {
+                                    seenVoicePhones.add(cleanPhone);
                                     await VoiceCallingService.triggerCall({
                                         organizationId: orgId,
                                         propertyId: propId,
-                                        recipientPhone: u.phone,
+                                        recipientPhone: cleanPhone,
                                         recipientUserId: u.id,
                                         eventType: 'REMINDER_PPM',
-                                        customTemplate: activePpmRule?.voice_template,
-                                        voiceId: activePpmRule?.voice_id,
-                                        speechSpeed: activePpmRule?.speech_speed,
+                                        customTemplate: activePpmRule?.voice_template || ppmRule?.voice_template,
+                                        voiceId: activePpmRule?.voice_id || ppmRule?.voice_id,
+                                        speechSpeed: activePpmRule?.speech_speed || ppmRule?.speech_speed,
                                         variables: {
                                             userName: u.name || 'Staff',
                                             systemName: consolidatedSystem,
@@ -319,7 +323,8 @@ export async function GET(request: NextRequest) {
                             }
                         }
                     } catch (voiceErr: any) {
-                        console.error('[PPM Reminders] Voice call error:', voiceErr.message);
+                        console.error('[PPM Reminders] Voice call error for group:', voiceErr.message);
+                        console.error('[PPM Reminders] Voice call error for group:', voiceErr.message);
                     }
 
                     alreadySentEntityIds.add(dedupEntityId);

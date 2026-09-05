@@ -44,9 +44,17 @@ export async function POST(request: NextRequest) {
         const adminClient = createAdminClient()
 
         // Org-level roles that belong in organization_memberships
-        const ORG_LEVEL_ROLES = ['org_super_admin', 'super_tenant', 'ops_super_admin'];
+        // Union of origin/main's expanded list and ops_super_admin, added by
+        // migration 20260904000001_app_role_ops_super_admin.
+        const ORG_LEVEL_ROLES = [
+            'org_super_admin', 'super_tenant', 'ops_super_admin', 'procurement', 'finance', 'accounts',
+            'bd_admin', 'bd_super_admin', 'bd_rep', 'sales', 'sales_executive', 'admin', 'owner'
+        ];
         // Property-level roles that belong in property_memberships
-        const PROPERTY_LEVEL_ROLES = ['property_admin', 'staff', 'mst', 'security', 'tenant'];
+        const PROPERTY_LEVEL_ROLES = [
+            'property_admin', 'staff', 'mst', 'security', 'soft_service_manager', 'soft_service_supervisor',
+            'tenant', 'super_tenant', 'vendor', 'finance', 'procurement'
+        ];
 
         const isNewRoleOrgLevel = ORG_LEVEL_ROLES.includes(newRole);
 

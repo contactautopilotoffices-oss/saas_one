@@ -48,7 +48,7 @@ import ClientQRGeneratorModal from '@/frontend/components/vms/ClientQRGeneratorM
 import VendorManagementModal from '@/frontend/components/vendor/VendorManagementModal';
 import GuestExperienceDashboard from '@/frontend/components/guest-experience/GuestExperienceDashboard';
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
-import AITicketsDashboard from '@/app/(dashboard)/[orgId]/ai-tickets/page';
+import AITicketsDashboard from '@/frontend/components/ai-tickets/AITicketsDashboard';
 
 // Types
 type Tab = 'overview' | 'requests' | 'guest_experience' | 'reports' | 'users' | 'visitors' | 'rooms' | 'diesel' | 'diesel_analytics' | 'electricity' | 'electricity_analytics' | 'cafeteria' | 'settings' | 'profile' | 'units' | 'vendor_revenue' | 'stock' | 'checklist' | 'escalation' | 'ppm' | 'procurement' | 'roster' | 'water' | 'water_analytics' | 'ai_tickets';
@@ -854,7 +854,7 @@ const PropertyAdminDashboard = () => {
                             />
                         )}
                         {openTab === 'settings' && <SettingsView />}
-                        {openTab === 'ai_tickets' && <AITicketsDashboard />}
+                        {openTab === 'ai_tickets' && <AITicketsDashboard propertyId={propertyId || property?.id || (assignedProperties && assignedProperties[0]?.id)} />}
                         {openTab === 'profile' && (
                             <div className="flex justify-center items-start py-8">
                                 <div className="bg-white border border-slate-100 rounded-3xl shadow-lg w-full max-w-md overflow-hidden">

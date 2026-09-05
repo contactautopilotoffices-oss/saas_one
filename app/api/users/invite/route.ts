@@ -105,6 +105,17 @@ export async function POST(request: NextRequest) {
                 console.error('Failed to pre-create membership:', memberError)
                 // Non-fatal - continue with response
             }
+
+            // Auto-approve user since they are directly invited by an authorized Org Admin
+            await adminClient
+                .from('users')
+                .update({
+                    is_approved: true,
+                    approval_status: 'approved',
+                    approved_by: currentUser.id,
+                    approved_at: new Date().toISOString()
+                })
+                .eq('id', inviteData.user.id);
         }
 
         return NextResponse.json({

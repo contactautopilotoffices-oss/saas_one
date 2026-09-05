@@ -42,3 +42,31 @@ export function getISTDateBounds(dateFilter: 'today' | 'yesterday' | 'week' | 'm
 
     return { start: startUtc.toISOString(), end: endUtc.toISOString() };
 }
+
+/**
+ * Accurately parses a booking date (YYYY-MM-DD) and time (HH:mm or HH:mm:ss)
+ * assuming Asia/Kolkata (IST, UTC+5:30) timezone, returning a UTC Date instance.
+ */
+export function getBookingDateTimeIST(dateStr: string, timeStr: string): Date {
+    if (!dateStr || !timeStr) return new Date(NaN);
+    const cleanDate = String(dateStr).split('T')[0];
+    const [year, month, day] = cleanDate.split('-').map(Number);
+    const [hours, minutes] = String(timeStr).split(':').map(Number);
+
+    if (isNaN(year) || isNaN(month) || isNaN(day) || isNaN(hours) || isNaN(minutes)) {
+        return new Date(NaN);
+    }
+
+    // IST is UTC+5:30 -> UTC is IST minus 5 hours 30 mins
+    const utcMillis = Date.UTC(year, month - 1, day, hours - 5, minutes - 30, 0, 0);
+    return new Date(utcMillis);
+}
+
+/**
+ * Checks if a booking start date/time (in IST) is in the past compared to the current moment.
+ */
+export function isBookingPastIST(dateStr: string, timeStr: string): boolean {
+    const bookingDate = getBookingDateTimeIST(dateStr, timeStr);
+    if (isNaN(bookingDate.getTime())) return false;
+    return bookingDate.getTime() <= Date.now();
+}

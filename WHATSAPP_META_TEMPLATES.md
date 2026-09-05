@@ -24,6 +24,8 @@ This document contains the revised, copy-paste ready message template copy for A
 6. [Meeting Room Reservations](#6-meeting-room-reservations)
 7. [CRM Sales Leads](#7-crm-sales-leads)
 8. [FMS Welcome & Onboarding Broadcast](#8-fms-welcome--onboarding-broadcast)
+9. [Cafeteria & Food Vendor Revenue Suite](#9-cafeteria--food-vendor-revenue-suite)
+10. [Facility QR Requests Suite](#10-facility-qr-requests-suite)
 
 ---
 
@@ -1128,3 +1130,287 @@ Need support? Contact our site helpdesk at {{2}} for prompt assistance.
 - **Sample Values:**
   - `{{1}}`: `Rahul Sharma`
   - `{{2}}`: `contact.autopilotoffices@gmail.com`
+
+---
+
+## 9. Cafeteria & Food Vendor Revenue Suite
+
+### Template 22: `vendor_revenue_recorded_v1` (Daily Revenue Recorded & Commission Calculated)
+*(Sent when a food vendor uploads their daily sales revenue, confirming the amount and commission breakdown)*
+
+- **Template Name:** `vendor_revenue_recorded_v1`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Text` &rarr; `Cafeteria Revenue Recorded 💰`
+- **Body:**
+```text
+Hello {{1}},
+
+Daily cafeteria revenue for {{2}} at {{3}} has been recorded for {{4}}.
+
+💵 Daily Revenue: ₹{{5}}
+📊 Commission Rate: {{6}}%
+🏷️ Commission Due: ₹{{7}}
+
+Your monthly commission statement has been updated.
+```
+- **Footer:** `AutoPilot Cafeteria Management`
+- **Button Type:** `Call to Action (Website URL)`
+  - **Button Text:** `View Revenue Portal`
+  - **URL Type:** `Dynamic` &rarr; `https://fms-dev-saas-one.vercel.app/properties/{{8}}/vendor-revenue`
+- **Sample Values:**
+  - `{{1}}`: `Sunil Sharma (Chai Point)`
+  - `{{2}}`: `Chai Point Stall #2`
+  - `{{3}}`: `Mafatlal Chambers`
+  - `{{4}}`: `27/08/2026`
+  - `{{5}}`: `24,500`
+  - `{{6}}`: `10`
+  - `{{7}}`: `2,450`
+  - `{{8}}` *(Property ID)*: `d35372d1-bee2-403f-8578-00da66f16984`
+
+---
+
+### Template 23: `vendor_revenue_reminder_v1` (Missing Daily Revenue Reminder)
+*(Sent automatically at the UI-selected cutoff time e.g. after 6:00 PM to vendors who have not submitted today's revenue)*
+
+- **Template Name:** `vendor_revenue_reminder_v1`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Text` &rarr; `Daily Revenue Submission Pending ⏰` *(or None)*
+- **Body:**
+```text
+Hello {{1}},
+
+This is a reminder that daily sales revenue for {{2}} at {{3}} has not been submitted for today ({{4}}). Please enter your today's total revenue in the vendor portal to ensure timely commission settlement.
+```
+- **Footer:** `AutoPilot Cafeteria Management`
+- **Button Type:** `Call to Action (Website URL)`
+  - **Button Text:** `Submit Revenue Now`
+  - **URL Type:** `Dynamic` &rarr; `https://fms-dev-saas-one.vercel.app/properties/{{5}}/vendor-revenue`
+- **Sample Values:**
+  - `{{1}}`: `Sunil Sharma`
+  - `{{2}}`: `Chai Point Stall #2`
+  - `{{3}}`: `Mafatlal Chambers`
+  - `{{4}}`: `27/08/2026`
+  - `{{5}}` *(Property ID)*: `d35372d1-bee2-403f-8578-00da66f16984`
+
+---
+
+### Template 24: `vendor_revenue_pending_digest_v1` (Pending Revenue Daily Team Digest)
+*(Sent to Property Managers, Accounts, and Operations team at the cutoff time summarizing the list of vendors who have not submitted daily revenue)*
+
+- **Template Name:** `vendor_revenue_pending_digest_v1`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Text` &rarr; `Cafeteria Revenue Pending Report 📊`
+- **Body:**
+```text
+Hello {{1}},
+
+Here is the daily cafeteria revenue submission summary for {{2}} on {{3}}:
+
+🏪 Total Food Vendors: {{4}}
+✅ Revenue Submitted: {{5}}
+⚠️ Submission Pending: {{6}}
+
+📋 Pending Vendors List:
+{{7}}
+
+Please follow up with the pending vendor partners for timely submission.
+```
+- **Footer:** `AutoPilot Cafeteria Operations`
+- **Button Type:** `Call to Action (Website URL)`
+  - **Button Text:** `View Revenue Portal`
+  - **URL Type:** `Dynamic` &rarr; `https://fms-dev-saas-one.vercel.app/properties/{{8}}/vendor-revenue`
+- **Meta Sample Values:**
+  - `{{1}}`: `Operations Team`
+  - `{{2}}`: `Mafatlal Chambers`
+  - `{{3}}`: `27/08/2026`
+  - `{{4}}`: `8`
+  - `{{5}}`: `5`
+  - `{{6}}`: `3`
+  - `{{7}}`: `• Chai Point Stall #2 (Sunil Sharma)\n• Subway Cafeteria (Ramesh Kumar)\n• Dosa Plaza Kiosk (Anand Verma)`
+  - `{{8}}` *(Property ID)*: `d35372d1-bee2-403f-8578-00da66f16984`
+
+---
+
+## 10. User Onboarding & Approvals Suite
+
+### Template 25: `user_pending_approval_v1` (New User Registration Pending Approval)
+*(Sent to Org Super Admins and Property Admins immediately when a new user registers and completes onboarding)*
+
+- **Template Name:** `user_pending_approval_v1`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Text` &rarr; `New User Awaiting Approval 🔔`
+- **Body:**
+```text
+Hello {{1}},
+
+A new user has completed onboarding and is awaiting your review:
+
+👤 Name: {{2}}
+📧 Email: {{3}}
+🏢 Property: {{4}}
+💼 Requested Role: {{5}}
+
+Please review and approve this user in your User Management dashboard.
+```
+- **Footer:** `AutoPilot User Management`
+- **Button Type:** `Call to Action (Website URL)`
+  - **Button Text:** `Review User`
+  - **URL Type:** `Static` &rarr; `https://autopilotoffices.com/dashboard`
+- **Sample Values:**
+  - `{{1}}`: `Saniel Golechha`
+  - `{{2}}`: `Amith M`
+  - `{{3}}`: `amith.m@worksquare.in`
+  - `{{4}}`: `SS Plaza`
+  - `{{5}}`: `Property Admin`
+
+---
+
+### Template 26: `user_approved_v1` (User Account Approved Confirmation)
+*(Sent to the applicant once an administrator approves their account to notify them of full dashboard access)*
+
+- **Template Name:** `user_approved_v1`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Text` &rarr; `Account Approved! 🎉`
+- **Body:**
+```text
+Hello {{1}},
+
+Great news! Your account for {{2}} has been reviewed and approved by {{3}}.
+
+You now have full access to your workplace dashboard.
+
+Click below to sign in to your dashboard.
+```
+- **Footer:** `AutoPilot Offices`
+- **Button Type:** `Call to Action (Website URL)`
+  - **Button Text:** `Log In to Dashboard`
+  - **URL Type:** `Static` &rarr; `https://autopilotoffices.com/login`
+- **Sample Values:**
+  - `{{1}}`: `Amith M`
+  - `{{2}}`: `SS Plaza`
+  - `{{3}}`: `Saniel Golechha`
+
+---
+
+### Automated Voice Call Alert Prompt (Plivo / Bolna AI)
+When the **Voice** channel toggle is activated in Omnichannel settings:
+- **Neural Speaker Voice:** `Polly.Aditi` (Indian English Female) or `Polly.Raveena`
+- **Speech Speed:** `1.0x`
+- **Spoken Voice Script:**
+```text
+Hi {{user_name}}, this is Pratiksha from the Operations team. This is a quick reminder that today's revenue for {{shop_name}} at {{property_name}} has not been recorded yet. Please open the AutoPilot app and submit your sales figures before the day ends.
+```
+
+---
+
+## 10. Facility QR Requests Suite
+
+### Template 10A: `facility_request_created_v1` (Text-Only / Default when NO photo is attached)
+- **Template Name:** `facility_request_created_v1`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Text` &rarr; `New Facility Request 🏢`
+- **Body:**
+```text
+Hello {{1}},
+
+A new facility issue has been reported via QR scan on AutoPilot.
+
+🎫 Ticket ID: #{{2}}
+⚙️ Process Name: {{3}}
+📍 Location: {{4}}
+🏢 Property: {{5}}
+📝 Issue Details: {{6}}
+👤 Reported By: {{7}}
+
+Please dispatch on-duty staff immediately to inspect and resolve this issue.
+```
+- **Footer:** `AutoPilot Facility Management`
+- **Button Type:** `Call to Action (Dynamic URL)`
+  - **Button Text:** `View Request`
+  - **URL Type:** `Dynamic` &rarr; `https://app.saasone.com/{{8}}`
+- **Sample Values:**
+  - `{{1}}`: `Operations Team`
+  - `{{2}}`: `GR-MAF-WSH-001`
+  - `{{3}}`: `Facility Request`
+  - `{{4}}`: `Washroom (1st Floor)`
+  - `{{5}}`: `D Mafatlal Chambers`
+  - `{{6}}`: `Water leakage in tap near washbasin`
+  - `{{7}}`: `Amit Verma`
+  - `{{8}}` *(Dynamic URL Path)*: `guest-requests`
+
+---
+
+### Template 10B: `facility_request_created_v1_media` (Used automatically when Photo is attached)
+- **Template Name:** `facility_request_created_v1_media`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Media` &rarr; Select **`Image`** *(Upload sample issue photo)*
+- **Body:** *(Identical to Template 10A)*
+```text
+Hello {{1}},
+
+A new facility issue has been reported via QR scan on AutoPilot.
+
+🎫 Ticket ID: #{{2}}
+⚙️ Process Name: {{3}}
+📍 Location: {{4}}
+🏢 Property: {{5}}
+📝 Issue Details: {{6}}
+👤 Reported By: {{7}}
+
+Please dispatch on-duty staff immediately to inspect and resolve this issue.
+```
+- **Footer:** `AutoPilot Facility Management`
+- **Button Type:** `Call to Action (Dynamic URL)`
+  - **Button Text:** `View Request`
+  - **URL Type:** `Dynamic` &rarr; `https://app.saasone.com/{{8}}`
+- **Sample Values:**
+  - `{{1}}`: `Operations Team`
+  - `{{2}}`: `GR-MAF-WSH-001`
+  - `{{3}}`: `Facility Request`
+  - `{{4}}`: `Washroom (1st Floor)`
+  - `{{5}}`: `D Mafatlal Chambers`
+  - `{{6}}`: `Water leakage in tap near washbasin`
+  - `{{7}}`: `Amit Verma`
+  - `{{8}}` *(Dynamic URL Path)*: `guest-requests`
+
+---
+
+### Template 10C: `facility_request_resolved_v1` (Sent when request is marked RESOLVED)
+- **Template Name:** `facility_request_resolved_v1`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Text` &rarr; `Facility Issue Resolved ✅`
+- **Body:**
+```text
+Hello {{1}},
+
+The facility issue has been addressed and marked as resolved on AutoPilot.
+
+🎫 Ticket ID: #{{2}}
+📍 Location: {{3}}
+🏢 Property: {{4}}
+👷 Resolved By: {{5}}
+
+Thank you for ensuring prompt maintenance service!
+```
+- **Footer:** `AutoPilot Facility Management`
+- **Button Type:** `Call to Action (Dynamic URL)`
+  - **Button Text:** `View Details`
+  - **URL Type:** `Dynamic` &rarr; `https://app.saasone.com/{{6}}`
+- **Sample Values:**
+  - `{{1}}`: `Property Admin`
+  - `{{2}}`: `GR-MAF-WSH-001`
+  - `{{3}}`: `Washroom (1st Floor)`
+  - `{{4}}`: `D Mafatlal Chambers`
+  - `{{5}}`: `Sunil Kumar (MST)`
+  - `{{6}}` *(Dynamic URL Path)*: `guest-requests`
+
+
+

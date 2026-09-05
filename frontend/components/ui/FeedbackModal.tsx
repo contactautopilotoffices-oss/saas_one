@@ -37,7 +37,7 @@ export default function FeedbackModal({ isOpen, onClose }: FeedbackModalProps) {
     const params = useParams();
     const pathname = usePathname();
     const orgId = params.orgId as string || membership?.org_id;
-    const propertyId = params.propertyId as string || null;
+    const propertyId = (params.propertyId as string) || (membership?.properties?.[0]?.id) || null;
 
     const [isLoading, setIsLoading] = useState(false);
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error'; visible: boolean }>({

@@ -3,3 +3,4 @@ export { default as TicketList } from './TicketList';
 export { default as TicketDetail } from './TicketDetail';
 export { default as TenantTicketingDashboard } from './TenantTicketingDashboard';
 export { default as AdminSPOCDashboard } from './AdminSPOCDashboard';
+export { SLABadge, SLABreachDetailsCard } from './SLABreachDetailsCard';

@@ -48,6 +48,13 @@ export default function Home() {
                     return;
                 }
 
+                // 1.5 Approval gate (from origin/main). Runs BEFORE any silo
+                // routing: an unapproved user must not be routed into a workspace.
+                if (!membership?.is_master_admin && membership?.is_approved === false) {
+                    router.replace('/waiting-approval');
+                    return;
+                }
+
                 // 2. Silo guard — CRM and Accounts users must ALWAYS land in their own
                 // workspace and NEVER fall through to an FMS dashboard. See
                 // frontend/lib/auth/silos.ts (mirrored by the login handler).
