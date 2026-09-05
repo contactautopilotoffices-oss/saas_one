@@ -215,7 +215,13 @@ const UpsertSchema = z.object({
         .trim()
         .toLowerCase()
         .regex(AGENT_KEY_RE, 'agent_key must be lowercase letters, digits, _ or - (2-63 chars)'),
-    display_name: z.string().trim().min(2).max(120),
+    /**
+     * Required only when CREATING. An existing agent keeps the name it has, so a
+     * partial update — the Delivery tab saving nothing but `runtime` — must not
+     * be forced to re-send identity it is not editing. Enforced below, where it
+     * is known whether the row exists.
+     */
+    display_name: z.string().trim().min(2).max(120).optional(),
     department: z.string().trim().max(80).nullish(),
     role_description: z.string().trim().max(4_000).nullish(),
     runtime: RuntimeSchema.nullish(),
@@ -752,7 +758,16 @@ async function upsertAgent(supabase: Db, orgId: string, userId: string, body: Re
         .maybeSingle();
 
     if (existingRes.error && isMissingSchema(existingRes.error)) return NOT_PROVISIONED('oem_agents');
-    const existing = existingRes.data as { id: string; status: string } | null;
+    const existing = existingRes.data as { id: string; status: string; display_name: string } | null;
+
+    // Creating still needs a name; updating does not. Checked here rather than in
+    // the schema because only here is it known which of the two this is.
+    if (!existing && !input.display_name) {
+        return NextResponse.json(
+            { error: 'display_name is required when creating an agent.', field: 'display_name' },
+            { status: 400 },
+        );
+    }
 
     // Only fields the caller actually sent are written. Status is NOT settable
     // here — it moves through set_status so every transition is logged and the
