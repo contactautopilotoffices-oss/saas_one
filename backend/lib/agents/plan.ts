@@ -80,6 +80,14 @@ export interface PlanSlot {
     allowAll?: boolean;
     /** Set when picking All multiplies the run rather than widening one run. */
     fanOut?: boolean;
+    /**
+     * More than one option may be chosen.
+     *
+     * A single-select dropdown quietly forces a false choice: "which anomaly
+     * types should it look for" has one honest answer — all of them — and a
+     * <select> cannot express it. Multi renders checkboxes and a Select all.
+     */
+    multi?: boolean;
 }
 
 /** The literal option text. One constant so hydrator and UI cannot disagree. */

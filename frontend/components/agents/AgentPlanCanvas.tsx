@@ -30,7 +30,7 @@ export interface PlanSlot {
     key: string; question: string; why: string;
     from: 'operator' | 'table' | 'policy' | 'catalog';
     lookup?: string | null; options?: string[] | null; required: boolean;
-    allowAll?: boolean; fanOut?: boolean;
+    allowAll?: boolean; fanOut?: boolean; multi?: boolean;
 }
 
 /** Must match ALL_SCOPE_OPTION in backend/lib/agents/plan.ts. */
@@ -93,7 +93,12 @@ export default function AgentPlanCanvas({ plan }: { plan: AgentPlan }) {
     const [editing, setEditing] = useState(false);
 
     const required = plan.slots.filter((s) => s.required);
-    const answered = required.filter((s) => (answers[s.key] ?? '').trim().length > 0).length;
+    // A multi slot with every box cleared is NOT answered — an empty required
+    // multi-select is the same false-completion as an empty text box.
+    const answered = required.filter((s) => {
+        const v = (answers[s.key] ?? '').trim();
+        return s.multi ? v.split('|').filter(Boolean).length > 0 : v.length > 0;
+    }).length;
     const ready = answered === required.length;
 
     const toolBySlug = useMemo(
@@ -164,7 +169,56 @@ export default function AgentPlanCanvas({ plan }: { plan: AgentPlan }) {
                                     : <span className="rounded-full border border-border px-1.5 py-0.5 text-[10px] text-text-tertiary">optional</span>}
                             </div>
                             <p className="mt-1 text-[11.5px] leading-relaxed text-text-secondary">{s.why}</p>
-                            {s.options?.length ? (
+                            {s.options?.length && s.multi ? (
+                                /* CHECKBOXES, NOT A DROPDOWN.
+                                   A single-select forces a false choice: "which anomaly types"
+                                   has one honest answer — all of them — and a <select> cannot
+                                   say it. Select all is first because it is usually right. */
+                                <div className="mt-2 rounded-lg border border-border bg-card p-2">
+                                    {(() => {
+                                        const chosen = (answers[s.key] ?? '').split('|').filter(Boolean);
+                                        const all = s.options ?? [];
+                                        const allOn = chosen.length === all.length && all.length > 0;
+                                        const set = (next: string[]) =>
+                                            setAnswers((a) => ({ ...a, [s.key]: next.join('|') }));
+                                        return (
+                                            <>
+                                                <label className="flex cursor-pointer items-center gap-2 border-b border-border px-1.5 pb-2">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={allOn}
+                                                        ref={(el) => { if (el) el.indeterminate = chosen.length > 0 && !allOn; }}
+                                                        onChange={() => set(allOn ? [] : [...all])}
+                                                    />
+                                                    <span className="text-[12.5px] font-semibold">
+                                                        All {all.length}
+                                                    </span>
+                                                </label>
+                                                <div className="max-h-44 overflow-y-auto pt-1.5">
+                                                    {all.map((o) => (
+                                                        <label key={o} className="flex cursor-pointer items-center gap-2 px-1.5 py-1">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={chosen.includes(o)}
+                                                                onChange={() =>
+                                                                    set(chosen.includes(o)
+                                                                        ? chosen.filter((x) => x !== o)
+                                                                        : [...chosen, o])}
+                                                            />
+                                                            <span className="text-[12.5px]">{o}</span>
+                                                        </label>
+                                                    ))}
+                                                </div>
+                                                <div className="border-t border-border px-1.5 pt-1.5 text-[11px] text-text-tertiary">
+                                                    {chosen.length === 0
+                                                        ? 'Pick at least one — this is required.'
+                                                        : `${chosen.length} of ${all.length} selected`}
+                                                </div>
+                                            </>
+                                        );
+                                    })()}
+                                </div>
+                            ) : s.options?.length ? (
                                 <>
                                     {/* A long list (catalogue) gets type-ahead; a short one
                                         (sites) gets a plain select, which is faster to use. */}

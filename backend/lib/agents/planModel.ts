@@ -53,6 +53,7 @@ const SlotSchema = z.object({
     required: z.boolean().optional(),
     allowAll: z.boolean().optional(),
     fanOut: z.boolean().optional(),
+    multi: z.boolean().optional(),
 });
 
 const PlanSchema = z.object({
@@ -101,6 +102,11 @@ RULES
    needed" — what breaks.
 4. 'from' is one of: operator, table, policy, catalog. When it is table or
    catalog, set 'lookup' to the exact table name so the UI can offer real values.
+4b. Set 'multi': true whenever more than one option can honestly be chosen —
+   which kinds of anomaly to look for, which sites, which categories. Only leave
+   it false when the options are genuinely exclusive (one procurement route, one
+   delivery channel). When in doubt, multi is the safer answer: a single-select
+   forces a false choice and the operator has no way to say 'all of them'.
 5. STEPS must be executable and ordered. 'needs' refers to earlier step ids.
    Put a human 'approve' step before anything irreversible leaves the system.
 6. 'blockedBy' lists slot keys a step cannot start without.
@@ -181,6 +187,7 @@ export async function composePlanWithModel(input: ModelPlanInput): Promise<Agent
             required: s.required ?? true,
             allowAll: s.allowAll,
             fanOut: s.fanOut,
+            multi: s.multi ?? false,
         }));
 
     // A step may only wait on a slot that exists.
