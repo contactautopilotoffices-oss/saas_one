@@ -27,7 +27,76 @@
  * spend. The mock is stage-aware via the `purpose` tag the runner passes in.
  */
 
-const LLM_API_URL = 'https://api.openai.com/v1/chat/completions';
+/* ---------------------------------------------------------------------------
+ * PROVIDER ROUTING
+ *
+ * Every provider worth using speaks the OpenAI chat-completions wire format, so
+ * the only things that actually vary are the base URL, the env var holding the
+ * key, and the model id. This is the same pattern the handbook uses — its own
+ * agent points an OpenAI client at OpenRouter via base_url [BAA p.89].
+ *
+ * Resolution order (first one whose key is present wins):
+ *   1. COUNCIL_PROVIDER, when set explicitly — no guessing.
+ *   2. openai   OPENAI_API_KEY
+ *   3. groq     GROQ_API_KEY          (OpenAI-compatible)
+ *   4. custom   COUNCIL_API_KEY + COUNCIL_BASE_URL  — any other compatible host
+ *
+ * `custom` exists so a key from a provider this file has never heard of can be
+ * routed without editing code: set the two vars and a model id.
+ */
+
+export type CouncilProvider = 'openai' | 'groq' | 'custom';
+
+interface ProviderSpec {
+    baseUrl: string;
+    keyVar: string;
+    /** Used only when COUNCIL_MODEL is unset, so a provider swap needs one var. */
+    defaultModel: string;
+}
+
+const PROVIDERS: Record<CouncilProvider, ProviderSpec> = {
+    openai: {
+        baseUrl: 'https://api.openai.com/v1',
+        keyVar: 'OPENAI_API_KEY',
+        defaultModel: 'gpt-5.6-luna',
+    },
+    groq: {
+        baseUrl: 'https://api.groq.com/openai/v1',
+        keyVar: 'GROQ_API_KEY',
+        defaultModel: 'openai/gpt-oss-120b',
+    },
+    custom: {
+        baseUrl: process.env.COUNCIL_BASE_URL || '',
+        keyVar: 'COUNCIL_API_KEY',
+        defaultModel: process.env.COUNCIL_MODEL || '',
+    },
+};
+
+/** The provider actually in force, and whether its key is present. */
+export function resolveProvider(env: NodeJS.ProcessEnv = process.env): {
+    provider: CouncilProvider;
+    spec: ProviderSpec;
+    apiKey: string | null;
+} {
+    const explicit = (env.COUNCIL_PROVIDER || '').trim().toLowerCase() as CouncilProvider;
+    const order: CouncilProvider[] =
+        explicit && explicit in PROVIDERS ? [explicit] : ['openai', 'groq', 'custom'];
+
+    for (const p of order) {
+        const spec = { ...PROVIDERS[p] };
+        if (p === 'custom') spec.baseUrl = env.COUNCIL_BASE_URL || '';
+        const key = env[spec.keyVar];
+        if (typeof key === 'string' && key.trim() && (p !== 'custom' || spec.baseUrl)) {
+            return { provider: p, spec, apiKey: key.trim() };
+        }
+    }
+    const fallback = explicit && explicit in PROVIDERS ? explicit : 'openai';
+    return { provider: fallback, spec: PROVIDERS[fallback], apiKey: null };
+}
+
+function chatUrl(spec: ProviderSpec): string {
+    return `${spec.baseUrl.replace(/\/+$/, '')}/chat/completions`;
+}
 
 /**
  * gpt-5.6-luna is the default because it is the one gpt-5.6 model this repo has
@@ -35,7 +104,8 @@ const LLM_API_URL = 'https://api.openai.com/v1/chat/completions';
  * rather than a pessimistic guess. Override with COUNCIL_MODEL — gpt-5.6-sol,
  * gpt-5.6-terra and the gpt-5.5-pro tier are all available on this key.
  */
-export const COUNCIL_MODEL = process.env.COUNCIL_MODEL || 'gpt-5.6-luna';
+export const COUNCIL_MODEL =
+    process.env.COUNCIL_MODEL || resolveProvider().spec.defaultModel || 'gpt-5.6-luna';
 
 /**
  * Council calls are far heavier than the 10s-timeout calls elsewhere in the repo:
@@ -48,6 +118,17 @@ const LLM_TIMEOUT_MS = Number(process.env.COUNCIL_LLM_TIMEOUT_MS || 120_000);
 const MODEL_PRICING: Record<string, { input: number; output: number }> = {
     'gpt-5.6-luna': { input: 0.20, output: 1.20 },
     'gpt-4o-mini': { input: 0.15, output: 0.60 },
+
+    // --- engy.ai. Read from GET https://api.engy.ai/v1/models on 2026-09-05,
+    // which returns per-token pricing, so these are the provider's own figures
+    // rather than an estimate. Re-read that endpoint if they change.
+    'deepseek-v4-flash-0731': { input: 0.045, output: 0.09 },
+    'qwen3.6-35b-a3b': { input: 0.045, output: 0.3 },
+    'qwen3.8-27b': { input: 0.045, output: 0.32 },
+    'glm-5.3-flash': { input: 0.135, output: 0.45 },
+    'glm-5.2': { input: 0.68, output: 1.5 },
+    'glm-5.3': { input: 0.98, output: 3.08 },
+    'kimi-k3': { input: 1.95, output: 9.75 },
 };
 /** Unknown model → assume expensive, so the cost warning errs toward being noticed. */
 const UNPRICED_MODEL = { input: 2.50, output: 10.00 };
@@ -169,9 +250,12 @@ export async function councilChat(
 ): Promise<string> {
     if (isMockLlm()) return mockResponse(purpose, messages);
 
-    const apiKey = process.env.OPENAI_API_KEY;
+    const { provider, spec, apiKey } = resolveProvider();
     if (!apiKey) {
-        throw new Error('OPENAI_API_KEY not configured (set COUNCIL_MOCK_LLM=1 for a dry run)');
+        throw new Error(
+            `No LLM key configured. Set one of OPENAI_API_KEY, GROQ_API_KEY, or ` +
+            `COUNCIL_API_KEY + COUNCIL_BASE_URL — or COUNCIL_MOCK_LLM=1 for a dry run.`,
+        );
     }
 
     // gpt-5.x / o3 / o4 reject `max_tokens` and any non-default `temperature`.
@@ -185,7 +269,7 @@ export async function councilChat(
 
     let response: Response;
     try {
-        response = await fetch(LLM_API_URL, {
+        response = await fetch(chatUrl(spec), {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${apiKey}`,
@@ -196,7 +280,7 @@ export async function councilChat(
         });
     } catch (error) {
         if (error instanceof Error && error.name === 'AbortError') {
-            throw new Error(`OpenAI call timed out after ${LLM_TIMEOUT_MS}ms (${purpose}) — raise COUNCIL_LLM_TIMEOUT_MS`);
+            throw new Error(`${provider} call timed out after ${LLM_TIMEOUT_MS}ms (${purpose}) — raise COUNCIL_LLM_TIMEOUT_MS`);
         }
         throw error;
     } finally {

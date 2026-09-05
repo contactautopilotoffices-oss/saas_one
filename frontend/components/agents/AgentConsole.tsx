@@ -58,8 +58,20 @@ import {
     ThumbsUp,
     Timer,
     Wand2,
-    X,
-} from 'lucide-react';
+    X, Workflow,} from 'lucide-react';
+import AgentPlanCanvas, { type AgentPlan } from '@/frontend/components/agents/AgentPlanCanvas';
+
+/** What POST /api/agents/optimize returns. */
+interface OptimizeResult {
+    optimized: string;
+    changes: string[];
+    grounded_in: string[];
+    module: string | null;
+    rejected: string[];
+    open_questions: string[];
+    mocked: boolean;
+    original?: string;
+}
 import {
     AGENT_RUNTIME_MIGRATION,
     type AgentLifecycleStatus,
@@ -996,6 +1008,14 @@ function ComposeBox({
     const [error, setError] = useState<string | null>(null);
     const [result, setResult] = useState<ComposeResponse | null>(null);
 
+    const [plan, setPlan] = useState<AgentPlan | null>(null);
+    const [planning, setPlanning] = useState(false);
+
+    const [optimizing, setOptimizing] = useState(false);
+    const [optimized, setOptimized] = useState<OptimizeResult | null>(null);
+    /** The text before the rewrite, so Undo is one click and never lossy. */
+    const [preOptimize, setPreOptimize] = useState<string | null>(null);
+
     const [applyIdentity, setApplyIdentity] = useState(true);
     const [applyPrompt, setApplyPrompt] = useState(true);
     const [applyBundle, setApplyBundle] = useState(true);
@@ -1009,7 +1029,73 @@ function ComposeBox({
         setResult(null);
         setSteps([]);
         setError(null);
+        setPlan(null);
+        setOptimized(null);
+        setPreOptimize(null);
     }, [agent?.agent_key]);
+
+    /**
+     * Rewrite the operator's sentence into a structured brief, grounded in this
+     * FMS's real modules and tables. Replaces the textarea, keeping the original
+     * for Undo — a rewrite you cannot reverse is a rewrite you cannot trust.
+     */
+    const optimize = async () => {
+        const raw = description.trim();
+        if (optimizing || raw.length < 12) return;
+        setOptimizing(true);
+        setError(null);
+        try {
+            const res = await fetch(`/api/agents/optimize?orgId=${encodeURIComponent(orgId)}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ description: raw }),
+            });
+            const json = (await res.json()) as OptimizeResult & { error?: string };
+            if (json.error || !json.optimized) {
+                setError(json.error ?? 'The optimizer returned nothing usable.');
+                return;
+            }
+            setPreOptimize(raw);
+            setDescription(json.optimized);
+            setOptimized(json);
+        } catch (e) {
+            setError((e as Error).message);
+        } finally {
+            setOptimizing(false);
+        }
+    };
+
+    const undoOptimize = () => {
+        if (preOptimize === null) return;
+        setDescription(preOptimize);
+        setPreOptimize(null);
+        setOptimized(null);
+    };
+
+    /**
+     * Plan is deliberately SEPARATE from Build. Build answers "who is this
+     * agent"; plan answers "what would it do". Plan needs no model and no
+     * provisioned schema, so it works in exactly the state the console is in.
+     */
+    const planWorkflow = async () => {
+        if (planning || description.trim().length < 12) return;
+        setPlanning(true);
+        setError(null);
+        try {
+            const res = await fetch(`/api/agents/plan?orgId=${encodeURIComponent(orgId)}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ description: description.trim() }),
+            });
+            const json = (await res.json()) as { plan?: AgentPlan; error?: string };
+            if (json.error) setError(json.error);
+            setPlan(json.plan ?? null);
+        } catch (e) {
+            setError((e as Error).message);
+        } finally {
+            setPlanning(false);
+        }
+    };
 
     const build = async () => {
         if (busy || description.trim().length < 12) return;
@@ -1158,6 +1244,15 @@ function ComposeBox({
                 </button>
             </div>
 
+            <div className="relative">
+            {optimizing && (
+                <div className="absolute inset-0 z-10 flex items-center justify-center gap-2 rounded-[12px] border border-primary/30 bg-card/80 backdrop-blur-[2px]">
+                    <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                    <span className="text-[12px] font-medium text-text-secondary">
+                        Rewriting against your modules and tables…
+                    </span>
+                </div>
+            )}
             <textarea
                 ref={areaRef}
                 value={description}
@@ -1166,6 +1261,49 @@ function ComposeBox({
                 placeholder="Every morning, look at electricity bills that have been waiting for approval for more than three days and tell the property admin which ones are stuck."
                 className="mt-2 w-full resize-y rounded-[12px] border border-border bg-card px-3 py-2.5 text-[12.5px] leading-relaxed text-foreground placeholder:text-text-tertiary focus:border-primary/40 focus:outline-none"
             />
+            </div>
+
+            {optimized && (
+                <div className="mt-2 rounded-[12px] border border-primary/25 bg-primary/5 px-3 py-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] font-semibold uppercase tracking-wide text-primary">
+                            Rewritten{optimized.mocked ? ' (mock — no model ran)' : ''}
+                        </span>
+                        <button
+                            type="button"
+                            onClick={undoOptimize}
+                            className="text-[11.5px] text-text-tertiary underline-offset-2 hover:text-foreground hover:underline"
+                        >
+                            Undo
+                        </button>
+                    </div>
+                    {optimized.changes.length > 0 && (
+                        <ul className="mt-1.5 space-y-0.5 text-[11.5px] leading-relaxed text-text-secondary">
+                            {optimized.changes.map((c, i) => <li key={i}>· {c}</li>)}
+                        </ul>
+                    )}
+                    {optimized.grounded_in.length > 0 && (
+                        <div className="mt-2 flex flex-wrap items-center gap-1">
+                            <span className="text-[10.5px] text-text-tertiary">bound to</span>
+                            {optimized.grounded_in.map((t) => (
+                                <span key={t} className="rounded border border-border bg-card px-1.5 py-0.5 font-mono text-[10px]">{t}</span>
+                            ))}
+                            {optimized.module && (
+                                <span className="rounded-full border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
+                                    {optimized.module}
+                                </span>
+                            )}
+                        </div>
+                    )}
+                    {optimized.open_questions.length > 0 && (
+                        <div className="mt-2 rounded-[10px] border border-amber-200 bg-amber-50 px-2.5 py-1.5">
+                            <ul className="space-y-0.5 text-[11px] leading-relaxed text-amber-800">
+                                {optimized.open_questions.map((q, i) => <li key={i}>{q}</li>)}
+                            </ul>
+                        </div>
+                    )}
+                </div>
+            )}
 
             <div className="mt-2 flex flex-wrap items-center gap-2">
                 <button
@@ -1176,6 +1314,25 @@ function ComposeBox({
                 >
                     {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
                     Build
+                </button>
+                <button
+                    type="button"
+                    onClick={() => void optimize()}
+                    disabled={optimizing || description.trim().length < 12}
+                    title="Rewrite into a structured brief using this FMS's real modules and tables"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-[12px] font-semibold text-foreground transition-colors hover:border-primary/40 disabled:opacity-40"
+                >
+                    {optimizing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}
+                    {optimizing ? 'Optimizing…' : 'Optimize prompt'}
+                </button>
+                <button
+                    type="button"
+                    onClick={() => void planWorkflow()}
+                    disabled={planning || description.trim().length < 12}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-[12px] font-semibold text-foreground transition-colors hover:border-primary/40 disabled:opacity-40"
+                >
+                    {planning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Workflow className="h-3.5 w-3.5" />}
+                    Plan workflow
                 </button>
                 <span className="text-[11px] text-text-tertiary">
                     Nothing is saved until you accept. {agent ? `Proposed against ${agent.agent_key}.` : 'A new agent starts in draft.'}
@@ -1189,6 +1346,12 @@ function ComposeBox({
                 <p className="mt-2 rounded-[12px] border border-border bg-card px-3 py-2 text-[11.5px] text-text-secondary">
                     {result.note ?? `Not provisioned yet — run migration ${result.migration ?? AGENT_RUNTIME_MIGRATION}.`}
                 </p>
+            )}
+
+            {plan && (
+                <div className="mt-4">
+                    <AgentPlanCanvas plan={plan} />
+                </div>
             )}
 
             <AnimatePresence initial={false}>

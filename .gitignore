@@ -70,3 +70,7 @@ scratch_check.mjs
 /Cassandra.png
 /ChatGPT Image*.png
 /Commercial Calculator/
+
+# session scratch
+scratch/
+.env.bak.*

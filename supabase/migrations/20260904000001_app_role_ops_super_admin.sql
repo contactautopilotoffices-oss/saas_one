@@ -1,0 +1,33 @@
+-- Migration: add `ops_super_admin` to the app_role enum
+-- Created: 2026-09-04
+--
+-- WHY THIS EXISTS
+--   `ops_super_admin` has been referenced in application code since
+--   20260804000002_electricity_validation_and_ops_role.sql (48 references across 26 files:
+--   frontend/types/rbac.ts, frontend/constants/capabilities.ts, frontend/lib/auth/silos.ts,
+--   backend/lib/accounts/access.ts, backend/lib/electricity/*, and several dashboards)
+--   but the enum value was never added. Verified live on 2026-09-04:
+--
+--     select exists(select 1 from unnest(enum_range(null::app_role)) e
+--                   where e::text = 'ops_super_admin');   -- false
+--
+--   Because organization_memberships.role and property_memberships.role ARE this enum,
+--   the role could never be granted to anyone:
+--     ERROR: invalid input value for enum app_role: "ops_super_admin"
+--   Every code path and policy branch testing for it has therefore been dead code.
+--
+-- APPLY THIS MIGRATION ON ITS OWN, BEFORE 20260904000002.
+--   Postgres will not let a newly added enum value be USED in the same transaction that
+--   adds it (unless the type itself was created in that transaction). The membership
+--   updates in 20260904000002 reference 'ops_super_admin', so this file must be
+--   committed first. Running both in one transaction fails with:
+--     ERROR: unsafe use of new value "ops_super_admin" of enum type app_role
+--
+-- SCOPE: this migration only makes the role grantable. It grants nothing to anybody and
+--   changes no membership. See 20260904000002 for the membership changes, and note that
+--   ops_super_admin currently carries no RLS grant of its own anywhere in the schema —
+--   its capabilities come from application-layer checks (frontend/constants/capabilities.ts:
+--   users:[view], tickets:[view, approve], dashboards:[view], reports:[view]) plus the
+--   electricity validation/dispute routes.
+
+ALTER TYPE public.app_role ADD VALUE IF NOT EXISTS 'ops_super_admin';

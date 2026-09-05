@@ -1,0 +1,152 @@
+/**
+ * HOW AN ANSWER CHANGES THE NEXT SCAN.
+ * -----------------------------------------------------------------------------
+ * "Their feedback becomes training" is easy to claim and easy to fake. There are
+ * exactly TWO mechanisms here, they work on different timescales, and both are
+ * inspectable.
+ *
+ *   1. SUPPRESSION — takes effect on the VERY NEXT SCAN, no model involved.
+ *      A finding closed as 'done' or 'not_an_issue' is not raised again. This is
+ *      a database read the detector performs before it emits anything. It is
+ *      deterministic, immediate, and cannot be undone by a model changing its
+ *      mind. This is what stops Vidya seeing the same duplicate invoice daily.
+ *
+ *   2. PROMPT EVOLUTION — takes effect on the NEXT PROMPT VERSION, via a human.
+ *      The note typed alongside the disposition lands in oem_agent_feedback as
+ *      `guidance` with applied_to_prompt_version NULL. foldGuidance() drains that
+ *      queue into a proposed prompt v(n+1); a person reviews the diff and commits
+ *      it with save_prompt. This is what stops the agent raising the CLASS of
+ *      finding, not just the instance.
+ *
+ * The split matters. Suppression must not wait on anyone reviewing a prompt diff,
+ * and a prompt change must not happen because someone clicked a button on a phone.
+ *
+ * ── THE RE-RAISE RULE ───────────────────────────────────────────────────────
+ * Suppression is not deletion. If a finding closed as 'done' reappears in a later
+ * scan, the work did not hold — and that is more important than the original
+ * finding. It comes back, escalated, carrying who closed it and when.
+ * `not_an_issue` does NOT re-raise: a human judged the class wrong, and
+ * overriding that would teach people their answers are ignored.
+ */
+
+import { supabaseAdmin } from '@/backend/lib/supabase/admin';
+import type { Finding } from './types';
+import { closesLine, type Disposition } from './disposition';
+
+export interface PriorDisposition {
+    finding_key: string;
+    disposition: Disposition;
+    disposition_note: string | null;
+    dispositioned_at: string | null;
+    dispositioned_by_name: string | null;
+    reopened_count: number;
+}
+
+export interface AppliedMemory {
+    /** What survives to be emailed. */
+    findings: Finding[];
+    /** Closed and stayed closed. Not emailed — counted. */
+    suppressed: string[];
+    /** Closed as done, but the problem is back. Escalated. */
+    reopened: string[];
+    /** True when the findings store is not provisioned; nothing was suppressed. */
+    degraded: boolean;
+}
+
+/**
+ * Apply what people already answered to a fresh set of findings.
+ *
+ * Never throws. If the findings table is absent this returns every finding
+ * unchanged with `degraded: true` — a scan that cannot read memory must still
+ * report, it just must not pretend it remembered anything.
+ */
+export async function applyPriorDispositions(
+    orgId: string,
+    agentKey: string,
+    findings: ReadonlyArray<Finding>,
+): Promise<AppliedMemory> {
+    const keys = findings.map((f) => f.key);
+    if (!keys.length) return { findings: [], suppressed: [], reopened: [], degraded: false };
+
+    const { data, error } = await supabaseAdmin
+        .from('oem_agent_findings')
+        .select('finding_key, disposition, disposition_note, dispositioned_at, reopened_count')
+        .eq('organization_id', orgId)
+        .eq('agent_key', agentKey)
+        .in('finding_key', keys);
+
+    if (error || !data) {
+        return { findings: [...findings], suppressed: [], reopened: [], degraded: true };
+    }
+
+    const prior = new Map(data.map((r) => [String(r.finding_key), r as unknown as PriorDisposition]));
+    const out: Finding[] = [];
+    const suppressed: string[] = [];
+    const reopened: string[] = [];
+
+    for (const finding of findings) {
+        const p = prior.get(finding.key);
+        if (!p?.disposition || !closesLine(p.disposition)) {
+            out.push(finding);
+            continue;
+        }
+
+        if (p.disposition === 'not_an_issue') {
+            // A human judged this class wrong. It stays gone.
+            suppressed.push(finding.key);
+            continue;
+        }
+
+        // 'done', but here it is again. The fix did not hold — that is the story now.
+        reopened.push(finding.key);
+        const when = p.dispositioned_at ? new Date(p.dispositioned_at).toLocaleDateString('en-IN') : 'earlier';
+        out.push({
+            ...finding,
+            priority: 'critical',
+            title: `${finding.title} — REOPENED`,
+            problem:
+                `${finding.problem}\n\nThis was marked done on ${when}` +
+                (p.disposition_note ? ` ("${p.disposition_note}")` : '') +
+                `, and it is back. The correction did not hold.`,
+        });
+    }
+
+    return { findings: out, suppressed, reopened, degraded: false };
+}
+
+/**
+ * Record this scan's findings so they can be answered, and so the NEXT scan can
+ * tell a new problem from a returning one.
+ *
+ * Upserts on (organization_id, agent_key, finding_key) — the same problem next
+ * week is the same row, which is the whole basis of closure. Never throws.
+ */
+export async function rememberFindings(
+    orgId: string,
+    agentKey: string,
+    runId: string | null,
+    findings: ReadonlyArray<Finding>,
+): Promise<{ ok: boolean; error?: string }> {
+    if (!findings.length) return { ok: true };
+    const now = new Date().toISOString();
+
+    const rows = findings.map((f) => ({
+        organization_id: orgId,
+        agent_key: agentKey,
+        finding_key: f.key,
+        priority: f.priority,
+        title: f.title,
+        vendor: f.vendor,
+        property: f.property,
+        amount: f.amount,
+        problem: f.problem,
+        last_seen_at: now,
+        last_run_id: runId,
+    }));
+
+    const { error } = await supabaseAdmin
+        .from('oem_agent_findings')
+        .upsert(rows, { onConflict: 'organization_id,agent_key,finding_key', ignoreDuplicates: false });
+
+    return error ? { ok: false, error: error.message } : { ok: true };
+}

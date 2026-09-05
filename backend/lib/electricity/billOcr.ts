@@ -1,7 +1,7 @@
 /**
  * Groq vision/text parse of one electricity-board bill PDF into structured fields.
  *
- * Model: meta-llama/llama-4-scout-17b-16e-instruct, same as app/api/ocr/meter/route.ts.
+ * Model: qwen/qwen3.8-27b, same as app/api/ocr/meter/route.ts.
  *
  * BUDGET NOTE (shared GROQ_API_KEY): this key also powers ticket classification, meter
  * OCR, catalog bulk-upload, call coaching and the master-admin chatbot, and Groq's free
@@ -20,7 +20,11 @@
  */
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
+// Was qwen/qwen3.8-27b until 2026-09-05, when Groq
+// retired it — every OCR path 404'd with model_not_found. qwen3.8-27b is the
+// vision model still served on this key; verified against a test invoice for
+// both free-text transcription and response_format:json_object.
+const MODEL = 'qwen/qwen3.8-27b';
 const TIMEOUT_MS = 30_000;
 const MAX_PAGES = 2;        // the money block is on page 1–2 of every board bill we have seen
 const TEXT_CHAR_LIMIT = 12_000;

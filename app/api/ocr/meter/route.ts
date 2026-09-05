@@ -3,7 +3,11 @@ import { createClient } from '@/frontend/utils/supabase/server';
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
+// Was qwen/qwen3.8-27b until 2026-09-05, when Groq
+// retired it — every OCR path 404'd with model_not_found. qwen3.8-27b is the
+// vision model still served on this key; verified against a test invoice for
+// both free-text transcription and response_format:json_object.
+const MODEL = 'qwen/qwen3.8-27b';
 
 export async function POST(req: NextRequest) {
     try {

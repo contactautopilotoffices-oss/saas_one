@@ -111,3 +111,36 @@ export async function revokeTokensForEntity(entityType: string, entityId: string
     if (exceptId) q = q.neq('id', exceptId);
     await q;
 }
+
+/**
+ * Read a token's SHAPE without consuming it.
+ *
+ * Needed because the landing page must know, on GET, whether to auto-submit
+ * (a decision link) or render a form (a feedback link) — and GET must never
+ * mutate, or Outlook Safe Links and Gmail prefetch would burn the token before
+ * a human ever saw it.
+ *
+ * Returns entity_type and action ONLY. No payload, no ids, no org. A caller
+ * learning "this is a feedback link" leaks nothing an attacker holding the raw
+ * token does not already have, and everything that matters still happens in the
+ * atomic consume on POST.
+ */
+export async function peekEmailActionToken(
+    raw: string,
+): Promise<{ entityType: string; action: string; payload: Record<string, unknown> } | null> {
+    if (!raw || raw.length < 20) return null;
+    const { data, error } = await supabaseAdmin
+        .from('email_action_tokens')
+        .select('entity_type, action, payload')
+        .eq('token_hash', hash(raw))
+        .is('consumed_at', null)
+        .gt('expires_at', new Date().toISOString())
+        .maybeSingle();
+    if (error || !data) return null;
+    return {
+        entityType: String(data.entity_type),
+        action: String(data.action),
+        // Only ever read by the page the token holder is already looking at.
+        payload: (data.payload ?? {}) as Record<string, unknown>,
+    };
+}

@@ -3,7 +3,7 @@
  * certificate, OEM manual, warranty card, SLD) into the fields the audit checklist actually
  * asks for: what the document is, its number/issuer, and its validity window.
  *
- * Model + budget note: same meta-llama/llama-4-scout-17b-16e-instruct call as
+ * Model + budget note: same qwen/qwen3.8-27b call as
  * backend/lib/electricity/billOcr.ts and app/api/ocr/meter/route.ts, sharing the same
  * GROQ_API_KEY. Document Bank uploads are occasional (audit evidence, not a high-volume
  * feed), so this stays well inside the shared daily budget.
@@ -15,8 +15,15 @@
  * degrades honestly to ocr_status 'failed' — same as billOcr.ts, nothing is guessed.
  */
 
+import { rasterizePdf } from '@/backend/lib/ocr/rasterize';
+import { visionExtract } from '@/backend/lib/ocr/vision';
+
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
+// Was qwen/qwen3.8-27b until 2026-09-05, when Groq
+// retired it — every OCR path 404'd with model_not_found. qwen3.8-27b is the
+// vision model still served on this key; verified against a test invoice for
+// both free-text transcription and response_format:json_object.
+const MODEL = 'qwen/qwen3.8-27b';
 const TIMEOUT_MS = 30_000;
 const MAX_PAGES = 3;
 const TEXT_CHAR_LIMIT = 12_000;
@@ -85,7 +92,8 @@ export async function parseDocument(fileBytes: Buffer, mimeType: string, signedU
         }
     }
 
-    let content: any[];
+    let content: any[] | undefined;
+    let visionResult: { fields: Record<string, unknown>; payload: Record<string, unknown> } | null = null;
     if (text) {
         content = [{ type: 'text', text: `Extract the fields from this document text:\n\n${text}` }];
     } else if (!isPdf && signedUrl) {
@@ -93,12 +101,60 @@ export async function parseDocument(fileBytes: Buffer, mimeType: string, signedU
             { type: 'text', text: 'Extract the fields from this document image.' },
             { type: 'image_url', image_url: { url: signedUrl } },
         ];
+    } else if (isPdf) {
+        // SCANNED PDF — no text layer. Until 2026-09-05 this returned
+        // 'no text layer and no image fallback available' and the upload died as
+        // ocr_status 'failed'. Now the pages are rasterized and read by a vision
+        // model. Note this path CANNOT use a signed URL: ENGY documents, and its
+        // API enforces, that images arrive as base64 data: URIs — so the buffers
+        // go through backend/lib/ocr/vision.ts, which encodes them itself.
+        const raster = await rasterizePdf(fileBytes, { maxPages: MAX_PAGES });
+        if (!raster.pages.length) {
+            return {
+                extracted: null, text: null,
+                payload: { raster_warnings: raster.warnings, total_pages: raster.totalPages },
+                error: `scanned PDF could not be rasterized${raster.warnings.length ? `: ${raster.warnings[0]}` : ''}`,
+            };
+        }
+
+        const vision = await visionExtract({
+            pages: raster.pages,
+            json: true,
+            instruction: `${SYSTEM_PROMPT}\n\nExtract the fields from these scanned document pages.`,
+        });
+
+        if (!vision.ok || !vision.data) {
+            return {
+                extracted: null, text: vision.text ?? null,
+                payload: {
+                    source: 'rasterized_pdf', model: vision.model, provider: vision.provider,
+                    usage: vision.usage, pages_rendered: raster.pages.length,
+                    raster_warnings: raster.warnings,
+                },
+                error: vision.error ?? 'vision returned no parseable JSON',
+            };
+        }
+
+        visionResult = {
+            fields: vision.data,
+            payload: {
+                source: 'rasterized_pdf', model: vision.model, provider: vision.provider,
+                usage: vision.usage, pages_rendered: raster.pages.length,
+                total_pages: raster.totalPages, raster_warnings: raster.warnings,
+            },
+        };
+        text = vision.text ?? '';
     } else {
-        // Scanned PDF with no text layer, or no signed URL to fall back on — degrade honestly.
+        // An image upload with no signed URL to read. Nothing to send.
         return { extracted: null, text: null, payload: {}, error: 'no text layer and no image fallback available' };
     }
 
-    const result = await callGroq(apiKey, content);
+    let result: { ok: true; fields: unknown; payload: Record<string, unknown> } | GroqCallErr;
+    if (visionResult) {
+        result = { ok: true, fields: visionResult.fields, payload: visionResult.payload };
+    } else {
+        result = await callGroq(apiKey, content!);
+    }
     if (!result.ok) return { extracted: null, text: text || null, payload: result.payload, error: result.error };
 
     const raw = result.fields as Record<string, unknown>;
