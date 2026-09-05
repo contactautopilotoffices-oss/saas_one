@@ -1,0 +1,157 @@
+/**
+ * IRA DAILY DIGEST — the scheduled send.
+ *
+ * vercel.json fires this at 05:30 UTC = 11:00 IST, every day.
+ *
+ * WHY THE CRON TIME IS FIXED BUT THE AGENT'S IS NOT
+ * Vercel's schedule is static in vercel.json; it cannot be changed from the
+ * console. So this fires HOURLY-ACCURATE at 11:00 IST and then checks each
+ * agent's own runtime.schedule_cron hour before sending. An operator moving the
+ * digest to 09:00 in the console changes the send; the cron just wakes up.
+ * Without that check, runtime.schedule_cron would stay decorative — which it is
+ * today, read by nothing.
+ *
+ * Sending is still gated: IRA_SEND_ENABLED, a configured recipient list, and a
+ * reply-to that the poller actually reads. Any of those missing = no send, and
+ * the run says which.
+ */
+
+import { NextRequest, NextResponse } from 'next/server';
+import { supabaseAdmin } from '@/backend/lib/supabase/admin';
+import { withAgentRun, dailyRunKey } from '@/backend/lib/agents/instrument';
+import { scanPurchaseOrders } from '@/backend/lib/ira/procurement/detectLive';
+import { windowFor, type Cadence } from '@/backend/lib/ira/procurement/cadence';
+import { applyPriorDispositions, rememberFindings, loadDispositionStatuses } from '@/backend/lib/ira/procurement/memory';
+import { routeFindings } from '@/backend/lib/ira/procurement/router';
+import { renderRecipientEmail, type FeedbackLinks } from '@/backend/lib/ira/procurement/render';
+import { mintFeedbackLinks } from '@/backend/lib/ira/procurement/feedbackLinks';
+import { replyTag, taggedSubject } from '@/backend/lib/ira/procurement/reply';
+import { resolveDelivery } from '@/backend/lib/ira/procurement/delivery';
+import { sendDigest } from '@/backend/lib/ira/dailyDigest';
+import type { RecipientKey } from '@/backend/lib/ira/procurement/types';
+
+export const maxDuration = 300;
+export const dynamic = 'force-dynamic';
+
+const AGENT_KEY = 'ira';
+const DEFAULT_HOUR_IST = 11;
+
+/** The hour an agent wants to be sent at, from its own cron. */
+function hourFromCron(cron: string | undefined): number {
+    const parts = (cron ?? '').trim().split(/\s+/);
+    const h = Number(parts[1]);
+    return Number.isInteger(h) && h >= 0 && h <= 23 ? h : DEFAULT_HOUR_IST;
+}
+
+function istHour(now: Date): number {
+    return Number(new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Kolkata', hour: '2-digit', hour12: false,
+    }).format(now));
+}
+
+export async function GET(request: NextRequest) {
+    if (request.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const now = new Date();
+    const hourNow = istHour(now);
+    const force = new URL(request.url).searchParams.get('force') === 'yes';
+
+    const { data: agents } = await supabaseAdmin
+        .from('oem_agents')
+        .select('organization_id, runtime, status')
+        .eq('agent_key', AGENT_KEY);
+
+    const out: unknown[] = [];
+
+    for (const a of agents ?? []) {
+        const orgId = String(a.organization_id);
+        const runtime = (a.runtime ?? {}) as { schedule_cron?: string };
+        const wantHour = hourFromCron(runtime.schedule_cron);
+
+        if (!force && wantHour !== hourNow) {
+            out.push({ orgId, skipped: `wants ${wantHour}:00 IST, now ${hourNow}:00` });
+            continue;
+        }
+        // A draft or paused agent does not mail anyone.
+        if (!['live', 'shadow'].includes(String(a.status))) {
+            out.push({ orgId, skipped: `status ${a.status}` });
+            continue;
+        }
+
+        const delivery = await resolveDelivery(orgId, AGENT_KEY);
+        const shadow = String(a.status) === 'shadow';
+
+        const r = await withAgentRun(
+            {
+                orgId, agentKey: AGENT_KEY, module: 'procurement',
+                trigger: shadow ? 'shadow' : 'cron',
+                runKey: dailyRunKey('ira-digest'),
+            },
+            async (step) => {
+                const cadence: Cadence = 'daily';
+                const w = windowFor(cadence, now);
+
+                const s = await step(`Scanning ${w.label}`, 'fetch');
+                const { findings: raw, stats } = await scanPurchaseOrders(orgId, w.to, w);
+                await s.ok({ detail: { ...stats, window: w.label } });
+
+                const mem = await applyPriorDispositions(orgId, AGENT_KEY, raw);
+                await rememberFindings(orgId, AGENT_KEY, null, mem.findings);
+                const statuses = await loadDispositionStatuses(orgId, AGENT_KEY, mem.findings.map((f) => f.key));
+                const bundles = routeFindings(mem.findings);
+
+                if (!bundles.length) {
+                    return { outcome: `Nothing to send for ${w.label}.`, status: 'skipped' as const, grounded: true };
+                }
+                if (process.env.IRA_SEND_ENABLED !== 'true') {
+                    return { outcome: `${bundles.length} bundle(s) ready but IRA_SEND_ENABLED is not true.`, status: 'skipped' as const, grounded: true };
+                }
+
+                const sent: string[] = [];
+                const skipped: string[] = [];
+
+                for (const b of bundles) {
+                    const to = delivery.to[b.recipient.key as RecipientKey] ?? [];
+                    if (!to.length) { skipped.push(`${b.recipient.key}: no address configured`); continue; }
+
+                    const links: FeedbackLinks = b.recipient.canDisposition
+                        ? await mintFeedbackLinks({ organizationId: orgId, userId: '', agentKey: AGENT_KEY, runId: null, findings: b.findings })
+                        : {};
+                    const subjects: Record<string, string> = {};
+                    for (const f of b.findings) subjects[f.key] = taggedSubject(f.title, replyTag(orgId, AGENT_KEY, f.key));
+
+                    const { subject, html } = renderRecipientEmail(
+                        b, orgId, now, links, [], delivery.replyTo, subjects, statuses,
+                    );
+
+                    const st = await step(`Emailing ${b.recipient.key} (${to.length})`, 'notify',
+                        { recipient: b.recipient.key, findings: b.counts.total });
+                    try {
+                        // Shadow never mails anyone. It proves the run without the send.
+                        if (shadow) { skipped.push(`${b.recipient.key}: shadow, not sent`); await st.ok({ detail: { shadow: true } }); continue; }
+                        await sendDigest(to.join(', '), subject, html);
+                        sent.push(`${b.recipient.key} → ${to.join(', ')}`);
+                        await st.ok();
+                    } catch (e) {
+                        const msg = e instanceof Error ? e.message : String(e);
+                        console.error('[ira-digest]', orgId, b.recipient.key, msg);
+                        skipped.push(`${b.recipient.key}: ${msg}`);
+                        await st.fail(e);
+                    }
+                }
+
+                return {
+                    outcome: `sent ${sent.length}, skipped ${skipped.length} · ${w.label}`,
+                    status: (sent.length ? 'succeeded' : 'skipped') as 'succeeded' | 'skipped',
+                    grounded: true,
+                    result: { sent, skipped, usingEnvFallback: delivery.usingEnvFallback },
+                };
+            },
+        );
+        out.push({ orgId, hour: wantHour, ...(r ?? {}) });
+    }
+
+    return NextResponse.json({ ok: true, istHour: hourNow, results: out });
+}
