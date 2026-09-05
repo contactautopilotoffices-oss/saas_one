@@ -243,6 +243,21 @@ export default function AgentTriView({ orgId, agentKey, agent, onSaved }: AgentT
     const [discoverOpen, setDiscoverOpen] = useState(false);
     const [discoverQuery, setDiscoverQuery] = useState('');
 
+    /**
+     * Tables this agent's own configuration already points at, with the reason.
+     * Source of truth is the active bundle — which is what the composer and the
+     * plan both write — so a recommendation can never name a table the agent was
+     * not actually configured to read.
+     */
+    const recommendedTables = useMemo(() => {
+        const m = new Map<string, string>();
+        for (const t of agent?.active_bundle?.bundle?.tables ?? []) {
+            const row = t as { name?: string; why?: string; access?: string };
+            if (row?.name) m.set(row.name, row.why || `In this agent's bundle (${row.access ?? 'read'}).`);
+        }
+        return m;
+    }, [agent]);
+
     const [selectedNode, setSelectedNode] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
     const [saveError, setSaveError] = useState<string | null>(null);
@@ -621,6 +636,7 @@ export default function AgentTriView({ orgId, agentKey, agent, onSaved }: AgentT
                         query={discoverQuery}
                         onQuery={setDiscoverQuery}
                         alreadyBound={new Set(draft.map((t) => t.name))}
+                        recommended={recommendedTables}
                         onAdd={(rows) => {
                             addTables(rows);
                             setDiscoverOpen(false);
@@ -1361,6 +1377,7 @@ function DiscoverPanel({
     query,
     onQuery,
     alreadyBound,
+    recommended,
     onAdd,
     onRefresh,
     onClose,
@@ -1370,11 +1387,22 @@ function DiscoverPanel({
     query: string;
     onQuery: (v: string) => void;
     alreadyBound: Set<string>;
+    /**
+     * Tables the plan or composer said THIS task needs, mapped to why.
+     * Nobody should have to know the schema to configure an agent — the plan
+     * already worked out which tables it reads, so the picker surfaces that
+     * instead of making the operator guess from 94 names.
+     */
+    recommended: Map<string, string>;
     onAdd: (rows: DiscoveredTableRow[]) => void;
     onRefresh: () => void;
     onClose: () => void;
 }) {
-    const [picked, setPicked] = useState<Set<string>>(new Set());
+    // Recommended tables start ticked. The operator confirms or unticks rather
+    // than hunting through the catalogue for names they have never seen.
+    const [picked, setPicked] = useState<Set<string>>(
+        () => new Set([...recommended.keys()].filter((n) => !alreadyBound.has(n))),
+    );
 
     const moduleLabel = useMemo(() => {
         const map = new Map<string, string>();
@@ -1490,9 +1518,16 @@ function DiscoverPanel({
                                 </button>
                             </div>
                             <ul className="overflow-hidden rounded-[12px] border border-border">
-                                {rows.map((r) => {
+                                {[...rows].sort((a, b) => {
+                                    // Recommended first: it is the answer to the
+                                    // question the operator actually has.
+                                    const ra = recommended.has(a.name) ? 0 : 1;
+                                    const rb = recommended.has(b.name) ? 0 : 1;
+                                    return ra - rb;
+                                }).map((r) => {
                                     const bound = alreadyBound.has(r.name);
                                     const on = picked.has(r.name);
+                                    const why = recommended.get(r.name);
                                     return (
                                         <li
                                             key={r.name}
@@ -1509,8 +1544,17 @@ function DiscoverPanel({
                                                 className="h-3.5 w-3.5 accent-[var(--primary)]"
                                             />
                                             <div className="min-w-0 flex-1">
-                                                <p className="font-mono text-[12px] font-medium text-foreground">{r.name}</p>
-                                                <p className="truncate text-[11px] text-text-tertiary">{r.purpose}</p>
+                                                <p className="flex items-center gap-1.5 font-mono text-[12.5px] font-medium text-foreground">
+                                                    {r.name}
+                                                    {why && (
+                                                        <span className="rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-[1px] font-sans text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
+                                                            recommended
+                                                        </span>
+                                                    )}
+                                                </p>
+                                                {/* The reason, not just the badge — a badge with no
+                                                    reason is just another thing to trust blindly. */}
+                                                <p className="truncate text-[12px] text-text-tertiary">{why || r.purpose}</p>
                                             </div>
                                             <span className="shrink-0 text-[10.5px] text-text-tertiary">
                                                 {r.rows_estimate != null ? `~${r.rows_estimate.toLocaleString()} rows` : 'no count'}

@@ -394,7 +394,7 @@ function AgentRosterCardImpl({ agent, selected, now, onSelect }: AgentRosterCard
 
                 <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                        <span className="truncate text-[13.5px] font-semibold leading-tight text-foreground">
+                        <span className="truncate text-[15px] font-semibold leading-tight text-foreground">
                             {agent.display_name}
                         </span>
                         {failures !== null && failures > 0 && (
@@ -404,7 +404,7 @@ function AgentRosterCardImpl({ agent, selected, now, onSelect }: AgentRosterCard
                             />
                         )}
                     </div>
-                    <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-text-tertiary">
+                    <div className="mt-1 flex items-center gap-1.5 text-[12.5px] text-text-tertiary">
                         <span className="truncate capitalize">{moduleLabel}</span>
                         <span aria-hidden>·</span>
                         <span className="shrink-0 font-mono">
@@ -421,7 +421,7 @@ function AgentRosterCardImpl({ agent, selected, now, onSelect }: AgentRosterCard
 
                 <span
                     title={statusMeta.hint}
-                    className={`shrink-0 rounded-full border px-2 py-[2px] text-[10px] font-semibold uppercase tracking-wide ${statusMeta.className}`}
+                    className={`shrink-0 rounded-full border px-2.5 py-[3px] text-[11px] font-semibold uppercase tracking-wide ${statusMeta.className}`}
                 >
                     {statusMeta.label}
                 </span>
@@ -451,19 +451,19 @@ function AgentRosterCardImpl({ agent, selected, now, onSelect }: AgentRosterCard
                     )}
                 </div>
                 {reliability !== null && tone ? (
-                    <span className={`w-[52px] shrink-0 text-right text-[11px] font-semibold tabular-nums ${tone.text}`}>
+                    <span className={`w-[56px] shrink-0 text-right text-[12.5px] font-semibold tabular-nums ${tone.text}`}>
                         {Math.round(reliability)}
                         <span className="ml-0.5 font-normal text-text-tertiary">rel</span>
                     </span>
                 ) : (
-                    <span className="w-[52px] shrink-0 text-right text-[10px] text-text-tertiary">
+                    <span className="w-[56px] shrink-0 text-right text-[11.5px] text-text-tertiary">
                         {statsKnown ? 'no data' : '—'}
                     </span>
                 )}
             </div>
 
             {/* Row 3 — coins, throughput, last active */}
-            <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-text-secondary">
+            <div className="mt-2.5 flex items-center justify-between gap-2 text-[12.5px] text-text-secondary">
                 <span className="flex items-center gap-3">
                     <span
                         className="flex items-center gap-1"

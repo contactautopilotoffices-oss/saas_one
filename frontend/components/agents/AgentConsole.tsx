@@ -58,9 +58,10 @@ import {
     ThumbsUp,
     Timer,
     Wand2,
-    X, Workflow, Send,} from 'lucide-react';
+    X, Workflow, Send,PanelLeftClose,PanelLeftOpen,} from 'lucide-react';
 import AgentPlanCanvas, { type AgentPlan } from '@/frontend/components/agents/AgentPlanCanvas';
 import AgentDelivery from '@/frontend/components/agents/AgentDelivery';
+import Hint from '@/frontend/components/agents/Hint';
 
 /** What POST /api/agents/optimize returns. */
 interface OptimizeResult {
@@ -226,6 +227,7 @@ export default function AgentConsole({ orgId }: AgentConsoleProps) {
 
     const [selectedKey, setSelectedKey] = useState<string | null>(null);
     const [tab, setTab] = useState<DetailTab>('configure');
+    const [rosterOpen, setRosterOpen] = useState(true);
     const [query, setQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState<AgentLifecycleStatus | 'all'>('all');
 
@@ -504,20 +506,59 @@ export default function AgentConsole({ orgId }: AgentConsoleProps) {
             {/* ================= body ================= */}
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
                 {/* ---------- roster ---------- */}
-                <aside className="w-full shrink-0 lg:w-[340px]">
-                    <div className="rounded-[20px] border border-border bg-card p-3">
+                <aside className={`w-full shrink-0 transition-all duration-200 ${rosterOpen ? 'lg:w-[380px]' : 'lg:w-[64px]'}`}>
+                    <div className="rounded-[20px] border border-border bg-card p-3.5">
+                        {/* Collapse gives the canvas room without losing the switcher. */}
+                        <div className="mb-3 flex items-center justify-between gap-2">
+                            {rosterOpen && (
+                                <span className="text-[12px] font-semibold uppercase tracking-wide text-text-tertiary">
+                                    Agents
+                                </span>
+                            )}
+                            <button
+                                type="button"
+                                onClick={() => setRosterOpen((v) => !v)}
+                                title={rosterOpen ? 'Collapse the list' : 'Expand the list'}
+                                aria-label={rosterOpen ? 'Collapse the agent list' : 'Expand the agent list'}
+                                className="ml-auto rounded-lg border border-border bg-card p-1.5 text-text-tertiary hover:text-foreground"
+                            >
+                                {rosterOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
+                            </button>
+                        </div>
+
+                        {!rosterOpen && (
+                            <div className="flex flex-col items-center gap-2">
+                                {filtered.slice(0, 8).map((a) => (
+                                    <button
+                                        key={a.agent_key}
+                                        type="button"
+                                        onClick={() => setSelectedKey(a.agent_key)}
+                                        title={a.display_name}
+                                        className={`flex h-9 w-9 items-center justify-center rounded-full border text-[13px] font-semibold ${
+                                            a.agent_key === selectedKey
+                                                ? 'border-primary/40 bg-primary/10 text-primary'
+                                                : 'border-border bg-card-tint text-text-secondary hover:text-foreground'
+                                        }`}
+                                    >
+                                        {a.display_name.slice(0, 1).toUpperCase()}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+
+                        {rosterOpen && (<>
                         <div className="relative">
-                            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-tertiary" />
+                            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-tertiary" />
                             <input
                                 value={query}
                                 onChange={(e) => setQuery(e.target.value)}
                                 placeholder="Find an agent"
                                 aria-label="Find an agent"
-                                className="w-full rounded-lg border border-border bg-card-tint py-2 pl-8 pr-3 text-[12.5px] text-foreground placeholder:text-text-tertiary focus:border-primary/40 focus:outline-none"
+                                className="w-full rounded-lg border border-border bg-card-tint py-2.5 pl-9 pr-3 text-[14px] text-foreground placeholder:text-text-tertiary focus:border-primary/40 focus:outline-none"
                             />
                         </div>
 
-                        <div className="mt-2 flex flex-wrap gap-1">
+                        <div className="mt-3 flex flex-wrap gap-1.5">
                             {STATUS_FILTERS.map((s) => {
                                 const on = statusFilter === s;
                                 const n = s === 'all' ? agents.length : agents.filter((a) => a.status === s).length;
@@ -526,7 +567,7 @@ export default function AgentConsole({ orgId }: AgentConsoleProps) {
                                         key={s}
                                         type="button"
                                         onClick={() => setStatusFilter(s)}
-                                        className={`rounded-md px-2 py-[3px] text-[11px] font-medium capitalize transition-colors ${
+                                        className={`rounded-md px-2.5 py-1 text-[12.5px] font-medium capitalize transition-colors ${
                                             on ? 'bg-primary/10 text-primary' : 'text-text-tertiary hover:text-text-secondary'
                                         }`}
                                     >
@@ -542,14 +583,14 @@ export default function AgentConsole({ orgId }: AgentConsoleProps) {
                                     {/* "No agents yet" is a statement about the org.
                                         An empty list produced by a failed read has
                                         not earned it. */}
-                                    <p className="text-[12.5px] font-medium text-foreground">
+                                    <p className="text-[14px] font-semibold text-foreground">
                                         {registryUnreadable
                                             ? 'The roster couldn’t be read'
                                             : agents.length === 0
                                               ? 'No agents yet'
                                               : 'Nothing matches that filter'}
                                     </p>
-                                    <p className="mt-1 text-[11.5px] leading-relaxed text-text-tertiary">
+                                    <p className="mt-1.5 text-[13px] leading-relaxed text-text-tertiary">
                                         {registryUnreadable
                                             ? 'This is not an empty workforce — the query that lists agents failed, so how many there are is unknown. See the note above.'
                                             : agents.length === 0
@@ -573,6 +614,7 @@ export default function AgentConsole({ orgId }: AgentConsoleProps) {
                                 ))
                             )}
                         </div>
+                        </>)}
                     </div>
                 </aside>
 
@@ -940,7 +982,7 @@ function DetailHeader({
                 ))}
                 {agent.status === 'draft' && (
                     <span className="text-[11px] text-text-tertiary">
-                        A draft cannot go straight to live — it proves itself in shadow first.
+                        A <Hint text="A draft is written down but does nothing. It has never run and mails nobody.">draft</Hint> cannot go straight to <Hint text="Live means it runs on its schedule and really sends. Only promote after you have watched shadow runs.">live</Hint> — it proves itself in <Hint text="Shadow runs the whole job for real and writes a full trace, but takes no action on the business and mails nobody. It is the rehearsal.">shadow</Hint> first.
                     </span>
                 )}
                 {busy && <Loader2 className="h-3.5 w-3.5 animate-spin text-text-tertiary" />}
@@ -956,6 +998,26 @@ function DetailHeader({
 }
 
 /** The safety envelope, read-only. Changed by describing it, or in the JSON view. */
+/**
+ * What each envelope setting means, in a sentence, attached to the word itself.
+ * These are the densest terms on the screen and the ones most likely to be set
+ * wrong by someone guessing.
+ */
+const CHIP_HINTS: Record<string, string> = {
+    schedule: 'When it runs, as cron. "0 11 * * *" is 11:00 every day. Blank means it only runs when you trigger it.',
+    timezone: 'The clock the schedule is read in. Leave default for IST.',
+    autonomy: 'suggest = it proposes and waits for a person. act = it writes on its own. Start on suggest.',
+    heartbeat: 'How often it checks in so you can tell alive from stuck. Off means silence looks the same as healthy.',
+    'quiet hours': 'A window where it will not message anyone, so a 2am run does not wake the site team.',
+    'max runs/day': 'A hard stop. Protects you from a loop that would otherwise run all night.',
+    'cost cap/day': 'Rupees per day of model spend. It stops at this rather than asking forgiveness.',
+    timeout: 'How long one run may take before it is abandoned. Set it above the realistic worst case or you get phantom failures.',
+    model: 'Which language model does the reasoning. Cheaper is fine where a mistake is caught downstream.',
+    temperature: 'Higher is more varied, lower more repeatable. For anything you audit, keep it low.',
+    top_p: 'Another randomness dial. Change one of temperature or top_p, not both.',
+    context: 'How much it can read at once. Too small and it silently forgets the earlier part of a long document.',
+};
+
 function RuntimeEnvelope({ agent }: { agent: ConsoleAgent }) {
     const r = agent.runtime ?? {};
     const m = agent.model_config ?? {};
@@ -982,8 +1044,9 @@ function RuntimeEnvelope({ agent }: { agent: ConsoleAgent }) {
             </div>
             <div className="mt-2 flex flex-wrap gap-1.5">
                 {chips.map(([k, v]) => (
-                    <span key={k} className="rounded-md border border-border bg-card px-2 py-[3px] text-[11px] text-text-secondary">
-                        {k} <span className="ml-0.5 font-mono text-text-primary">{v}</span>
+                    <span key={k} className="rounded-md border border-border bg-card px-2.5 py-1 text-[12.5px] text-text-secondary">
+                        {CHIP_HINTS[k] ? <Hint text={CHIP_HINTS[k]}>{k}</Hint> : k}
+                        <span className="ml-1 font-mono text-text-primary">{v}</span>
                     </span>
                 ))}
             </div>
