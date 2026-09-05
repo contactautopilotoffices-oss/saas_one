@@ -189,19 +189,24 @@ const TOOL_SPECS: Record<string, ToolSpec> = {
     llm: {
         slug: 'llm',
         label: 'Language model',
-        purpose: 'Summarise, compare and draft prose.',
-        requires: ['OPENAI_API_KEY'],
+        purpose: 'Summarise, compare, adjudicate and draft prose.',
+        // Any of these satisfies it — the repo routes through
+        // backend/lib/council/llm.ts, which supports openai | groq | custom.
+        // Hardcoding OPENAI_API_KEY reported the model as missing on a
+        // deployment that had a perfectly good engy.ai key configured.
+        requires: ['COUNCIL_API_KEY|OPENAI_API_KEY|GROQ_API_KEY'],
     },
 };
 
 /** True only when every named env var is present and non-empty. */
+/**
+ * A requirement may be a single var, or alternatives separated by '|' where any
+ * one satisfies it. The LLM is the case that matters: three providers are
+ * supported and demanding one specific key mislabels a working deployment.
+ */
 function toolStatus(spec: ToolSpec, env: NodeJS.ProcessEnv): 'connected' | 'missing' {
-    return spec.requires.every((k) => {
-        const v = env[k];
-        return typeof v === 'string' && v.trim().length > 0;
-    })
-        ? 'connected'
-        : 'missing';
+    const has = (k: string) => typeof env[k] === 'string' && String(env[k]).trim().length > 0;
+    return spec.requires.every((req) => req.split('|').some(has)) ? 'connected' : 'missing';
 }
 
 export function bindTools(slugs: string[], env: NodeJS.ProcessEnv = process.env): ToolBinding[] {

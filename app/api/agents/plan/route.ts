@@ -19,7 +19,9 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
-import { composePlan, ALL_SCOPE_OPTION, type AgentPlan, type PlanSlot } from '@/backend/lib/agents/plan';
+import { composePlan, bindTools, ALL_SCOPE_OPTION, type AgentPlan, type PlanSlot } from '@/backend/lib/agents/plan';
+import { composePlanWithModel } from '@/backend/lib/agents/planModel';
+import { AGENT_MODULES } from '@/frontend/types/agentRuntime';
 import { AGENT_TABLE_CATALOG } from '@/app/api/agents/_shared';
 
 type Db = Awaited<ReturnType<typeof createClient>>;
@@ -140,7 +142,21 @@ export async function POST(request: NextRequest) {
             availableTables = [];
         }
 
-        const plan = composePlan({ description, availableTables });
+        // MODEL FIRST. The rule-based planner only knows two templates and
+        // keyword-matched everything else onto them — which is why a request to
+        // scan POs for anomalies came back asking which site to buy a fan for.
+        // composePlanWithModel falls back to those rules on any failure, so this
+        // is strictly better, never worse.
+        const toolSlugs = bindTools(['db_read', 'db_write', 'web_search', 'email', 'whatsapp', 'push', 'llm', 'zoho_books'])
+            .map((t) => t.slug);
+
+        const plan = await composePlanWithModel({
+            description,
+            tables: AGENT_TABLE_CATALOG.map((t) => ({ name: t.name, domain: t.domain, purpose: t.purpose })),
+            modules: [...AGENT_MODULES],
+            toolSlugs,
+        });
+        void composePlan; void availableTables;
         const hydrated = await hydrateSlots(plan, supabase, orgId);
 
         return NextResponse.json({ ok: true, plan: hydrated });

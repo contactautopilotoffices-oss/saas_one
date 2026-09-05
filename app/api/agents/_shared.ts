@@ -56,7 +56,7 @@ export type Db = Awaited<ReturnType<typeof createClient>>;
 /** Postgres / PostgREST codes that mean "the schema isn't there yet". */
 const NOT_PROVISIONED_CODES = new Set([
     '42P01', // undefined_table
-    '42703', // undefined_column
+    // 42703 (undefined_column) deliberately NOT here — see isMissingSchema.
     '42883', // undefined_function
     'PGRST202', // function not found in schema cache
     'PGRST204', // column not found in schema cache
@@ -75,10 +75,18 @@ export function isMissingSchema(error: unknown): boolean {
     const e = error as PgLikeError;
     if (e.code && NOT_PROVISIONED_CODES.has(e.code)) return true;
     const msg = `${e.message ?? ''} ${e.details ?? ''}`.toLowerCase();
+
+    // A MISSING COLUMN IS NOT A MISSING TABLE. Postgres says
+    // "column oem_agent_bundles.notes does not exist" for a schema drift bug,
+    // and this used to match the bare 'does not exist' test — so operators were
+    // told to run a migration that was already applied, and running it again
+    // changed nothing. A column fault is a real error and must surface as one.
+    if (/\bcolumn\b.*does not exist/.test(msg)) return false;
+    if (e.code === '42703') return false;
+
     return (
         msg.includes('does not exist') ||
         msg.includes('could not find the table') ||
-        msg.includes('could not find the') ||
         msg.includes('schema cache')
     );
 }
