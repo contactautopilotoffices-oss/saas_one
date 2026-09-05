@@ -13,7 +13,7 @@
  * and silently loses every answer — which is exactly what was happening.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Check, Inbox, Loader2, MapPin, Users } from 'lucide-react';
 
 type Role = 'ceo' | 'procurement' | 'technical';
@@ -43,11 +43,33 @@ export default function AgentDelivery({
     const [error, setError] = useState<string | null>(null);
     const [saved, setSaved] = useState(false);
 
-    useEffect(() => { setDraft(runtime); }, [runtime]);
+    /**
+     * Re-seed from the server ONLY when the value genuinely changed.
+     *
+     * The parent passes `runtime={selected.runtime ?? {}}`, which is a NEW object
+     * on every render. Depending on its identity meant the effect fired
+     * constantly and reset `draft` mid-typing — every field emptied the moment
+     * you moved to the next one. Compare by value instead.
+     */
+    const lastSeen = useRef<string>(JSON.stringify(runtime ?? {}));
+    useEffect(() => {
+        const incoming = JSON.stringify(runtime ?? {});
+        if (incoming === lastSeen.current) return;
+        lastSeen.current = incoming;
+        setDraft(runtime);
+    }, [runtime]);
 
     const inbox = draft.inbox ?? {};
     const roles = draft.recipients?.roles ?? {};
     const sites = draft.recipients?.sites ?? {};
+
+    // Rendered from the draft unless the operator is mid-edit, so their line
+    // breaks and spacing survive a parse round-trip.
+    const [sitesTouched, setSitesTouched] = useState(false);
+    const [sitesRaw, setSitesRaw] = useState('');
+    const sitesText = sitesTouched
+        ? sitesRaw
+        : Object.entries(sites).map(([k, v]) => `${k}: ${v.join(', ')}`).join('\n');
 
     /** The failure that silently loses replies. Surfaced, not buried. */
     const replyMismatch = useMemo(() => {
@@ -111,12 +133,12 @@ export default function AgentDelivery({
                             onChange={(e) => setInbox('from', e.target.value)} />
                     </div>
                     <div>
-                        <label className={label}>Replies come back to</label>
+                        <label className={label}>Reply-To on the mail she sends</label>
                         <input className={field} value={inbox.reply_to ?? ''} placeholder="purchase@worksquare.in"
                             onChange={(e) => setInbox('reply_to', e.target.value)} />
                     </div>
                     <div>
-                        <label className={label}>Mailbox the poller reads</label>
+                        <label className={label}>Mailbox Ira reads replies in</label>
                         <input className={field} value={inbox.poll_address ?? ''} placeholder="purchase@worksquare.in"
                             onChange={(e) => setInbox('poll_address', e.target.value)} />
                     </div>
@@ -131,9 +153,9 @@ export default function AgentDelivery({
                     <div className="mt-3 flex items-start gap-2 rounded-[10px] border border-amber-200 bg-amber-50 px-3 py-2">
                         <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
                         <p className="text-[11.5px] leading-relaxed text-amber-800">
-                            Reply-To and the polled mailbox are different. Replies will arrive somewhere
-                            nothing reads, and every answer is lost silently. Make them the same address
-                            unless the poller genuinely watches both.
+                            These two are different. Ira asks people to reply to the first address,
+                            but she only reads the second — so every answer lands somewhere nobody
+                            opens and is lost silently. Make them the same address.
                         </p>
                     </div>
                 )}
@@ -172,9 +194,12 @@ export default function AgentDelivery({
                 <textarea
                     rows={4}
                     className={`${field} font-mono text-[12px]`}
-                    defaultValue={Object.entries(sites).map(([k, v]) => `${k}: ${v.join(', ')}`).join('\n')}
+                    // Controlled off the draft, not defaultValue — an uncontrolled
+                    // field silently keeps stale text after a re-seed.
+                    value={sitesText}
+                    onFocus={() => setSitesTouched(true)}
                     placeholder={'SS Plaza: blr.purchase@worksquare.in\nArcil Noida: ncr.purchase@worksquare.in'}
-                    onChange={(e) => setSites(e.target.value)}
+                    onChange={(e) => { setSitesRaw(e.target.value); setSites(e.target.value); }}
                 />
             </section>
 
