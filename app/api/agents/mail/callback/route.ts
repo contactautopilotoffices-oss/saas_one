@@ -57,15 +57,48 @@ export async function GET(request: NextRequest) {
     const clientSecret = process.env.ZOHO_MAIL_APP_CLIENT_SECRET ?? '';
     const dc = (process.env.ZOHO_MAIL_APP_DC || process.env.ZOHO_MAIL_DC || 'com').trim();
 
-    // 1. code -> refresh token
-    const body = new URLSearchParams({
+    /**
+     * 1. code -> refresh token.
+     *
+     * Three things this gets right that the first version did not:
+     *
+     *  · THE SERVER ZOHO NAMED. The consent redirect carries `accounts-server`,
+     *    which is the authoritative token endpoint for THIS user's data centre.
+     *    Guessing it from an env var works until someone's account lives
+     *    elsewhere, and then the exchange quietly hits the wrong region.
+     *
+     *  · A FORM BODY, not a query string. The authorization_code grant is
+     *    posted form-encoded. Sent as query parameters, Zoho answered with an
+     *    HTML page.
+     *
+     *  · READ AS TEXT FIRST. `await r.json()` on that HTML threw
+     *    "Unexpected token '<'", which told the operator nothing about what
+     *    had gone wrong. Now a non-JSON answer is reported as what it is.
+     */
+    const accountsServer = (sp.get('accounts-server') ?? '').trim().replace(/\/+$/, '')
+        || `https://accounts.zoho.${dc}`;
+
+    const form = new URLSearchParams({
         grant_type: 'authorization_code', code,
         client_id: clientId, client_secret: clientSecret, redirect_uri: callbackUrl(request.url),
     });
     let tok: { access_token?: string; refresh_token?: string; scope?: string; error?: string };
     try {
-        const r = await fetch(`https://accounts.zoho.${dc}/oauth/v2/token?${body.toString()}`, { method: 'POST' });
-        tok = await r.json();
+        const r = await fetch(`${accountsServer}/oauth/v2/token`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+            body: form.toString(),
+        });
+        const text = await r.text();
+        try {
+            tok = JSON.parse(text);
+        } catch {
+            const looksLikeHtml = /^\s*</.test(text);
+            console.error('[mail callback] non-JSON from Zoho token endpoint:', r.status, text.slice(0, 400));
+            return page('Not connected', looksLikeHtml
+                ? `Zoho answered the token request with a web page instead of data (HTTP ${r.status}). That usually means the redirect URL on the application does not exactly match <b>${callbackUrl(request.url)}</b>. Check it in the API console and connect again.`
+                : `Zoho sent an answer we could not read (HTTP ${r.status}). Nothing was saved.`, 'bad');
+        }
     } catch (e) {
         return page('Not connected', `Could not reach Zoho: ${e instanceof Error ? e.message : e}`, 'bad');
     }
@@ -81,7 +114,8 @@ export async function GET(request: NextRequest) {
     // 2. which addresses can this grant actually read?
     let address = ''; let addresses: string[] = []; let accountId: string | null = null;
     try {
-        const r = await fetch(`https://mail.zoho.${dc}/api/accounts`, {
+        const mailHost = accountsServer.replace('accounts.zoho.', 'mail.zoho.');
+        const r = await fetch(`${mailHost}/api/accounts`, {
             headers: { Authorization: `Zoho-oauthtoken ${tok.access_token}` },
         });
         const d = await r.json();
@@ -102,7 +136,9 @@ export async function GET(request: NextRequest) {
 
     const saved = await saveMailAccount({
         orgId: String(st.organization_id), address, addresses, zohoAccountId: accountId,
-        refreshToken: tok.refresh_token, dc, scopes: tok.scope ?? null,
+        refreshToken: tok.refresh_token,
+        dc: (accountsServer.match(/accounts\.zoho\.([a-z.]+)$/)?.[1] ?? dc),
+        scopes: tok.scope ?? null,
         connectedBy: st.created_by ? String(st.created_by) : null,
     });
     if (!saved.ok) {
