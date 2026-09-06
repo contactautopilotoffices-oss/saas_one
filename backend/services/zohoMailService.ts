@@ -73,8 +73,29 @@ export function mailboxAddress(prefix: ZohoMailEnv = 'ZOHO_MAIL'): string {
     return (env(prefix, 'ADDRESS') || fallback).toLowerCase();
 }
 
+/**
+ * Access tokens live about an hour. Zoho rate-limits how many a refresh token
+ * may mint, so minting a fresh one for every single API call is not merely
+ * wasteful — it takes the integration down.
+ *
+ * That is exactly what happened: a burst of diagnostic calls exhausted the
+ * quota, every subsequent refresh came back `invalid_client`, and the failure
+ * read as dead credentials. It was self-inflicted, and it compounded, because
+ * a FAILED call tries the fallback data centre too and therefore burns two
+ * refreshes instead of one. Left alone, four polls an hour across two
+ * mailboxes would have kept re-minting for no reason.
+ *
+ * Cached per env prefix, with a minute of headroom before expiry.
+ */
+const tokenCache = new Map<string, { token: string; apiDomain: string; expiresAt: number }>();
+const TOKEN_SAFETY_MS = 60_000;
+
 export class ZohoMailService {
     private static async getAccessToken(prefix: ZohoMailEnv = 'ZOHO_MAIL'): Promise<{ token: string; apiDomain: string }> {
+        const cached = tokenCache.get(prefix);
+        if (cached && cached.expiresAt > Date.now()) {
+            return { token: cached.token, apiDomain: cached.apiDomain };
+        }
         const clientId = env(prefix, 'CLIENT_ID');
         const clientSecret = env(prefix, 'CLIENT_SECRET');
         const refreshToken = env(prefix, 'REFRESH_TOKEN');
@@ -104,16 +125,26 @@ export class ZohoMailService {
 
                 const data = await res.json();
                 if (res.ok && data.access_token) {
-                    return { token: data.access_token, apiDomain: this.mailApiDomain(data.api_domain, tld, prefix) };
+                    const apiDomain = this.mailApiDomain(data.api_domain, tld, prefix);
+                    const ttlMs = Math.max(0, (Number(data.expires_in) || 3600) * 1000 - TOKEN_SAFETY_MS);
+                    tokenCache.set(prefix, { token: data.access_token, apiDomain, expiresAt: Date.now() + ttlMs });
+                    return { token: data.access_token, apiDomain };
                 }
                 lastError = data;
+                // `invalid_client` from the CONFIGURED data centre is either bad
+                // credentials or an exhausted quota. Trying the other DC cannot
+                // fix either, and doubles the spend that caused the second one.
+                if (tld === preferred && data?.error === 'invalid_client') break;
             } catch (err) {
                 lastError = err;
             }
         }
 
         console.error('Zoho Mail Token Error:', lastError);
-        throw new Error(`Failed to refresh Zoho Mail access token. Check ${prefix}_* credentials and ${prefix}_DC.`);
+        const hint = (lastError as { error?: string })?.error === 'invalid_client'
+            ? ` The credentials may be correct and the refresh QUOTA exhausted — verify by minting one token by hand before changing anything.`
+            : '';
+        throw new Error(`Failed to refresh Zoho Mail access token. Check ${prefix}_* credentials and ${prefix}_DC.${hint}`);
     }
 
     /**

@@ -72,6 +72,8 @@ const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(
 
 /** The marker our own subjects carry, so a reply to one is recognisable as ours. */
 const SCAN_MARKER = 'po scan';
+/** A reply, not an original. "Re:", "RE:", "Fwd:", and the stacked variants. */
+const IS_REPLY = /^\s*((re|fwd|fw)\s*:\s*)+/i;
 
 /**
  * Read replies since `since` from ONE mailbox and apply them. Never throws — a
@@ -193,11 +195,32 @@ export async function collectIraReplies(
              * A reply to a subject carrying our own scan marker is ours, full
              * stop. If we cannot place the line we ASK; we do not go quiet.
              */
+            /**
+             * The marker alone is NOT enough. The CEO writes his own scan under
+             * the subject "PO Scan 11:30 — 06 Sep — ..." and the first version
+             * of this test matched it, so Ira mailed him back asking which line
+             * he meant. Answering a human's own report as though it were a
+             * reply to us is worse than missing a reply.
+             *
+             * So: it must be a REPLY (Re:/Fwd:) as well as ours.
+             */
             const isOurThread = quotedTags.length > 0
-                || /\bira\b/i.test(subject)
-                || normSubject.includes(SCAN_MARKER);
+                || (IS_REPLY.test(subject) && (/\bira\b/i.test(subject) || normSubject.includes(SCAN_MARKER)));
             if (!isOurThread) continue; // genuinely unrelated mail in a shared inbox
-            out.ignored.push({ from: senderEmail, subject, reason: 'could not tell which line this answers — asked the sender' });
+            // Only answer a person we can actually place in this org. An inbox is
+            // a public surface; replying to an unknown sender is a way to be used
+            // as a mailer.
+            const { data: u } = await supabaseAdmin
+                .from('users').select('id').ilike('email', senderEmail).maybeSingle();
+            let isMember = false;
+            if (u) {
+                const { count } = await supabaseAdmin
+                    .from('organization_memberships').select('*', { count: 'exact', head: true })
+                    .eq('organization_id', orgId).eq('user_id', u.id);
+                isMember = (count ?? 0) > 0;
+            }
+            out.ignored.push({ from: senderEmail, subject, reason: isMember ? 'could not tell which line this answers — asked the sender' : 'could not place the line, and the sender is not a member of this org' });
+            if (!isMember) continue;
             out.needsAnswer.push({
                 findingId: null, findingKey: null, findingTitle: null,
                 because: 'unmatched', disposition: null,
