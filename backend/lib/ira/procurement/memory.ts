@@ -121,6 +121,55 @@ export async function applyPriorDispositions(
  * Upserts on (organization_id, agent_key, finding_key) — the same problem next
  * week is the same row, which is the whole basis of closure. Never throws.
  */
+/**
+ * CLOSE WHAT IS NO LONGER TRUE.
+ *
+ * A finding is raised, somebody fixes the underlying problem, and the next scan
+ * simply stops detecting it — but the row stays open for ever, because nothing
+ * ever told it the cause was gone. It then keeps appearing in status lists and
+ * gets quoted back as current.
+ *
+ * That is not hypothetical. "Purchase-order sync has not run for 24 days" was
+ * raised on 5 September, the sync was run an hour later, and the finding was
+ * still being repeated as fact two days on. I quoted it to the operator myself.
+ *
+ * So: an open finding that this scan did NOT re-detect is closed as
+ * `not_an_issue` with a note saying the scan stopped seeing it and when. It is
+ * marked as resolved by the agent, not by a person, so nobody gets credit for
+ * work they did not report.
+ *
+ * DELIBERATELY NARROW. Only findings the scan could have re-detected are
+ * eligible — the caller passes the keys this scan actually evaluated. A finding
+ * that was not looked for is not evidence of anything, and closing it would be
+ * a lie about coverage.
+ */
+export async function resolveVanishedFindings(
+    orgId: string,
+    agentKey: string,
+    evaluatedKeys: ReadonlyArray<string>,
+    stillPresentKeys: ReadonlyArray<string>,
+): Promise<{ resolved: string[]; error?: string }> {
+    const gone = evaluatedKeys.filter((k) => !stillPresentKeys.includes(k));
+    if (!gone.length) return { resolved: [] };
+
+    const { data, error } = await supabaseAdmin
+        .from('oem_agent_findings')
+        .update({
+            disposition: 'not_an_issue',
+            disposition_note: `Closed automatically: the scan on ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' })} no longer detects this. Nobody reported it fixed — the condition simply stopped being true.`,
+            dispositioned_at: new Date().toISOString(),
+            // dispositioned_by stays NULL: the agent closed this, not a person.
+        })
+        .eq('organization_id', orgId)
+        .eq('agent_key', agentKey)
+        .in('finding_key', gone)
+        .is('disposition', null)
+        .select('finding_key');
+
+    if (error) return { resolved: [], error: error.message };
+    return { resolved: (data ?? []).map((r) => String(r.finding_key)) };
+}
+
 export async function rememberFindings(
     orgId: string,
     agentKey: string,

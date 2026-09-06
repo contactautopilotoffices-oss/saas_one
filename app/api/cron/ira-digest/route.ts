@@ -21,7 +21,7 @@ import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { withAgentRun, dailyRunKey } from '@/backend/lib/agents/instrument';
 import { scanPurchaseOrders } from '@/backend/lib/ira/procurement/detectLive';
 import { windowFor, type Cadence } from '@/backend/lib/ira/procurement/cadence';
-import { applyPriorDispositions, rememberFindings, loadDispositionStatuses } from '@/backend/lib/ira/procurement/memory';
+import { applyPriorDispositions, rememberFindings, loadDispositionStatuses, resolveVanishedFindings } from '@/backend/lib/ira/procurement/memory';
 import { routeFindings } from '@/backend/lib/ira/procurement/router';
 import { renderRecipientEmail, type FeedbackLinks } from '@/backend/lib/ira/procurement/render';
 import { mintFeedbackLinks } from '@/backend/lib/ira/procurement/feedbackLinks';
@@ -103,6 +103,27 @@ export async function GET(request: NextRequest) {
 
                 const mem = await applyPriorDispositions(orgId, AGENT_KEY, raw);
                 await rememberFindings(orgId, AGENT_KEY, null, mem.findings);
+
+                /**
+                 * Close what stopped being true.
+                 *
+                 * The stale-feed finding is the case that proved this is needed:
+                 * raised on 5 Sept, the sync run an hour later, and the row still
+                 * open and being quoted as current two days on.
+                 *
+                 * Only the singleton checks are eligible — a scan either raises
+                 * them or does not, so absence is meaningful. Per-record findings
+                 * (a specific duplicate) are excluded: they can vanish because the
+                 * window moved, not because anything was fixed, and closing those
+                 * would be a lie about coverage.
+                 */
+                const SINGLETON_CHECKS = ['po-feed-stale', 'vendor-name-variants', 'approved-without-workflow-state'];
+                const stillPresent = raw.map((f) => f.key);
+                const vanished = await resolveVanishedFindings(orgId, AGENT_KEY, SINGLETON_CHECKS, stillPresent);
+                if (vanished.resolved.length) {
+                    const v = await step(`${vanished.resolved.length} finding(s) no longer detected — closed`, 'decide');
+                    await v.ok({ detail: { resolved: vanished.resolved } });
+                }
                 const statuses = await loadDispositionStatuses(orgId, AGENT_KEY, mem.findings.map((f) => f.key));
                 const bundles = routeFindings(mem.findings);
 

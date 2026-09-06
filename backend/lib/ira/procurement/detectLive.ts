@@ -198,12 +198,35 @@ export async function scanPurchaseOrders(
         .sort()
         .pop() as string | undefined;
 
-    if (window && lastSync && new Date(lastSync) < window.from) {
-        const days = Math.floor((window.to.getTime() - new Date(lastSync).getTime()) / 86_400_000);
+    /**
+     * STALE IS ABOUT THE FEED, NOT ABOUT THE SCAN WINDOW.
+     *
+     * This used to fire whenever the last sync predated the window, so a DAILY
+     * scan called anything over a day old "stale" — and then reported the gap
+     * in DAYS, which reads as a catastrophe when the real answer is "the last
+     * sync was 27 hours ago". The feed runs every two hours; the honest
+     * threshold is hours, and it is the same number whatever window is being
+     * scanned.
+     *
+     * STALE_AFTER_H is generous on purpose: six missed runs, not one. A cron
+     * that skips once is not news, and an agent that cries wolf on a healthy
+     * feed teaches people to ignore the one time it matters.
+     */
+    // Findings this scan is capable of raising, whether or not it did. Used to
+    // close an open finding whose cause is gone — a key NOT in this list was
+    // never looked for, and its absence proves nothing.
+    const STALE_AFTER_H = 12;
+    const sinceSyncH = lastSync ? (asOf.getTime() - new Date(lastSync).getTime()) / 3_600_000 : null;
+
+    if (lastSync && sinceSyncH !== null && sinceSyncH >= STALE_AFTER_H) {
+        const days = Math.floor(sinceSyncH / 24);
+        const age = days >= 1
+            ? `${days} day${days === 1 ? '' : 's'}`
+            : `${Math.floor(sinceSyncH)} hours`;
         findings.push({
             key: 'po-feed-stale',
-            priority: 'critical',
-            title: `Purchase-order sync has not run for ${days} days`,
+            priority: sinceSyncH >= 48 ? 'critical' : 'action',
+            title: `Purchase-order sync has not run for ${age}`,
             vendor: null,
             property: null,
             amount: null,
@@ -213,13 +236,13 @@ export async function scanPurchaseOrders(
                 `Nothing has synced from Zoho since.
 
 ` +
-                `Every other check in this scan ran against data that is ${days} days old. ` +
-                `Treat an otherwise-empty scan as UNKNOWN, not as all-clear — any PO raised in ` +
-                `the last ${days} days is invisible to this agent, including duplicates.`,
+                `Every other check in this scan ran against data that is ${age} old. ` +
+                `Treat an otherwise-empty scan as UNKNOWN, not as all-clear — any PO raised since ` +
+                `then is invisible to this agent, including duplicates.`,
             refs: [],
             stats: [
                 { label: 'Last sync', value: new Date(lastSync).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short' }) },
-                { label: 'Days stale', value: String(days) },
+                { label: 'Stale by', value: age },
                 { label: 'POs held', value: rows.length.toLocaleString('en-IN') },
             ],
             actions: [
