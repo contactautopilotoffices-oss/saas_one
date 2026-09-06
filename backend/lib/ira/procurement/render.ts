@@ -68,12 +68,12 @@ export function inrShort(n: number): string {
  * There is no third branch: a URL is never invented to fill the gap.
  */
 function refChip(ref: EntityRef, orgId: string): string {
-    const url = entityUrl(ref, orgId);
+    // The order in Zoho Books wins over our own read-only page: that is where
+    // the comment box is, and the comment box is where things actually change.
+    const url = ref.url ?? entityUrl(ref, orgId);
     const label = esc(ref.label);
-    if (!url) {
-        return `<span style="display:inline-block;padding:3px 9px;margin:0 5px 5px 0;border:1px solid ${LINE};border-radius:4px;font-size:12px;color:${MUTED};background:${TINT}">${label}</span>`;
-    }
-    return `<a href="${esc(url)}" style="display:inline-block;padding:3px 9px;margin:0 5px 5px 0;border:1px solid ${EDGE};border-radius:4px;font-size:12px;color:${BRAND};background:${TINT};text-decoration:none">${label} &#8599;</a>`;
+    if (!url) return `<span style="display:inline-block;padding:3px 9px;margin:0 5px 5px 0;border:1px solid ${LINE};border-radius:4px;font-size:12px;color:${BODY};background:${TINT}">${label}</span>`;
+    return `<a href="${esc(url)}" style="display:inline-block;padding:4px 10px;margin:0 5px 5px 0;border:1px solid ${EDGE};border-radius:4px;font-size:12px;font-weight:600;color:${BRAND};background:${CARD};text-decoration:none">${label} &nbsp;&#8599;</a>`;
 }
 
 /** Per-finding one-click disposition URLs, keyed by finding.key then disposition. */
@@ -109,77 +109,71 @@ function vettingLine(v: VettingStamp): string {
 }
 
 function closeStrip(links: FeedbackLinks[string] | undefined, replyTo?: string, subject?: string, multi = false): string {
-    const refTag = subject ? tagFromSubject(subject) : null;
-    if (!links && !replyTo) return '';
-    const buttons = DISPOSITION_ORDER.filter((d) => links?.[d]);
-
     /**
-     * THE REPLY BOX THAT ISN'T ONE.
+     * PER FINDING: the one-tap buttons only.
      *
-     * An email body cannot contain a working text field — Zoho Mail (this team's
-     * client) strips <form>, and AMP for Email, which would allow it, is not
-     * rendered by Zoho.
+     * The full "hit Reply" invitation used to render under EVERY item, so a
+     * five-item email repeated the same three paragraphs five times. It is one
+     * instruction about the whole email, so it is printed once, at the end —
+     * see replyFooter().
      *
-     * The previous version made the whole box a mailto: link and called that
-     * "works everywhere mailto works — which is everywhere". IT IS NOT. Chrome
-     * with no registered mail handler — the exact setup on this team's machines —
-     * swallows the click and lands on `about:blank#blocked`. The one affordance
-     * on the card was a dead end, and a dead end is worse than no button because
-     * the reader concludes the whole loop is broken.
-     *
-     * So the PRIMARY instruction is now the thing that cannot fail: hit Reply.
-     * The thread is already addressed to the polled mailbox (Reply-To is set on
-     * the send) and the subject already carries the tag the parser matches, so a
-     * plain reply lands correctly with zero special handling.
-     *
-     * mailto: survives only as a SECONDARY convenience, small and clearly
-     * optional — useful on a phone, harmless when the browser blocks it.
-     * The address is NOT percent-encoded: `mailto:` takes the address in the
-     * path, and encoding the "@" produced a malformed target on clients that
-     * did follow it.
+     * The ref still travels invisibly. An HTML comment survives a quoted reply
+     * in every client we care about and never renders as text, so the poller
+     * keeps a reliable match without the reader ever seeing a hash. If it is
+     * stripped, matching falls back to the PO number in their own words.
      */
-    const mailto = replyTo
-        ? `mailto:${replyTo}?subject=${encodeURIComponent(subject ?? '')}`
-        : null;
-
-    const replyBox = replyTo
-        ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 10px">
-             <tr><td style="border:1px solid ${EDGE};border-radius:4px;background:${CARD};padding:13px 14px">
-               <div style="font-size:13.5px;font-weight:700;color:${BRAND};line-height:1.5">
-                 &#8629;&nbsp; Hit <span style="text-decoration:underline">Reply</span>${multi && refTag
-                     ? `, start with <span style="font-family:Menlo,Consolas,monospace;background:${TINT};border:1px solid ${LINE};border-radius:3px;padding:0 5px">${esc(refTag)}</span>, then say what you did.`
-                     : ' and type what you did.'}
-               </div>
-               <div style="font-size:11.5px;color:${MUTED};line-height:1.55;margin-top:6px">
-                 Reply goes to <b style="color:${BODY}">${esc(replyTo)}</b>.
-                 ${multi
-                     ? 'This mail has several lines, so the ref is how Ira knows which one you mean &mdash; you can answer more than one in a single reply, one ref per line.'
-                     : 'Keep the subject line as it is &mdash; that is how Ira matches your answer to this line.'}
-                 Attach the credit note, corrected PO or photo to the same reply if you have one.
-               </div>
-               ${mailto ? `<div style="font-size:11px;margin-top:9px"><a href="${esc(mailto)}" style="color:${MUTED};text-decoration:underline">On a phone? Tap to open a pre-addressed reply</a></div>` : ''}
-             </td></tr>
-           </table>`
-        : '';
+    const hiddenRef = subject ? tagFromSubject(subject) : null;
+    const buttons = DISPOSITION_ORDER.filter((d) => links?.[d]);
+    void replyTo; void multi;
+    if (!buttons.length) return hiddenRef ? `<!--ira-ref:${hiddenRef}-->` : '';
 
     return `
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:14px 0 0">
-        <tr><td style="padding:12px 13px;border:1px solid ${EDGE};border-radius:4px;background:${GROUND}">
-          <div style="font-size:13px;font-weight:700;color:${BRAND};letter-spacing:-0.01em;margin-bottom:8px">Close this line</div>
-          ${replyBox}
-          <div style="font-size:11.5px;line-height:1.55;color:${MUTED};margin:0 0 9px">
-            Your sentence is what gets kept &mdash; quoted to whoever reads the summary, and it changes what
-            Ira raises next scan.
-            ${buttons.length ? '<br>Nothing to add? Tap:' : ''}
-          </div>
+      ${hiddenRef ? `<!--ira-ref:${hiddenRef}-->` : ''}
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:13px 0 0">
+        <tr><td style="padding:10px 12px;border:1px solid ${LINE};border-radius:4px;background:${GROUND}">
+          <div style="font-size:12px;line-height:1.55;color:${MUTED};margin:0 0 7px">Nothing to add? One tap:</div>
           ${buttons.map((d) => {
               const spec = DISPOSITION_SPECS[d];
               const strong = spec.closes;
               return `<a href="${esc((links?.[d]) as string)}" style="display:inline-block;padding:7px 12px;margin:0 6px 6px 0;border:1px solid ${strong ? EDGE : LINE};border-radius:4px;font-size:12px;font-weight:600;color:${strong ? BRAND : BODY};background:${strong ? CARD : TINT};text-decoration:none">${esc(spec.label)}</a>`;
           }).join('')}
-          ${buttons.length ? `<div style="font-size:11px;color:${MUTED};margin-top:4px">Buttons work once. Do not forward.</div>` : ''}
+          <div style="font-size:11px;color:${MUTED};margin-top:2px">These links work once and are yours &mdash; please do not forward them.</div>
         </td></tr>
       </table>`;
+}
+
+/**
+ * THE ONE INVITATION TO WRITE BACK, printed once at the foot of the mail.
+ *
+ * This is the whole point of the email: a person telling us, in their own
+ * words, what they did. So it gets room, plain language, and no instruction to
+ * quote a code at anybody.
+ */
+function replyFooter(replyTo: string | null, multi: boolean): string {
+    if (!replyTo) return '';
+    return `
+      <tr><td style="padding:4px 0 0">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+          <tr><td style="border:1px solid ${EDGE};border-radius:5px;background:${CARD};padding:16px 17px">
+            <div style="font-size:15px;font-weight:800;color:${BRAND};line-height:1.4">
+              &#8629;&nbsp; Just hit Reply and tell us what you did.
+            </div>
+            <div style="font-size:13.5px;color:${BODY};line-height:1.7;margin-top:8px">
+              Write it however you like &mdash; &ldquo;cancelled the second one&rdquo;,
+              &ldquo;this is correct, two different floors&rdquo;, &ldquo;waiting on the vendor since Tuesday&rdquo;.
+              One sentence is enough, and it is kept exactly as you wrote it.
+            </div>
+            <div style="font-size:13.5px;color:${BODY};line-height:1.7;margin-top:8px">
+              Attach anything that helps &mdash; a credit note, a corrected order, a photo.
+              ${multi ? 'Answering about one order in particular? Just mention its number and we will file it against that one.' : ''}
+            </div>
+            <div style="font-size:12px;color:${MUTED};line-height:1.6;margin-top:10px;padding-top:9px;border-top:1px solid ${LINE}">
+              Your reply goes to <b style="color:${BODY}">${esc(replyTo)}</b>.
+              If something here is wrong or not worth chasing, say so &mdash; that is how these checks get better.
+            </div>
+          </td></tr>
+        </table>
+      </td></tr>`;
 }
 
 /**
@@ -215,10 +209,17 @@ function statusStrip(status: DispositionStatus | undefined): string {
 function findingBlock(f: RoutedFinding, orgId: string, index: number, canDisposition: boolean, fb?: FeedbackLinks[string], status?: DispositionStatus, replyTo?: string, replySubject?: string, multi = false, vetting: VettingStamp | null = null): string {
     const tone = TONE[f.priority];
     const lineConcerns = (vetting?.concerns ?? []).filter((c) => c.finding_key === f.key).map((c) => ({ ...c, reviewer: vetting!.reviewer }));
-    // The ref is what a plain Reply must quote for the poller to know which
-    // line was answered. It is derived from the tagged subject so there is one
-    // source of truth for the tag, not two.
-    const refTag = replySubject ? tagFromSubject(replySubject) : null;
+    /**
+     * The identifier a HUMAN uses: the purchase-order number. Printing our
+     * internal hash here asked the reader to carry our bookkeeping for us —
+     * and it is not even the thing they would naturally type. A reply saying
+     * "PO-26/27-0609 cancelled" is matched on that number instead.
+     */
+    const linkable = f.refs.filter((r) => (r.url ?? entityUrl(r, orgId)) !== null);
+    // Only print the plain identifier line when the numbers are NOT already
+    // shown as links below — otherwise every order number appears twice.
+    const idLine = linkable.length ? null
+        : (f.refs.map((r) => r.label).filter(Boolean).slice(0, 3).join(' · ') || null);
     const context = [f.vendor, f.property].filter(Boolean).map((x) => esc(String(x))).join(' &middot; ');
 
     const stats = f.stats?.length
@@ -227,7 +228,15 @@ function findingBlock(f: RoutedFinding, orgId: string, index: number, canDisposi
               .join('')}</tr></table>`
         : '';
 
-    const refs = f.refs.length ? `<div style="margin:12px 0 0">${f.refs.map((r) => refChip(r, orgId)).join('')}</div>` : '';
+    // Only worth a chip row if the chips actually go somewhere. Otherwise the
+    // numbers are already on the identifier line under the title and repeating
+    // them is noise.
+    const refs = linkable.length
+        ? `<div style="margin:12px 0 0">
+             <div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:${MUTED};font-weight:600;margin-bottom:5px">Open the order in Zoho Books to comment</div>
+             ${linkable.map((r) => refChip(r, orgId)).join('')}
+           </div>`
+        : '';
 
     const actions = f.actions
         .map((a) => `<tr><td style="padding:11px 13px;background:${TINT};border:1px solid ${LINE};border-radius:4px">
@@ -246,7 +255,7 @@ function findingBlock(f: RoutedFinding, orgId: string, index: number, canDisposi
           </div>
           <div style="font-size:16px;font-weight:700;color:${BRAND};letter-spacing:-0.01em;line-height:1.35">${esc(f.title)}${f.amount !== null ? ` &mdash; ${inr(f.amount)}` : ''}</div>
           ${lineConcerns.length ? `<div style="margin-top:7px;padding:7px 10px;border-left:3px solid #B07206;background:${TINT};font-size:12px;line-height:1.5;color:${BODY}"><b style="color:${BRAND}">${esc(lineConcerns[0].reviewer)} flags:</b> ${lineConcerns.map((c) => esc(c.concern)).join(' ')}</div>` : ''}
-          ${refTag ? `<div style="margin-top:5px;font-size:11px;color:${MUTED}">Ref <span style="font-family:Menlo,Consolas,monospace;font-weight:700;color:${BODY};background:${TINT};border:1px solid ${LINE};border-radius:3px;padding:1px 5px">${esc(refTag)}</span></div>` : ''}
+          ${idLine ? `<div style="margin-top:5px;font-size:12px;color:${MUTED}">${esc(idLine)}</div>` : ''}
           ${context ? `<div style="font-size:12px;color:${MUTED};margin-top:3px">${context}</div>` : ''}
         </td></tr>
         <tr><td style="padding:14px 16px">
@@ -317,44 +326,61 @@ export function renderRecipientEmail(
     const open = counts.total - counts.closed;
     // Three site mails land in the SAME mailbox. Without the site in the subject
     // they are three identical lines in a list and the owner opens the wrong one.
-    const scanTag = siteTag ? `${date.toUpperCase()} PO SCAN — ${siteTag.label.toUpperCase()}` : null;
-    const lead = scanTag ?? 'FMS Procurement';
-    const baseSubject =
-        counts.critical > 0
-            ? `${lead} — ${counts.critical} critical · ${inrShort(counts.exposure)} exposure`
-            : `${lead} — ${open} item${open === 1 ? ' needs' : 's need'} your attention`;
-    // ONE line in the mail → the subject carries its ref, and a plain Reply
-    // needs nothing typed to be matched. Several lines → the subject cannot
-    // carry all of them, so each line prints its own ref and the person
-    // quotes it (see closeStrip). Without this, a reply to a one-line site
-    // mail was silently dropped by the poller: no tag anywhere it looked.
-    const soleTag = findings.length === 1 ? tagFromSubject(replySubjects[findings[0].key] ?? '') : null;
-    const subject = soleTag ? `[${soleTag}] ${baseSubject}` : baseSubject;
+    /**
+     * THE SUBJECT SAYS THE NEWS.
+     *
+     * It used to read `[IRA-9AD0D96D] 07 SEPT 2026 PO SCAN — UNASSIGNED — 1
+     * item needs your attention`. Every word of that is written for the
+     * machine: an internal hash, a shouted date, our word for "we could not
+     * work out the site", and a count that says nothing about what happened.
+     *
+     * A subject line is the one sentence everybody reads. So it now carries the
+     * finding itself — the vendor, what is wrong, the money — the way a
+     * colleague would put it. Matching a reply is OUR problem and is solved on
+     * the PO number instead (see reply.ts), which is what people type anyway.
+     */
+    const dayLabel = when.toLocaleDateString('en-IN', {
+        timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short',
+    });
+    const where = siteTag ? ` · ${siteTag.label}` : '';
+    const top = findings.find((f) => f.priority !== 'closed') ?? findings[0];
+    const topMoney = top?.amount ? ` · ${inr(top.amount)}` : '';
+    const others = open - 1;
+
+    const subject = open === 0
+        ? `PO scan · ${dayLabel}${where} — everything answered, nothing new`
+        : open === 1 && top
+            ? `PO scan · ${dayLabel}${where} — ${top.title}${topMoney}`
+            : `PO scan · ${dayLabel}${where} — ${top ? `${top.title}${others > 0 ? `, and ${others} more` : ''}` : `${open} to check`}${counts.exposure ? ` · ${inrShort(counts.exposure)}` : ''}`;
 
     // FIRST SCREEN: health, count, critical, exposure. Nothing above this.
     const summary = `
       <tr><td style="padding:0 0 18px">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${EDGE};border-radius:5px;background:${CARD};overflow:hidden">
-          <tr><td style="padding:9px 16px;background:${TINT};border-bottom:1px solid ${LINE};font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:${MUTED}">
-            ${esc(recipient.lens)} &middot; ${esc(date)}
-          </td></tr>
           <tr><td style="padding:18px 16px">
-            <div style="font-size:26px;font-weight:800;color:${BRAND};letter-spacing:-0.02em;line-height:1.2">${open} ${open === 1 ? 'item needs' : 'items need'} your attention</div>
-            <div style="font-size:13.5px;line-height:1.6;color:${BODY};margin-top:6px">
-              ${counts.critical} critical &middot; ${inrShort(counts.exposure)} exposure${counts.closed ? ` &middot; ${counts.closed} already closed` : ''}.
+            <div style="font-size:24px;font-weight:800;color:${BRAND};letter-spacing:-0.02em;line-height:1.25">${
+                open === 0 ? 'Nothing new today.'
+                : open === 1 ? 'One thing needs a look.'
+                : `${open} things need a look.`
+            }</div>
+            <div style="font-size:14px;line-height:1.65;color:${BODY};margin-top:7px">
+              ${counts.exposure ? `<b style="color:${BRAND}">${inr(counts.exposure)}</b> could be paid out on these. None of it is billed yet, so it can still be stopped. ` : ''}
+              ${counts.critical > 0 ? `${counts.critical === 1 ? 'One is' : `${counts.critical} are`} urgent. ` : ''}
+              ${counts.closed ? `${counts.closed} ${counts.closed === 1 ? 'item was' : 'items were'} already answered and ${counts.closed === 1 ? 'is' : 'are'} shown below for the record. ` : ''}
+            </div>
+            <div style="font-size:13.5px;line-height:1.6;color:${BODY};margin-top:8px">
               ${recipient.canDisposition
-                  ? 'Close each line below and say what you did &mdash; that note is what the agent keeps.'
-                  : 'Lines already answered by procurement show their reason underneath.'}
+                  ? 'Reply to this email and tell us what you did. A sentence is enough.'
+                  : 'Where procurement has answered, their words are shown under the item.'}
             </div>
           </td></tr>
         </table>
       </td></tr>`;
 
-    const anyLink = findings.some((f) => f.refs.some((r) => entityUrl(r, orgId) !== null));
-    const linkNotice =
-        !anyLink && findings.some((f) => f.refs.length)
-            ? `<tr><td style="padding:0 0 16px"><div style="padding:10px 12px;background:${TINT};border:1px solid ${LINE};border-radius:4px;font-size:11.5px;line-height:1.55;color:${MUTED}">Record references are shown as plain text: no application URL is configured on this deployment, and a link that cannot be verified is not generated.</div></td></tr>`
-            : '';
+    // The old "no application URL is configured on this deployment" notice was
+    // an engineering apology printed inside a procurement email. A reference
+    // that cannot be linked is simply shown as text; that needs no explanation.
+    const linkNotice = '';
 
     const html = `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(subject)}</title></head>
@@ -363,20 +389,21 @@ export function renderRecipientEmail(
     <tr><td align="center">
       <table role="presentation" width="620" cellpadding="0" cellspacing="0" style="width:620px;max-width:100%">
         <tr><td style="padding:0 0 16px">
-          ${scanTag
-            ? `<div style="font-size:15px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:${BRAND};line-height:1.3">${esc(scanTag)}</div>
-               <div style="font-size:12.5px;color:${BODY};margin-top:3px">${
-                   siteTag && siteTag.owners.length
-                       ? `Assigned to <b style="color:${BRAND};font-weight:700">${esc(siteTag.owners.join(', '))}</b>`
-                       : 'No owner configured for this site &mdash; set one in Agent Console &rsaquo; Delivery.'
-               }</div>
-               <div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:${MUTED};font-weight:600;margin-top:7px">FMS Procurement &middot; ${esc(time)}</div>`
-            : `<div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:${MUTED};font-weight:600">FMS Procurement &middot; ${esc(time)}</div>`}
+          <div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:${MUTED};font-weight:600">Purchase order scan</div>
+          <div style="font-size:17px;font-weight:800;color:${BRAND};letter-spacing:-0.01em;line-height:1.3;margin-top:2px">
+            ${esc(when.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'long', year: 'numeric' }))}${siteTag ? ` &middot; ${esc(siteTag.label)}` : ''}
+          </div>
+          <div style="font-size:12.5px;color:${BODY};margin-top:3px">
+            ${siteTag && siteTag.owners.length
+                ? `For <b style="color:${BRAND};font-weight:700">${esc(siteTag.owners.join(' and '))}</b> &middot; run at ${esc(time)}`
+                : `Run at ${esc(time)}`}
+          </div>
           ${vetting ? vettingLine(vetting) : ''}
         </td></tr>
         ${summary}
         ${linkNotice}
         ${findings.map((f, i) => findingBlock(f, orgId, i + 1, recipient.canDisposition, feedbackLinks[f.key], statuses[f.key], replyTo ?? undefined, replySubjects[f.key], findings.length > 1, vetting)).join('')}
+        ${recipient.canDisposition ? replyFooter(replyTo, findings.length > 1) : ''}
         ${attachmentNames.length ? `<tr><td style="padding:0 0 14px"><div style="padding:10px 12px;background:${TINT};border:1px solid ${LINE};border-radius:4px;font-size:11.5px;line-height:1.6;color:${BODY}"><strong style="color:${BRAND}">Attached:</strong> ${attachmentNames.map((n) => esc(n)).join(', ')}. Everything else is linked above rather than attached, to keep this email light.</div></td></tr>` : ''}
         <tr><td style="padding:4px 0 0;border-top:1px solid ${LINE}">
           <div style="font-size:11px;line-height:1.6;color:${MUTED};padding-top:12px">

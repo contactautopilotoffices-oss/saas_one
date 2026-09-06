@@ -140,13 +140,27 @@ export async function rememberFindings(
         property: f.property,
         amount: f.amount,
         problem: f.problem,
+        // The records the finding points at, kept WITH the finding. Without
+        // these a reply naming a PO number cannot be filed against anything,
+        // and an answer to "which PO?" has nothing to cite.
+        refs: f.refs ?? [],
+        stats: f.stats ?? [],
         last_seen_at: now,
         last_run_id: runId,
     }));
 
-    const { error } = await supabaseAdmin
+    let { error } = await supabaseAdmin
         .from('oem_agent_findings')
         .upsert(rows, { onConflict: 'organization_id,agent_key,finding_key', ignoreDuplicates: false });
+
+    // Degrade rather than lose the scan: a deployment without migration
+    // 20260907000002 still records the finding, just without its evidence.
+    if (error && /refs|stats/.test(error.message)) {
+        const bare = rows.map(({ refs: _r, stats: _s, ...rest }) => rest);
+        ({ error } = await supabaseAdmin
+            .from('oem_agent_findings')
+            .upsert(bare, { onConflict: 'organization_id,agent_key,finding_key', ignoreDuplicates: false }));
+    }
 
     return error ? { ok: false, error: error.message } : { ok: true };
 }

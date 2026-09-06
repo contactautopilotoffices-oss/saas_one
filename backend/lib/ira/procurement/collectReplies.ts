@@ -31,7 +31,7 @@
 
 import { ZohoMailService } from '@/backend/services/zohoMailService';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
-import { parseReply, replyTag, tagFromSubject, tagsFromText, segmentsByTag, stripQuotedText } from './reply';
+import { parseReply, replyTag, tagFromSubject, tagsFromText, segmentsByTag, stripQuotedText, poNumbersFromText } from './reply';
 import { DISPOSITION_SPECS, signalFor, type Disposition } from './disposition';
 
 /** Feedback coins, mirroring the console's DEFAULT_COINS. */
@@ -65,7 +65,7 @@ export interface CollectResult {
     errors: string[];
 }
 
-interface OpenFinding { id: string; finding_key: string; title: string }
+interface OpenFinding { id: string; finding_key: string; title: string; refs?: Array<{ label?: string }> | null }
 
 /**
  * Read replies since `since` from ONE mailbox and apply them. Never throws — a
@@ -83,7 +83,7 @@ export async function collectIraReplies(
     // 1. Open findings, and the ref each one answers to.
     const { data: findings, error: fErr } = await supabaseAdmin
         .from('oem_agent_findings')
-        .select('id, finding_key, title')
+        .select('id, finding_key, title, refs')
         .eq('organization_id', orgId)
         .eq('agent_key', agentKey)
         .is('disposition', null);
@@ -95,10 +95,20 @@ export async function collectIraReplies(
     if (!findings?.length) return out;
 
     const byTag = new Map<string, OpenFinding>();
+    /** PO number -> the ref that answers for it. What people actually type. */
+    const byPoNumber = new Map<string, string>();
     for (const f of findings) {
-        byTag.set(replyTag(orgId, agentKey, String(f.finding_key)), {
+        const tag = replyTag(orgId, agentKey, String(f.finding_key));
+        byTag.set(tag, {
             id: String(f.id), finding_key: String(f.finding_key), title: String(f.title ?? ''),
+            refs: (f as { refs?: Array<{ label?: string }> }).refs ?? [],
         });
+        for (const r of ((f as { refs?: Array<{ label?: string }> }).refs ?? [])) {
+            const label = String(r?.label ?? '').trim().toUpperCase();
+            // First finding wins: if two open findings name the same order we
+            // cannot tell which one they meant, and guessing is worse than asking.
+            if (label && !byPoNumber.has(label)) byPoNumber.set(label, tag);
+        }
     }
 
     // 2. Read the mailbox.
@@ -127,13 +137,27 @@ export async function collectIraReplies(
             // Fall back to the summary rather than losing the reply entirely.
         }
         const ownText = stripQuotedText(raw);
-        const bodyTags = tagsFromText(ownText);
-        const tags = bodyTags.length ? bodyTags : subjectTag ? [subjectTag] : [];
+
+        /**
+         * WHICH LINE IS THIS ABOUT, in order of how much we trust it:
+         *   1. a ref they typed themselves;
+         *   2. a PURCHASE ORDER NUMBER in their own words — the identifier a
+         *      human actually uses, and now the primary match;
+         *   3. the hidden ref carried in the quoted original;
+         *   4. the subject, for older mail that still had a tag in it.
+         */
+        const fromPo = poNumbersFromText(ownText)
+            .map((n) => byPoNumber.get(n)).filter((t): t is string => Boolean(t));
+        const quotedTags = tagsFromText(raw);
+        const tags = tagsFromText(ownText).length ? tagsFromText(ownText)
+            : fromPo.length ? Array.from(new Set(fromPo))
+            : quotedTags.length ? quotedTags
+            : subjectTag ? [subjectTag] : [];
 
         // Not addressed to any line — and not about this agent at all if there is
         // no ref anywhere in the whole message including the quoted digest.
         if (!tags.length) {
-            const mentionsIra = tagsFromText(raw).length > 0 || /\bira\b/i.test(subject);
+            const mentionsIra = quotedTags.length > 0 || /\bira\b/i.test(subject);
             if (!mentionsIra) continue; // unrelated mail in a shared inbox
             out.ignored.push({ from: senderEmail, subject, reason: 'reply did not say which line (no ref in text or subject)' });
             out.needsAnswer.push({

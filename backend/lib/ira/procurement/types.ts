@@ -34,6 +34,31 @@ export interface EntityRef {
     label: string;
     /** DB id used to construct the deep link. Null when we could not resolve it. */
     id: string | null;
+    /**
+     * A link straight to the record in the SYSTEM OF RECORD — for a purchase
+     * order, Zoho Books.
+     *
+     * This is where the work actually happens: nine scans produced 78 emailed
+     * asks and zero email replies, while four record changes landed within
+     * minutes of a comment going onto the purchase order itself. So the mail
+     * should put people one tap from that comment box, not ask them to go
+     * looking for the order.
+     *
+     * Built at detection time, where the Zoho id and the org's Books id are
+     * both in hand, and stored with the finding so a later reply can cite it.
+     * Null when the id could not be resolved — never guessed.
+     */
+    url?: string | null;
+}
+
+/**
+ * A purchase order in Zoho Books. Returns null unless BOTH ids are real —
+ * a link to the wrong order is worse than no link.
+ */
+export function zohoBooksPoUrl(zohoOrgId: string | null, purchaseOrderId: string | null, dc = 'com'): string | null {
+    if (!zohoOrgId?.trim() || !purchaseOrderId?.trim()) return null;
+    const region = /^[a-z.]{2,6}$/.test(dc) ? dc : 'com';
+    return `https://books.zoho.${region}/app/${zohoOrgId.trim()}#/purchaseorders/${purchaseOrderId.trim()}`;
 }
 
 /** One action, addressed to exactly one recipient. */

@@ -176,10 +176,18 @@ export async function respondToReply(
     if ((recent ?? 0) > 0) return { sent: false, why: `already answered this line in the last ${ANSWER_COOLDOWN_H}h` };
 
     // ---- the facts -----------------------------------------------------------
-    const { data: f } = await supabaseAdmin
+    let { data: f } = await supabaseAdmin
         .from('oem_agent_findings')
         .select('id, finding_key, title, priority, vendor, property, amount, problem, refs, stats, first_seen_at, times_seen')
         .eq('id', r.findingId).maybeSingle();
+    if (!f) {
+        // Pre-migration deployments have no refs/stats columns; the select errors
+        // and returns nothing, which silently meant Ira answered nobody at all.
+        ({ data: f } = await supabaseAdmin
+            .from('oem_agent_findings')
+            .select('id, finding_key, title, priority, vendor, property, amount, problem, first_seen_at, times_seen')
+            .eq('id', r.findingId).maybeSingle());
+    }
     if (!f) return { sent: false, why: 'finding row not found' };
     const finding = f as unknown as FindingRow;
     const history = await loadFindingHistory(finding.id);

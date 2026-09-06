@@ -38,6 +38,28 @@ export function tagFromSubject(subject: string): string | null {
 const TAG_RE = /\b(IRA-[0-9A-F]{8})\b/gi;
 
 /**
+ * Purchase-order numbers, as people actually write them.
+ *
+ * THE REF A HUMAN USES IS THE PO NUMBER, NOT OUR HASH. The old design put
+ * `[IRA-9AD0D96D]` in the subject line so a reply could be matched — machine
+ * junk in the first thing a person reads, to save us a lookup. People write
+ * "PO-26/27-0216 cancelled", so that is what we match on.
+ *
+ * Covers the branch prefixes in this book: PO-, BLR-PO-, DL-PO-.
+ */
+const PO_RE = /\b((?:[A-Z]{2,4}-)?PO-\d{2}\/\d{2}-\d{3,6})\b/gi;
+
+/** Every purchase-order number mentioned, uppercased and deduplicated. */
+export function poNumbersFromText(text: string): string[] {
+    const out: string[] = [];
+    for (const m of text.matchAll(PO_RE)) {
+        const n = m[1].toUpperCase();
+        if (!out.includes(n)) out.push(n);
+    }
+    return out;
+}
+
+/**
  * Every ref the person typed, in the order they typed them, deduplicated.
  *
  * WHY THE BODY AND NOT ONLY THE SUBJECT. One digest carries N findings, so one

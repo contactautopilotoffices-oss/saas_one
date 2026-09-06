@@ -26,7 +26,7 @@
  */
 
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
-import type { Finding, EntityRef } from './types';
+import { zohoBooksPoUrl, type Finding, type EntityRef } from './types';
 import { inWindow, type CadenceWindow } from './cadence';
 
 /** Two POs are the same money if their amounts differ by less than this. */
@@ -152,6 +152,24 @@ export async function scanPurchaseOrders(
 
     const live = rows.filter((r) => !DEAD_STATUSES.has(String(r.status ?? '')));
 
+    // --- the org's Zoho Books id, so every PO reference can link straight to
+    //     the order (and its comment box, which is where things actually move).
+    //     One query per scan; a missing config simply means no links.
+    let zohoOrgId: string | null = null;
+    try {
+        const { data } = await supabaseAdmin
+            .from('accounts_zoho_config').select('zoho_organization_id')
+            .eq('organization_id', orgId).maybeSingle();
+        zohoOrgId = data?.zoho_organization_id ? String(data.zoho_organization_id) : null;
+    } catch { /* no links, rather than a failed scan */ }
+    const booksDc = process.env.ZOHO_BOOKS_DC || 'com';
+    const poRef = (r: PoRow): EntityRef => ({
+        kind: 'po',
+        label: r.po_number ?? r.id,
+        id: r.id,
+        url: zohoBooksPoUrl(zohoOrgId, r.raw?.purchaseorder_id ? String(r.raw.purchaseorder_id) : null, booksDc),
+    });
+
     // --- property names, so findings read in English ------------------------
     const propIds = [...new Set(live.map((r) => r.property_id).filter(Boolean))] as string[];
     const propName = new Map<string, string>();
@@ -268,9 +286,7 @@ export async function scanPurchaseOrders(
             problem:
                 `Invoice reference "${ref}" appears on ${matched.length} purchase orders that are all still live, ` +
                 `each for effectively the same amount. If more than one has been paid, the excess is recoverable.`,
-            refs: matched.slice(0, 6).map<EntityRef>((r) => ({
-                kind: 'po', label: r.po_number ?? r.id, id: r.id,
-            })),
+            refs: matched.slice(0, 6).map<EntityRef>(poRef),
             stats: [
                 { label: 'POs', value: String(matched.length) },
                 { label: 'Each', value: `₹${Math.round(num(matched[0].po_amount)).toLocaleString('en-IN')}` },
