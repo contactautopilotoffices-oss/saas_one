@@ -320,6 +320,19 @@ export class ZohoMailService {
         return { token: data.access_token, apiDomain };
     }
 
+    /** Addresses reachable on a caller-supplied grant — a console connection. */
+    static async listAddressesWithGrant(grant: { refreshToken: string; dc: string }): Promise<string[]> {
+        const t = await this.tokenFromGrant(grant);
+        const res = await fetch(`${t.apiDomain}/api/accounts`, { headers: { 'Authorization': `Zoho-oauthtoken ${t.token}` } });
+        const data = await res.json().catch(() => null);
+        const out: string[] = [];
+        for (const a of (data?.data ?? []) as Array<{ primaryEmailAddress?: string; emailAddress?: Array<{ mailId?: string }> }>) {
+            if (a.primaryEmailAddress) out.push(String(a.primaryEmailAddress).toLowerCase());
+            for (const e of a.emailAddress ?? []) if (e?.mailId) out.push(String(e.mailId).toLowerCase());
+        }
+        return [...new Set(out)];
+    }
+
     /** Every address reachable on this grant, primaries and aliases, lowercased. */
     static async listAccountAddresses(prefix: ZohoMailEnv = 'ZOHO_MAIL'): Promise<string[]> {
         const { token, apiDomain } = await this.getAccessToken(prefix);

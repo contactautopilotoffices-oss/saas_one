@@ -10,7 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { isOrgMember } from '@/backend/lib/ira/procurement/guard';
-import { listMailAccounts } from '@/backend/lib/mail/accounts';
+import { listMailAccounts, refreshMailAccountAddresses } from '@/backend/lib/mail/accounts';
 
 export const dynamic = 'force-dynamic';
 
@@ -53,6 +53,29 @@ export async function GET(request: NextRequest) {
         });
     }
     return NextResponse.json({ provisioned: true, app_ready: appReady, key_ready: keyReady, accounts: res.accounts });
+}
+
+/**
+ * POST ?orgId=&address=   re-read the aliases on a connected mailbox.
+ *
+ * An alias added AFTER consent is invisible until this runs: the address list
+ * was captured at connect time. Adding an alias is exactly how an agent gets
+ * its own address, so this is a normal operation, not a repair.
+ */
+export async function POST(request: NextRequest) {
+    const g = await gate(request, true);
+    if ('error' in g) return g.error;
+    const address = (new URL(request.url).searchParams.get('address') ?? '').trim();
+    if (!address.includes('@')) return NextResponse.json({ error: 'address required' }, { status: 400 });
+
+    const r = await refreshMailAccountAddresses(g.orgId, address);
+    if (!r.ok) return NextResponse.json({ error: r.error }, { status: 400 });
+    return NextResponse.json({
+        ok: true, addresses: r.addresses, added: r.added,
+        note: r.added.length
+            ? `Now also reading ${r.added.join(', ')}.`
+            : 'No new addresses — the alias may not have been added yet, or is on a different mailbox.',
+    });
 }
 
 export async function DELETE(request: NextRequest) {

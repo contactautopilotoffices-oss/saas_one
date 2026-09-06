@@ -15,7 +15,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, Check, Inbox, Loader2, Plus, ShieldCheck, Trash2 } from 'lucide-react';
+import { AlertTriangle, Check, Inbox, Loader2, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
 
 interface Account {
     id: string; address: string; addresses: string[]; dc: string;
@@ -30,6 +30,7 @@ interface Payload {
 export default function MailAccounts({ orgId }: { orgId: string }) {
     const [data, setData] = useState<Payload | null>(null);
     const [busy, setBusy] = useState<string | null>(null);
+    const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
 
     const load = useCallback(async () => {
         try {
@@ -47,6 +48,21 @@ export default function MailAccounts({ orgId }: { orgId: string }) {
         }
     }, [orgId]);
     useEffect(() => { void load(); }, [load]);
+
+    /**
+     * Aliases are captured when the mailbox is connected, so one added later —
+     * which is how an agent gets its own address — stays invisible until asked
+     * for again. This asks.
+     */
+    const refresh = async (a: Account) => {
+        setBusy(a.id);
+        try {
+            const res = await fetch(`/api/agents/mail?orgId=${encodeURIComponent(orgId)}&address=${encodeURIComponent(a.address)}`, { method: 'POST' });
+            const j = await res.json().catch(() => null);
+            setNote(j?.error ? { ok: false, text: j.error } : { ok: true, text: j?.note ?? 'Refreshed.' });
+            await load();
+        } finally { setBusy(null); }
+    };
 
     const disconnect = async (a: Account) => {
         setBusy(a.id);
@@ -90,6 +106,12 @@ export default function MailAccounts({ orgId }: { orgId: string }) {
                 </div>
             )}
 
+            {note && (
+                <div className={`mb-3 rounded-xl border px-3 py-2 text-[11.5px] ${note.ok ? 'border-emerald-500/30 bg-emerald-500/8 text-emerald-800' : 'border-red-500/30 bg-red-500/8 text-red-700'}`}>
+                    {note.text}
+                </div>
+            )}
+
             <ul className="mb-3 space-y-2">
                 {data.accounts.map((a) => {
                     const others = a.addresses.filter((x) => x !== a.address);
@@ -99,8 +121,13 @@ export default function MailAccounts({ orgId }: { orgId: string }) {
                                 <ShieldCheck className={`h-4 w-4 shrink-0 ${a.last_error ? 'text-red-600' : 'text-emerald-600'}`} />
                                 <span className="text-[13px] font-semibold text-foreground">{a.address}</span>
                                 {a.connected_by_name && <span className="text-[11.5px] text-text-tertiary">connected by {a.connected_by_name}</span>}
+                                <button type="button" onClick={() => void refresh(a)} disabled={busy === a.id}
+                                    title="Re-read the aliases on this mailbox"
+                                    className="ml-auto inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[11px] font-semibold text-text-secondary hover:text-foreground disabled:opacity-50">
+                                    {busy === a.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />} Refresh aliases
+                                </button>
                                 <button type="button" onClick={() => void disconnect(a)} disabled={busy === a.id}
-                                    className="ml-auto inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[11px] font-semibold text-text-secondary hover:text-red-600 disabled:opacity-50">
+                                    className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[11px] font-semibold text-text-secondary hover:text-red-600 disabled:opacity-50">
                                     {busy === a.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />} Disconnect
                                 </button>
                             </div>

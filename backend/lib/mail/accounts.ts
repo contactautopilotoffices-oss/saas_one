@@ -126,9 +126,17 @@ export interface ResolvedGrant { refreshToken: string; dc: string; address: stri
  * Returns null when nothing covers it. That is a real answer the caller must
  * surface; falling back to another grant would read the wrong inbox.
  */
+const grantCache = new Map<string, { at: number; grant: ResolvedGrant | null }>();
+const GRANT_TTL_MS = 60_000;
+
+/** Drop the resolver cache, so a newly added alias is readable at once. */
+export function grantForMailboxCacheClear(): void { grantCache.clear(); }
+
 export async function grantForMailbox(orgId: string, address: string): Promise<ResolvedGrant | null> {
     const want = address.trim().toLowerCase();
     if (!want) return null;
+    const hit = grantCache.get(`${orgId}:${want}`);
+    if (hit && Date.now() - hit.at < GRANT_TTL_MS) return hit.grant;
     const { data } = await supabaseAdmin
         .from('oem_mail_accounts')
         .select('address, addresses, refresh_token_enc, dc, zoho_account_id')
@@ -137,15 +145,58 @@ export async function grantForMailbox(orgId: string, address: string): Promise<R
         const all = [String(a.address).toLowerCase(), ...((a.addresses ?? []) as string[]).map((x) => x.toLowerCase())];
         if (!all.includes(want)) continue;
         try {
-            return {
+            const grant = {
                 refreshToken: decryptToken(String(a.refresh_token_enc)),
                 dc: String(a.dc ?? 'com'),
                 address: String(a.address),
                 accountId: a.zoho_account_id ? String(a.zoho_account_id) : null,
             };
+            grantCache.set(`${orgId}:${want}`, { at: Date.now(), grant });
+            return grant;
         } catch { return null; } // key rotated: reconnect, do not guess
     }
+    grantCache.set(`${orgId}:${want}`, { at: Date.now(), grant: null });
     return null;
+}
+
+/**
+ * Re-read which addresses a connection can reach, and store them.
+ *
+ * The alias list is captured at consent time, so adding an alias afterwards —
+ * which is exactly how an agent gets its own address — leaves our copy stale
+ * and the mailbox unreadable for no visible reason. This re-asks Zoho.
+ *
+ * Cheap, safe to repeat, and needs no reconsent: the grant is unchanged, only
+ * our picture of it was out of date.
+ */
+export async function refreshMailAccountAddresses(
+    orgId: string, address: string,
+): Promise<{ ok: boolean; addresses: string[]; added: string[]; error?: string }> {
+    const grant = await grantForMailbox(orgId, address);
+    if (!grant) return { ok: false, addresses: [], added: [], error: `no connection covers ${address}` };
+
+    const { ZohoMailService } = await import('@/backend/services/zohoMailService');
+    try {
+        const found = await ZohoMailService.listAddressesWithGrant({ refreshToken: grant.refreshToken, dc: grant.dc });
+        if (!found.length) return { ok: false, addresses: [], added: [], error: 'Zoho listed no addresses for this connection' };
+
+        const { data: before } = await supabaseAdmin
+            .from('oem_mail_accounts').select('addresses')
+            .eq('organization_id', orgId).eq('address', grant.address.toLowerCase()).maybeSingle();
+        const had = new Set(((before?.addresses ?? []) as string[]).map((x) => x.toLowerCase()));
+
+        const { error } = await supabaseAdmin.from('oem_mail_accounts')
+            .update({ addresses: found, last_ok_at: new Date().toISOString(), last_error: null })
+            .eq('organization_id', orgId).eq('address', grant.address.toLowerCase());
+        if (error) return { ok: false, addresses: [], added: [], error: error.message };
+
+        // The in-process resolver caches address -> grant; a new alias must not
+        // wait on a restart to become readable.
+        grantForMailboxCacheClear();
+        return { ok: true, addresses: found, added: found.filter((a) => !had.has(a)) };
+    } catch (e) {
+        return { ok: false, addresses: [], added: [], error: e instanceof Error ? e.message : String(e) };
+    }
 }
 
 /** Health, so a revoked grant shows in the console instead of a quiet agent. */
