@@ -105,24 +105,44 @@ function closeStrip(links: FeedbackLinks[string] | undefined, replyTo?: string, 
      *
      * An email body cannot contain a working text field — Zoho Mail (this team's
      * client) strips <form>, and AMP for Email, which would allow it, is not
-     * rendered by Zoho. Saying "just reply" while showing nothing to type into is
-     * the worst of both: an instruction with no affordance.
+     * rendered by Zoho.
      *
-     * So this renders something that LOOKS like the input and behaves like one:
-     * a mailto: link, pre-addressed, pre-tagged in the subject, with the cursor
-     * landing in an empty body. One tap opens the reply composer ready to type.
-     * It is the closest an email can get, and it works everywhere mailto works —
-     * which is everywhere.
+     * The previous version made the whole box a mailto: link and called that
+     * "works everywhere mailto works — which is everywhere". IT IS NOT. Chrome
+     * with no registered mail handler — the exact setup on this team's machines —
+     * swallows the click and lands on `about:blank#blocked`. The one affordance
+     * on the card was a dead end, and a dead end is worse than no button because
+     * the reader concludes the whole loop is broken.
+     *
+     * So the PRIMARY instruction is now the thing that cannot fail: hit Reply.
+     * The thread is already addressed to the polled mailbox (Reply-To is set on
+     * the send) and the subject already carries the tag the parser matches, so a
+     * plain reply lands correctly with zero special handling.
+     *
+     * mailto: survives only as a SECONDARY convenience, small and clearly
+     * optional — useful on a phone, harmless when the browser blocks it.
+     * The address is NOT percent-encoded: `mailto:` takes the address in the
+     * path, and encoding the "@" produced a malformed target on clients that
+     * did follow it.
      */
     const mailto = replyTo
-        ? `mailto:${encodeURIComponent(replyTo)}?subject=${encodeURIComponent(subject ?? '')}`
+        ? `mailto:${replyTo}?subject=${encodeURIComponent(subject ?? '')}`
         : null;
 
-    const replyBox = mailto
-        ? `<a href="${esc(mailto)}" style="display:block;text-decoration:none;border:1px solid ${EDGE};border-radius:4px;background:${CARD};padding:13px 14px;margin:0 0 10px">
-             <div style="font-size:13.5px;color:${MUTED};line-height:1.5">Write what you did&hellip;</div>
-             <div style="font-size:11.5px;color:${BRAND};font-weight:700;margin-top:9px">&#9993;&nbsp; Tap to reply &mdash; opens your mail app with this line already tagged</div>
-           </a>`
+    const replyBox = replyTo
+        ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 10px">
+             <tr><td style="border:1px solid ${EDGE};border-radius:4px;background:${CARD};padding:13px 14px">
+               <div style="font-size:13.5px;font-weight:700;color:${BRAND};line-height:1.5">
+                 &#8629;&nbsp; Hit <span style="text-decoration:underline">Reply</span> and type what you did.
+               </div>
+               <div style="font-size:11.5px;color:${MUTED};line-height:1.55;margin-top:6px">
+                 Reply goes to <b style="color:${BODY}">${esc(replyTo)}</b>. Keep the subject line as it is &mdash;
+                 that is how Ira matches your answer to this line. Attach the credit note, corrected PO or
+                 photo to the same reply if you have one.
+               </div>
+               ${mailto ? `<div style="font-size:11px;margin-top:9px"><a href="${esc(mailto)}" style="color:${MUTED};text-decoration:underline">On a phone? Tap to open a pre-addressed reply</a></div>` : ''}
+             </td></tr>
+           </table>`
         : '';
 
     return `
@@ -132,7 +152,7 @@ function closeStrip(links: FeedbackLinks[string] | undefined, replyTo?: string, 
           ${replyBox}
           <div style="font-size:11.5px;line-height:1.55;color:${MUTED};margin:0 0 9px">
             Your sentence is what gets kept &mdash; quoted to whoever reads the summary, and it changes what
-            Ira raises next scan. Attach the credit note or corrected PO to the same reply if you have one.
+            Ira raises next scan.
             ${buttons.length ? '<br>Nothing to add? Tap:' : ''}
           </div>
           ${buttons.map((d) => {

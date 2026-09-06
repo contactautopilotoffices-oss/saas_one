@@ -907,6 +907,8 @@ function PendingGuidance({
     const currentPrompt = agent?.system_prompt ?? '';
 
     const [open, setOpen] = useState(false);
+    /** Collapsed by default: 2,000+ characters would bury the queue under it. */
+    const [showPrompt, setShowPrompt] = useState(false);
     const [proposed, setProposed] = useState('');
     const [view, setView] = useState<'diff' | 'edit'>('diff');
     const [toShadow, setToShadow] = useState(false);
@@ -938,6 +940,31 @@ function PendingGuidance({
      * v(next) — and the corrections stay queued, because a fold that did not
      * happen must not stamp them as absorbed.
      */
+    /**
+     * OPEN THE PROMPT FOR HAND-EDITING, with no corrections queued.
+     *
+     * The panel used to render the whole prompt UI only inside the
+     * `pending.length > 0` branch, so with an empty queue there was NO WAY to
+     * see or change the running prompt — the operator could read "running on
+     * version 1" and nothing else. Folding corrections is one way to write the
+     * next version; typing it is the other, and it must not depend on someone
+     * having complained first.
+     *
+     * appliedIds stays empty here on purpose: a hand-written version absorbs no
+     * specific correction, so nothing gets stamped as absorbed.
+     */
+    const beginEdit = () => {
+        setError(null);
+        setDone(null);
+        setChangelog([]);
+        setAppliedIds([]);
+        setProvenance(`v${currentVersion} exactly as the agent runs it today. Edit it to write v${nextVersion}.`);
+        setProposed(currentPrompt);
+        setView('edit');
+        setToShadow(agent?.status === 'live');
+        setOpen(true);
+    };
+
     const beginFold = async () => {
         setError(null);
         setDone(null);
@@ -1104,9 +1131,9 @@ function PendingGuidance({
                     <Sparkles className="h-4 w-4 text-primary" />
                 </div>
                 <div className="min-w-0 flex-1">
-                    <h3 className="text-sm font-bold text-foreground">Pending guidance</h3>
+                    <h3 className="text-sm font-bold text-foreground">System prompt &amp; guidance</h3>
                     <p className="mt-0.5 text-xs text-text-secondary">
-                        Corrections typed but not yet absorbed. This is the queue, not a log.
+                        What this agent is instructed to do, and the corrections not yet folded into it.
                     </p>
                 </div>
                 {pending.length > 0 && (
@@ -1136,13 +1163,51 @@ function PendingGuidance({
                     </div>
                 )}
 
-                {pending.length === 0 ? (
+                {/* THE RUNNING PROMPT. Always on screen — an operator must be able
+                    to read what the agent is actually instructed to do without first
+                    having to file a complaint against it. */}
+                {!open && (
+                    <div className="mb-4 overflow-hidden rounded-2xl border border-border">
+                        <div className="flex flex-wrap items-center gap-2 border-b border-border bg-card-tint px-3.5 py-2">
+                            <span className="text-xs font-bold text-foreground">
+                                Running system prompt · v{currentVersion}
+                            </span>
+                            <span className="text-[11px] text-text-tertiary">
+                                {currentPrompt.trim().length
+                                    ? `${currentPrompt.trim().length.toLocaleString()} characters`
+                                    : 'Empty — this agent has no prompt yet'}
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => setShowPrompt((v) => !v)}
+                                className="ml-auto rounded-lg border border-border bg-card px-2.5 py-1 text-[11px] font-semibold text-text-secondary transition-colors hover:text-foreground"
+                            >
+                                {showPrompt ? 'Hide' : 'Show'}
+                            </button>
+                        </div>
+                        {showPrompt && (
+                            <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words bg-card px-3.5 py-3 font-mono text-[11px] leading-relaxed text-text-secondary">
+{currentPrompt.trim() || 'No prompt has been written for this agent yet.'}
+                            </pre>
+                        )}
+                    </div>
+                )}
+
+                {pending.length === 0 && !open ? (
                     <p className="text-sm text-text-secondary">
-                        No corrections waiting. The agent is running on version{' '}
-                        <strong className="text-foreground">{currentVersion}</strong>.
+                        No corrections waiting. You can still{' '}
+                        <button
+                            type="button"
+                            onClick={beginEdit}
+                            className="font-semibold text-primary underline underline-offset-2"
+                        >
+                            write v{nextVersion} by hand
+                        </button>{' '}
+                        to give this agent extra instructions.
                     </p>
                 ) : (
                     <>
+                        {pending.length > 0 && (
                         <ul className="space-y-2">
                             {pending.map((p, i) => (
                                 <li
@@ -1170,6 +1235,7 @@ function PendingGuidance({
                                 </li>
                             ))}
                         </ul>
+                        )}
 
                         {!open ? (
                             <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -1190,6 +1256,14 @@ function PendingGuidance({
                                             version {nextVersion}
                                         </>
                                     )}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={beginEdit}
+                                    disabled={folding}
+                                    className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-3.5 py-2 text-xs font-semibold text-text-secondary transition-colors hover:text-foreground disabled:opacity-50"
+                                >
+                                    <FileDiff className="h-3.5 w-3.5" /> Write v{nextVersion} by hand
                                 </button>
                                 <span className="text-[11px] text-text-tertiary">
                                     The prompt compiler runs on the server; you see the diff before anything
