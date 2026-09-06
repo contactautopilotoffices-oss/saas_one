@@ -207,6 +207,37 @@ export class ZohoMailService {
 
     private static accountCache = new Map<string, string>();
 
+    /**
+     * The Zoho account id for an address, resolved from the TOKEN rather than
+     * from an env prefix. A console-connected mailbox has no prefix to name.
+     * With no address, the grant's first (and for a personal grant, only)
+     * account is used.
+     */
+    private static async accountIdFor(token: string, apiDomain: string, address?: string): Promise<string> {
+        const want = (address ?? '').trim().toLowerCase();
+        const cacheKey = `tok:${token.slice(-10)}:${want}`;
+        const cached = this.accountCache.get(cacheKey);
+        if (cached) return cached;
+
+        const res = await fetch(`${apiDomain}/api/accounts`, { headers: { 'Authorization': `Zoho-oauthtoken ${token}` } });
+        const data = await res.json().catch(() => null);
+        const accounts = (data?.data ?? []) as Array<{ accountId?: string; primaryEmailAddress?: string; emailAddress?: Array<{ mailId?: string }> }>;
+
+        const match = want
+            ? accounts.find((a) =>
+                String(a?.primaryEmailAddress ?? '').toLowerCase() === want
+                || (a?.emailAddress ?? []).some((e) => String(e?.mailId ?? '').toLowerCase() === want))
+            : accounts[0];
+
+        if (!match?.accountId) {
+            throw new Error(want
+                ? `This mailbox connection does not contain "${want}". Connect that mailbox from the Agent Console.`
+                : 'This mailbox connection lists no account.');
+        }
+        this.accountCache.set(cacheKey, String(match.accountId));
+        return String(match.accountId);
+    }
+
     private static async accountId(token: string, apiDomain: string, prefix: ZohoMailEnv, address?: string): Promise<string> {
         const wanted = (address ?? mailboxAddress(prefix)).toLowerCase();
         // The env ACCOUNT_ID is the DEFAULT mailbox's id. It must not be handed to
@@ -242,6 +273,53 @@ export class ZohoMailService {
         return String(match.accountId);
     }
 
+    /**
+     * Read using a grant handed in at call time — a mailbox connected through
+     * the console rather than named in the environment. Same code path; the
+     * only difference is where the refresh token came from.
+     */
+    static async listMessagesWithGrant(
+        options: ListOptions,
+        grant: { refreshToken: string; dc: string },
+    ): Promise<ZohoMailMessage[]> {
+        const t = await this.tokenFromGrant(grant);
+        return this.listMessagesRaw(options, t.token, t.apiDomain);
+    }
+
+    static async getMessageContentWithGrant(
+        messageId: string, folderId: string | null | undefined,
+        grant: { refreshToken: string; dc: string }, address?: string,
+    ): Promise<{ subject: string; content: string; fromAddress: string }> {
+        const t = await this.tokenFromGrant(grant);
+        return this.getMessageContentRaw(messageId, folderId, t.token, t.apiDomain, address);
+    }
+
+    /** Mint (and cache) an access token for a caller-supplied refresh token. */
+    private static async tokenFromGrant(grant: { refreshToken: string; dc: string }): Promise<{ token: string; apiDomain: string }> {
+        const cacheKey = `grant:${grant.refreshToken.slice(-12)}`;
+        const cached = tokenCache.get(cacheKey);
+        if (cached && cached.expiresAt > Date.now()) return { token: cached.token, apiDomain: cached.apiDomain };
+
+        const clientId = process.env.ZOHO_MAIL_APP_CLIENT_ID ?? process.env.ZOHO_MAIL_CLIENT_ID;
+        const clientSecret = process.env.ZOHO_MAIL_APP_CLIENT_SECRET ?? process.env.ZOHO_MAIL_CLIENT_SECRET;
+        if (!clientId || !clientSecret) throw new Error('No Zoho mail application configured (ZOHO_MAIL_APP_CLIENT_ID / _SECRET).');
+
+        const dc = (grant.dc || 'com').trim();
+        const params = new URLSearchParams({
+            refresh_token: grant.refreshToken, client_id: clientId,
+            client_secret: clientSecret, grant_type: 'refresh_token',
+        });
+        const res = await fetch(`https://accounts.zoho.${dc}/oauth/v2/token?${params}`, { method: 'POST' });
+        const data = await res.json().catch(() => null);
+        if (!data?.access_token) {
+            throw new Error(`Zoho refused this mailbox connection: ${data?.error ?? 'unknown'}. It may have been revoked — reconnect it from the console.`);
+        }
+        const apiDomain = this.mailApiDomain(data.api_domain, dc, 'ZOHO_MAIL');
+        const ttlMs = Math.max(0, (Number(data.expires_in) || 3600) * 1000 - TOKEN_SAFETY_MS);
+        tokenCache.set(cacheKey, { token: data.access_token, apiDomain, expiresAt: Date.now() + ttlMs });
+        return { token: data.access_token, apiDomain };
+    }
+
     /** Every address reachable on this grant, primaries and aliases, lowercased. */
     static async listAccountAddresses(prefix: ZohoMailEnv = 'ZOHO_MAIL'): Promise<string[]> {
         const { token, apiDomain } = await this.getAccessToken(prefix);
@@ -261,7 +339,16 @@ export class ZohoMailService {
      */
     static async listMessages(options: ListOptions = {}, prefix: ZohoMailEnv = 'ZOHO_MAIL'): Promise<ZohoMailMessage[]> {
         const { token, apiDomain } = await this.getAccessToken(prefix);
-        const acct = await this.accountId(token, apiDomain, prefix, options.address);
+        return this.listMessagesRaw(options, token, apiDomain);
+    }
+
+    /**
+     * The paging body, independent of WHERE the token came from — an env grant
+     * or a mailbox connected through the console. Split out so both paths run
+     * exactly the same code rather than two copies that drift.
+     */
+    private static async listMessagesRaw(options: ListOptions, token: string, apiDomain: string): Promise<ZohoMailMessage[]> {
+        const acct = await this.accountIdFor(token, apiDomain, options.address);
 
         const sinceMs = options.since ? options.since.getTime() : 0;
         const limit = options.limit ?? MAX_PAGES * PAGE_SIZE;
@@ -364,7 +451,17 @@ export class ZohoMailService {
         address?: string,
     ): Promise<{ subject: string; content: string; fromAddress: string }> {
         const { token, apiDomain } = await this.getAccessToken(prefix);
-        const acct = await this.accountId(token, apiDomain, prefix, address);
+        return this.getMessageContentRaw(messageId, folderId, token, apiDomain, address);
+    }
+
+    private static async getMessageContentRaw(
+        messageId: string,
+        folderId: string | null | undefined,
+        token: string,
+        apiDomain: string,
+        address?: string,
+    ): Promise<{ subject: string; content: string; fromAddress: string }> {
+        const acct = await this.accountIdFor(token, apiDomain, address);
 
         const path = folderId
             ? `${apiDomain}/api/accounts/${acct}/folders/${folderId}/messages/${messageId}/content`

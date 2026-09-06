@@ -30,6 +30,7 @@
  */
 
 import { ZohoMailService, grantOwning } from '@/backend/services/zohoMailService';
+import { grantForMailbox, noteMailAccountResult } from '@/backend/lib/mail/accounts';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { parseReply, replyTag, tagFromSubject, tagsFromText, segmentsByTag, stripQuotedText, poNumbersFromText } from './reply';
 import { DISPOSITION_SPECS, signalFor, type Disposition } from './disposition';
@@ -131,17 +132,36 @@ export async function collectIraReplies(
         }
     }
 
-    // 2. Read the mailbox, using whichever grant actually owns it.
+    /**
+     * 2. Read the mailbox.
+     *
+     * A mailbox connected from the console wins over anything in the
+     * environment: it was authorised by the person who owns that inbox, it is
+     * revocable by them, and it is how every mailbox after the first will be
+     * added. Env grants remain for the original purchase@ setup.
+     */
     let messages;
+    let usedConnected = false;
     try {
-        const grant = box ? await grantOwning(box) : 'ZOHO_MAIL';
-        if (!grant) {
-            out.errors.push(`no Zoho grant can read ${box} — add one for that mailbox, or the replies there are invisible`);
-            return out;
+        const connected = box ? await grantForMailbox(orgId, box) : null;
+        if (connected) {
+            usedConnected = true;
+            messages = await ZohoMailService.listMessagesWithGrant(
+                { since, address: box }, { refreshToken: connected.refreshToken, dc: connected.dc },
+            );
+        } else {
+            const grant = box ? await grantOwning(box) : 'ZOHO_MAIL';
+            if (!grant) {
+                out.errors.push(`nothing can read ${box} — connect that mailbox from the Agent Console, or its replies stay invisible`);
+                return out;
+            }
+            messages = await ZohoMailService.listMessages({ since, address: box || undefined }, grant);
         }
-        messages = await ZohoMailService.listMessages({ since, address: box || undefined }, grant);
+        if (usedConnected) await noteMailAccountResult(orgId, box, null);
     } catch (e) {
-        out.errors.push(`mailbox ${box || 'default'} read failed: ${e instanceof Error ? e.message : e}`);
+        const msg = e instanceof Error ? e.message : String(e);
+        if (usedConnected) await noteMailAccountResult(orgId, box, msg);
+        out.errors.push(`mailbox ${box || 'default'} read failed: ${msg}`);
         return out;
     }
     out.scanned = messages.length;
@@ -173,7 +193,10 @@ export async function collectIraReplies(
         // 3. Their words — fetched BEFORE matching, because the ref may be in them.
         let raw = msg.summary ?? '';
         try {
-            const full = await ZohoMailService.getMessageContent(msg.messageId, msg.folderId, (await grantOwning(box)) ?? 'ZOHO_MAIL', box || undefined);
+            const connected = box ? await grantForMailbox(orgId, box) : null;
+            const full = connected
+                ? await ZohoMailService.getMessageContentWithGrant(msg.messageId, msg.folderId, { refreshToken: connected.refreshToken, dc: connected.dc }, box)
+                : await ZohoMailService.getMessageContent(msg.messageId, msg.folderId, (await grantOwning(box)) ?? 'ZOHO_MAIL', box || undefined);
             if (full?.content) raw = full.content;
         } catch {
             // Fall back to the summary rather than losing the reply entirely.
