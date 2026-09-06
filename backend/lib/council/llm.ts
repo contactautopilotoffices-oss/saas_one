@@ -130,6 +130,22 @@ const MODEL_PRICING: Record<string, { input: number; output: number }> = {
     'glm-5.3': { input: 0.98, output: 3.08 },
     'kimi-k3': { input: 1.95, output: 9.75 },
 };
+/**
+ * The models an operator may pick per council member, cheapest first. Drawn
+ * from MODEL_PRICING so a model with no published rate can never be offered —
+ * an unpriced model silently bills at the pessimistic fallback and the cost
+ * report stops meaning anything.
+ */
+export const COUNCIL_MODEL_CHOICES = [
+    'deepseek-v4-flash-0731', 'qwen3.6-35b-a3b', 'qwen3.8-27b',
+    'glm-5.3-flash', 'glm-5.2', 'glm-5.3', 'kimi-k3',
+] as const;
+
+/** Per-1M input/output rates for a model, for the console to show alongside it. */
+export function priceOf(model: string): { input: number; output: number } {
+    return MODEL_PRICING[model] ?? UNPRICED_MODEL;
+}
+
 /** Unknown model → assume expensive, so the cost warning errs toward being noticed. */
 const UNPRICED_MODEL = { input: 2.50, output: 10.00 };
 
@@ -251,8 +267,16 @@ function mockResponse(purpose: CouncilPurpose, messages: CouncilChatMessage[]): 
 export async function councilChat(
     messages: CouncilChatMessage[],
     purpose: CouncilPurpose,
+    /**
+     * Override the model for THIS call. Each council member can now run on a
+     * different model — Verma reading for security on a strong model, a routine
+     * vetting pass on a cheap one — so the choice belongs per call, not in one
+     * module-level constant read once at import.
+     */
+    opts: { model?: string | null } = {},
 ): Promise<string> {
     if (isMockLlm()) return mockResponse(purpose, messages);
+    const model = (opts.model ?? '').trim() || COUNCIL_MODEL;
 
     const { provider, spec, apiKey } = resolveProvider();
     if (!apiKey) {
@@ -263,7 +287,7 @@ export async function councilChat(
     }
 
     // gpt-5.x / o3 / o4 reject `max_tokens` and any non-default `temperature`.
-    const isReasoningModel = /^(gpt-5|o[34])/.test(COUNCIL_MODEL);
+    const isReasoningModel = /^(gpt-5|o[34])/.test(model);
     const limits = isReasoningModel
         ? { max_completion_tokens: MAX_OUTPUT_TOKENS[purpose] }
         : { max_tokens: MAX_OUTPUT_TOKENS[purpose], temperature: purpose === 'email' ? 0.5 : 0.1 };
@@ -279,7 +303,7 @@ export async function councilChat(
                 'Authorization': `Bearer ${apiKey}`,
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ model: COUNCIL_MODEL, messages, ...limits }),
+            body: JSON.stringify({ model, messages, ...limits }),
             signal: controller.signal,
         });
     } catch (error) {
@@ -300,12 +324,14 @@ export async function councilChat(
 
     const inputTokens = Number(data?.usage?.prompt_tokens || 0);
     const outputTokens = Number(data?.usage?.completion_tokens || 0);
-    const pricing = MODEL_PRICING[COUNCIL_MODEL] ?? UNPRICED_MODEL;
+    // Price the model that ACTUALLY ran. Using the global default here would
+    // misreport every call that overrode it — and the override is the point.
+    const pricing = MODEL_PRICING[model] ?? UNPRICED_MODEL;
     const callCost = (inputTokens * pricing.input + outputTokens * pricing.output) / 1e6;
     runCostUsd += callCost;
     runCalls += 1;
     console.log(
-        `[council llm] ${purpose} · ${COUNCIL_MODEL} · in=${inputTokens} out=${outputTokens}`
+        `[council llm] ${purpose} · ${model} · in=${inputTokens} out=${outputTokens}`
         + ` · $${callCost.toFixed(5)} · session $${runCostUsd.toFixed(4)} over ${runCalls} call(s)`,
     );
     if (runCostUsd > RUN_BUDGET_USD) {

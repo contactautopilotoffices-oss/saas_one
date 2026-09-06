@@ -26,6 +26,13 @@ export interface CouncilAgentDef {
     sort: number;
     /** Full stage-1 system prompt. DB persona column overrides this at runtime. */
     persona: string;
+    /**
+     * The model THIS member thinks with, when provisioned as an agent and given
+     * one in the console. Null means the deployment default (COUNCIL_MODEL).
+     */
+    model?: string | null;
+    /** True when an oem_agents row is driving this persona's prompt and model. */
+    provisioned?: boolean;
 }
 
 /** What every stage-1 opinion must parse into (leniently — see runner.parseFindings). */

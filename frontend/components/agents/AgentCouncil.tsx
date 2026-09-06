@@ -19,7 +19,8 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Check, ChevronDown, ChevronUp, Crown, Loader2, Save, ShieldCheck, Users } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, ChevronUp, Crown, Cpu, Loader2, Save, ShieldCheck, UserPlus, Users } from 'lucide-react';
+import AgentAvatar from './AgentAvatar';
 
 interface Verdict {
     id: string; agent_key: string; summary: string; decision: string; created_at: string;
@@ -30,12 +31,19 @@ interface Persona {
     sort: number; is_active: boolean; persona_version: number | null; updated_at: string | null; persona_chars: number;
     reports: Array<{ agent_key: string; display_name: string; status: string }>;
     verdicts: Verdict[];
+    /** The roster row driving this persona, when the council has been provisioned. */
+    agent_key: string;
+    is_provisioned: boolean;
+    agent_status: string | null;
+    model: string | null;
 }
 interface Payload {
     provisioned: boolean;
     error?: string;
     agents: Persona[];
     runtime_agents: Array<{ agent_key: string; display_name: string; reports_to: string | null }>;
+    models?: Array<{ model: string; input: number; output: number }>;
+    default_model?: string;
     /** A 401 on first paint is transient — offer a retry rather than a dead end. */
     retryable?: boolean;
 }
@@ -46,11 +54,15 @@ const VERDICT_TONE: Record<string, string> = {
     needs_human: 'bg-red-500/12 text-red-700',
 };
 
-export default function AgentCouncil({ orgId, agentKey, agentName, reportsTo, onReportsToChange }: {
+export default function AgentCouncil({ orgId, agentKey, agentName, reportsTo, onReportsToChange, onRosterChanged, onOpenAgent }: {
     orgId: string; agentKey: string; agentName: string;
     reportsTo: string | null;
     /** Persist { reports_to } on the runtime. Delivery's save path is reused. */
     onReportsToChange: (key: string | null) => Promise<void> | void;
+    /** Refresh the roster after provisioning adds eight rows to it. */
+    onRosterChanged?: () => Promise<void> | void;
+    /** Jump the console to a council member's own agent page. */
+    onOpenAgent?: (agentKey: string) => void;
 }) {
     const [data, setData] = useState<Payload | null>(null);
     const [open, setOpen] = useState<string | null>(null);
@@ -84,7 +96,7 @@ export default function AgentCouncil({ orgId, agentKey, agentName, reportsTo, on
                 });
                 return;
             }
-            setData({ provisioned: true, agents: raw.agents, runtime_agents: raw.runtime_agents ?? [] });
+            setData({ provisioned: true, agents: raw.agents, runtime_agents: raw.runtime_agents ?? [], models: raw.models ?? [], default_model: raw.default_model });
         } catch (e) {
             setData({ provisioned: false, error: (e as Error).message, agents: [], runtime_agents: [], retryable: true });
         }
@@ -92,6 +104,7 @@ export default function AgentCouncil({ orgId, agentKey, agentName, reportsTo, on
     useEffect(() => { void load(); }, [load]);
 
     const mine = useMemo(() => (data?.agents ?? []).find((a) => a.key === reportsTo) ?? null, [data, reportsTo]);
+    const unprovisioned = useMemo(() => (data?.agents ?? []).filter((a) => !a.is_provisioned).length, [data]);
 
     const savePersona = async (p: Persona) => {
         const text = draft[p.key] ?? p.persona;
@@ -106,6 +119,32 @@ export default function AgentCouncil({ orgId, agentKey, agentName, reportsTo, on
             setMsg({ key: p.key, text: j.unchanged ? 'No change.' : `Saved as v${j.version}. Next convene, reply and vetting use it.`, ok: true });
             setDraft((d) => { const n = { ...d }; delete n[p.key]; return n; });
             await load();
+        } finally { setSaving(null); }
+    };
+
+    const [provisioning, setProvisioning] = useState(false);
+    const provision = async () => {
+        setProvisioning(true); setMsg(null);
+        try {
+            const res = await fetch(`/api/agents/council?orgId=${encodeURIComponent(orgId)}`, { method: 'POST' });
+            const j = await res.json().catch(() => null);
+            if (!res.ok || j?.error) { setMsg({ key: '*', text: j?.error ?? `HTTP ${res.status}`, ok: false }); return; }
+            setMsg({ key: '*', text: `${(j.created ?? []).length} added, ${(j.updated ?? []).length} refreshed. They are in the roster on the left, in shadow.`, ok: true });
+            await load(); await onRosterChanged?.();
+        } finally { setProvisioning(false); }
+    };
+
+    const setModel = async (p: Persona, model: string) => {
+        setSaving(p.key); setMsg(null);
+        try {
+            const res = await fetch(`/api/agents/council?orgId=${encodeURIComponent(orgId)}`, {
+                method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ key: p.key, model }),
+            });
+            const j = await res.json().catch(() => null);
+            if (!res.ok || j?.error) { setMsg({ key: p.key, text: j?.error ?? `HTTP ${res.status}`, ok: false }); return; }
+            setMsg({ key: p.key, text: `${p.name} now thinks on ${model}.`, ok: true });
+            await load(); await onRosterChanged?.();
         } finally { setSaving(null); }
     };
 
@@ -196,6 +235,28 @@ export default function AgentCouncil({ orgId, agentKey, agentName, reportsTo, on
                 <h4 className="mb-1 flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-wide text-text-tertiary">
                     <Users className="h-3.5 w-3.5" /> The council
                 </h4>
+                {unprovisioned > 0 && (
+                    <div className="mb-3 flex flex-wrap items-center gap-3 rounded-xl border border-primary/25 bg-primary/5 px-3.5 py-3">
+                        <UserPlus className="h-4 w-4 shrink-0 text-primary" />
+                        <span className="min-w-0 flex-1 text-[12px] leading-relaxed text-text-secondary">
+                            <b className="text-foreground">{unprovisioned} of {data.agents.length} specialists are not in the roster yet.</b>{' '}
+                            Add them and each one becomes a full agent like Ira &mdash; its own status, schedule, model,
+                            reliability, run history and prompt editor. They arrive in <b>shadow</b>, so nothing changes
+                            until you set them live.
+                        </span>
+                        <button type="button" onClick={provision} disabled={provisioning}
+                            className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3.5 py-2 text-xs font-bold text-white disabled:opacity-50">
+                            {provisioning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserPlus className="h-3.5 w-3.5" />}
+                            Add all to roster
+                        </button>
+                    </div>
+                )}
+                {msg?.key === '*' && (
+                    <div className={`mb-3 flex items-start gap-2 rounded-xl border px-3 py-2 text-[11.5px] ${msg.ok ? 'border-emerald-500/30 bg-emerald-500/8 text-emerald-700' : 'border-red-500/30 bg-red-500/8 text-red-700'}`}>
+                        {msg.ok ? <Check className="mt-0.5 h-3.5 w-3.5 shrink-0" /> : <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
+                        {msg.text}
+                    </div>
+                )}
                 <p className="mb-3 text-[12px] leading-relaxed text-text-secondary">
                     Each persona below is a <b className="text-foreground">live system prompt</b> &mdash; the one kind in this
                     system a model actually runs. Change it and the next convene, inbox reply and vetting behave differently.
@@ -209,20 +270,53 @@ export default function AgentCouncil({ orgId, agentKey, agentName, reportsTo, on
                         return (
                             <li key={a.key} className="py-3">
                                 <button type="button" onClick={() => setOpen(isOpen ? null : a.key)} className="flex w-full items-center gap-3 text-left">
-                                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[12px] font-bold text-white" style={{ background: a.color }}>{a.name[0]}</span>
+                                    <AgentAvatar name={a.name} seed={a.key} color={a.color} size={34} />
                                     <span className="min-w-0 flex-1">
                                         <span className="block text-[13px] font-semibold text-foreground">{a.name} <span className="font-normal text-text-secondary">· {a.title}</span></span>
                                         <span className="block truncate text-[11.5px] text-text-tertiary">{a.lens}</span>
                                     </span>
                                     <span className="hidden shrink-0 items-center gap-2 text-[11px] text-text-tertiary md:flex">
                                         {a.reports.length > 0 && <span className="rounded-full bg-primary/10 px-2 py-0.5 font-semibold text-primary">{a.reports.map((r) => r.display_name).join(', ')} reports here</span>}
+                                        {a.is_provisioned
+                                            ? <span className="rounded-full border border-border px-2 py-0.5 font-mono">{a.model ?? data.default_model}</span>
+                                            : <span className="rounded-full bg-amber-500/12 px-2 py-0.5 font-semibold text-amber-700">not in roster</span>}
+                                        {a.agent_status && <span className="uppercase tracking-wide">{a.agent_status}</span>}
                                         <span>v{a.persona_version ?? 1} · {a.persona_chars.toLocaleString()} chars</span>
-                                        {a.verdicts.length > 0 && <span>{a.verdicts.length} verdict{a.verdicts.length === 1 ? '' : 's'}</span>}
                                     </span>
                                     {isOpen ? <ChevronUp className="h-4 w-4 shrink-0 text-text-tertiary" /> : <ChevronDown className="h-4 w-4 shrink-0 text-text-tertiary" />}
                                 </button>
                                 {isOpen && (
                                     <div className="mt-3 space-y-2">
+                                        {a.is_provisioned ? (
+                                            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card-tint px-3 py-2.5">
+                                                <Cpu className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
+                                                <span className="text-[11.5px] font-semibold text-foreground">Thinks with</span>
+                                                <select
+                                                    value={a.model ?? data.default_model ?? ''}
+                                                    disabled={saving === a.key}
+                                                    onChange={(e) => void setModel(a, e.target.value)}
+                                                    className="rounded-lg border border-border bg-card px-2 py-1 font-mono text-[11.5px] focus:border-primary/40 focus:outline-none"
+                                                >
+                                                    {(data.models ?? []).map((m) => (
+                                                        <option key={m.model} value={m.model}>
+                                                            {m.model} — ${m.input}/${m.output} per 1M
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                                <span className="text-[11px] text-text-tertiary">
+                                                    Input / output rate. A miss that costs money deserves a stronger model than a routine read.
+                                                </span>
+                                                <a href={`#agent-${a.agent_key}`}
+                                                    onClick={(e) => { e.preventDefault(); onOpenAgent?.(a.agent_key); }}
+                                                    className="ml-auto text-[11px] font-semibold text-primary underline underline-offset-2">
+                                                    Open {a.name} in the roster &rsaquo;
+                                                </a>
+                                            </div>
+                                        ) : (
+                                            <div className="rounded-xl border border-amber-500/25 bg-amber-500/8 px-3 py-2 text-[11.5px] text-amber-800">
+                                                Add the council to the roster to choose a model and a schedule for {a.name}.
+                                            </div>
+                                        )}
                                         <textarea value={text} spellCheck={false} rows={14}
                                             onChange={(e) => setDraft((d) => ({ ...d, [a.key]: e.target.value }))}
                                             className="w-full rounded-xl border border-border bg-card px-3 py-2 font-mono text-[11px] leading-relaxed focus:border-primary/40 focus:outline-none" />

@@ -34,6 +34,7 @@
  */
 
 import React, { memo } from 'react';
+import AgentAvatar from './AgentAvatar';
 import { motion, useReducedMotion } from 'framer-motion';
 import { Coins, Activity, AlertTriangle } from 'lucide-react';
 import type {
@@ -373,7 +374,25 @@ function AgentRosterCardImpl({ agent, selected, now, onSelect }: AgentRosterCard
 
             {/* Row 1 — identity + status */}
             <div className="flex items-start gap-2.5">
-                <span className="relative mt-[5px] flex h-2.5 w-2.5 shrink-0 items-center justify-center">
+                {/* A face, so eight specialists are eight recognisable rows and not
+                    eight identical ones. The heartbeat rides on it as a badge. */}
+                <span className="relative shrink-0">
+                    <AgentAvatar
+                        name={agent.display_name}
+                        seed={agent.agent_key}
+                        color={typeof agent.config?.color === 'string' ? (agent.config.color as string) : null}
+                        src={typeof agent.config?.avatar_url === 'string' ? (agent.config.avatar_url as string) : null}
+                        size={34}
+                        ring={selected}
+                    />
+                    <span className="absolute -bottom-0.5 -right-0.5 flex h-3 w-3 items-center justify-center rounded-full bg-card">
+                        <span
+                            className={`h-2 w-2 rounded-full ${healthMeta.dot}`}
+                            title={healthKnown ? `Heartbeat: ${healthMeta.label}` : HEALTH_UNREADABLE.hint}
+                        />
+                    </span>
+                </span>
+                <span className="relative mt-[5px] hidden h-2.5 w-2.5 shrink-0 items-center justify-center">
                     {beating && (
                         <motion.span
                             aria-hidden

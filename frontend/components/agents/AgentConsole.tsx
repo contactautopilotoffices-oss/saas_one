@@ -740,6 +740,8 @@ export default function AgentConsole({ orgId }: AgentConsoleProps) {
                                             agentKey={selected.agent_key}
                                             agentName={selected.display_name}
                                             reportsTo={((selected.runtime ?? {}) as { reports_to?: string | null }).reports_to ?? null}
+                                            onRosterChanged={async () => { await load(true); }}
+                                            onOpenAgent={(k) => { setSelectedKey(k); setTab('configure'); }}
                                             onReportsToChange={async (key) => {
                                                 await fetch(`/api/agents/registry?orgId=${encodeURIComponent(orgId)}`, {
                                                     method: 'POST', headers: { 'Content-Type': 'application/json' },

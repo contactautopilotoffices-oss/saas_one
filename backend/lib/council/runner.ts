@@ -155,7 +155,55 @@ export function createSupabaseCouncilStore(): CouncilStore {
  * org has no seed — the council can still convene, and the UI gets the same
  * shape either way.
  */
-export async function loadAgents(orgId: string): Promise<CouncilAgentDef[]> {
+export async function loadAgents(
+    orgId: string,
+    /**
+     * Apply the oem_agents overrides (prompt + model) for members provisioned
+     * as agents. Pass false to read the SEED — provisioning needs the seed, or
+     * it would re-seed from its own output.
+     *
+     * The override query is inlined rather than imported from provision.ts on
+     * purpose: provision.ts calls loadAgents, and importing the other way would
+     * be a cycle.
+     */
+    opts: { applyOverrides?: boolean } = {},
+): Promise<CouncilAgentDef[]> {
+    const applyOverrides = opts.applyOverrides !== false;
+
+    /** council key -> the agent row driving it, when one exists. */
+    const overrides = new Map<string, { prompt: string | null; model: string | null; status: string }>();
+    if (applyOverrides) {
+        try {
+            const { data } = await supabaseAdmin
+                .from('oem_agents')
+                .select('agent_key, system_prompt, model_config, status')
+                .eq('organization_id', orgId)
+                .like('agent_key', 'council-%');
+            for (const r of data ?? []) {
+                overrides.set(String(r.agent_key).slice('council-'.length), {
+                    prompt: String(r.system_prompt ?? '').trim() || null,
+                    model: (r.model_config as { model?: string } | null)?.model ?? null,
+                    status: String(r.status ?? 'draft'),
+                });
+            }
+        } catch { /* not provisioned — the seed stands */ }
+    }
+
+    /**
+     * THE PROMPT THAT ACTUALLY RUNS.
+     *
+     * Once a member is provisioned, oem_agents.system_prompt wins. That makes
+     * the console's Reinforcement tab the real editor for these eight — the one
+     * place in this system where that column is executed rather than described.
+     * A retired or paused member is dropped from the convene entirely.
+     */
+    const merge = (a: CouncilAgentDef): CouncilAgentDef | null => {
+        const o = overrides.get(a.key);
+        if (!o) return a;
+        if (['paused', 'retired'].includes(o.status)) return null;
+        return { ...a, persona: o.prompt ?? a.persona, model: o.model, provisioned: true };
+    };
+
     try {
         const { data, error } = await supabaseAdmin
             .from('council_agents')
@@ -165,22 +213,25 @@ export async function loadAgents(orgId: string): Promise<CouncilAgentDef[]> {
             .order('sort', { ascending: true });
         if (error) throw new Error(error.message);
         if (data && data.length) {
-            return (data as Array<Omit<CouncilAgentDef, 'sort'> & { sort: number | null }>).map((row, i) => ({
-                key: row.key,
-                name: row.name,
-                title: row.title,
-                email: row.email,
-                lens: row.lens,
-                persona: row.persona,
-                color: row.color,
-                sort: row.sort ?? i + 1,
-            }));
+            return (data as Array<Omit<CouncilAgentDef, 'sort'> & { sort: number | null }>)
+                .map((row, i) => ({
+                    key: row.key,
+                    name: row.name,
+                    title: row.title,
+                    email: row.email,
+                    lens: row.lens,
+                    persona: row.persona,
+                    color: row.color,
+                    sort: row.sort ?? i + 1,
+                }))
+                .map(merge)
+                .filter((a): a is CouncilAgentDef => a !== null);
         }
         console.warn(`[council] no seeded agents for org ${orgId} — using built-in personas`);
     } catch (e) {
         console.warn('[council] council_agents unavailable — using built-in personas:', e instanceof Error ? e.message : e);
     }
-    return FOUNDING_AGENTS;
+    return FOUNDING_AGENTS.map(merge).filter((a): a is CouncilAgentDef => a !== null);
 }
 
 // ---------------------------------------------------------------------------
@@ -247,7 +298,7 @@ export async function runCouncil(opts: RunCouncilOptions): Promise<CouncilRunRes
         await setStatus('stage1');
 
         const opinionCalls = await Promise.allSettled(
-            sorted.map(agent => councilChat(buildOpinionMessages(agent, question, dataPack), 'opinion')),
+            sorted.map(agent => councilChat(buildOpinionMessages(agent, question, dataPack), 'opinion', { model: agent.model })),
         );
 
         const opinions: LabeledOpinion[] = [];
@@ -301,7 +352,7 @@ export async function runCouncil(opts: RunCouncilOptions): Promise<CouncilRunRes
         await setStatus('stage2');
 
         const reviewCalls = await Promise.allSettled(
-            sorted.map(agent => councilChat(buildReviewMessages(agent, question, opinions), 'review')),
+            sorted.map(agent => councilChat(buildReviewMessages(agent, question, opinions), 'review', { model: agent.model })),
         );
 
         const reviews: CouncilReview[] = [];
