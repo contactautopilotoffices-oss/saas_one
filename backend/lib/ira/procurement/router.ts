@@ -73,6 +73,29 @@ export interface RecipientBundle {
 const ORDER: Record<Priority, number> = { critical: 0, action: 1, watch: 2, closed: 3 };
 
 /**
+ * The one sort order for findings: severity, then money. Exported because the
+ * site splitter re-sorts each slice and must not invent a second ordering — two
+ * orderings in one email system is how "why is this one first?" starts.
+ */
+export function ORDER_BY_PRIORITY(a: RoutedFinding, b: RoutedFinding): number {
+    return ORDER[a.priority] - ORDER[b.priority] || (b.amount ?? 0) - (a.amount ?? 0);
+}
+
+/** Counts for an arbitrary slice of findings. One definition of "exposure". */
+export function countsFor(list: ReadonlyArray<RoutedFinding>): RecipientBundle['counts'] {
+    return {
+        total: list.length,
+        critical: list.filter((f) => f.priority === 'critical').length,
+        action: list.filter((f) => f.priority === 'action').length,
+        watch: list.filter((f) => f.priority === 'watch').length,
+        closed: list.filter((f) => f.priority === 'closed').length,
+        exposure: list
+            .filter((f) => f.priority !== 'closed')
+            .reduce((sum, f) => sum + (f.amount ?? 0), 0),
+    };
+}
+
+/**
  * Split findings into one bundle per recipient who actually has something to do.
  *
  * Recipients with zero actions are OMITTED from the result — the caller cannot
@@ -93,21 +116,8 @@ export function routeFindings(findings: ReadonlyArray<Finding>): RecipientBundle
 
     const out: RecipientBundle[] = [];
     for (const [key, list] of bundles) {
-        list.sort((a, b) => ORDER[a.priority] - ORDER[b.priority] || (b.amount ?? 0) - (a.amount ?? 0));
-        out.push({
-            recipient: RECIPIENTS[key],
-            findings: list,
-            counts: {
-                total: list.length,
-                critical: list.filter((f) => f.priority === 'critical').length,
-                action: list.filter((f) => f.priority === 'action').length,
-                watch: list.filter((f) => f.priority === 'watch').length,
-                closed: list.filter((f) => f.priority === 'closed').length,
-                exposure: list
-                    .filter((f) => f.priority !== 'closed')
-                    .reduce((sum, f) => sum + (f.amount ?? 0), 0),
-            },
-        });
+        list.sort(ORDER_BY_PRIORITY);
+        out.push({ recipient: RECIPIENTS[key], findings: list, counts: countsFor(list) });
     }
 
     // Stable order: CEO, procurement, technical.

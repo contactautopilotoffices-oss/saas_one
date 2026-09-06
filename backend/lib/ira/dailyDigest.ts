@@ -102,7 +102,22 @@ export function buildDigestHtml(tasks: IraTask[]): { subject: string; html: stri
     };
 }
 
-export async function sendDigest(to: string, subject: string, html: string): Promise<void> {
+/**
+ * REPLY-TO IS NOT OPTIONAL POLISH — it is the return path.
+ *
+ * The From address must sit on a domain the SMTP provider has verified
+ * (autopilotoffices.com here; Resend rejects worksquare.in with a 550). But the
+ * mailbox Ira POLLS is purchase@worksquare.in. Without an explicit Reply-To,
+ * every reply goes back to the From address, which nothing reads — the exact
+ * silent-loss failure the disposition loop exists to prevent. So: send as the
+ * verified domain, reply to the polled mailbox.
+ */
+export async function sendDigest(
+    to: string,
+    subject: string,
+    html: string,
+    replyTo?: string | null,
+): Promise<void> {
     const transporter = nodemailer.createTransport({
         host: process.env.SMTP_HOST,
         port: Number(process.env.SMTP_PORT || 587),
@@ -114,6 +129,7 @@ export async function sendDigest(to: string, subject: string, html: string): Pro
         to,
         subject,
         html,
+        ...(replyTo ? { replyTo } : {}),
     });
 }
 

@@ -88,7 +88,10 @@ export default function AgentDelivery({
         }));
 
     const setSites = (text: string) => {
-        // "SS Plaza: a@x.in, b@x.in" per line — a shape an operator can type.
+        // "BLR / Bangalore: Vidya <a@x.in>, Sahil <b@x.in>" per line — a shape an
+        // operator can type. Everything before the FIRST colon is the site key
+        // (display label + match aliases, "/"-separated); the rest are owners.
+        // Split on the first colon only, so "Name <a@x>" survives intact.
         const map: Record<string, string[]> = {};
         for (const line of text.split('\n')) {
             const i = line.indexOf(':');
@@ -187,18 +190,27 @@ export default function AgentDelivery({
                     <MapPin className="h-3.5 w-3.5" /> Site owners <span className="font-normal normal-case tracking-normal text-text-tertiary">— optional</span>
                 </h4>
                 <p className="mb-3 text-[11.5px] leading-relaxed text-text-secondary">
-                    A Bengaluru finding reaches whoever owns Bengaluru rather than every procurement
-                    address. One per line. A site not listed falls back to the role above, so partial
-                    setup is safe.
+                    Splits the scan into <b>one email per city</b>, each headed{' '}
+                    <span className="font-mono text-[11px] text-text-primary">06 SEP PO SCAN — BLR</span> and{' '}
+                    <span className="font-mono text-[11px] text-text-primary">Assigned to Vidya</span>. They can all
+                    go to the same shared mailbox — the header, not the address, is what makes a mail one
+                    person&rsquo;s job.
+                </p>
+                <p className="mb-3 text-[11.5px] leading-relaxed text-text-secondary">
+                    <span className="underline decoration-dotted underline-offset-2">One line per city.</span>{' '}
+                    The <b>first</b> name before the colon is what the header shows; add{' '}
+                    <span className="font-mono text-[11px]">/ aliases</span> for every property or city that
+                    belongs to it. A site matching nothing lands in one final &ldquo;Unassigned&rdquo; mail
+                    rather than being dropped.
                 </p>
                 <textarea
-                    rows={4}
+                    rows={5}
                     className={`${field} font-mono text-[12px]`}
                     // Controlled off the draft, not defaultValue — an uncontrolled
                     // field silently keeps stale text after a re-seed.
                     value={sitesText}
                     onFocus={() => setSitesTouched(true)}
-                    placeholder={'SS Plaza: blr.purchase@worksquare.in\nArcil Noida: ncr.purchase@worksquare.in'}
+                    placeholder={'BLR / Bangalore / SS Plaza: Vidya <purchase@worksquare.in>\nMumbai / Byculla / Rabale: Sahil <purchase@worksquare.in>\nNoida: Priyanka <purchase@worksquare.in>'}
                     onChange={(e) => { setSitesRaw(e.target.value); setSites(e.target.value); }}
                 />
             </section>

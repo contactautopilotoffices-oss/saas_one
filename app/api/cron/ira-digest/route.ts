@@ -27,6 +27,7 @@ import { renderRecipientEmail, type FeedbackLinks } from '@/backend/lib/ira/proc
 import { mintFeedbackLinks } from '@/backend/lib/ira/procurement/feedbackLinks';
 import { replyTag, taggedSubject } from '@/backend/lib/ira/procurement/reply';
 import { resolveDelivery } from '@/backend/lib/ira/procurement/delivery';
+import { splitBySite, cityLookup, unmatchedProperties } from '@/backend/lib/ira/procurement/sites';
 import { sendDigest } from '@/backend/lib/ira/dailyDigest';
 import type { RecipientKey } from '@/backend/lib/ira/procurement/types';
 
@@ -112,41 +113,60 @@ export async function GET(request: NextRequest) {
                 const sent: string[] = [];
                 const skipped: string[] = [];
 
+                // A property's city is what makes "SS Plaza" a Bengaluru finding.
+                // One query per run, not one per finding.
+                const { data: props } = await supabaseAdmin
+                    .from('properties').select('name, city').eq('organization_id', orgId);
+                const cityOf = cityLookup(props ?? []);
+
                 for (const b of bundles) {
-                    const to = delivery.to[b.recipient.key as RecipientKey] ?? [];
-                    if (!to.length) { skipped.push(`${b.recipient.key}: no address configured`); continue; }
+                    const roleTo = delivery.to[b.recipient.key as RecipientKey] ?? [];
 
-                    const links: FeedbackLinks = b.recipient.canDisposition
-                        ? await mintFeedbackLinks({ organizationId: orgId, userId: '', agentKey: AGENT_KEY, runId: null, findings: b.findings })
-                        : {};
-                    const subjects: Record<string, string> = {};
-                    for (const f of b.findings) subjects[f.key] = taggedSubject(f.title, replyTag(orgId, AGENT_KEY, f.key));
+                    // One email per site owner, all to the same shared mailbox.
+                    // With no site rules configured this yields a single slice and
+                    // the mail is byte-identical to what it was before.
+                    const slices = splitBySite(b, delivery.siteRules, roleTo, cityOf);
 
-                    const { subject, html } = renderRecipientEmail(
-                        b, orgId, now, links, [], delivery.replyTo, subjects, statuses,
-                    );
+                    for (const slice of slices) {
+                        const who = slice.label ? `${b.recipient.key}/${slice.label}` : b.recipient.key;
+                        if (!slice.to.length) { skipped.push(`${who}: no address configured`); continue; }
 
-                    const st = await step(`Emailing ${b.recipient.key} (${to.length})`, 'notify',
-                        { recipient: b.recipient.key, findings: b.counts.total });
-                    try {
-                        // Shadow never mails anyone. It proves the run without the send.
-                        if (shadow) { skipped.push(`${b.recipient.key}: shadow, not sent`); await st.ok({ detail: { shadow: true } }); continue; }
-                        await sendDigest(to.join(', '), subject, html);
-                        sent.push(`${b.recipient.key} → ${to.join(', ')}`);
-                        await st.ok();
-                    } catch (e) {
-                        const msg = e instanceof Error ? e.message : String(e);
-                        console.error('[ira-digest]', orgId, b.recipient.key, msg);
-                        skipped.push(`${b.recipient.key}: ${msg}`);
-                        await st.fail(e);
+                        const links: FeedbackLinks = b.recipient.canDisposition
+                            ? await mintFeedbackLinks({ organizationId: orgId, userId: '', agentKey: AGENT_KEY, runId: null, findings: slice.bundle.findings })
+                            : {};
+                        const subjects: Record<string, string> = {};
+                        for (const f of slice.bundle.findings) subjects[f.key] = taggedSubject(f.title, replyTag(orgId, AGENT_KEY, f.key));
+
+                        const { subject, html } = renderRecipientEmail(
+                            slice.bundle, orgId, now, links, [], delivery.replyTo, subjects, statuses,
+                            slice.label ? { label: slice.label, owners: slice.ownerNames } : null,
+                        );
+
+                        const st = await step(`Emailing ${who} (${slice.to.length})`, 'notify',
+                            { recipient: b.recipient.key, site: slice.label || null, owners: slice.ownerNames, findings: slice.bundle.counts.total });
+                        try {
+                            // Shadow never mails anyone. It proves the run without the send.
+                            if (shadow) { skipped.push(`${who}: shadow, not sent`); await st.ok({ detail: { shadow: true } }); continue; }
+                            await sendDigest(slice.to.join(', '), subject, html, delivery.replyTo);
+                            sent.push(`${who} → ${slice.to.join(', ')}`);
+                            await st.ok();
+                        } catch (e) {
+                            const msg = e instanceof Error ? e.message : String(e);
+                            console.error('[ira-digest]', orgId, who, msg);
+                            skipped.push(`${who}: ${msg}`);
+                            await st.fail(e);
+                        }
                     }
                 }
+
+                // A site nobody owns is a silent gap. Say it in the run, every run.
+                const unmatched = unmatchedProperties(mem.findings, delivery.siteRules, cityOf);
 
                 return {
                     outcome: `sent ${sent.length}, skipped ${skipped.length} · ${w.label}`,
                     status: (sent.length ? 'succeeded' : 'skipped') as 'succeeded' | 'skipped',
                     grounded: true,
-                    result: { sent, skipped, usingEnvFallback: delivery.usingEnvFallback },
+                    result: { sent, skipped, unmatchedSites: unmatched, usingEnvFallback: delivery.usingEnvFallback },
                 };
             },
         );

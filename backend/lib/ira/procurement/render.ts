@@ -223,6 +223,17 @@ export interface RenderedEmail {
     findingCount: number;
 }
 
+/**
+ * The site stamp on a mail that shares an inbox with two other people's mail.
+ *
+ * `label` is the city ("BLR"); `owners` are the humans who answer for it. Both
+ * come from configuration, never from a model — see procurement/sites.ts.
+ */
+export interface SiteTag {
+    label: string;
+    owners: string[];
+}
+
 export function renderRecipientEmail(
     bundle: RecipientBundle,
     orgId: string,
@@ -235,6 +246,11 @@ export function renderRecipientEmail(
     replySubjects: Record<string, string> = {},
     /** What the workers have already answered. Read by recipients who don't close lines. */
     statuses: DispositionStatuses = {},
+    /**
+     * Whose city this mail is, when one shared mailbox serves several owners.
+     * Null renders exactly today's header — the tag is additive, never required.
+     */
+    siteTag: SiteTag | null = null,
 ): RenderedEmail {
     const { counts, recipient, findings } = bundle;
 
@@ -242,10 +258,14 @@ export function renderRecipientEmail(
     const time = when.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
 
     const open = counts.total - counts.closed;
+    // Three site mails land in the SAME mailbox. Without the site in the subject
+    // they are three identical lines in a list and the owner opens the wrong one.
+    const scanTag = siteTag ? `${date.toUpperCase()} PO SCAN — ${siteTag.label.toUpperCase()}` : null;
+    const lead = scanTag ?? 'FMS Procurement';
     const subject =
         counts.critical > 0
-            ? `FMS Procurement — ${counts.critical} critical · ${inrShort(counts.exposure)} exposure`
-            : `FMS Procurement — ${open} item${open === 1 ? ' needs' : 's need'} your attention`;
+            ? `${lead} — ${counts.critical} critical · ${inrShort(counts.exposure)} exposure`
+            : `${lead} — ${open} item${open === 1 ? ' needs' : 's need'} your attention`;
 
     // FIRST SCREEN: health, count, critical, exposure. Nothing above this.
     const summary = `
@@ -279,7 +299,15 @@ export function renderRecipientEmail(
     <tr><td align="center">
       <table role="presentation" width="620" cellpadding="0" cellspacing="0" style="width:620px;max-width:100%">
         <tr><td style="padding:0 0 16px">
-          <div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:${MUTED};font-weight:600">FMS Procurement &middot; ${esc(time)}</div>
+          ${scanTag
+            ? `<div style="font-size:15px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:${BRAND};line-height:1.3">${esc(scanTag)}</div>
+               <div style="font-size:12.5px;color:${BODY};margin-top:3px">${
+                   siteTag && siteTag.owners.length
+                       ? `Assigned to <b style="color:${BRAND};font-weight:700">${esc(siteTag.owners.join(', '))}</b>`
+                       : 'No owner configured for this site &mdash; set one in Agent Console &rsaquo; Delivery.'
+               }</div>
+               <div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:${MUTED};font-weight:600;margin-top:7px">FMS Procurement &middot; ${esc(time)}</div>`
+            : `<div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:${MUTED};font-weight:600">FMS Procurement &middot; ${esc(time)}</div>`}
         </td></tr>
         ${summary}
         ${linkNotice}

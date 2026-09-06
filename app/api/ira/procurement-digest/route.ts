@@ -29,7 +29,10 @@ import type { Finding } from '@/backend/lib/ira/procurement/types';
 import { routeFindings } from '@/backend/lib/ira/procurement/router';
 import type { RecipientKey } from '@/backend/lib/ira/procurement/types';
 import { renderRecipientEmail } from '@/backend/lib/ira/procurement/render';
+import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { sendDigest } from '@/backend/lib/ira/dailyDigest';
+import { resolveDelivery } from '@/backend/lib/ira/procurement/delivery';
+import { splitBySite, cityLookup } from '@/backend/lib/ira/procurement/sites';
 import { mintFeedbackLinks } from '@/backend/lib/ira/procurement/feedbackLinks';
 import { isOrgMember } from '@/backend/lib/ira/procurement/guard';
 import type { FeedbackLinks } from '@/backend/lib/ira/procurement/render';
@@ -237,39 +240,56 @@ export async function POST(request: NextRequest) {
         { orgId, agentKey: 'ira', module: 'procurement', trigger: fromCron ? 'cron' : 'manual',
           runKey: dailyRunKey('ira-procurement-digest') },
         async (step) => {
+            // Site ownership is read from the agent's config, not the request
+            // body. The manual send and the cron must split mail identically —
+            // two send paths that disagree about who owns Bengaluru is worse
+            // than one that never split at all.
+            const delivery = await resolveDelivery(orgId, AGENT_KEY);
+            const { data: props } = await supabaseAdmin
+                .from('properties').select('name, city').eq('organization_id', orgId);
+            const cityOf = cityLookup(props ?? []);
+
             for (const bundle of bundles) {
                 const address = to[bundle.recipient.key];
                 if (!address) { skipped.push(`${bundle.recipient.key} (no address given)`); continue; }
-                // Links are minted PER RECIPIENT: a token is bound to one user, and
-                // one person's feedback link must never be usable by another.
-                const userId = body.userIds?.[bundle.recipient.key];
-                const links = userId
-                    ? await mintFeedbackLinks({
-                          organizationId: orgId, userId, agentKey: 'ira',
-                          runId: null, findings: bundle.findings,
-                      })
-                    : {};
-                if (!userId) skipped.push(`${bundle.recipient.key}: no userId — sent without feedback links`);
+                // The caller named the address; site rules only decide the SPLIT
+                // and the header, never a recipient the caller did not ask for.
+                const slices = splitBySite(bundle, delivery.siteRules, [address], cityOf);
 
-                const subjects: Record<string, string> = {};
-                for (const f of bundle.findings) subjects[f.key] = taggedSubject(f.title, replyTag(orgId, AGENT_KEY, f.key));
+                for (const slice of slices) {
+                    const who = slice.label ? `${bundle.recipient.key}/${slice.label}` : bundle.recipient.key;
+                    // Links are minted PER RECIPIENT: a token is bound to one user, and
+                    // one person's feedback link must never be usable by another.
+                    const userId = body.userIds?.[bundle.recipient.key];
+                    const links = userId
+                        ? await mintFeedbackLinks({
+                              organizationId: orgId, userId, agentKey: 'ira',
+                              runId: null, findings: slice.bundle.findings,
+                          })
+                        : {};
+                    if (!userId) skipped.push(`${who}: no userId — sent without feedback links`);
 
-                const { subject, html } = renderRecipientEmail(
-                    bundle, orgId, new Date(), links, [], replyAddress(), subjects, scan.statuses,
-                );
-                const s = await step(`Emailing ${bundle.recipient.key}`, 'notify',
-                    { recipient: bundle.recipient.key, findings: bundle.counts.total });
-                try {
-                    await sendDigest(address, subject, html);
-                    sent.push(`${bundle.recipient.key} → ${address}`);
-                    await s.ok();
-                } catch (e) {
-                    // s.fail() is a no-op until the runtime tables exist, so the
-                    // failure would otherwise vanish and the route still return 200.
-                    const msg = e instanceof Error ? e.message : String(e);
-                    console.error(`[ira procurement-digest] send to ${bundle.recipient.key} failed:`, msg);
-                    skipped.push(`${bundle.recipient.key}: send failed — ${msg}`);
-                    await s.fail(e);
+                    const subjects: Record<string, string> = {};
+                    for (const f of slice.bundle.findings) subjects[f.key] = taggedSubject(f.title, replyTag(orgId, AGENT_KEY, f.key));
+
+                    const { subject, html } = renderRecipientEmail(
+                        slice.bundle, orgId, new Date(), links, [], replyAddress(), subjects, scan.statuses,
+                        slice.label ? { label: slice.label, owners: slice.ownerNames } : null,
+                    );
+                    const s = await step(`Emailing ${who}`, 'notify',
+                        { recipient: bundle.recipient.key, site: slice.label || null, owners: slice.ownerNames, findings: slice.bundle.counts.total });
+                    try {
+                        await sendDigest(address, subject, html, replyAddress());
+                        sent.push(`${who} → ${address}`);
+                        await s.ok();
+                    } catch (e) {
+                        // s.fail() is a no-op until the runtime tables exist, so the
+                        // failure would otherwise vanish and the route still return 200.
+                        const msg = e instanceof Error ? e.message : String(e);
+                        console.error(`[ira procurement-digest] send to ${who} failed:`, msg);
+                        skipped.push(`${who}: send failed — ${msg}`);
+                        await s.fail(e);
+                    }
                 }
             }
             return {

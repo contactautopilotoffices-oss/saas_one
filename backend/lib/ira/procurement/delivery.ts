@@ -19,6 +19,7 @@
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import type { AgentRuntimeConfig } from '@/frontend/types/agentRuntime';
 import type { RecipientKey } from './types';
+import { parseSiteRules, type SiteRule } from './sites';
 
 export interface Delivery {
     from: string | null;
@@ -28,6 +29,11 @@ export interface Delivery {
     /** role -> addresses, already merged with any site-specific owners. */
     to: Record<RecipientKey, string[]>;
     respond: { enabled: boolean; on: Array<'need_info' | 'blocked'> };
+    /**
+     * Per-site owners, parsed. Empty means "one email per role", i.e. exactly
+     * the behaviour before site ownership existed.
+     */
+    siteRules: SiteRule[];
     /** True when nothing was configured and env defaults were used. */
     usingEnvFallback: boolean;
 }
@@ -82,6 +88,7 @@ export async function resolveDelivery(orgId: string, agentKey: string): Promise<
             enabled: runtime.respond?.enabled ?? false,
             on: (runtime.respond?.on as Array<'need_info' | 'blocked'>) ?? ['need_info', 'blocked'],
         },
+        siteRules: parseSiteRules(runtime.recipients?.sites),
         usingEnvFallback: !configured,
     };
 }
