@@ -51,7 +51,17 @@ export async function GET(request: NextRequest) {
         .from('oem_mail_oauth_state').select('organization_id, created_by, consumed_at').eq('state', state).maybeSingle();
     if (!st) return page('Not connected', 'That connection link is not one we issued. Start again from the console.', 'bad');
     if (st.consumed_at) return page('Already used', 'That connection link has already been used. Start again if you need to reconnect.', 'bad');
-    await supabaseAdmin.from('oem_mail_oauth_state').update({ consumed_at: new Date().toISOString() }).eq('state', state);
+    // Atomic: only the request that flips consumed_at from NULL proceeds. The
+    // browser hit this callback three times with the same state, and a check
+    // followed by a write would have let more than one through.
+    const { data: claimed } = await supabaseAdmin
+        .from('oem_mail_oauth_state')
+        .update({ consumed_at: new Date().toISOString() })
+        .eq('state', state).is('consumed_at', null)
+        .select('state');
+    if (!claimed?.length) {
+        return page('Already used', 'That connection link has already been used. Start again from Connect a mailbox if you need to reconnect.', 'bad');
+    }
 
     const clientId = process.env.ZOHO_MAIL_APP_CLIENT_ID ?? '';
     const clientSecret = process.env.ZOHO_MAIL_APP_CLIENT_SECRET ?? '';
@@ -100,13 +110,44 @@ export async function GET(request: NextRequest) {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
             body: form.toString(),
         });
-        const text = await r.text();
+        let text = await r.text();
+
+        /**
+         * Zoho's token endpoint accepts the grant either as a form body or as
+         * query parameters, and which one it will answer with JSON has proved
+         * inconsistent in practice: a correctly form-encoded POST with a valid
+         * fresh code, the right redirect and the right region still came back
+         * as an HTML error page. So if the first shape does not yield JSON, the
+         * other is tried once before giving up.
+         *
+         * The code is single-use, but a request Zoho refused without reading
+         * does not spend it — and if it did, the retry simply fails the same
+         * way. Not trying leaves the operator with an error and no connection.
+         */
+        if (/^\s*</.test(text)) {
+            console.warn('[mail oauth] form body gave HTML; retrying as query parameters');
+            const r2 = await fetch(`${tokenEndpoint}?${form.toString()}`, {
+                method: 'POST', headers: { Accept: 'application/json' },
+            });
+            const t2 = await r2.text();
+            if (!/^\s*</.test(t2)) text = t2;
+            else console.error('[mail oauth] query form ALSO gave HTML, status', r2.status);
+        }
+
         try {
             tok = JSON.parse(text);
         } catch {
             const looksLikeHtml = /^\s*</.test(text);
             console.error('[mail oauth] NON-JSON from', tokenEndpoint, 'status', r.status);
-            console.error('[mail oauth] body was:', text.slice(0, 600));
+            // The readable sentence, not 600 characters of stylesheet.
+            const said = text
+                .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+                .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+                .replace(/<[^>]+>/g, ' ')
+                .replace(/&nbsp;/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+            console.error('[mail oauth] Zoho said:', said.slice(0, 300));
             /**
              * Zoho answers EVERY token error with the same generic HTML page —
              * verified by posting a deliberately invalid code and getting this
