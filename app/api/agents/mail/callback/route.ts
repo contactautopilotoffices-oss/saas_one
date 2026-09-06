@@ -15,7 +15,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { saveMailAccount } from '@/backend/lib/mail/accounts';
-import { callbackUrl } from '../connect/route';
+import { callbackUrl } from '@/backend/lib/mail/oauth';
 
 export const dynamic = 'force-dynamic';
 
@@ -60,7 +60,7 @@ export async function GET(request: NextRequest) {
     // 1. code -> refresh token
     const body = new URLSearchParams({
         grant_type: 'authorization_code', code,
-        client_id: clientId, client_secret: clientSecret, redirect_uri: callbackUrl(),
+        client_id: clientId, client_secret: clientSecret, redirect_uri: callbackUrl(request.url),
     });
     let tok: { access_token?: string; refresh_token?: string; scope?: string; error?: string };
     try {

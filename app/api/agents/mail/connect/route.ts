@@ -23,22 +23,13 @@ import crypto from 'crypto';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { isOrgMember } from '@/backend/lib/ira/procurement/guard';
+import { ZOHO_MAIL_SCOPES, callbackUrl } from '@/backend/lib/mail/oauth';
 
 export const dynamic = 'force-dynamic';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Read-only mail scopes. Sending goes through SMTP, so no send scope is asked for. */
-export const ZOHO_MAIL_SCOPES = [
-    'ZohoMail.messages.READ',
-    'ZohoMail.accounts.READ',
-    'ZohoMail.folders.READ',
-].join(',');
 
-export function callbackUrl(): string {
-    const base = (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || '').trim().replace(/\/+$/, '').replace(/^"|"$/g, '');
-    return `${base}/api/agents/mail/callback`;
-}
 
 export async function GET(request: NextRequest) {
     const sp = new URL(request.url).searchParams;
@@ -55,11 +46,11 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({
             error: 'No Zoho mail application is configured on this deployment.',
             fix: 'Create ONE server-based application at api-console.zoho.com with redirect URI ' +
-                 `${callbackUrl()} and set ZOHO_MAIL_APP_CLIENT_ID and ZOHO_MAIL_APP_CLIENT_SECRET. ` +
+                 `${callbackUrl(request.url)} and set ZOHO_MAIL_APP_CLIENT_ID and ZOHO_MAIL_APP_CLIENT_SECRET. ` +
                  'It is a one-time step; after it, every mailbox connects from the console.',
         }, { status: 503 });
     }
-    if (!callbackUrl().startsWith('http')) {
+    if (!callbackUrl(request.url).startsWith('http')) {
         return NextResponse.json({ error: 'NEXT_PUBLIC_APP_URL is not set, so the Zoho redirect cannot be built.' }, { status: 503 });
     }
 
@@ -79,7 +70,7 @@ export async function GET(request: NextRequest) {
     url.searchParams.set('response_type', 'code');
     url.searchParams.set('client_id', clientId);
     url.searchParams.set('scope', ZOHO_MAIL_SCOPES);
-    url.searchParams.set('redirect_uri', callbackUrl());
+    url.searchParams.set('redirect_uri', callbackUrl(request.url));
     // offline + consent, or Zoho returns an access token with no refresh token
     // and the connection silently lasts one hour.
     url.searchParams.set('access_type', 'offline');
