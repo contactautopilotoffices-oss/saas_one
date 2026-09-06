@@ -51,9 +51,23 @@ function isKey(v: string): v is RecipientKey {
 
 const AGENT_KEY = 'ira';
 
-/** Where replies come back to. Unset = no reply box, buttons only. */
-function replyAddress(): string | null {
-    return (process.env.IRA_REPLY_TO || process.env.IRA_FROM_EMAIL || process.env.SMTP_SENDER_EMAIL || '').trim() || null;
+/**
+ * WHERE REPLIES ARE ASKED TO GO.
+ *
+ * This used to read env only, and fell through to IRA_FROM_EMAIL — the Resend
+ * SENDING identity, which is not a mailbox anyone polls. So every digest from
+ * this path told people to reply to an address nothing reads, and that is
+ * exactly what happened: a real answer from procurement went to
+ * ira.mehta@autopilotoffices.com and sat there unread.
+ *
+ * The cron path was moved onto resolveDelivery weeks ago; this one was missed.
+ * It now reads the same console config, and env survives only as a fallback.
+ * A reply-to that nobody polls is the precise failure the delivery module was
+ * written to prevent.
+ */
+async function replyAddressFor(orgId: string): Promise<string | null> {
+    const d = await resolveDelivery(orgId, AGENT_KEY);
+    return d.replyTo ?? ((process.env.IRA_REPLY_TO || '').trim() || null);
 }
 
 /**
@@ -184,7 +198,7 @@ export async function GET(request: NextRequest) {
     for (const f of bundle.findings) subjects[f.key] = taggedSubject(f.title, replyTag(orgId, AGENT_KEY, f.key));
 
     const { html } = renderRecipientEmail(
-        bundle, orgId, new Date(), links, [], replyAddress(), subjects, scan.statuses,
+        bundle, orgId, new Date(), links, [], await replyAddressFor(orgId), subjects, scan.statuses,
     );
     return new NextResponse(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
 }
@@ -250,6 +264,7 @@ export async function POST(request: NextRequest) {
             // two send paths that disagree about who owns Bengaluru is worse
             // than one that never split at all.
             const delivery = await resolveDelivery(orgId, AGENT_KEY);
+            const replyTo = delivery.replyTo;
             const { data: props } = await supabaseAdmin
                 .from('properties').select('name, city').eq('organization_id', orgId);
             const cityOf = cityLookup(props ?? []);
@@ -294,14 +309,14 @@ export async function POST(request: NextRequest) {
                     for (const f of slice.bundle.findings) subjects[f.key] = taggedSubject(f.title, replyTag(orgId, AGENT_KEY, f.key));
 
                     const { subject, html } = renderRecipientEmail(
-                        slice.bundle, orgId, new Date(), links, [], replyAddress(), subjects, scan.statuses,
+                        slice.bundle, orgId, new Date(), links, [], replyTo, subjects, scan.statuses,
                         slice.label ? { label: slice.label, owners: slice.ownerNames } : null,
                         vet.stamp,
                     );
                     const s = await step(`Emailing ${who}`, 'notify',
                         { recipient: bundle.recipient.key, site: slice.label || null, owners: slice.ownerNames, findings: slice.bundle.counts.total });
                     try {
-                        await sendDigest(address, subject, html, replyAddress());
+                        await sendDigest(address, subject, html, replyTo);
                         sent.push(`${who} → ${address}`);
                         await s.ok();
                     } catch (e) {
