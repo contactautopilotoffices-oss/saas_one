@@ -67,6 +67,12 @@ export interface CollectResult {
 
 interface OpenFinding { id: string; finding_key: string; title: string; refs?: Array<{ label?: string }> | null }
 
+/** Compare subjects and titles without punctuation, case or spacing getting in the way. */
+const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+
+/** The marker our own subjects carry, so a reply to one is recognisable as ours. */
+const SCAN_MARKER = 'po scan';
+
 /**
  * Read replies since `since` from ONE mailbox and apply them. Never throws — a
  * mailbox outage must not take down the cron that also does other work.
@@ -97,12 +103,24 @@ export async function collectIraReplies(
     const byTag = new Map<string, OpenFinding>();
     /** PO number -> the ref that answers for it. What people actually type. */
     const byPoNumber = new Map<string, string>();
+    /**
+     * Finding title -> its ref.
+     *
+     * The subject we send carries the finding's own title:
+     *   "PO scan · 7 Sept · BLR — TREIS SOLUTION LLP — same invoice on 2 live POs"
+     * so "Re: <that>" identifies the line with nothing typed and nothing hidden.
+     * This is the match that survives a client stripping our HTML comment, which
+     * is exactly what happened the first time somebody actually replied.
+     */
+    const byTitle = new Map<string, string>();
     for (const f of findings) {
         const tag = replyTag(orgId, agentKey, String(f.finding_key));
         byTag.set(tag, {
             id: String(f.id), finding_key: String(f.finding_key), title: String(f.title ?? ''),
             refs: (f as { refs?: Array<{ label?: string }> }).refs ?? [],
         });
+        const title = norm(String(f.title ?? ''));
+        if (title.length >= 12 && !byTitle.has(title)) byTitle.set(title, tag);
         for (const r of ((f as { refs?: Array<{ label?: string }> }).refs ?? [])) {
             const label = String(r?.label ?? '').trim().toUpperCase();
             // First finding wins: if two open findings name the same order we
@@ -149,17 +167,37 @@ export async function collectIraReplies(
         const fromPo = poNumbersFromText(ownText)
             .map((n) => byPoNumber.get(n)).filter((t): t is string => Boolean(t));
         const quotedTags = tagsFromText(raw);
+        // The finding title, carried in the subject of the mail they replied to.
+        const normSubject = norm(subject);
+        const fromTitle: string[] = [];
+        for (const [title, tag] of byTitle) if (normSubject.includes(title)) fromTitle.push(tag);
+
         const tags = tagsFromText(ownText).length ? tagsFromText(ownText)
             : fromPo.length ? Array.from(new Set(fromPo))
             : quotedTags.length ? quotedTags
+            : fromTitle.length ? Array.from(new Set(fromTitle))
             : subjectTag ? [subjectTag] : [];
 
         // Not addressed to any line — and not about this agent at all if there is
         // no ref anywhere in the whole message including the quoted digest.
         if (!tags.length) {
-            const mentionsIra = quotedTags.length > 0 || /\bira\b/i.test(subject);
-            if (!mentionsIra) continue; // unrelated mail in a shared inbox
-            out.ignored.push({ from: senderEmail, subject, reason: 'reply did not say which line (no ref in text or subject)' });
+            /**
+             * Is this one of ours at all?
+             *
+             * The old test was "does the word ira appear, or is there a ref
+             * anywhere". Cleaning the subject line removed BOTH from a normal
+             * reply, so the first real reply this system ever received was
+             * dropped without a line in the run log — the exact failure this
+             * function was written to prevent, reintroduced by me.
+             *
+             * A reply to a subject carrying our own scan marker is ours, full
+             * stop. If we cannot place the line we ASK; we do not go quiet.
+             */
+            const isOurThread = quotedTags.length > 0
+                || /\bira\b/i.test(subject)
+                || normSubject.includes(SCAN_MARKER);
+            if (!isOurThread) continue; // genuinely unrelated mail in a shared inbox
+            out.ignored.push({ from: senderEmail, subject, reason: 'could not tell which line this answers — asked the sender' });
             out.needsAnswer.push({
                 findingId: null, findingKey: null, findingTitle: null,
                 because: 'unmatched', disposition: null,
