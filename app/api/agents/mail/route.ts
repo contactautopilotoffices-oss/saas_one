@@ -10,7 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { isOrgMember } from '@/backend/lib/ira/procurement/guard';
-import { listMailAccounts, refreshMailAccountAddresses } from '@/backend/lib/mail/accounts';
+import { listMailAccounts, refreshMailAccountAddresses, probeMailbox } from '@/backend/lib/mail/accounts';
 
 export const dynamic = 'force-dynamic';
 
@@ -67,6 +67,12 @@ export async function POST(request: NextRequest) {
     if ('error' in g) return g.error;
     const address = (new URL(request.url).searchParams.get('address') ?? '').trim();
     if (!address.includes('@')) return NextResponse.json({ error: 'address required' }, { status: 400 });
+
+    // ?check=1 asks whether an address is READABLE, without changing anything.
+    if (new URL(request.url).searchParams.get('check') === '1') {
+        const p = await probeMailbox(g.orgId, address);
+        return NextResponse.json({ ok: p.reachable, ...p });
+    }
 
     const r = await refreshMailAccountAddresses(g.orgId, address);
     if (!r.ok) return NextResponse.json({ error: r.error }, { status: 400 });

@@ -15,7 +15,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, Check, Inbox, Loader2, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
+import { AlertTriangle, AtSign, Check, Inbox, Loader2, Plus, RefreshCw, ShieldCheck, Search, Trash2 } from 'lucide-react';
 
 interface Account {
     id: string; address: string; addresses: string[]; dc: string;
@@ -31,6 +31,9 @@ export default function MailAccounts({ orgId }: { orgId: string }) {
     const [data, setData] = useState<Payload | null>(null);
     const [busy, setBusy] = useState<string | null>(null);
     const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+    const [probe, setProbe] = useState('');
+    const [probing, setProbing] = useState(false);
+    const [probeResult, setProbeResult] = useState<{ ok: boolean; why: string } | null>(null);
 
     const load = useCallback(async () => {
         try {
@@ -62,6 +65,23 @@ export default function MailAccounts({ orgId }: { orgId: string }) {
             setNote(j?.error ? { ok: false, text: j.error } : { ok: true, text: j?.note ?? 'Refreshed.' });
             await load();
         } finally { setBusy(null); }
+    };
+
+    /**
+     * Ask whether a typed address is readable, with a real read rather than a
+     * look at the stored alias list — the stored list is a snapshot, and
+     * whether it changed is the whole question.
+     */
+    const check = async () => {
+        const addr = probe.trim();
+        if (!addr.includes('@')) { setProbeResult({ ok: false, why: 'That is not an email address.' }); return; }
+        setProbing(true); setProbeResult(null);
+        try {
+            const res = await fetch(`/api/agents/mail?orgId=${encodeURIComponent(orgId)}&address=${encodeURIComponent(addr)}&check=1`, { method: 'POST' });
+            const j = await res.json().catch(() => null);
+            setProbeResult({ ok: Boolean(j?.reachable), why: j?.why ?? j?.error ?? 'Could not check that address.' });
+            if (j?.reachable) await load();
+        } finally { setProbing(false); }
     };
 
     const disconnect = async (a: Account) => {
@@ -151,6 +171,39 @@ export default function MailAccounts({ orgId }: { orgId: string }) {
                     </li>
                 )}
             </ul>
+
+            {/* Type an address, find out whether an agent can actually read it. */}
+            {!blocked && data.accounts.length > 0 && (
+                <div className="mb-3 rounded-xl border border-border bg-card-tint px-3.5 py-3">
+                    <div className="mb-2 flex items-center gap-1.5 text-[11.5px] font-semibold text-foreground">
+                        <AtSign className="h-3.5 w-3.5 text-text-tertiary" /> Can an agent read this address?
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        <input
+                            value={probe}
+                            onChange={(e) => setProbe(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') void check(); }}
+                            placeholder="ira.mehta@autopilotoffices.com"
+                            className="min-w-[240px] flex-1 rounded-lg border border-border bg-card px-3 py-2 font-mono text-[12px] focus:border-primary/40 focus:outline-none"
+                        />
+                        <button type="button" onClick={() => void check()} disabled={probing}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-xs font-semibold text-text-secondary hover:text-foreground disabled:opacity-50">
+                            {probing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />} Check
+                        </button>
+                    </div>
+                    {probeResult && (
+                        <div className={`mt-2 flex items-start gap-1.5 text-[11.5px] leading-relaxed ${probeResult.ok ? 'text-emerald-700' : 'text-amber-800'}`}>
+                            {probeResult.ok ? <Check className="mt-0.5 h-3.5 w-3.5 shrink-0" /> : <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
+                            <span>{probeResult.why}</span>
+                        </div>
+                    )}
+                    <p className="mt-2 text-[11px] leading-relaxed text-text-tertiary">
+                        An agent&rsquo;s own address is an <b>alias</b> on a connected mailbox. Creating one is done in
+                        Zoho Mail admin &mdash; this console reads mail and deliberately cannot change your mail
+                        settings. Add the alias there, press <b>Refresh aliases</b>, then check it here.
+                    </p>
+                </div>
+            )}
 
             <a
                 href={blocked ? undefined : `/api/agents/mail/connect?orgId=${encodeURIComponent(orgId)}`}

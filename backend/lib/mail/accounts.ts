@@ -199,6 +199,46 @@ export async function refreshMailAccountAddresses(
     }
 }
 
+/**
+ * Can any connection actually read this address, right now?
+ *
+ * Typing an address into the console is a claim; this is the check. It does a
+ * real read against Zoho rather than trusting the stored alias list, because
+ * the stored list is a snapshot and the whole point of the question is whether
+ * something changed since.
+ */
+export async function probeMailbox(
+    orgId: string, address: string,
+): Promise<{ reachable: boolean; via: string | null; messages: number | null; why: string }> {
+    const want = address.trim().toLowerCase();
+    if (!want.includes('@')) return { reachable: false, via: null, messages: null, why: 'That is not an email address.' };
+
+    grantForMailboxCacheClear();
+    const grant = await grantForMailbox(orgId, want);
+    if (!grant) {
+        return {
+            reachable: false, via: null, messages: null,
+            why: `No connected mailbox answers to ${want} yet. Add it as an alias in Zoho Mail admin on a connected account, then press Refresh aliases.`,
+        };
+    }
+    const { ZohoMailService } = await import('@/backend/services/zohoMailService');
+    try {
+        const msgs = await ZohoMailService.listMessagesWithGrant(
+            { since: new Date(Date.now() - 24 * 3600_000), address: want, limit: 5 },
+            { refreshToken: grant.refreshToken, dc: grant.dc },
+        );
+        return {
+            reachable: true, via: grant.address, messages: msgs.length,
+            why: `Readable through ${grant.address}. An agent pointed at ${want} will see replies sent there.`,
+        };
+    } catch (e) {
+        return {
+            reachable: false, via: grant.address, messages: null,
+            why: `${grant.address} lists ${want} but reading it failed: ${e instanceof Error ? e.message : e}`,
+        };
+    }
+}
+
 /** Health, so a revoked grant shows in the console instead of a quiet agent. */
 export async function noteMailAccountResult(orgId: string, address: string, error: string | null): Promise<void> {
     try {
