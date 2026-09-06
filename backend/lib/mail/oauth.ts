@@ -29,6 +29,15 @@ export const ZOHO_MAIL_SCOPES = [
  * MAIL_OAUTH_REDIRECT_URL overrides everything for an unusual deployment.
  */
 export function callbackUrl(requestUrl?: string): string {
+    // Logged at BOTH steps, so a mismatch between the authorisation redirect and
+    // the token-exchange redirect is visible in one line instead of inferred
+    // from an HTML error page. Zoho requires the two to be byte-identical.
+    const out = buildCallbackUrl(requestUrl);
+    console.log('[mail oauth] redirect_uri =', out, requestUrl ? `(from ${requestUrl})` : '(no request)');
+    return out;
+}
+
+function buildCallbackUrl(requestUrl?: string): string {
     const override = (process.env.MAIL_OAUTH_REDIRECT_URL ?? '').trim();
     if (override) return override.replace(/\/+$/, '');
     let fromRequest = '';

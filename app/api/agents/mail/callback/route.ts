@@ -82,9 +82,20 @@ export async function GET(request: NextRequest) {
         grant_type: 'authorization_code', code,
         client_id: clientId, client_secret: clientSecret, redirect_uri: callbackUrl(request.url),
     });
+    const tokenEndpoint = `${accountsServer}/oauth/v2/token`;
+    console.log('[mail oauth] exchanging code', {
+        tokenEndpoint,
+        redirect_uri: callbackUrl(request.url),
+        content_type: 'application/x-www-form-urlencoded',
+        code_prefix: code.slice(0, 12) + '…',
+        client_id_prefix: clientId.slice(0, 14) + '…',
+        accounts_server_from_zoho: sp.get('accounts-server') ?? '(not sent)',
+        location_from_zoho: sp.get('location') ?? '(not sent)',
+    });
+
     let tok: { access_token?: string; refresh_token?: string; scope?: string; error?: string };
     try {
-        const r = await fetch(`${accountsServer}/oauth/v2/token`, {
+        const r = await fetch(tokenEndpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
             body: form.toString(),
@@ -94,9 +105,25 @@ export async function GET(request: NextRequest) {
             tok = JSON.parse(text);
         } catch {
             const looksLikeHtml = /^\s*</.test(text);
-            console.error('[mail callback] non-JSON from Zoho token endpoint:', r.status, text.slice(0, 400));
+            console.error('[mail oauth] NON-JSON from', tokenEndpoint, 'status', r.status);
+            console.error('[mail oauth] body was:', text.slice(0, 600));
+            /**
+             * Zoho answers EVERY token error with the same generic HTML page —
+             * verified by posting a deliberately invalid code and getting this
+             * exact response. So the page does not tell us which error it was,
+             * and claiming it does would be a guess dressed as a diagnosis.
+             *
+             * By far the most common cause is the first one listed: the
+             * authorisation code is single-use and lives about a minute.
+             */
             return page('Not connected', looksLikeHtml
-                ? `Zoho answered the token request with a web page instead of data (HTTP ${r.status}). That usually means the redirect URL on the application does not exactly match <b>${callbackUrl(request.url)}</b>. Check it in the API console and connect again.`
+                ? `Zoho rejected the exchange (HTTP ${r.status}) and returned a generic error page, which does not say why. In order of likelihood:
+                   <ol style="margin:10px 0 0;padding-left:20px;line-height:1.7">
+                     <li>The code expired or was already used — they last about a minute, and reloading this tab spends it. <b>Start again from Connect a mailbox</b> and do not reload.</li>
+                     <li>The redirect URL differs between the two steps. We sent <b>${callbackUrl(request.url)}</b> — it must be registered on the application exactly, including http vs https and the port.</li>
+                     <li>The client is not enabled for your data centre in the application's Multi-DC settings.</li>
+                   </ol>
+                   The server log line beginning <b>[mail oauth]</b> records exactly what was sent.`
                 : `Zoho sent an answer we could not read (HTTP ${r.status}). Nothing was saved.`, 'bad');
         }
     } catch (e) {
