@@ -58,7 +58,53 @@ const MAX_PAGES = 15;           // hard cap: 15 × 200 = 3k messages per sync
  * ZOHO_ELEC_MAIL_* (plan §9 items 1–2: forwarding goes via SMTP, never Zoho send
  * scope). Everything keys off the prefix so both mailboxes share one code path.
  */
-export type ZohoMailEnv = 'ZOHO_MAIL' | 'ZOHO_ELEC_MAIL';
+export type ZohoMailEnv = string;
+
+/**
+ * Every Zoho grant this deployment holds, in priority order.
+ *
+ * A grant is tied to ONE Zoho account and can only reach that account's
+ * mailboxes — `purchase@worksquare.in` cannot read anybody else's inbox, and
+ * should not be able to. So an agent whose replies land in a different mailbox
+ * needs its own grant, and the code must be able to hold more than two.
+ *
+ * Discovered from the environment rather than hardcoded, so adding a mailbox
+ * is a credential change and not a code change. Any `<PREFIX>_CLIENT_ID` +
+ * `_CLIENT_SECRET` + `_REFRESH_TOKEN` triple is a usable grant.
+ */
+export function zohoMailGrants(): ZohoMailEnv[] {
+    const known = new Set<string>(['ZOHO_MAIL', 'ZOHO_ELEC_MAIL']);
+    for (const k of Object.keys(process.env)) {
+        const m = /^(ZOHO_[A-Z0-9_]*MAIL)_CLIENT_ID$/.exec(k);
+        if (m) known.add(m[1]);
+    }
+    return [...known].filter(isZohoMailConfigured);
+}
+
+/** grant prefix that owns an address, once proven. Saves re-probing every poll. */
+const grantForAddress = new Map<string, ZohoMailEnv>();
+
+/**
+ * Which grant can actually read this mailbox. Probes each configured grant's
+ * account list once and remembers the answer.
+ *
+ * Returns null when no grant holds it — which is a real answer the caller must
+ * surface, not something to paper over by falling back to the default grant and
+ * silently reading the wrong inbox.
+ */
+export async function grantOwning(address: string): Promise<ZohoMailEnv | null> {
+    const want = address.trim().toLowerCase();
+    if (!want) return null;
+    const cached = grantForAddress.get(want);
+    if (cached) return cached;
+    for (const prefix of zohoMailGrants()) {
+        try {
+            const accounts = await ZohoMailService.listAccountAddresses(prefix);
+            if (accounts.includes(want)) { grantForAddress.set(want, prefix); return prefix; }
+        } catch { /* try the next grant */ }
+    }
+    return null;
+}
 
 const env = (prefix: ZohoMailEnv, key: string) => process.env[`${prefix}_${key}`];
 
@@ -194,6 +240,19 @@ export class ZohoMailService {
         }
         this.accountCache.set(`${prefix}:${wanted}`, String(match.accountId));
         return String(match.accountId);
+    }
+
+    /** Every address reachable on this grant, primaries and aliases, lowercased. */
+    static async listAccountAddresses(prefix: ZohoMailEnv = 'ZOHO_MAIL'): Promise<string[]> {
+        const { token, apiDomain } = await this.getAccessToken(prefix);
+        const res = await fetch(`${apiDomain}/api/accounts`, { headers: { 'Authorization': `Zoho-oauthtoken ${token}` } });
+        const data = await res.json().catch(() => null);
+        const out: string[] = [];
+        for (const a of (data?.data ?? []) as Array<{ primaryEmailAddress?: string; emailAddress?: Array<{ mailId?: string }> }>) {
+            if (a.primaryEmailAddress) out.push(String(a.primaryEmailAddress).toLowerCase());
+            for (const e of a.emailAddress ?? []) if (e?.mailId) out.push(String(e.mailId).toLowerCase());
+        }
+        return [...new Set(out)];
     }
 
     /**

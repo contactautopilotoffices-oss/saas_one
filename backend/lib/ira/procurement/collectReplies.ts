@@ -29,7 +29,7 @@
  * surface and anyone can send mail to it claiming anything.
  */
 
-import { ZohoMailService } from '@/backend/services/zohoMailService';
+import { ZohoMailService, grantOwning } from '@/backend/services/zohoMailService';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { parseReply, replyTag, tagFromSubject, tagsFromText, segmentsByTag, stripQuotedText, poNumbersFromText } from './reply';
 import { DISPOSITION_SPECS, signalFor, type Disposition } from './disposition';
@@ -131,10 +131,15 @@ export async function collectIraReplies(
         }
     }
 
-    // 2. Read the mailbox.
+    // 2. Read the mailbox, using whichever grant actually owns it.
     let messages;
     try {
-        messages = await ZohoMailService.listMessages({ since, address: box || undefined });
+        const grant = box ? await grantOwning(box) : 'ZOHO_MAIL';
+        if (!grant) {
+            out.errors.push(`no Zoho grant can read ${box} — add one for that mailbox, or the replies there are invisible`);
+            return out;
+        }
+        messages = await ZohoMailService.listMessages({ since, address: box || undefined }, grant);
     } catch (e) {
         out.errors.push(`mailbox ${box || 'default'} read failed: ${e instanceof Error ? e.message : e}`);
         return out;
@@ -148,10 +153,27 @@ export async function collectIraReplies(
         const subject = msg.subject ?? '';
         const subjectTag = tagFromSubject(subject);
 
+        /**
+         * ADDRESSED TO HER, OR MERELY COPIED IN?
+         *
+         * If two people discuss a purchase order between themselves and CC Ira,
+         * the old code read it exactly like an instruction: an org member, a Re:
+         * subject, a PO number, the word "done" somewhere — and the line closed.
+         * Nobody had told her anything. Somebody had been polite.
+         *
+         * So the rule is the one a person uses. On the To line it is addressed
+         * to her and it can change the state of a finding. On CC only, she is
+         * being kept informed: the words are KEPT AGAINST THE LINE as context,
+         * and nothing is closed, nothing is answered.
+         */
+        const inTo = (msg.toAddress ?? []).some((a) => String(a).toLowerCase().includes(box));
+        const inCc = (msg.ccAddress ?? []).some((a) => String(a).toLowerCase().includes(box));
+        const ccOnly = !inTo && inCc;
+
         // 3. Their words — fetched BEFORE matching, because the ref may be in them.
         let raw = msg.summary ?? '';
         try {
-            const full = await ZohoMailService.getMessageContent(msg.messageId, msg.folderId, 'ZOHO_MAIL', box || undefined);
+            const full = await ZohoMailService.getMessageContent(msg.messageId, msg.folderId, (await grantOwning(box)) ?? 'ZOHO_MAIL', box || undefined);
             if (full?.content) raw = full.content;
         } catch {
             // Fall back to the summary rather than losing the reply entirely.
@@ -257,6 +279,20 @@ export async function collectIraReplies(
 
             const parsed = parseReply(seg.text);
             const spec = DISPOSITION_SPECS[parsed.disposition];
+
+            // Copied in, not asked. Keep what was said; change nothing.
+            if (ccOnly) {
+                await supabaseAdmin.from('oem_agent_finding_events').insert({
+                    finding_id: finding.id,
+                    organization_id: orgId,
+                    disposition: null,
+                    note: `[overheard on a thread Ira was copied into, from ${senderEmail}]\n${seg.text.slice(0, 2000)}`,
+                    source: 'email',
+                    created_by: user.id,
+                });
+                out.ignored.push({ from: senderEmail, subject, reason: `copied in only — noted against ${seg.tag}, not applied` });
+                continue;
+            }
 
             // A disposition that needs an explanation, sent without one, is left open.
             // Applying it would record a closure nobody justified.
