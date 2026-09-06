@@ -15,11 +15,12 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Check, Inbox, Loader2, MapPin, Users } from 'lucide-react';
+import SiteOwnersBuilder from './SiteOwnersBuilder';
 
 type Role = 'ceo' | 'procurement' | 'technical';
 
 interface Runtime {
-    inbox?: { from?: string; reply_to?: string; poll_address?: string; lookback_hours?: number };
+    inbox?: { from?: string; reply_to?: string; poll_address?: string; poll_addresses?: string[]; lookback_hours?: number };
     recipients?: { roles?: Partial<Record<Role, string[]>>; sites?: Record<string, string[]> };
     respond?: { enabled?: boolean; on?: Array<'need_info' | 'blocked'> };
 }
@@ -63,20 +64,19 @@ export default function AgentDelivery({
     const roles = draft.recipients?.roles ?? {};
     const sites = draft.recipients?.sites ?? {};
 
-    // Rendered from the draft unless the operator is mid-edit, so their line
-    // breaks and spacing survive a parse round-trip.
-    const [sitesTouched, setSitesTouched] = useState(false);
-    const [sitesRaw, setSitesRaw] = useState('');
-    const sitesText = sitesTouched
-        ? sitesRaw
-        : Object.entries(sites).map(([k, v]) => `${k}: ${v.join(', ')}`).join('\n');
-
     /** The failure that silently loses replies. Surfaced, not buried. */
+    // Every mailbox the poller reads. Older configs have one `poll_address`;
+    // both shapes are honoured and shown as one list.
+    const pollList = useMemo(() => {
+        const list = [...(inbox.poll_addresses ?? []), ...(inbox.poll_address ? [inbox.poll_address] : [])]
+            .map((x) => x.trim().toLowerCase()).filter(Boolean);
+        return Array.from(new Set(list));
+    }, [inbox.poll_addresses, inbox.poll_address]);
+
     const replyMismatch = useMemo(() => {
         const r = (inbox.reply_to ?? '').trim().toLowerCase();
-        const p = (inbox.poll_address ?? '').trim().toLowerCase();
-        return Boolean(r && p && r !== p);
-    }, [inbox.reply_to, inbox.poll_address]);
+        return Boolean(r && pollList.length && !pollList.includes(r));
+    }, [inbox.reply_to, pollList]);
 
     const setInbox = (k: keyof NonNullable<Runtime['inbox']>, v: string) =>
         setDraft((d) => ({ ...d, inbox: { ...(d.inbox ?? {}), [k]: v || undefined } }));
@@ -86,22 +86,6 @@ export default function AgentDelivery({
             ...d,
             recipients: { ...(d.recipients ?? {}), roles: { ...(d.recipients?.roles ?? {}), [r]: split(v) } },
         }));
-
-    const setSites = (text: string) => {
-        // "BLR / Bangalore: Vidya <a@x.in>, Sahil <b@x.in>" per line — a shape an
-        // operator can type. Everything before the FIRST colon is the site key
-        // (display label + match aliases, "/"-separated); the rest are owners.
-        // Split on the first colon only, so "Name <a@x>" survives intact.
-        const map: Record<string, string[]> = {};
-        for (const line of text.split('\n')) {
-            const i = line.indexOf(':');
-            if (i < 1) continue;
-            const name = line.slice(0, i).trim();
-            const addrs = split(line.slice(i + 1));
-            if (name && addrs.length) map[name] = addrs;
-        }
-        setDraft((d) => ({ ...d, recipients: { ...(d.recipients ?? {}), sites: map } }));
-    };
 
     const save = async () => {
         setSaving(true); setError(null); setSaved(false);
@@ -141,9 +125,17 @@ export default function AgentDelivery({
                             onChange={(e) => setInbox('reply_to', e.target.value)} />
                     </div>
                     <div>
-                        <label className={label}>Mailbox Ira reads replies in</label>
-                        <input className={field} value={inbox.poll_address ?? ''} placeholder="purchase@worksquare.in"
-                            onChange={(e) => setInbox('poll_address', e.target.value)} />
+                        <label className={label}>Mailboxes Ira reads replies in</label>
+                        <textarea rows={2} className={`${field} font-mono text-[12px]`}
+                            value={join(pollList)}
+                            placeholder={'purchase@worksquare.in, support@worksquare.in'}
+                            onChange={(e) => setDraft((d) => ({
+                                ...d,
+                                inbox: { ...(d.inbox ?? {}), poll_addresses: split(e.target.value), poll_address: undefined },
+                            }))} />
+                        <p className="mt-1 text-[10.5px] text-text-tertiary">
+                            Comma-separated. All must be under the same Zoho grant. A reply to any of them lands.
+                        </p>
                     </div>
                     <div>
                         <label className={label}>Look back (hours)</label>
@@ -157,7 +149,7 @@ export default function AgentDelivery({
                         <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
                         <p className="text-[11.5px] leading-relaxed text-amber-800">
                             These two are different. Ira asks people to reply to the first address,
-                            but she only reads the second — so every answer lands somewhere nobody
+                            but she only reads the mailboxes listed — so every answer lands somewhere nobody
                             opens and is lost silently. Make them the same address.
                         </p>
                     </div>
@@ -192,26 +184,16 @@ export default function AgentDelivery({
                 <p className="mb-3 text-[11.5px] leading-relaxed text-text-secondary">
                     Splits the scan into <b>one email per city</b>, each headed{' '}
                     <span className="font-mono text-[11px] text-text-primary">06 SEP PO SCAN — BLR</span> and{' '}
-                    <span className="font-mono text-[11px] text-text-primary">Assigned to Vidya</span>. They can all
-                    go to the same shared mailbox — the header, not the address, is what makes a mail one
-                    person&rsquo;s job.
+                    <span className="font-mono text-[11px] text-text-primary">Assigned to Vidya</span>. Every city can
+                    use the same shared mailbox — the header, not the address, is what makes a mail one
+                    person&rsquo;s job. Green properties already route somewhere; amber ones will land in a
+                    single &ldquo;Unassigned&rdquo; mail until you click them onto a city.
                 </p>
-                <p className="mb-3 text-[11.5px] leading-relaxed text-text-secondary">
-                    <span className="underline decoration-dotted underline-offset-2">One line per city.</span>{' '}
-                    The <b>first</b> name before the colon is what the header shows; add{' '}
-                    <span className="font-mono text-[11px]">/ aliases</span> for every property or city that
-                    belongs to it. A site matching nothing lands in one final &ldquo;Unassigned&rdquo; mail
-                    rather than being dropped.
-                </p>
-                <textarea
-                    rows={5}
-                    className={`${field} font-mono text-[12px]`}
-                    // Controlled off the draft, not defaultValue — an uncontrolled
-                    // field silently keeps stale text after a re-seed.
-                    value={sitesText}
-                    onFocus={() => setSitesTouched(true)}
-                    placeholder={'BLR / Bangalore / SS Plaza: Vidya <purchase@worksquare.in>\nMumbai / Byculla / Rabale: Sahil <purchase@worksquare.in>\nNoida: Priyanka <purchase@worksquare.in>'}
-                    onChange={(e) => { setSitesRaw(e.target.value); setSites(e.target.value); }}
+                <SiteOwnersBuilder
+                    orgId={orgId}
+                    value={sites}
+                    defaultEmail={(roles.procurement ?? [])[0] ?? inbox.reply_to ?? ''}
+                    onChange={(map) => setDraft((d) => ({ ...d, recipients: { ...(d.recipients ?? {}), sites: map } }))}
                 />
             </section>
 

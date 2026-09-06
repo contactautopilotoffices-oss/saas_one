@@ -33,6 +33,8 @@ import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { sendDigest } from '@/backend/lib/ira/dailyDigest';
 import { resolveDelivery } from '@/backend/lib/ira/procurement/delivery';
 import { splitBySite, cityLookup } from '@/backend/lib/ira/procurement/sites';
+import { vetFindings } from '@/backend/lib/ira/procurement/vet';
+import type { VettingStamp } from '@/backend/lib/ira/procurement/render';
 import { mintFeedbackLinks } from '@/backend/lib/ira/procurement/feedbackLinks';
 import { isOrgMember } from '@/backend/lib/ira/procurement/guard';
 import type { FeedbackLinks } from '@/backend/lib/ira/procurement/render';
@@ -235,6 +237,9 @@ export async function POST(request: NextRequest) {
     const bundles = routeFindings(scan.findings);
     const sent: string[] = [];
     const skipped: string[] = [];
+    // A holder, not a `let`: TS narrows a let assigned inside the async
+    // callback to `never` at the return below and rejects the read.
+    const vet: { stamp: VettingStamp | null } = { stamp: null };
 
     await withAgentRun(
         { orgId, agentKey: 'ira', module: 'procurement', trigger: fromCron ? 'cron' : 'manual',
@@ -248,6 +253,22 @@ export async function POST(request: NextRequest) {
             const { data: props } = await supabaseAdmin
                 .from('properties').select('name, city').eq('organization_id', orgId);
             const cityOf = cityLookup(props ?? []);
+
+            // Same reviewer, same rule as the cron: the manual send is vetted too,
+            // or the two paths would mail different things under the same name.
+            const { data: agentRow } = await supabaseAdmin
+                .from('oem_agents').select('display_name, runtime').eq('organization_id', orgId).eq('agent_key', AGENT_KEY).maybeSingle();
+            const reportsTo = ((agentRow?.runtime ?? {}) as { reports_to?: string | null }).reports_to ?? null;
+            if (reportsTo) {
+                const v = await step(`Vetting by ${reportsTo}`, 'decide', { reports_to: reportsTo });
+                const r = await vetFindings(orgId, AGENT_KEY, String(agentRow?.display_name ?? 'Ira'), reportsTo, scan.findings, scan.window.label);
+                if (r.ok && r.reviewer && r.verdict) {
+                    vet.stamp = { reviewer: r.reviewer.name, verdict: r.verdict, concerns: r.concerns.map((c) => ({ finding_key: c.finding_key, concern: c.concern })) };
+                    await v.ok({ detail: { verdict: r.verdict, reasoning: r.reasoning, concerns: r.concerns, cost_usd: r.costUsd, logged: Boolean(r.loggedId) } });
+                } else {
+                    await v.ok({ detail: { skipped: r.why, cost_usd: r.costUsd } });
+                }
+            }
 
             for (const bundle of bundles) {
                 const address = to[bundle.recipient.key];
@@ -275,6 +296,7 @@ export async function POST(request: NextRequest) {
                     const { subject, html } = renderRecipientEmail(
                         slice.bundle, orgId, new Date(), links, [], replyAddress(), subjects, scan.statuses,
                         slice.label ? { label: slice.label, owners: slice.ownerNames } : null,
+                        vet.stamp,
                     );
                     const s = await step(`Emailing ${who}`, 'notify',
                         { recipient: bundle.recipient.key, site: slice.label || null, owners: slice.ownerNames, findings: slice.bundle.counts.total });
@@ -299,5 +321,5 @@ export async function POST(request: NextRequest) {
         },
     );
 
-    return NextResponse.json({ ok: true, sent, skipped });
+    return NextResponse.json({ ok: true, sent, skipped, vetted: vet.stamp ? { by: vet.stamp.reviewer, verdict: vet.stamp.verdict, concerns: vet.stamp.concerns } : null });
 }

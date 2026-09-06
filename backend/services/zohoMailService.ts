@@ -40,6 +40,13 @@ interface ListOptions {
     /** Hard ceiling on messages pulled; also bounded by the page cap below. */
     limit?: number;
     folderId?: string;
+    /**
+     * Which mailbox in the grant to read. One Zoho grant (one refresh token)
+     * can cover several shared mailboxes — purchase@, support@, sites@ — and
+     * this picks the account for the address instead of the env default. It is
+     * what lets an agent poll MANY addresses without a new env prefix each.
+     */
+    address?: string;
 }
 
 const PAGE_SIZE = 200;          // Zoho Mail caps `limit` at 200
@@ -121,9 +128,16 @@ export class ZohoMailService {
         return `https://mail.zoho.${fromApi || tld}`;
     }
 
-    private static async accountId(token: string, apiDomain: string, prefix: ZohoMailEnv): Promise<string> {
+    private static accountCache = new Map<string, string>();
+
+    private static async accountId(token: string, apiDomain: string, prefix: ZohoMailEnv, address?: string): Promise<string> {
+        const wanted = (address ?? mailboxAddress(prefix)).toLowerCase();
+        // The env ACCOUNT_ID is the DEFAULT mailbox's id. It must not be handed to
+        // a different address — that would read purchase@ while claiming support@.
         const configured = env(prefix, 'ACCOUNT_ID');
-        if (configured) return configured;
+        if (configured && wanted === mailboxAddress(prefix)) return configured;
+        const cached = this.accountCache.get(`${prefix}:${wanted}`);
+        if (cached) return cached;
 
         // Self-service fallback so the integration works with creds alone; the account
         // id is stable, so setting <PREFIX>_ACCOUNT_ID saves this round trip.
@@ -132,7 +146,6 @@ export class ZohoMailService {
         });
         const data = await res.json().catch(() => null);
         const accounts: any[] = data?.data || [];
-        const wanted = mailboxAddress(prefix);
         const match = accounts.find(a =>
             String(a?.primaryEmailAddress || '').toLowerCase() === wanted
             || (a?.emailAddress || []).some((e: any) => String(e?.mailId || '').toLowerCase() === wanted),
@@ -148,6 +161,7 @@ export class ZohoMailService {
                 `The Zoho Mail grant does not contain the mailbox "${wanted}". Set ${prefix}_ACCOUNT_ID (or correct ${prefix}_ADDRESS).`,
             );
         }
+        this.accountCache.set(`${prefix}:${wanted}`, String(match.accountId));
         return String(match.accountId);
     }
 
@@ -157,7 +171,7 @@ export class ZohoMailService {
      */
     static async listMessages(options: ListOptions = {}, prefix: ZohoMailEnv = 'ZOHO_MAIL'): Promise<ZohoMailMessage[]> {
         const { token, apiDomain } = await this.getAccessToken(prefix);
-        const acct = await this.accountId(token, apiDomain, prefix);
+        const acct = await this.accountId(token, apiDomain, prefix, options.address);
 
         const sinceMs = options.since ? options.since.getTime() : 0;
         const limit = options.limit ?? MAX_PAGES * PAGE_SIZE;
@@ -257,9 +271,10 @@ export class ZohoMailService {
         messageId: string,
         folderId?: string | null,
         prefix: ZohoMailEnv = 'ZOHO_MAIL',
+        address?: string,
     ): Promise<{ subject: string; content: string; fromAddress: string }> {
         const { token, apiDomain } = await this.getAccessToken(prefix);
-        const acct = await this.accountId(token, apiDomain, prefix);
+        const acct = await this.accountId(token, apiDomain, prefix, address);
 
         const path = folderId
             ? `${apiDomain}/api/accounts/${acct}/folders/${folderId}/messages/${messageId}/content`

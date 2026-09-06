@@ -58,7 +58,7 @@ import {
     ThumbsUp,
     Timer,
     Wand2,
-    X, Workflow, Send,PanelLeftClose,PanelLeftOpen,} from 'lucide-react';
+    X, Workflow, Send,PanelLeftClose,PanelLeftOpen, Crown,} from 'lucide-react';
 import AgentPlanCanvas, { type AgentPlan } from '@/frontend/components/agents/AgentPlanCanvas';
 import AgentDelivery from '@/frontend/components/agents/AgentDelivery';
 import Hint from '@/frontend/components/agents/Hint';
@@ -105,6 +105,7 @@ import AgentActivity from './AgentActivity';
 import AgentUptime from './AgentUptime';
 import AgentProfile from './AgentProfile';
 import AgentReinforcement from './AgentReinforcement';
+import AgentCouncil from './AgentCouncil';
 import AgentCredentials from './AgentCredentials';
 
 /* ==========================================================================
@@ -178,7 +179,7 @@ interface ComposeResponse {
     error?: string;
 }
 
-type DetailTab = 'configure' | 'delivery' | 'activity' | 'uptime' | 'profile' | 'reinforcement' | 'credentials';
+type DetailTab = 'configure' | 'delivery' | 'activity' | 'uptime' | 'profile' | 'reinforcement' | 'council' | 'credentials';
 
 const TABS: Array<{ key: DetailTab; label: string; Icon: React.ElementType }> = [
     { key: 'configure', label: 'Configure', Icon: Wand2 },
@@ -187,6 +188,7 @@ const TABS: Array<{ key: DetailTab; label: string; Icon: React.ElementType }> = 
     { key: 'uptime', label: 'Uptime', Icon: Timer },
     { key: 'profile', label: 'Profile', Icon: Gauge },
     { key: 'reinforcement', label: 'Reinforcement', Icon: ThumbsUp },
+    { key: 'council', label: 'Council', Icon: Crown },
     { key: 'credentials', label: 'Credentials', Icon: KeyRound },
 ];
 
@@ -730,6 +732,22 @@ export default function AgentConsole({ orgId }: AgentConsoleProps) {
                                     {tab === 'profile' && <AgentProfile orgId={orgId} agentKey={selected.agent_key} />}
                                     {tab === 'reinforcement' && (
                                         <AgentReinforcement orgId={orgId} agentKey={selected.agent_key} />
+                                    )}
+                                    {tab === 'council' && (
+                                        <AgentCouncil
+                                            key={selected.agent_key}
+                                            orgId={orgId}
+                                            agentKey={selected.agent_key}
+                                            agentName={selected.display_name}
+                                            reportsTo={((selected.runtime ?? {}) as { reports_to?: string | null }).reports_to ?? null}
+                                            onReportsToChange={async (key) => {
+                                                await fetch(`/api/agents/registry?orgId=${encodeURIComponent(orgId)}`, {
+                                                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                                    body: JSON.stringify({ action: 'upsert', agent_key: selected.agent_key, runtime: { ...(selected.runtime ?? {}), reports_to: key } }),
+                                                });
+                                                await load(true);
+                                            }}
+                                        />
                                     )}
                                     {tab === 'credentials' && (
                                         <AgentCredentials orgId={orgId} agentKey={selected.agent_key} />

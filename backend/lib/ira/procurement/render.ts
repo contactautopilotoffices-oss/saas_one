@@ -18,6 +18,7 @@
 import { entityUrl, type EntityRef, type Priority } from './types';
 import { DISPOSITION_SPECS, statusLine, type Disposition, type DispositionStatus } from './disposition';
 import type { RecipientBundle, RoutedFinding } from './router';
+import { tagFromSubject } from './reply';
 
 /**
  * PALETTE — taken verbatim from backend/lib/ira/dailyDigest.ts, so the two Ira
@@ -96,7 +97,19 @@ const DISPOSITION_ORDER: Disposition[] = ['done', 'not_an_issue', 'in_progress',
  * Rendered ONLY when real signed links exist. There is deliberately no decorative
  * version: a button that records nothing teaches people their answers are ignored.
  */
-function closeStrip(links: FeedbackLinks[string] | undefined, replyTo?: string, subject?: string): string {
+function vettingLine(v: VettingStamp): string {
+    const tone = v.verdict === 'sound' ? '#0B6E5F' : v.verdict === 'needs_human' ? '#B0442E' : '#B07206';
+    const label = v.verdict === 'sound' ? 'sound' : v.verdict === 'needs_human' ? 'needs a human read' : `${v.concerns.length} concern${v.concerns.length === 1 ? '' : 's'}`;
+    const runLevel = v.concerns.filter((c) => !c.finding_key);
+    return `<div style="margin-top:9px;font-size:12px;color:${BODY}">
+      <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${tone};margin-right:6px;vertical-align:middle"></span>
+      Vetted by <b style="color:${BRAND}">${esc(v.reviewer)}</b> &middot; <span style="color:${tone};font-weight:700">${esc(label)}</span>
+      ${runLevel.length ? `<div style="margin-top:4px;font-size:11.5px;color:${MUTED}">${runLevel.map((c) => esc(c.concern)).join(' ')}</div>` : ''}
+    </div>`;
+}
+
+function closeStrip(links: FeedbackLinks[string] | undefined, replyTo?: string, subject?: string, multi = false): string {
+    const refTag = subject ? tagFromSubject(subject) : null;
     if (!links && !replyTo) return '';
     const buttons = DISPOSITION_ORDER.filter((d) => links?.[d]);
 
@@ -133,12 +146,16 @@ function closeStrip(links: FeedbackLinks[string] | undefined, replyTo?: string, 
         ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 10px">
              <tr><td style="border:1px solid ${EDGE};border-radius:4px;background:${CARD};padding:13px 14px">
                <div style="font-size:13.5px;font-weight:700;color:${BRAND};line-height:1.5">
-                 &#8629;&nbsp; Hit <span style="text-decoration:underline">Reply</span> and type what you did.
+                 &#8629;&nbsp; Hit <span style="text-decoration:underline">Reply</span>${multi && refTag
+                     ? `, start with <span style="font-family:Menlo,Consolas,monospace;background:${TINT};border:1px solid ${LINE};border-radius:3px;padding:0 5px">${esc(refTag)}</span>, then say what you did.`
+                     : ' and type what you did.'}
                </div>
                <div style="font-size:11.5px;color:${MUTED};line-height:1.55;margin-top:6px">
-                 Reply goes to <b style="color:${BODY}">${esc(replyTo)}</b>. Keep the subject line as it is &mdash;
-                 that is how Ira matches your answer to this line. Attach the credit note, corrected PO or
-                 photo to the same reply if you have one.
+                 Reply goes to <b style="color:${BODY}">${esc(replyTo)}</b>.
+                 ${multi
+                     ? 'This mail has several lines, so the ref is how Ira knows which one you mean &mdash; you can answer more than one in a single reply, one ref per line.'
+                     : 'Keep the subject line as it is &mdash; that is how Ira matches your answer to this line.'}
+                 Attach the credit note, corrected PO or photo to the same reply if you have one.
                </div>
                ${mailto ? `<div style="font-size:11px;margin-top:9px"><a href="${esc(mailto)}" style="color:${MUTED};text-decoration:underline">On a phone? Tap to open a pre-addressed reply</a></div>` : ''}
              </td></tr>
@@ -195,8 +212,13 @@ function statusStrip(status: DispositionStatus | undefined): string {
       </table>`;
 }
 
-function findingBlock(f: RoutedFinding, orgId: string, index: number, canDisposition: boolean, fb?: FeedbackLinks[string], status?: DispositionStatus, replyTo?: string, replySubject?: string): string {
+function findingBlock(f: RoutedFinding, orgId: string, index: number, canDisposition: boolean, fb?: FeedbackLinks[string], status?: DispositionStatus, replyTo?: string, replySubject?: string, multi = false, vetting: VettingStamp | null = null): string {
     const tone = TONE[f.priority];
+    const lineConcerns = (vetting?.concerns ?? []).filter((c) => c.finding_key === f.key).map((c) => ({ ...c, reviewer: vetting!.reviewer }));
+    // The ref is what a plain Reply must quote for the poller to know which
+    // line was answered. It is derived from the tagged subject so there is one
+    // source of truth for the tag, not two.
+    const refTag = replySubject ? tagFromSubject(replySubject) : null;
     const context = [f.vendor, f.property].filter(Boolean).map((x) => esc(String(x))).join(' &middot; ');
 
     const stats = f.stats?.length
@@ -223,6 +245,8 @@ function findingBlock(f: RoutedFinding, orgId: string, index: number, canDisposi
             <span style="font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:${tone.fg};font-weight:700;vertical-align:middle;margin-left:6px">${index}. ${esc(tone.label)}</span>
           </div>
           <div style="font-size:16px;font-weight:700;color:${BRAND};letter-spacing:-0.01em;line-height:1.35">${esc(f.title)}${f.amount !== null ? ` &mdash; ${inr(f.amount)}` : ''}</div>
+          ${lineConcerns.length ? `<div style="margin-top:7px;padding:7px 10px;border-left:3px solid #B07206;background:${TINT};font-size:12px;line-height:1.5;color:${BODY}"><b style="color:${BRAND}">${esc(lineConcerns[0].reviewer)} flags:</b> ${lineConcerns.map((c) => esc(c.concern)).join(' ')}</div>` : ''}
+          ${refTag ? `<div style="margin-top:5px;font-size:11px;color:${MUTED}">Ref <span style="font-family:Menlo,Consolas,monospace;font-weight:700;color:${BODY};background:${TINT};border:1px solid ${LINE};border-radius:3px;padding:1px 5px">${esc(refTag)}</span></div>` : ''}
           ${context ? `<div style="font-size:12px;color:${MUTED};margin-top:3px">${context}</div>` : ''}
         </td></tr>
         <tr><td style="padding:14px 16px">
@@ -230,7 +254,7 @@ function findingBlock(f: RoutedFinding, orgId: string, index: number, canDisposi
           ${stats}
           ${refs}
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:14px 0 0">${actions}</table>
-          ${canDisposition ? closeStrip(fb, replyTo, replySubject) : statusStrip(status)}
+          ${canDisposition ? closeStrip(fb, replyTo, replySubject, multi) : statusStrip(status)}
         </td></tr>
       </table>
     </td></tr>`;
@@ -254,6 +278,17 @@ export interface SiteTag {
     owners: string[];
 }
 
+/**
+ * The reviewer's stamp. A reader should know a second pair of eyes looked, and
+ * what they flagged, without opening the console. Concerns about a specific
+ * line are also printed under that line.
+ */
+export interface VettingStamp {
+    reviewer: string;
+    verdict: 'sound' | 'sound_with_concerns' | 'needs_human';
+    concerns: Array<{ finding_key: string | null; concern: string }>;
+}
+
 export function renderRecipientEmail(
     bundle: RecipientBundle,
     orgId: string,
@@ -271,6 +306,8 @@ export function renderRecipientEmail(
      * Null renders exactly today's header — the tag is additive, never required.
      */
     siteTag: SiteTag | null = null,
+    /** Who vetted this run and what they concluded. Null = nobody did. */
+    vetting: VettingStamp | null = null,
 ): RenderedEmail {
     const { counts, recipient, findings } = bundle;
 
@@ -282,10 +319,17 @@ export function renderRecipientEmail(
     // they are three identical lines in a list and the owner opens the wrong one.
     const scanTag = siteTag ? `${date.toUpperCase()} PO SCAN — ${siteTag.label.toUpperCase()}` : null;
     const lead = scanTag ?? 'FMS Procurement';
-    const subject =
+    const baseSubject =
         counts.critical > 0
             ? `${lead} — ${counts.critical} critical · ${inrShort(counts.exposure)} exposure`
             : `${lead} — ${open} item${open === 1 ? ' needs' : 's need'} your attention`;
+    // ONE line in the mail → the subject carries its ref, and a plain Reply
+    // needs nothing typed to be matched. Several lines → the subject cannot
+    // carry all of them, so each line prints its own ref and the person
+    // quotes it (see closeStrip). Without this, a reply to a one-line site
+    // mail was silently dropped by the poller: no tag anywhere it looked.
+    const soleTag = findings.length === 1 ? tagFromSubject(replySubjects[findings[0].key] ?? '') : null;
+    const subject = soleTag ? `[${soleTag}] ${baseSubject}` : baseSubject;
 
     // FIRST SCREEN: health, count, critical, exposure. Nothing above this.
     const summary = `
@@ -328,10 +372,11 @@ export function renderRecipientEmail(
                }</div>
                <div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:${MUTED};font-weight:600;margin-top:7px">FMS Procurement &middot; ${esc(time)}</div>`
             : `<div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:${MUTED};font-weight:600">FMS Procurement &middot; ${esc(time)}</div>`}
+          ${vetting ? vettingLine(vetting) : ''}
         </td></tr>
         ${summary}
         ${linkNotice}
-        ${findings.map((f, i) => findingBlock(f, orgId, i + 1, recipient.canDisposition, feedbackLinks[f.key], statuses[f.key], replyTo ?? undefined, replySubjects[f.key])).join('')}
+        ${findings.map((f, i) => findingBlock(f, orgId, i + 1, recipient.canDisposition, feedbackLinks[f.key], statuses[f.key], replyTo ?? undefined, replySubjects[f.key], findings.length > 1, vetting)).join('')}
         ${attachmentNames.length ? `<tr><td style="padding:0 0 14px"><div style="padding:10px 12px;background:${TINT};border:1px solid ${LINE};border-radius:4px;font-size:11.5px;line-height:1.6;color:${BODY}"><strong style="color:${BRAND}">Attached:</strong> ${attachmentNames.map((n) => esc(n)).join(', ')}. Everything else is linked above rather than attached, to keep this email light.</div></td></tr>` : ''}
         <tr><td style="padding:4px 0 0;border-top:1px solid ${LINE}">
           <div style="font-size:11px;line-height:1.6;color:${MUTED};padding-top:12px">

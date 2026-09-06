@@ -28,6 +28,9 @@ import { mintFeedbackLinks } from '@/backend/lib/ira/procurement/feedbackLinks';
 import { replyTag, taggedSubject } from '@/backend/lib/ira/procurement/reply';
 import { resolveDelivery } from '@/backend/lib/ira/procurement/delivery';
 import { splitBySite, cityLookup, unmatchedProperties } from '@/backend/lib/ira/procurement/sites';
+import { vetFindings } from '@/backend/lib/ira/procurement/vet';
+import { reportToCouncil } from '@/backend/lib/ira/procurement/council';
+import type { VettingStamp } from '@/backend/lib/ira/procurement/render';
 import { sendDigest } from '@/backend/lib/ira/dailyDigest';
 import type { RecipientKey } from '@/backend/lib/ira/procurement/types';
 
@@ -61,14 +64,14 @@ export async function GET(request: NextRequest) {
 
     const { data: agents } = await supabaseAdmin
         .from('oem_agents')
-        .select('organization_id, runtime, status')
+        .select('organization_id, runtime, status, display_name')
         .eq('agent_key', AGENT_KEY);
 
     const out: unknown[] = [];
 
     for (const a of agents ?? []) {
         const orgId = String(a.organization_id);
-        const runtime = (a.runtime ?? {}) as { schedule_cron?: string };
+        const runtime = (a.runtime ?? {}) as { schedule_cron?: string; reports_to?: string | null };
         const wantHour = hourFromCron(runtime.schedule_cron);
 
         if (!force && wantHour !== hourNow) {
@@ -106,6 +109,23 @@ export async function GET(request: NextRequest) {
                 if (!bundles.length) {
                     return { outcome: `Nothing to send for ${w.label}.`, status: 'skipped' as const, grounded: true };
                 }
+
+                // The reviewer reads BEFORE the mail goes out. A failed or absent
+                // review does not stop the send — the stamp just isn't there.
+                let stamp: VettingStamp | null = null;
+                if (runtime.reports_to) {
+                    const v = await step(`Vetting by ${runtime.reports_to}`, 'decide', { reports_to: runtime.reports_to });
+                    const vet = await vetFindings(orgId, AGENT_KEY, String(a.display_name ?? 'Ira'), runtime.reports_to, mem.findings, w.label);
+                    if (vet.ok && vet.reviewer && vet.verdict) {
+                        stamp = { reviewer: vet.reviewer.name, verdict: vet.verdict, concerns: vet.concerns.map((c) => ({ finding_key: c.finding_key, concern: c.concern })) };
+                        await v.ok({ detail: { verdict: vet.verdict, concerns: vet.concerns.length, cost_usd: vet.costUsd, logged: Boolean(vet.loggedId) } });
+                    } else {
+                        await v.ok({ detail: { skipped: vet.why } });
+                    }
+                }
+
+                // Escalations + the run note. This function existed with no callers.
+                const council = await reportToCouncil(orgId, AGENT_KEY, mem.findings, { suppressed: mem.suppressed, reopened: mem.reopened });
                 if (process.env.IRA_SEND_ENABLED !== 'true') {
                     return { outcome: `${bundles.length} bundle(s) ready but IRA_SEND_ENABLED is not true.`, status: 'skipped' as const, grounded: true };
                 }
@@ -140,6 +160,7 @@ export async function GET(request: NextRequest) {
                         const { subject, html } = renderRecipientEmail(
                             slice.bundle, orgId, now, links, [], delivery.replyTo, subjects, statuses,
                             slice.label ? { label: slice.label, owners: slice.ownerNames } : null,
+                            stamp,
                         );
 
                         const st = await step(`Emailing ${who} (${slice.to.length})`, 'notify',
@@ -166,7 +187,7 @@ export async function GET(request: NextRequest) {
                     outcome: `sent ${sent.length}, skipped ${skipped.length} · ${w.label}`,
                     status: (sent.length ? 'succeeded' : 'skipped') as 'succeeded' | 'skipped',
                     grounded: true,
-                    result: { sent, skipped, unmatchedSites: unmatched, usingEnvFallback: delivery.usingEnvFallback },
+                    result: { sent, skipped, unmatchedSites: unmatched, vetted: stamp ? { by: stamp.reviewer, verdict: stamp.verdict, concerns: stamp.concerns.length } : null, council: { escalated: council.escalated.length, noted: council.noted }, usingEnvFallback: delivery.usingEnvFallback },
                 };
             },
         );

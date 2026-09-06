@@ -149,12 +149,16 @@ const MAX_OUTPUT_TOKENS: Record<CouncilPurpose, number> = {
     review: 4500,
     synthesis: 10000,
     email: 2000,
+    // A single-persona verdict on one agent's run. glm-5.3-flash spends most of
+    // its budget reasoning before it emits the JSON; 3000 was eaten entirely
+    // and nothing parseable came back. Sized so the answer survives the thinking.
+    vet: 6000,
 };
 
 /** Soft per-session warning threshold; a full 17-call session on luna is well under this. */
 const RUN_BUDGET_USD = Number(process.env.COUNCIL_RUN_BUDGET_USD || 1.00);
 
-export type CouncilPurpose = 'opinion' | 'review' | 'synthesis' | 'email';
+export type CouncilPurpose = 'opinion' | 'review' | 'synthesis' | 'email' | 'vet';
 
 export interface CouncilChatMessage {
     role: 'system' | 'user' | 'assistant';

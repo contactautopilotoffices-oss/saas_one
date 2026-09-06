@@ -165,6 +165,7 @@ const RuntimeSchema = z.looseObject({
             from: z.string().trim().email().max(160).nullish(),
             reply_to: z.string().trim().email().max(160).nullish(),
             poll_address: z.string().trim().email().max(160).nullish(),
+        poll_addresses: EmailList.nullish(),
             lookback_hours: z.number().int().min(1).max(168).nullish(),
         })
         .nullish(),
@@ -196,6 +197,7 @@ const RuntimeSchema = z.looseObject({
     max_cost_inr_per_day: z.number().min(0).max(10_000_000).nullish(),
     timeout_sec: z.number().int().min(5).max(3_600).nullish(),
     autonomy: z.enum(['suggest', 'act']).nullish(),
+    reports_to: z.string().trim().toLowerCase().regex(/^[a-z_]{2,40}$/).nullish(),
 });
 
 const ModelConfigSchema = z.looseObject({

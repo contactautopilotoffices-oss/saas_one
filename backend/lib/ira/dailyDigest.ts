@@ -112,25 +112,43 @@ export function buildDigestHtml(tasks: IraTask[]): { subject: string; html: stri
  * silent-loss failure the disposition loop exists to prevent. So: send as the
  * verified domain, reply to the polled mailbox.
  */
+export interface SendOptions {
+    replyTo?: string | null;
+    /**
+     * Threading. A reply Ira sends must carry In-Reply-To/References or every
+     * mail client files it as a NEW conversation, and the person loses the
+     * context they were asking about. Pass the Message-ID being answered.
+     */
+    inReplyTo?: string | null;
+    references?: string | null;
+}
+
 export async function sendDigest(
     to: string,
     subject: string,
     html: string,
-    replyTo?: string | null,
-): Promise<void> {
+    replyToOrOpts?: string | null | SendOptions,
+): Promise<{ messageId: string | null }> {
+    const opts: SendOptions =
+        typeof replyToOrOpts === 'string' || replyToOrOpts == null
+            ? { replyTo: replyToOrOpts ?? null }
+            : replyToOrOpts;
     const transporter = nodemailer.createTransport({
         host: process.env.SMTP_HOST,
         port: Number(process.env.SMTP_PORT || 587),
         secure: process.env.SMTP_SECURE === 'true',
         auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
     });
-    await transporter.sendMail({
+    const info = await transporter.sendMail({
         from: `"${IRA_FROM_NAME}" <${IRA_FROM_EMAIL}>`,
         to,
         subject,
         html,
-        ...(replyTo ? { replyTo } : {}),
+        ...(opts.replyTo ? { replyTo: opts.replyTo } : {}),
+        ...(opts.inReplyTo ? { inReplyTo: opts.inReplyTo } : {}),
+        ...(opts.references ?? opts.inReplyTo ? { references: opts.references ?? opts.inReplyTo ?? undefined } : {}),
     });
+    return { messageId: (info as { messageId?: string })?.messageId ?? null };
 }
 
 export async function buildTodaysDigest() {

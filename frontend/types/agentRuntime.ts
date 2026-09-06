@@ -533,8 +533,14 @@ export interface AgentInboxConfig {
     from?: string;
     /** Reply-To. MUST be a mailbox the poller can read, or replies land nowhere. */
     reply_to?: string;
-    /** The mailbox the reply poller actually reads. */
+    /** The mailbox the reply poller actually reads. Kept for older configs; see poll_addresses. */
     poll_address?: string;
+    /**
+     * EVERY mailbox the poller reads. One Zoho grant can cover several shared
+     * inboxes (purchase@, support@, sites@); list them all and a reply to any
+     * of them lands. reply_to must be one of these or answers are lost.
+     */
+    poll_addresses?: string[];
     /** How far back each poll looks. Overlap is cheap; a gap loses an answer. */
     lookback_hours?: number;
 }
@@ -576,6 +582,13 @@ export interface AgentRuntimeConfig {
     max_cost_inr_per_day?: number;
     timeout_sec?: number;
     autonomy?: AgentAutonomy;
+    /**
+     * Which council persona this agent reports to — a council_agents.key such
+     * as 'procurement' (Nair). When set, that persona vets the agent's findings
+     * after every run and the verdict is written to the council log and
+     * stamped on the digest. Null means nobody reviews the work.
+     */
+    reports_to?: string | null;
 }
 
 /** oem_agents.model_config — the operator-editable inference settings. */

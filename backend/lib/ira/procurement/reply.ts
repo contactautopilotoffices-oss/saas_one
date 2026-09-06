@@ -35,6 +35,51 @@ export function tagFromSubject(subject: string): string | null {
     return m ? m[1].toUpperCase() : null;
 }
 
+const TAG_RE = /\b(IRA-[0-9A-F]{8})\b/gi;
+
+/**
+ * Every ref the person typed, in the order they typed them, deduplicated.
+ *
+ * WHY THE BODY AND NOT ONLY THE SUBJECT. One digest carries N findings, so one
+ * subject line cannot carry N tags; the subject is tagged only when the mail
+ * has exactly one line. For everything else the ref is printed on each line
+ * and the person quotes it. Pass the STRIPPED body (quoted original removed) —
+ * otherwise every ref in the quoted digest matches and we cannot tell which
+ * line was actually answered.
+ */
+export function tagsFromText(text: string): string[] {
+    const out: string[] = [];
+    for (const m of text.matchAll(TAG_RE)) {
+        const t = m[1].toUpperCase();
+        if (!out.includes(t)) out.push(t);
+    }
+    return out;
+}
+
+/**
+ * Split one reply into per-ref segments.
+ *
+ *     IRA-A1B2C3D4 done, credit note raised.
+ *     IRA-E5F6A7B8 not an issue — vendor already refunded.
+ *
+ * becomes two segments, each parsed on its own. Text before the first ref is
+ * attached to the first ref: people write "Hi, IRA-… done" and the greeting
+ * must not eat the verdict. A reply with a single ref is one segment: the
+ * whole text.
+ */
+export function segmentsByTag(text: string, tags: ReadonlyArray<string>): Array<{ tag: string; text: string }> {
+    if (tags.length <= 1) return tags.map((tag) => ({ tag, text }));
+    const positions = tags
+        .map((tag) => ({ tag, at: text.toUpperCase().indexOf(tag) }))
+        .filter((x) => x.at >= 0)
+        .sort((a, b) => a.at - b.at);
+    return positions.map((cur, i) => {
+        const start = i === 0 ? 0 : cur.at;
+        const end = i + 1 < positions.length ? positions[i + 1].at : text.length;
+        return { tag: cur.tag, text: text.slice(start, end).trim() };
+    });
+}
+
 /**
  * Strip the quoted original from a reply, keeping only what the person typed.
  *

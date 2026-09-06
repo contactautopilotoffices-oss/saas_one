@@ -10,25 +10,49 @@
  * mailbox crons already use. Nothing here talks to Zoho directly.
  *
  * ── MATCHING ────────────────────────────────────────────────────────────────
- * By SUBJECT TAG. `Re: [IRA-3F9A2B10] Trinity — same invoice…` survives every
- * client, every forward and every relay; a plus-addressed Reply-To does not. The
- * tag is derived from the finding, so nothing has to be stored to resolve it —
- * but it does have to be searched for, because the tag alone does not say which
- * finding it belongs to. We recompute tags for the org's open findings and match.
+ * By REF, in this order:
+ *   1. refs the person typed in their own text ("IRA-3F9A2B10 done") — several
+ *      per reply are fine, each segment is applied on its own;
+ *   2. the ref in the subject — present when the mail carried exactly one line,
+ *      so a plain Reply needs nothing typed.
+ * A reply with no ref anywhere is NOT dropped silently: it is returned as
+ * `unmatched` with the sender and text, so the responder can ask "which line?"
+ * The previous version `continue`d on a missing subject tag and the answer
+ * vanished without a trace in the run log.
+ *
+ * The ref is derived from the finding, so nothing has to be stored to resolve
+ * it — we recompute refs for the org's open findings and match.
  *
  * ── WHO IS ALLOWED TO CLOSE A LINE ──────────────────────────────────────────
- * The sender address must resolve to a real users row in this org. A reply from
- * an address we cannot place is READ AND IGNORED, not applied — an inbox is a
- * public surface and anyone can send mail to it claiming anything.
+ * The sender address must resolve to a real user WITH A MEMBERSHIP IN THIS
+ * ORG. A known user from another org is not enough — an inbox is a public
+ * surface and anyone can send mail to it claiming anything.
  */
 
 import { ZohoMailService } from '@/backend/services/zohoMailService';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
-import { parseReply, replyTag, tagFromSubject } from './reply';
-import { DISPOSITION_SPECS, signalFor } from './disposition';
+import { parseReply, replyTag, tagFromSubject, tagsFromText, segmentsByTag, stripQuotedText } from './reply';
+import { DISPOSITION_SPECS, signalFor, type Disposition } from './disposition';
 
 /** Feedback coins, mirroring the console's DEFAULT_COINS. */
 const COINS: Record<string, number> = { praise: 10, reject: -5, roi_flag: -15, correction: 0 };
+
+/** One reply that needs a human-readable answer from the agent. */
+export interface ReplyNeedingAnswer {
+    findingId: string | null;
+    findingKey: string | null;
+    findingTitle: string | null;
+    /** Why an answer is owed: they asked, they're stuck, or we couldn't place it. */
+    because: 'need_info' | 'blocked' | 'unmatched';
+    disposition: Disposition | null;
+    senderEmail: string;
+    senderUserId: string | null;
+    senderName: string | null;
+    text: string;
+    subject: string;
+    messageId: string;
+    mailbox: string;
+}
 
 export interface CollectResult {
     scanned: number;
@@ -36,21 +60,27 @@ export interface CollectResult {
     applied: number;
     /** Read but deliberately not applied, with the reason. Never silent. */
     ignored: Array<{ from: string; subject: string; reason: string }>;
+    /** Replies that earn a response back — the responder decides whether to send. */
+    needsAnswer: ReplyNeedingAnswer[];
     errors: string[];
 }
 
+interface OpenFinding { id: string; finding_key: string; title: string }
+
 /**
- * Read replies since `since` and apply them. Never throws — a mailbox outage
- * must not take down the cron that also does other work.
+ * Read replies since `since` from ONE mailbox and apply them. Never throws — a
+ * mailbox outage must not take down the cron that also does other work.
  */
 export async function collectIraReplies(
     orgId: string,
     agentKey: string,
     since: Date,
+    mailbox?: string,
 ): Promise<CollectResult> {
-    const out: CollectResult = { scanned: 0, matched: 0, applied: 0, ignored: [], errors: [] };
+    const out: CollectResult = { scanned: 0, matched: 0, applied: 0, ignored: [], needsAnswer: [], errors: [] };
+    const box = (mailbox ?? '').toLowerCase();
 
-    // 1. Open findings, and the tag each one answers to.
+    // 1. Open findings, and the ref each one answers to.
     const { data: findings, error: fErr } = await supabaseAdmin
         .from('oem_agent_findings')
         .select('id, finding_key, title')
@@ -64,7 +94,7 @@ export async function collectIraReplies(
     }
     if (!findings?.length) return out;
 
-    const byTag = new Map<string, { id: string; finding_key: string; title: string }>();
+    const byTag = new Map<string, OpenFinding>();
     for (const f of findings) {
         byTag.set(replyTag(orgId, agentKey, String(f.finding_key)), {
             id: String(f.id), finding_key: String(f.finding_key), title: String(f.title ?? ''),
@@ -74,88 +104,131 @@ export async function collectIraReplies(
     // 2. Read the mailbox.
     let messages;
     try {
-        messages = await ZohoMailService.listMessages({ since });
+        messages = await ZohoMailService.listMessages({ since, address: box || undefined });
     } catch (e) {
-        out.errors.push(`mailbox read failed: ${e instanceof Error ? e.message : e}`);
+        out.errors.push(`mailbox ${box || 'default'} read failed: ${e instanceof Error ? e.message : e}`);
         return out;
     }
     out.scanned = messages.length;
 
     for (const msg of messages) {
-        const tag = tagFromSubject(msg.subject ?? '');
-        if (!tag) continue;
-        const finding = byTag.get(tag);
-        if (!finding) {
-            out.ignored.push({ from: msg.fromAddress, subject: msg.subject, reason: `tag ${tag} matches no open finding` });
-            continue;
-        }
-        out.matched++;
+        const senderEmail = (msg.fromAddress ?? '').toLowerCase().trim();
+        // Our own outbound mail, and anything the agent itself sent, is not a reply.
+        if (!senderEmail || senderEmail === box) continue;
+        const subject = msg.subject ?? '';
+        const subjectTag = tagFromSubject(subject);
 
-        // 3. The sender must be someone we know, in this org.
-        const email = (msg.fromAddress ?? '').toLowerCase().trim();
-        const { data: user } = await supabaseAdmin
-            .from('users').select('id, full_name').ilike('email', email).maybeSingle();
-        if (!user) {
-            out.ignored.push({ from: msg.fromAddress, subject: msg.subject, reason: 'sender is not a known user — not applied' });
-            continue;
-        }
-
-        // 4. Their words.
-        let body = msg.summary ?? '';
+        // 3. Their words — fetched BEFORE matching, because the ref may be in them.
+        let raw = msg.summary ?? '';
         try {
-            const full = await ZohoMailService.getMessageContent(msg.messageId, msg.folderId);
-            if (full?.content) body = full.content;
+            const full = await ZohoMailService.getMessageContent(msg.messageId, msg.folderId, 'ZOHO_MAIL', box || undefined);
+            if (full?.content) raw = full.content;
         } catch {
             // Fall back to the summary rather than losing the reply entirely.
         }
-        const parsed = parseReply(body);
-        const spec = DISPOSITION_SPECS[parsed.disposition];
+        const ownText = stripQuotedText(raw);
+        const bodyTags = tagsFromText(ownText);
+        const tags = bodyTags.length ? bodyTags : subjectTag ? [subjectTag] : [];
 
-        // A disposition that needs an explanation, sent without one, is left open.
-        // Applying it would record a closure nobody justified.
-        if (spec.requiresNote && !parsed.note) {
-            out.ignored.push({ from: msg.fromAddress, subject: msg.subject, reason: `"${spec.label}" needs a reason; reply had none` });
+        // Not addressed to any line — and not about this agent at all if there is
+        // no ref anywhere in the whole message including the quoted digest.
+        if (!tags.length) {
+            const mentionsIra = tagsFromText(raw).length > 0 || /\bira\b/i.test(subject);
+            if (!mentionsIra) continue; // unrelated mail in a shared inbox
+            out.ignored.push({ from: senderEmail, subject, reason: 'reply did not say which line (no ref in text or subject)' });
+            out.needsAnswer.push({
+                findingId: null, findingKey: null, findingTitle: null,
+                because: 'unmatched', disposition: null,
+                senderEmail, senderUserId: null, senderName: null,
+                text: ownText, subject, messageId: msg.messageId, mailbox: box,
+            });
             continue;
         }
 
-        const { error: upErr } = await supabaseAdmin
-            .from('oem_agent_findings')
-            .update({
-                disposition: parsed.disposition,
-                disposition_note: parsed.note || null,
-                dispositioned_by: user.id,
-                dispositioned_at: new Date().toISOString(),
-            })
-            .eq('id', finding.id)
-            .is('disposition', null); // first reply wins; a second does not overwrite
+        // 4. The sender must be someone we know, IN THIS ORG.
+        const { data: user } = await supabaseAdmin
+            .from('users').select('id, full_name').ilike('email', senderEmail).maybeSingle();
+        let member = false;
+        if (user) {
+            const { count } = await supabaseAdmin
+                .from('organization_memberships')
+                .select('*', { count: 'exact', head: true })
+                .eq('organization_id', orgId).eq('user_id', user.id);
+            member = (count ?? 0) > 0;
+        }
+        if (!user || !member) {
+            out.ignored.push({ from: senderEmail, subject, reason: user ? 'sender is not a member of this org — not applied' : 'sender is not a known user — not applied' });
+            continue;
+        }
 
-        if (upErr) { out.errors.push(`${finding.finding_key}: ${upErr.message}`); continue; }
+        // 5. One segment per ref. "IRA-A done. IRA-B not an issue — refunded."
+        for (const seg of segmentsByTag(ownText, tags)) {
+            const finding = byTag.get(seg.tag);
+            if (!finding) {
+                out.ignored.push({ from: senderEmail, subject, reason: `ref ${seg.tag} matches no open line (already closed, or not this agent's)` });
+                continue;
+            }
+            out.matched++;
 
-        await supabaseAdmin.from('oem_agent_finding_events').insert({
-            finding_id: finding.id,
-            organization_id: orgId,
-            disposition: parsed.disposition,
-            note: parsed.note || null,
-            source: 'email',
-            created_by: user.id,
-        });
+            const parsed = parseReply(seg.text);
+            const spec = DISPOSITION_SPECS[parsed.disposition];
 
-        // The training signal, derived — nobody was asked to rate anything.
-        const signal = signalFor(parsed.disposition);
-        if (signal) {
-            await supabaseAdmin.from('oem_agent_feedback').insert({
+            // A disposition that needs an explanation, sent without one, is left open.
+            // Applying it would record a closure nobody justified.
+            if (spec.requiresNote && !parsed.note.trim()) {
+                out.ignored.push({ from: senderEmail, subject, reason: `"${spec.label}" on ${seg.tag} needs a reason; reply had none` });
+                continue;
+            }
+
+            const { error: upErr } = await supabaseAdmin
+                .from('oem_agent_findings')
+                .update({
+                    disposition: parsed.disposition,
+                    disposition_note: parsed.note || null,
+                    dispositioned_by: user.id,
+                    dispositioned_at: new Date().toISOString(),
+                })
+                .eq('id', finding.id)
+                .is('disposition', null); // first reply wins; a second does not overwrite
+
+            if (upErr) { out.errors.push(`${finding.finding_key}: ${upErr.message}`); continue; }
+
+            await supabaseAdmin.from('oem_agent_finding_events').insert({
+                finding_id: finding.id,
                 organization_id: orgId,
-                agent_key: agentKey,
-                signal,
-                coins: COINS[signal] ?? 0,
-                roi_flag: false,
-                reason: `${spec.label} — ${finding.title}`.slice(0, 300),
-                guidance: parsed.note ? `[${finding.finding_key}] ${parsed.note}` : null,
-                applied_to_prompt_version: null,
+                disposition: parsed.disposition,
+                note: parsed.note || null,
+                source: 'email',
                 created_by: user.id,
             });
+
+            // The training signal, derived — nobody was asked to rate anything.
+            const signal = signalFor(parsed.disposition);
+            if (signal) {
+                await supabaseAdmin.from('oem_agent_feedback').insert({
+                    organization_id: orgId,
+                    agent_key: agentKey,
+                    signal,
+                    coins: COINS[signal] ?? 0,
+                    roi_flag: false,
+                    reason: `${spec.label} — ${finding.title}`.slice(0, 300),
+                    guidance: parsed.note ? `[${finding.finding_key}] ${parsed.note}` : null,
+                    applied_to_prompt_version: null,
+                    created_by: user.id,
+                });
+            }
+            out.applied++;
+
+            // They asked something, or they're stuck. That earns an answer back.
+            if (parsed.disposition === 'need_info' || parsed.disposition === 'blocked') {
+                out.needsAnswer.push({
+                    findingId: finding.id, findingKey: finding.finding_key, findingTitle: finding.title,
+                    because: parsed.disposition, disposition: parsed.disposition,
+                    senderEmail, senderUserId: user.id, senderName: user.full_name ?? null,
+                    text: seg.text, subject, messageId: msg.messageId, mailbox: box,
+                });
+            }
         }
-        out.applied++;
     }
 
     return out;
