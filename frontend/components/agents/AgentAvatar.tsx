@@ -20,6 +20,8 @@
  * tab.
  */
 
+import { useState } from 'react';
+
 /** Stable hue from a string. Same key in, same colour out, forever. */
 function hueOf(seed: string): number {
     let h = 0;
@@ -57,6 +59,7 @@ export interface AgentAvatarProps {
 export default function AgentAvatar({
     name, seed, color, src, size = 34, ring = false, className = '',
 }: AgentAvatarProps) {
+    const [failed, setFailed] = useState(false);
     const hue = hueOf(seed);
     const bg = color || `hsl(${hue} 58% 42%)`;
     const initials = initialsOf(name);
@@ -68,10 +71,19 @@ export default function AgentAvatar({
         boxShadow: ring ? `0 0 0 2px var(--card), 0 0 0 3.5px ${bg}` : undefined,
     };
 
-    if (src) {
+    // A portrait that 404s must degrade to the monogram, not to a broken-image
+    // glyph — identity falls back to initials, never to a hole.
+    if (src && !failed) {
         return (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={src} alt="" aria-hidden className={`${base} object-cover ${className}`} style={style} />
+            <img
+                src={src}
+                alt=""
+                aria-hidden
+                onError={() => setFailed(true)}
+                className={`${base} object-cover ${className}`}
+                style={{ ...style, objectPosition: 'top' }}
+            />
         );
     }
 

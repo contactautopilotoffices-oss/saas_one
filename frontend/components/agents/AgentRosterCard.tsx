@@ -344,6 +344,19 @@ function AgentRosterCardImpl({ agent, selected, now, onSelect }: AgentRosterCard
               ? 'No reliability score yet — this agent has not been measured.'
               : 'Reliability unknown — the telemetry read failed. This is not a score of zero and not "no data yet".';
 
+    /**
+     * "Nair — Procurement Specialist" is one string in the registry and far too
+     * long for a 240px rail, so `truncate` was eating the part that identifies
+     * the agent. Split it: the NAME gets the headline and always fits, the role
+     * drops to the meta line where it is allowed to clip.
+     */
+    const [primaryName, roleFromName] = (() => {
+        const parts = agent.display_name.split(/\s+[—–-]\s+/);
+        return parts.length > 1
+            ? [parts[0].trim(), parts.slice(1).join(' — ').trim()]
+            : [agent.display_name, null as string | null];
+    })();
+
     const moduleLabel =
         (typeof agent.config?.module === 'string' ? (agent.config.module as string) : null) ??
         agent.department ??
@@ -356,7 +369,7 @@ function AgentRosterCardImpl({ agent, selected, now, onSelect }: AgentRosterCard
             aria-pressed={selected}
             aria-label={`${agent.display_name} — ${statusMeta.label}, ${healthMeta.label}`}
             className={[
-                'group relative w-full overflow-hidden rounded-[14px] border px-3.5 py-3 text-left transition-colors',
+                'group relative w-full overflow-hidden rounded-[14px] border px-3.5 py-3.5 text-left transition-colors',
                 'focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
                 selected
                     ? 'border-primary/40 bg-card-tint shadow-sm'
@@ -373,7 +386,7 @@ function AgentRosterCardImpl({ agent, selected, now, onSelect }: AgentRosterCard
             )}
 
             {/* Row 1 — identity + status */}
-            <div className="flex items-start gap-2.5">
+            <div className="flex items-start gap-3">
                 {/* A face, so eight specialists are eight recognisable rows and not
                     eight identical ones. The heartbeat rides on it as a badge. */}
                 <span className="relative shrink-0">
@@ -414,7 +427,7 @@ function AgentRosterCardImpl({ agent, selected, now, onSelect }: AgentRosterCard
                 <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                         <span className="truncate text-[15px] font-semibold leading-tight text-foreground">
-                            {agent.display_name}
+                            {primaryName}
                         </span>
                         {failures !== null && failures > 0 && (
                             <AlertTriangle
@@ -424,7 +437,7 @@ function AgentRosterCardImpl({ agent, selected, now, onSelect }: AgentRosterCard
                         )}
                     </div>
                     <div className="mt-1 flex items-center gap-1.5 text-[12.5px] text-text-tertiary">
-                        <span className="truncate capitalize">{moduleLabel}</span>
+                        <span className="truncate capitalize" title={roleFromName ?? moduleLabel}>{roleFromName ?? moduleLabel}</span>
                         <span aria-hidden>·</span>
                         <span className="shrink-0 font-mono">
                             p{agent.system_prompt_version ?? 0}

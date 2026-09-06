@@ -46,6 +46,16 @@ export const isCouncilAgentKey = (agentKey: string) => agentKey.startsWith(COUNC
 export const councilKeyFromAgentKey = (agentKey: string) =>
     isCouncilAgentKey(agentKey) ? agentKey.slice(COUNCIL_AGENT_PREFIX.length) : null;
 
+/**
+ * The portraits the master-council chamber has used since August, at
+ * /council/<key>.png. Reused rather than regenerated: one matched set beats two
+ * near-identical ones, and the roster should show the same face the chamber
+ * does. AgentAvatar falls back to initials if a file is ever missing.
+ */
+const PORTRAIT_KEYS = new Set(['ops', 'compliance', 'qa', 'product', 'cto', 'procurement', 'energy', 'tenant']);
+const portraitFor = (councilKey: string) =>
+    PORTRAIT_KEYS.has(councilKey) ? `/council/${councilKey}.png` : null;
+
 /** Default model per member. Cheap for routine lenses, stronger where the cost of a miss is high. */
 const DEFAULT_MODEL_BY_KEY: Record<string, string> = {
     cto: 'glm-5.3',          // security misses are expensive
@@ -112,6 +122,8 @@ export async function provisionCouncilAgents(orgId: string): Promise<ProvisionRe
             color: p.color,
             email: p.email,
             sort: p.sort,
+            // Never clobber a portrait an operator uploaded themselves.
+            avatar_url: ((prior?.config ?? {}) as { avatar_url?: string }).avatar_url ?? portraitFor(p.key),
         };
 
         if (!prior) {

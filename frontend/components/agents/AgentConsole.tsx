@@ -581,7 +581,7 @@ export default function AgentConsole({ orgId }: AgentConsoleProps) {
                             })}
                         </div>
 
-                        <div className="mt-2.5 flex max-h-[62vh] flex-col gap-2 overflow-y-auto pr-0.5">
+                        <div className="mt-2.5 flex max-h-[62vh] flex-col gap-2.5 overflow-y-auto pb-1 pr-1">
                             {filtered.length === 0 ? (
                                 <div className="px-2 py-8 text-center">
                                     {/* "No agents yet" is a statement about the org.
