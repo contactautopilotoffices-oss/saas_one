@@ -38,6 +38,15 @@ import { DISPOSITION_SPECS, signalFor, type Disposition } from './disposition';
 /** Feedback coins, mirroring the console's DEFAULT_COINS. */
 const COINS: Record<string, number> = { praise: 10, reject: -5, roi_flag: -15, correction: 0 };
 
+/** A reply that was applied, and should be acknowledged straight away. */
+export interface AppliedReply {
+    findingId: string; findingKey: string; findingTitle: string;
+    poLabels: string[];
+    disposition: Disposition; note: string;
+    senderEmail: string; senderName: string | null;
+    subject: string; messageId: string; mailbox: string;
+}
+
 /** One reply that needs a human-readable answer from the agent. */
 export interface ReplyNeedingAnswer {
     findingId: string | null;
@@ -63,6 +72,8 @@ export interface CollectResult {
     ignored: Array<{ from: string; subject: string; reason: string }>;
     /** Replies that earn a response back — the responder decides whether to send. */
     needsAnswer: ReplyNeedingAnswer[];
+    /** Every reply that changed a line, for immediate acknowledgement. */
+    applied_replies: AppliedReply[];
     errors: string[];
 }
 
@@ -86,7 +97,7 @@ export async function collectIraReplies(
     since: Date,
     mailbox?: string,
 ): Promise<CollectResult> {
-    const out: CollectResult = { scanned: 0, matched: 0, applied: 0, ignored: [], needsAnswer: [], errors: [] };
+    const out: CollectResult = { scanned: 0, matched: 0, applied: 0, ignored: [], needsAnswer: [], applied_replies: [], errors: [] };
     const box = (mailbox ?? '').toLowerCase();
 
     // 1. Open findings, and the ref each one answers to.
@@ -362,6 +373,13 @@ export async function collectIraReplies(
                 });
             }
             out.applied++;
+            out.applied_replies.push({
+                findingId: finding.id, findingKey: finding.finding_key, findingTitle: finding.title,
+                poLabels: (finding.refs ?? []).map((r) => String(r?.label ?? '')).filter(Boolean),
+                disposition: parsed.disposition, note: parsed.note,
+                senderEmail, senderName: user.full_name ?? null,
+                subject, messageId: msg.messageId, mailbox: box,
+            });
 
             // They asked something, or they're stuck. That earns an answer back.
             if (parsed.disposition === 'need_info' || parsed.disposition === 'blocked') {

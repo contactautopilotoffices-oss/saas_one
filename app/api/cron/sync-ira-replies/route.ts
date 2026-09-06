@@ -25,10 +25,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { withAgentRun } from '@/backend/lib/agents/instrument';
-import { collectIraReplies, type ReplyNeedingAnswer } from '@/backend/lib/ira/procurement/collectReplies';
-import { respondToReply } from '@/backend/lib/ira/procurement/respond';
-import { resolveDelivery } from '@/backend/lib/ira/procurement/delivery';
+import { collectIraReplies, type ReplyNeedingAnswer, type AppliedReply } from '@/backend/lib/ira/procurement/collectReplies';
+import { respondToReply, acknowledgement } from '@/backend/lib/ira/procurement/respond';
+import { sendDigest } from '@/backend/lib/ira/dailyDigest';
 import { replyTag } from '@/backend/lib/ira/procurement/reply';
+import { resolveDelivery } from '@/backend/lib/ira/procurement/delivery';
 import { isZohoMailConfigured, mailboxAddress } from '@/backend/services/zohoMailService';
 import type { AgentRuntimeConfig } from '@/frontend/types/agentRuntime';
 
@@ -83,6 +84,7 @@ export async function GET(request: NextRequest) {
                 let scanned = 0, matched = 0, applied = 0;
                 const ignored: Array<{ from: string; subject: string; reason: string; mailbox: string }> = [];
                 const needsAnswer: ReplyNeedingAnswer[] = [];
+                const appliedReplies: AppliedReply[] = [];
                 const errors: string[] = [];
 
                 for (const box of mailboxes) {
@@ -91,6 +93,7 @@ export async function GET(request: NextRequest) {
                     scanned += c.scanned; matched += c.matched; applied += c.applied;
                     ignored.push(...c.ignored.map((i) => ({ ...i, mailbox: box })));
                     needsAnswer.push(...c.needsAnswer);
+                    appliedReplies.push(...c.applied_replies);
                     errors.push(...c.errors);
                     if (c.errors.length) await s.fail(new Error(c.errors.join('; ')));
                     else await s.ok({ detail: { scanned: c.scanned, matched: c.matched, applied: c.applied, ignored: c.ignored.length } });
@@ -101,6 +104,36 @@ export async function GET(request: NextRequest) {
                 if (ignored.length) {
                     const i = await step(`${ignored.length} reply(ies) read but not applied`, 'decide');
                     await i.ok({ detail: { ignored: ignored.slice(0, 10) } });
+                }
+
+                /**
+                 * ACKNOWLEDGE EVERY ANSWER, straight away.
+                 *
+                 * Not a model call and not conditional on respond.enabled: a
+                 * person who writes in should always be told what was recorded
+                 * and against which order. Silence after an answer is why the
+                 * last nine runs produced none.
+                 */
+                const acked: string[] = [];
+                if (appliedReplies.length && !shadow) {
+                    const ak = await step(`Acknowledging ${appliedReplies.length} answer(s)`, 'notify');
+                    for (const a of appliedReplies) {
+                        const msg = acknowledgement(
+                            a.senderName, a.poLabels, a.disposition, a.note,
+                            replyTag(orgId, AGENT_KEY, a.findingKey),
+                        );
+                        try {
+                            await sendDigest(
+                                a.senderEmail, msg.subject,
+                                `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;line-height:1.65;color:#16181C;white-space:pre-wrap">${msg.body.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</div>`,
+                                { replyTo: delivery.replyTo, inReplyTo: a.messageId },
+                            );
+                            acked.push(`${a.senderEmail} · ${a.poLabels[0] ?? a.findingKey}`);
+                        } catch (e) {
+                            console.error('[ira ack]', a.senderEmail, e instanceof Error ? e.message : e);
+                        }
+                    }
+                    await ak.ok({ detail: { acknowledged: acked } });
                 }
 
                 // Answer back — only where the console says to, never in shadow.
@@ -132,7 +165,7 @@ export async function GET(request: NextRequest) {
                         : `No replies applied${matched ? ` (${matched} matched but not applied)` : ''} across ${mailboxes.length} mailbox(es)${answered.length ? `, answered ${answered.length}` : ''}.`,
                     status: (applied === 0 && answered.length === 0 ? 'skipped' : 'succeeded') as 'skipped' | 'succeeded',
                     grounded: true,
-                    result: { mailboxes, scanned, matched, applied, ignored, answered, notAnswered, errors },
+                    result: { mailboxes, scanned, matched, applied, acknowledged: acked, ignored, answered, notAnswered, errors },
                 };
             },
         );

@@ -43,6 +43,7 @@ import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { councilChat, councilRunCost } from '@/backend/lib/council/llm';
 import { sendDigest } from '@/backend/lib/ira/dailyDigest';
 import { replyTag } from './reply';
+import { DISPOSITION_SPECS, type Disposition } from './disposition';
 import { entityUrl, type EntityRef } from './types';
 import type { ReplyNeedingAnswer } from './collectReplies';
 
@@ -55,6 +56,35 @@ export interface RespondOutcome {
 
 /** One answer per person per line per day. */
 const ANSWER_COOLDOWN_H = 24;
+
+/**
+ * ACKNOWLEDGE EVERY ANSWER, IMMEDIATELY.
+ *
+ * Someone writes "cancelled the second one" and hears nothing back. They cannot
+ * tell whether it was read, understood, or filed against the right order — so
+ * next time they do not bother. Nine runs and 78 asks produced zero replies,
+ * and silence is part of why.
+ *
+ * This is a template, not a model call: instant, free, and it states exactly
+ * what was recorded so a misfiling is caught by the person who would know.
+ * The substantive answers (need_info, blocked) still go through the model.
+ */
+export function acknowledgement(
+    name: string | null, poLabels: string[], disposition: Disposition, note: string, ref: string,
+): { subject: string; body: string } {
+    const spec = DISPOSITION_SPECS[disposition];
+    const where = poLabels.length ? poLabels.join(', ') : ref;
+    const kept = note.trim() ? `\n\nWhat I recorded, in your words:\n  "${note.trim().slice(0, 500)}"` : '';
+    const consequence = spec.closes
+        ? 'This line is closed. It will not come back in tomorrow\'s scan.'
+        : disposition === 'in_progress'
+            ? 'Left open and marked in progress, so it will not be escalated while you are on it.'
+            : 'Left open — tell me when it moves.';
+    return {
+        subject: `Got it — ${where}`,
+        body: `${name ? `Thanks ${name}.` : 'Thanks.'} Filed against ${where} as "${spec.label}".${kept}\n\n${consequence}\n\nIf I have filed this against the wrong order, just reply and say so.\n\n— Ira`,
+    };
+}
 
 interface FindingRow {
     id: string; finding_key: string; title: string; priority: string;
