@@ -31,7 +31,14 @@ interface Persona {
     reports: Array<{ agent_key: string; display_name: string; status: string }>;
     verdicts: Verdict[];
 }
-interface Payload { provisioned: boolean; error?: string; agents: Persona[]; runtime_agents: Array<{ agent_key: string; display_name: string; reports_to: string | null }> }
+interface Payload {
+    provisioned: boolean;
+    error?: string;
+    agents: Persona[];
+    runtime_agents: Array<{ agent_key: string; display_name: string; reports_to: string | null }>;
+    /** A 401 on first paint is transient — offer a retry rather than a dead end. */
+    retryable?: boolean;
+}
 
 const VERDICT_TONE: Record<string, string> = {
     sound: 'bg-emerald-500/12 text-emerald-700',
@@ -52,13 +59,39 @@ export default function AgentCouncil({ orgId, agentKey, agentName, reportsTo, on
     const [msg, setMsg] = useState<{ key: string; text: string; ok: boolean } | null>(null);
     const [pickSaving, setPickSaving] = useState(false);
 
+    /**
+     * Normalise before it reaches state.
+     *
+     * The route can answer with three different shapes: the full payload, a
+     * `{ error, provisioned:false }` body when the council tables are missing,
+     * and a bare `{ error }` on 401/403 — and a 401 is NORMAL on first paint,
+     * because the tab can render before the session cookie is attached. Storing
+     * any of those raw meant `data.agents` was undefined while the hooks below
+     * still ran (hooks run before the early returns), which is exactly the
+     * crash. Nothing enters state without an `agents` array.
+     */
     const load = useCallback(async () => {
-        const res = await fetch(`/api/agents/council?orgId=${encodeURIComponent(orgId)}`, { cache: 'no-store' });
-        setData(await res.json().catch(() => null));
+        try {
+            const res = await fetch(`/api/agents/council?orgId=${encodeURIComponent(orgId)}`, { cache: 'no-store' });
+            const raw = (await res.json().catch(() => null)) as Partial<Payload> | null;
+            if (!res.ok || !raw || !Array.isArray(raw.agents)) {
+                setData({
+                    provisioned: false,
+                    error: raw?.error ?? (res.status === 401 ? 'Not signed in yet.' : `Council unavailable (HTTP ${res.status}).`),
+                    agents: [],
+                    runtime_agents: [],
+                    retryable: res.status === 401,
+                });
+                return;
+            }
+            setData({ provisioned: true, agents: raw.agents, runtime_agents: raw.runtime_agents ?? [] });
+        } catch (e) {
+            setData({ provisioned: false, error: (e as Error).message, agents: [], runtime_agents: [], retryable: true });
+        }
     }, [orgId]);
     useEffect(() => { void load(); }, [load]);
 
-    const mine = useMemo(() => data?.agents.find((a) => a.key === reportsTo) ?? null, [data, reportsTo]);
+    const mine = useMemo(() => (data?.agents ?? []).find((a) => a.key === reportsTo) ?? null, [data, reportsTo]);
 
     const savePersona = async (p: Persona) => {
         const text = draft[p.key] ?? p.persona;
@@ -84,7 +117,14 @@ export default function AgentCouncil({ orgId, agentKey, agentName, reportsTo, on
     if (!data) return <div className="flex items-center gap-2 p-6 text-sm text-text-secondary"><Loader2 className="h-4 w-4 animate-spin" /> Loading the council…</div>;
     if (!data.provisioned) return (
         <div className="rounded-2xl border border-amber-500/30 bg-amber-500/8 p-4 text-sm text-amber-800">
-            <AlertTriangle className="mr-1.5 inline h-4 w-4" /> Council tables are not provisioned for this org. {data.error}
+            <AlertTriangle className="mr-1.5 inline h-4 w-4" />
+            {data.retryable ? 'Could not load the council.' : 'Council tables are not provisioned for this org.'}{' '}
+            {data.error}
+            {data.retryable && (
+                <button type="button" onClick={() => void load()} className="ml-2 font-semibold underline underline-offset-2">
+                    Retry
+                </button>
+            )}
         </div>
     );
 
