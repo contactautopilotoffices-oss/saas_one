@@ -19,6 +19,27 @@ const nextConfig: NextConfig = {
   // Silence Turbopack warning in dev (serwist adds a webpack config)
   turbopack: {},
 
+  /**
+   * NATIVE MODULES THE BUNDLER MUST NOT TOUCH.
+   *
+   * @napi-rs/canvas ships a compiled .node binary. Webpack tried to parse it as
+   * JavaScript and the production build failed outright:
+   *
+   *     Module parse failed: Unexpected character '�' (1:0)
+   *     ./node_modules/@napi-rs/canvas-darwin-arm64/skia.darwin-arm64.node
+   *
+   * Listing it here leaves it as a runtime require in the server bundle, which
+   * is the only way a platform-specific binary can work — the right one is
+   * resolved on the machine that runs it, not baked in at build time.
+   *
+   * pdfjs-dist is here for the same reason it is everywhere else: it reaches
+   * for canvas and worker files that a bundler mangles.
+   *
+   * Reached from backend/lib/ocr/rasterize.ts, which turns a scanned PDF into
+   * page images for OCR.
+   */
+  serverExternalPackages: ['@napi-rs/canvas', 'pdfjs-dist'],
+
   images: {
     remotePatterns: [
       {
