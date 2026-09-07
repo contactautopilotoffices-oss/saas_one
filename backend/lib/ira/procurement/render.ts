@@ -16,6 +16,7 @@
  */
 
 import { entityUrl, type EntityRef, type Priority } from './types';
+import type { ScanCoverage } from './checks';
 import { DISPOSITION_SPECS, statusLine, type Disposition, type DispositionStatus } from './disposition';
 import type { RecipientBundle, RoutedFinding } from './router';
 import { tagFromSubject } from './reply';
@@ -245,6 +246,69 @@ function findingBlock(f: RoutedFinding, orgId: string, index: number, canDisposi
                  </td></tr>`)
         .join('<tr><td style="height:6px"></td></tr>');
 
+    /**
+     * THE EVIDENCE, WITH THE FACTS ON IT.
+     *
+     * A bare list of order numbers asked the reader to open each one to learn
+     * what it said — which is the work we are supposed to have already done.
+     * Each row now carries the date, the amount, the status and whether it has
+     * been billed, so the claim can be checked without leaving the mail.
+     */
+    const evidence = f.evidence?.length
+        ? `<div style="margin:13px 0 0">
+             <div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:${MUTED};font-weight:600;margin-bottom:6px">The records</div>
+             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
+               ${f.evidence.map((e) => `
+               <tr>
+                 <td style="padding:6px 10px 6px 0;border-bottom:1px solid ${LINE};font-size:12.5px;font-weight:700;color:${BRAND};white-space:nowrap;vertical-align:top">${esc(e.ref.label)}</td>
+                 <td style="padding:6px 0;border-bottom:1px solid ${LINE};font-size:12.5px;line-height:1.5;color:${BODY}">${esc(e.facts)}</td>
+               </tr>`).join('')}
+             </table>
+           </div>`
+        : '';
+
+    /** What does not add up, as a comparison the reader can verify. */
+    const reconcile = f.reconcile?.length
+        ? `<div style="margin:13px 0 0">
+             <div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:${MUTED};font-weight:600;margin-bottom:6px">What does not reconcile</div>
+             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
+               ${f.reconcile.map((d) => `
+               <tr>
+                 <td style="padding:6px 10px 6px 0;border-bottom:1px solid ${LINE};font-size:12.5px;color:${BODY};vertical-align:top">${esc(d.what)}</td>
+                 <td style="padding:6px 10px 6px 0;border-bottom:1px solid ${LINE};font-size:12.5px;color:${MUTED};white-space:nowrap;vertical-align:top">expected ${esc(d.expected)}</td>
+                 <td style="padding:6px 10px 6px 0;border-bottom:1px solid ${LINE};font-size:12.5px;font-weight:700;color:${BRAND};white-space:nowrap;vertical-align:top">actual ${esc(d.actual)}</td>
+                 ${d.gap ? `<td style="padding:6px 0;border-bottom:1px solid ${LINE};font-size:12.5px;font-weight:700;color:${tone.fg};white-space:nowrap;vertical-align:top">${esc(d.gap)}</td>` : '<td style="border-bottom:1px solid ' + LINE + '"></td>'}
+               </tr>`).join('')}
+             </table>
+           </div>`
+        : '';
+
+    /**
+     * THE INNOCENT EXPLANATION, printed by us.
+     *
+     * Naming the way we could be wrong is what makes the rest credible, and it
+     * tells the reader exactly which document would close the line.
+     */
+    const counter = f.counter
+        ? `<div style="margin:13px 0 0;padding:10px 12px;border-left:3px solid ${EDGE};background:${TINT}">
+             <div style="font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:${MUTED};font-weight:700">If we are wrong</div>
+             <div style="font-size:12.5px;line-height:1.6;color:${BODY};margin-top:4px">${esc(f.counter)}</div>
+           </div>`
+        : '';
+
+    /** The single decision wanted. Not "please check". */
+    const ask = f.ask
+        ? `<div style="margin:13px 0 0;padding:11px 13px;border:1px solid ${tone.dot};border-radius:4px">
+             <div style="font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:${tone.fg};font-weight:700">Correction wanted</div>
+             <div style="font-size:14px;line-height:1.55;color:${BRAND};margin-top:4px;font-weight:600">${esc(f.ask)}</div>
+           </div>`
+        : '';
+
+    /** How long this has been open without an answer. */
+    const age = f.ageDays && f.ageDays > 0
+        ? `<span style="font-size:11px;color:${MUTED};margin-left:8px">&middot; open ${f.ageDays} day${f.ageDays === 1 ? '' : 's'}</span>`
+        : '';
+
     return `
     <tr><td style="padding:0 0 16px">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${EDGE};border-radius:5px;background:${CARD};overflow:hidden">
@@ -252,6 +316,7 @@ function findingBlock(f: RoutedFinding, orgId: string, index: number, canDisposi
           <div style="display:block;margin-bottom:5px">
             <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${tone.dot};vertical-align:middle"></span>
             <span style="font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:${tone.fg};font-weight:700;vertical-align:middle;margin-left:6px">${index}. ${esc(tone.label)}</span>
+            ${age}
           </div>
           <div style="font-size:16px;font-weight:700;color:${BRAND};letter-spacing:-0.01em;line-height:1.35">${esc(f.title)}${f.amount !== null ? ` &mdash; ${inr(f.amount)}` : ''}</div>
           ${lineConcerns.length ? `<div style="margin-top:7px;padding:7px 10px;border-left:3px solid #B07206;background:${TINT};font-size:12px;line-height:1.5;color:${BODY}"><b style="color:${BRAND}">${esc(lineConcerns[0].reviewer)} flags:</b> ${lineConcerns.map((c) => esc(c.concern)).join(' ')}</div>` : ''}
@@ -261,6 +326,10 @@ function findingBlock(f: RoutedFinding, orgId: string, index: number, canDisposi
         <tr><td style="padding:14px 16px">
           <div style="font-size:13px;line-height:1.6;color:${BODY};white-space:pre-line">${esc(f.problem)}</div>
           ${stats}
+          ${evidence}
+          ${reconcile}
+          ${counter}
+          ${ask}
           ${refs}
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:14px 0 0">${actions}</table>
           ${canDisposition ? closeStrip(fb, replyTo, replySubject, multi) : statusStrip(status)}
@@ -298,6 +367,46 @@ export interface VettingStamp {
     concerns: Array<{ finding_key: string | null; concern: string }>;
 }
 
+/**
+ * WHERE NOT TO LOOK — the section that makes the rest believable.
+ *
+ * Three states, and the third is the one that matters:
+ *   clear    — asked, and nothing came back. "107 reference groups, 6 survivors."
+ *   skipped  — NOT asked, and why. A check that could not see its data must
+ *              never be read as a clean bill of health.
+ *   failed   — broke. Said out loud rather than swallowed.
+ */
+function coverageBlock(coverage: ScanCoverage | null): string {
+    if (!coverage?.checks.length) return '';
+    const row = (label: string, text: string, dot: string) => `
+        <tr>
+          <td style="padding:6px 9px 6px 0;vertical-align:top"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${dot}"></span></td>
+          <td style="padding:6px 10px 6px 0;font-size:12px;font-weight:700;color:${BRAND};white-space:nowrap;vertical-align:top">${esc(label)}</td>
+          <td style="padding:6px 0;font-size:12px;line-height:1.55;color:${BODY}">${esc(text)}</td>
+        </tr>`;
+
+    const rows = coverage.checks.map((c) => {
+        if (c.outcome === 'found') return row(c.id, `${c.found} raised above${c.cleared?.note ? ` — ${c.cleared.note}` : ''}`, '#B4543A');
+        if (c.outcome === 'clear') return row(c.id, c.cleared?.note ?? `looked at ${c.cleared?.looked ?? 0} ${c.cleared?.unit ?? 'records'}, nothing to raise`, '#0B6E5F');
+        if (c.outcome === 'skipped') return row(c.id, `not run — ${c.why ?? 'no reason given'}`, '#797E86');
+        return row(c.id, `FAILED — ${c.why ?? 'unknown error'}`, '#B07206');
+    }).join('');
+
+    return `
+      <tr><td style="padding:0 0 16px">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${EDGE};border-radius:5px;background:${CARD}">
+          <tr><td style="padding:14px 16px">
+            <div style="font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:${MUTED};font-weight:700">What else was checked</div>
+            <div style="font-size:12px;color:${BODY};line-height:1.6;margin:5px 0 9px">
+              ${coverage.ran} question${coverage.ran === 1 ? '' : 's'} asked of the data${coverage.skipped ? `, ${coverage.skipped} not asked` : ''}${coverage.failed ? `, ${coverage.failed} failed` : ''}.
+              A line marked <b style="color:${BRAND}">not run</b> is not a clean bill of health.
+            </div>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table>
+          </td></tr>
+        </table>
+      </td></tr>`;
+}
+
 export function renderRecipientEmail(
     bundle: RecipientBundle,
     orgId: string,
@@ -317,6 +426,14 @@ export function renderRecipientEmail(
     siteTag: SiteTag | null = null,
     /** Who vetted this run and what they concluded. Null = nobody did. */
     vetting: VettingStamp | null = null,
+    /**
+     * WHAT THE SCAN COVERED — every question asked, and what came back.
+     *
+     * Without this the mail can only say what it FOUND, and a quiet scan is
+     * indistinguishable from a broken one. Null renders nothing, so a caller
+     * that does not have it is unchanged.
+     */
+    coverage: ScanCoverage | null = null,
 ): RenderedEmail {
     const { counts, recipient, findings } = bundle;
 
@@ -353,6 +470,26 @@ export function renderRecipientEmail(
             ? `PO scan · ${dayLabel}${where} — ${top.title}${topMoney}`
             : `PO scan · ${dayLabel}${where} — ${top ? `${top.title}${others > 0 ? `, and ${others} more` : ''}` : `${open} to check`}${counts.exposure ? ` · ${inrShort(counts.exposure)}` : ''}`;
 
+    /**
+     * WHAT THE HEADLINE FIGURE ACTUALLY IS.
+     *
+     * This line read "None of it is billed yet, so it can still be stopped" —
+     * hardcoded, on every mail ever sent. On the 7 Sept scan all six findings
+     * were on orders Zoho has already billed, so the first sentence a reader saw
+     * contradicted every item under it. A summary that asserts the opposite of
+     * its own contents is worse than no summary.
+     *
+     * It is now read off the findings.
+     */
+    const billedCount = findings.filter((f) => f.exposure === 'billed' || f.exposure === 'paid').length;
+    const monetary = findings.filter((f) => (f.amount ?? 0) > 0).length;
+    const money =
+        billedCount === 0
+            ? 'is committed and none of it is billed yet, so it can still be stopped'
+            : billedCount === monetary
+                ? 'is on orders that have already been billed — past the point where cancelling fixes it, so what is left is a credit or debit note'
+                : `is committed, and ${billedCount} of these ${billedCount === 1 ? 'is' : 'are'} already billed — that part comes back only as a credit or debit note`;
+
     // FIRST SCREEN: health, count, critical, exposure. Nothing above this.
     const summary = `
       <tr><td style="padding:0 0 18px">
@@ -364,7 +501,7 @@ export function renderRecipientEmail(
                 : `${open} things need a look.`
             }</div>
             <div style="font-size:14px;line-height:1.65;color:${BODY};margin-top:7px">
-              ${counts.exposure ? `<b style="color:${BRAND}">${inr(counts.exposure)}</b> could be paid out on these. None of it is billed yet, so it can still be stopped. ` : ''}
+              ${counts.exposure ? `<b style="color:${BRAND}">${inr(counts.exposure)}</b> ${money}. ` : ''}
               ${counts.critical > 0 ? `${counts.critical === 1 ? 'One is' : `${counts.critical} are`} urgent. ` : ''}
               ${counts.closed ? `${counts.closed} ${counts.closed === 1 ? 'item was' : 'items were'} already answered and ${counts.closed === 1 ? 'is' : 'are'} shown below for the record. ` : ''}
             </div>
@@ -403,6 +540,7 @@ export function renderRecipientEmail(
         ${summary}
         ${linkNotice}
         ${findings.map((f, i) => findingBlock(f, orgId, i + 1, recipient.canDisposition, feedbackLinks[f.key], statuses[f.key], replyTo ?? undefined, replySubjects[f.key], findings.length > 1, vetting)).join('')}
+        ${coverageBlock(coverage)}
         ${recipient.canDisposition ? replyFooter(replyTo, findings.length > 1) : ''}
         ${attachmentNames.length ? `<tr><td style="padding:0 0 14px"><div style="padding:10px 12px;background:${TINT};border:1px solid ${LINE};border-radius:4px;font-size:11.5px;line-height:1.6;color:${BODY}"><strong style="color:${BRAND}">Attached:</strong> ${attachmentNames.map((n) => esc(n)).join(', ')}. Everything else is linked above rather than attached, to keep this email light.</div></td></tr>` : ''}
         <tr><td style="padding:4px 0 0;border-top:1px solid ${LINE}">

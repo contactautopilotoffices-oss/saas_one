@@ -118,7 +118,11 @@
     },
     {
       "path": "/api/cron/ira-digest",
-      "schedule": "0 * * * *"
+      "schedule": "30 * * * *"
+    },
+    {
+      "path": "/api/cron/sync-po-line-items",
+      "schedule": "*/15 * * * *"
     }
   ]
 }
