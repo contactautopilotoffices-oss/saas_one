@@ -122,6 +122,43 @@ export class ZohoService {
         return all;
     }
 
+    /**
+     * ONE purchase order, in full — the only endpoint that returns line items.
+     *
+     * The list endpoint used above carries headers only: vendor, total, status,
+     * dates, reference number. Descriptions, quantities, units and rates — the
+     * facts every rate, overlap and quantity question turns on — exist only
+     * here, one call per order.
+     *
+     * Returns null rather than throwing on a single bad order: a backfill of
+     * thousands must not stop because one of them 404s. A CREDENTIAL failure
+     * still throws, because that is not one order's problem.
+     */
+    static async getPurchaseOrderDetail(
+        zohoOrgId: string,
+        zohoPoId: string,
+        auth?: { token: string; apiDomain: string },
+    ): Promise<
+        | { ok: true; po: any; remaining: number | null }
+        | { ok: false; status: number; message: string; remaining: number | null }
+    > {
+        const { token, apiDomain } = auth ?? await this.getAccessToken();
+        const res = await fetch(
+            `${apiDomain}/books/v3/purchaseorders/${encodeURIComponent(zohoPoId)}?organization_id=${zohoOrgId}`,
+            { headers: { 'Authorization': `Zoho-oauthtoken ${token}` } },
+        );
+        // Zoho reports the org's remaining DAILY quota on every response. A
+        // backfill that runs it to zero takes every other Books integration in
+        // this app down with it, so the caller is given the number.
+        const header = res.headers.get('x-rate-limit-remaining');
+        const remaining = header !== null && header !== '' && Number.isFinite(Number(header)) ? Number(header) : null;
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data?.purchaseorder) {
+            return { ok: false, status: res.status, message: String(data?.message ?? `HTTP ${res.status}`), remaining };
+        }
+        return { ok: true, po: data.purchaseorder, remaining };
+    }
+
     private static async findOrCreateVendor(orgId: string, vendorName: string, accessToken: string, apiDomain: string): Promise<string> {
         // 1. Try Exact Match First
         const exactRes = await fetch(`${apiDomain}/books/v3/contacts?organization_id=${orgId}&contact_name=${encodeURIComponent(vendorName)}&contact_type=vendor`, {

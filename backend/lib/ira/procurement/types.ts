@@ -70,6 +70,61 @@ export interface RecipientAction {
 }
 
 /**
+ * ONE ROW OF EVIDENCE — the record, and the facts that make it evidence.
+ *
+ * A finding used to carry a bare list of PO numbers. A reader then had to open
+ * each one to learn what it said, which is the work we are supposed to have
+ * done for them. Compare:
+ *
+ *   before   PO-26/27-0053, PO-26/27-0054, PO-26/27-0055
+ *   after    PO-26/27-0053 — approved 07-Apr-2026 · ₹74,340 · Head Office ·
+ *            "Period - 01.04.2026 to 31.06.2026"
+ *
+ * `facts` is assembled from database columns by the check. It is never prose a
+ * model produced, and it never restates the finding — it states what THIS
+ * record says.
+ */
+export interface Evidence {
+    ref: EntityRef;
+    facts: string;
+}
+
+/**
+ * A SPECIFIC THING THAT DOES NOT ADD UP, stated as a comparison a reader can
+ * check. "The annuals run 8.09% over 4× the quarterlies" is a discrepancy;
+ * "the pricing looks inconsistent" is a feeling.
+ */
+export interface Discrepancy {
+    /** What is being compared. "Annual vs 4× the quarterly" */
+    what: string;
+    /** What the record would say if nothing were wrong. */
+    expected: string;
+    /** What it actually says. */
+    actual: string;
+    /** The difference, when it is worth naming separately. */
+    gap?: string | null;
+}
+
+/**
+ * WHERE THE MONEY STANDS. Not a size — a state.
+ *
+ * Every finding this agent has ever sent claimed money was "at stake", which
+ * flattened three different situations into one word and let a duplicate that
+ * had already been billed read exactly like one that could be cancelled in the
+ * morning. They call for different urgency, a different ask, and a different
+ * claim about what is recoverable.
+ */
+export type Exposure =
+    /** Nothing is billed. Cancel it today and the money never moves. */
+    | 'stoppable'
+    /** A bill exists. Cancelling no longer fixes it; a credit or debit note might. */
+    | 'billed'
+    /** Payment is confirmed against the record. Only recovery is left. */
+    | 'paid'
+    /** The finding is not about money. */
+    | 'none';
+
+/**
  * One adjudicated problem. This is what the AI returns (minus `amount`, which
  * the detector fills from SQL, and minus `refs[].id`, which is resolved here).
  */
@@ -90,6 +145,39 @@ export interface Finding {
     actions: RecipientAction[];
     /** Optional supporting numbers rendered as a small stat row. */
     stats?: Array<{ label: string; value: string }>;
+
+    /* --- the reasoning, made inspectable ---------------------------------
+     * Everything below is OPTIONAL and additive: a check that fills none of
+     * it renders exactly as it did before. A check that fills it produces a
+     * writeup a person can argue with, which is the whole difference between
+     * "same invoice on 2 POs" and a paragraph somebody acts on.
+     */
+
+    /** Where the money stands. Defaults to 'stoppable' only if a check says so. */
+    exposure?: Exposure;
+    /** The records, each with the facts that implicate it. */
+    evidence?: Evidence[];
+    /** What does not reconcile, as checkable comparisons. */
+    reconcile?: Discrepancy[];
+    /**
+     * THE INNOCENT EXPLANATION, stated by us before anyone else has to.
+     *
+     * "The fair counter is that Stalwart's card was frozen through the 1-April
+     * revision, so this may measure the cost of becoming compliant." Naming the
+     * way we could be wrong is what makes the rest credible — and it tells the
+     * reader exactly which document would close the line.
+     */
+    counter?: string | null;
+    /**
+     * THE ONE DECISION WANTED, imperative and singular.
+     *
+     * Not "please check". "Short-close the four April quarterlies, or reduce
+     * the five annuals to nine months — say which." A finding that does not
+     * name the decision leaves it to a meeting.
+     */
+    ask?: string | null;
+    /** Days since first raised. Filled from the store, never by a check. */
+    ageDays?: number | null;
 }
 
 /* ---------------------------------------------------------------------------

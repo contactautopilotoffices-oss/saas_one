@@ -10,8 +10,11 @@
  *                 the problem statement, what has already been said on it.
  *   blocked     — they are stuck. Acknowledge, restate what unblocks it, and
  *                 say the line stays open and will not be re-raised meanwhile.
- *   unmatched   — the reply carried no ref. Ask which line, list the open refs
- *                 addressed to them in the last digest so they can copy one.
+ *   unmatched   — the reply carried no ref AND names no line we still hold, so
+ *                 ask which line and list what is open for them to copy. The
+ *                 CALLER bounds this to mail that arrived since the last pass:
+ *                 the ask is the one thing here that is not idempotent, and
+ *                 unbounded it re-asks every quarter hour for a day.
  *
  * WHAT IT NEVER DOES
  *   - invent a number: every figure in the reply is copied from the finding
@@ -21,7 +24,9 @@
  *     disposition loop is human-only.
  *   - reply twice to the same person on the same line in 24h. A model that
  *     answers its own answers is how a mailbox fills with an agent talking to
- *     itself; the guard is an event row with source 'agent'.
+ *     itself; the guard is an event row with source 'agent'. NOTE that the
+ *     unmatched branch returns before that guard — it has no line to hang an
+ *     event on — so its repeat-protection lives in the caller's askSince.
  *   - start a new thread. In-Reply-To carries the person's Message-ID so the
  *     answer files under their question.
  *
@@ -57,6 +62,9 @@ export interface RespondOutcome {
 /** One answer per person per line per day. */
 const ANSWER_COOLDOWN_H = 24;
 
+/** A "which line?" mail is a prompt, not an inventory. Eight is already a lot. */
+const MAX_REFS_LISTED = 8;
+
 /**
  * ACKNOWLEDGE EVERY ANSWER, IMMEDIATELY.
  *
@@ -71,18 +79,29 @@ const ANSWER_COOLDOWN_H = 24;
  */
 export function acknowledgement(
     name: string | null, poLabels: string[], disposition: Disposition, note: string, ref: string,
+    /** Their subject, so the reply lands in their thread instead of opening one. */
+    inSubject?: string,
 ): { subject: string; body: string } {
     const spec = DISPOSITION_SPECS[disposition];
-    const where = poLabels.length ? poLabels.join(', ') : ref;
-    const kept = note.trim() ? `\n\nWhat I recorded, in your words:\n  "${note.trim().slice(0, 500)}"` : '';
+    const where = poLabels.length ? poLabels.join(' and ') : ref;
     const consequence = spec.closes
-        ? 'This line is closed. It will not come back in tomorrow\'s scan.'
+        ? 'It won\'t come back in tomorrow\'s scan.'
         : disposition === 'in_progress'
-            ? 'Left open and marked in progress, so it will not be escalated while you are on it.'
-            : 'Left open — tell me when it moves.';
+            ? 'I\'ll leave it open and won\'t chase you on it meanwhile.'
+            : 'Leaving it open — tell me when it moves.';
+    /**
+     * A person replies IN the thread. The old subject — "Got it — PO-25/26-173,
+     * PO-25/26-031" — opened a new conversation in every mail client, so an
+     * answer to a question arrived detached from the question.
+     */
+    const subject = inSubject
+        ? `Re: ${inSubject.replace(/^(\s*(re|fwd|fw)\s*:\s*)+/i, '')}`
+        : `Re: ${where}`;
+    // First name only. "Thanks Vidya Pawar" is how a form letter opens.
+    const first = name?.trim().split(/\s+/)[0] ?? null;
     return {
-        subject: `Got it — ${where}`,
-        body: `${name ? `Thanks ${name}.` : 'Thanks.'} Filed against ${where} as "${spec.label}".${kept}\n\n${consequence}\n\nIf I have filed this against the wrong order, just reply and say so.\n\n— Ira`,
+        subject,
+        body: `${first ? `Thanks ${first} —` : 'Thanks —'} noted against ${where} as "${spec.label.toLowerCase()}". ${consequence}\n\nIf that's the wrong order, just say so and I'll move it.\n\n— Ira`,
     };
 }
 
@@ -172,7 +191,7 @@ export async function respondToReply(
     orgId: string,
     agentKey: string,
     r: ReplyNeedingAnswer,
-    cfg: { enabled: boolean; on: Array<'need_info' | 'blocked'>; replyTo: string | null; openRefsForSender?: string[] },
+    cfg: { enabled: boolean; on: Array<'need_info' | 'blocked'>; replyTo: string | null; openRefs?: string[] },
 ): Promise<RespondOutcome> {
     if (!cfg.enabled) return { sent: false, why: 'respond is off for this agent' };
     if (r.because !== 'unmatched' && !cfg.on.includes(r.because)) {
@@ -181,12 +200,16 @@ export async function respondToReply(
 
     // ---- unmatched: ask which line, without a model ------------------------
     if (r.because === 'unmatched' || !r.findingId) {
-        const refs = cfg.openRefsForSender ?? [];
+        const refs = (cfg.openRefs ?? []).slice(0, MAX_REFS_LISTED);
         const body = [
             `Thanks — I couldn't tell which line this is about.`,
             refs.length
-                ? `Open lines addressed to you right now:\n${refs.map((x) => `  ${x}`).join('\n')}\n\nReply with the ref at the start (e.g. "${refs[0]} done, credit note raised") and I'll file it against that line.`
-                : `Reply with the ref shown on the line (it looks like IRA-XXXXXXXX) at the start of your message and I'll file it against that line.`,
+                // "Open lines addressed to you" was not true: the list handed in
+                // is every line still open, for everyone. Nothing stores which
+                // finding went to which person, so the copy now says what the
+                // list actually is.
+                ? `Still open, across all sites:\n${refs.map((x) => `  ${x}`).join('\n')}\n\nReply with the ref at the start (e.g. "${refs[0].split(' ')[0]} done, credit note raised") and I'll file it against that line. A PO number works too.`
+                : `Reply with the ref shown on the line (it looks like IRA-XXXXXXXX) at the start of your message and I'll file it against that line. A PO number works too.`,
             `— Ira`,
         ].join('\n\n');
         try {

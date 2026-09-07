@@ -1,11 +1,16 @@
 /**
  * IRA DAILY DIGEST — the scheduled send.
  *
- * vercel.json fires this at 05:30 UTC = 11:00 IST, every day.
+ * vercel.json wakes this at HALF PAST each UTC hour, and IST is UTC+5:30, so
+ * every wake lands on the hour in Indian time: 05:30 UTC = 11:00 IST.
+ *
+ * That minute is load-bearing and was wrong. The schedule read `0 * * * *`,
+ * which wakes on the UTC hour and therefore at 11:30 IST — an agent configured
+ * for 11:00 could never be sent at 11:00, only half an hour late, every day.
  *
  * WHY THE CRON TIME IS FIXED BUT THE AGENT'S IS NOT
  * Vercel's schedule is static in vercel.json; it cannot be changed from the
- * console. So this fires HOURLY-ACCURATE at 11:00 IST and then checks each
+ * console. So this wakes every hour, on the hour IST, and then checks each
  * agent's own runtime.schedule_cron hour before sending. An operator moving the
  * digest to 09:00 in the console changes the send; the cron just wakes up.
  * Without that check, runtime.schedule_cron would stay decorative — which it is
@@ -20,6 +25,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { withAgentRun, dailyRunKey } from '@/backend/lib/agents/instrument';
 import { scanPurchaseOrders } from '@/backend/lib/ira/procurement/detectLive';
+import { SINGLETON_CHECK_IDS } from '@/backend/lib/ira/procurement/checks';
 import { windowFor, type Cadence } from '@/backend/lib/ira/procurement/cadence';
 import { applyPriorDispositions, rememberFindings, loadDispositionStatuses, resolveVanishedFindings } from '@/backend/lib/ira/procurement/memory';
 import { routeFindings } from '@/backend/lib/ira/procurement/router';
@@ -97,9 +103,31 @@ export async function GET(request: NextRequest) {
                 const cadence: Cadence = 'daily';
                 const w = windowFor(cadence, now);
 
+                /**
+                 * STRICTLY THE WINDOW.
+                 *
+                 * A previous version carried unanswered findings forward into
+                 * today's scan. It produced a mail headed "7 Sept" citing
+                 * purchase orders raised in MAY 2025, which was read to a team as
+                 * though it were news. Nothing may re-date a finding: the scan
+                 * reports what happened in the last 24 hours and nothing else.
+                 */
                 const s = await step(`Scanning ${w.label}`, 'fetch');
-                const { findings: raw, stats } = await scanPurchaseOrders(orgId, w.to, w);
+                const { findings: raw, stats, coverage } = await scanPurchaseOrders(orgId, w.to, w);
                 await s.ok({ detail: { ...stats, window: w.label } });
+
+                /**
+                 * WHAT THE SCAN COVERED, in the run log, every time.
+                 *
+                 * A quiet mail and a broken scan look identical from outside. This
+                 * is the row that tells them apart: which questions were asked,
+                 * which came back clear, and which could not run at all.
+                 */
+                const cov = await step(
+                    `${coverage.ran} check(s) ran, ${coverage.skipped} skipped, ${coverage.failed} failed`,
+                    'decide',
+                );
+                await cov.ok({ detail: { checks: coverage.checks } });
 
                 const mem = await applyPriorDispositions(orgId, AGENT_KEY, raw);
                 await rememberFindings(orgId, AGENT_KEY, null, mem.findings);
@@ -111,15 +139,18 @@ export async function GET(request: NextRequest) {
                  * raised on 5 Sept, the sync run an hour later, and the row still
                  * open and being quoted as current two days on.
                  *
-                 * Only the singleton checks are eligible — a scan either raises
+                 * Only the structural checks are eligible — a scan either raises
                  * them or does not, so absence is meaningful. Per-record findings
                  * (a specific duplicate) are excluded: they can vanish because the
                  * window moved, not because anything was fixed, and closing those
                  * would be a lie about coverage.
+                 *
+                 * The list comes from the check registry, not from a copy kept
+                 * here: a hand-maintained duplicate drifts the moment a check is
+                 * added, and the failure is silent — a finding that never closes.
                  */
-                const SINGLETON_CHECKS = ['po-feed-stale', 'vendor-name-variants', 'approved-without-workflow-state'];
                 const stillPresent = raw.map((f) => f.key);
-                const vanished = await resolveVanishedFindings(orgId, AGENT_KEY, SINGLETON_CHECKS, stillPresent);
+                const vanished = await resolveVanishedFindings(orgId, AGENT_KEY, SINGLETON_CHECK_IDS, stillPresent);
                 if (vanished.resolved.length) {
                     const v = await step(`${vanished.resolved.length} finding(s) no longer detected — closed`, 'decide');
                     await v.ok({ detail: { resolved: vanished.resolved } });
@@ -182,6 +213,9 @@ export async function GET(request: NextRequest) {
                             slice.bundle, orgId, now, links, [], delivery.replyTo, subjects, statuses,
                             slice.label ? { label: slice.label, owners: slice.ownerNames } : null,
                             stamp,
+                            // What else was asked of the data, and what was not
+                            // asked at all. A quiet mail has to say which.
+                            coverage,
                         );
 
                         const st = await step(`Emailing ${who} (${slice.to.length})`, 'notify',
