@@ -20,8 +20,14 @@
  * The previous version `continue`d on a missing subject tag and the answer
  * vanished without a trace in the run log.
  *
+ * Refs resolve against EVERY finding, open or answered. A reply stays in the
+ * lookback window for 24h after it is applied, and a line that no longer
+ * resolves reads as `unmatched` — which is how one answered reply turned into
+ * ~190 identical "which line is this?" mails in a day. Recognising a closed
+ * line is what tells us to say nothing.
+ *
  * The ref is derived from the finding, so nothing has to be stored to resolve
- * it — we recompute refs for the org's open findings and match.
+ * it — we recompute refs for the org's findings and match.
  *
  * ── WHO IS ALLOWED TO CLOSE A LINE ──────────────────────────────────────────
  * The sender address must resolve to a real user WITH A MEMBERSHIP IN THIS
@@ -32,7 +38,7 @@
 import { ZohoMailService, grantOwning } from '@/backend/services/zohoMailService';
 import { grantForMailbox, noteMailAccountResult } from '@/backend/lib/mail/accounts';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
-import { parseReply, replyTag, tagFromSubject, tagsFromText, segmentsByTag, stripQuotedText, poNumbersFromText } from './reply';
+import { parseReply, replyTag, tagFromSubject, tagsFromText, segmentsByTag, stripQuotedText, stripSignature, signOffName, poNumbersFromText } from './reply';
 import { DISPOSITION_SPECS, signalFor, type Disposition } from './disposition';
 
 /** Feedback coins, mirroring the console's DEFAULT_COINS. */
@@ -77,7 +83,36 @@ export interface CollectResult {
     errors: string[];
 }
 
-interface OpenFinding { id: string; finding_key: string; title: string; refs?: Array<{ label?: string }> | null }
+interface KnownFinding {
+    id: string; finding_key: string; title: string;
+    refs?: Array<{ label?: string }> | null;
+    /** Null while the line is open. Set once somebody has answered it. */
+    disposition: string | null;
+}
+
+/** How many of the agent's findings we resolve replies against, newest first. */
+const FINDING_LOOKUP_LIMIT = 500;
+
+export interface CollectOptions {
+    /**
+     * Only ASK "which line is this?" about mail that arrived after this.
+     *
+     * `since` is deliberately wide (24h) so no answer is ever missed, and
+     * re-applying an answer is free — the `.is('disposition', null)` guard makes
+     * it a no-op. Asking a QUESTION is not free: it is a new mail every time.
+     * So the ask is bounded by the last pass, and an unplaceable reply is asked
+     * about once rather than once per poll for a day.
+     */
+    askSince?: Date;
+    /**
+     * Addresses that are us. Mail from any of them is our own outbound and is
+     * never a reply — including the digests that land in a colleague's mailbox
+     * that we also poll. Previously only mail from the mailbox being read was
+     * skipped, so Ira read her own digests out of the second mailbox and was one
+     * seeded user row away from answering herself.
+     */
+    selfAddresses?: string[];
+}
 
 /** Compare subjects and titles without punctuation, case or spacing getting in the way. */
 const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -96,17 +131,36 @@ export async function collectIraReplies(
     agentKey: string,
     since: Date,
     mailbox?: string,
+    opts?: CollectOptions,
 ): Promise<CollectResult> {
     const out: CollectResult = { scanned: 0, matched: 0, applied: 0, ignored: [], needsAnswer: [], applied_replies: [], errors: [] };
     const box = (mailbox ?? '').toLowerCase();
+    const askSince = opts?.askSince ?? since;
+    const self = new Set((opts?.selfAddresses ?? []).map((a) => a.toLowerCase().trim()).filter(Boolean));
 
-    // 1. Open findings, and the ref each one answers to.
+    /**
+     * 1. EVERY finding, not only the open ones, and the ref each answers to.
+     *
+     * This used to read `.is('disposition', null)`, and that one clause put the
+     * mailbox into a loop. A reply is applied ONCE — the line becomes
+     * 'in_progress' — and then stays in the 24h lookback window for another day.
+     * On every pass after that the line it names is no longer open, so nothing
+     * matched, so the reply was re-read as `unmatched` and answered again: 2
+     * mails every 15 minutes, ~190 a day, all identical, all to the person who
+     * had already been told her answer was recorded.
+     *
+     * Identification and mutation are different questions. We resolve a reply
+     * against every finding, then refuse to CHANGE one that is already
+     * dispositioned. Recognising a line we have closed is exactly how we know
+     * to say nothing.
+     */
     const { data: findings, error: fErr } = await supabaseAdmin
         .from('oem_agent_findings')
-        .select('id, finding_key, title, refs')
+        .select('id, finding_key, title, refs, disposition')
         .eq('organization_id', orgId)
         .eq('agent_key', agentKey)
-        .is('disposition', null);
+        .order('last_seen_at', { ascending: false })
+        .limit(FINDING_LOOKUP_LIMIT);
 
     if (fErr) {
         out.errors.push(`findings store unavailable: ${fErr.message}`);
@@ -114,7 +168,11 @@ export async function collectIraReplies(
     }
     if (!findings?.length) return out;
 
-    const byTag = new Map<string, OpenFinding>();
+    // Open lines claim a PO number or a title first: when two findings answer to
+    // the same words, the one still needing an answer is the one they meant.
+    const ordered = [...findings].sort((a, b) => Number(Boolean(a.disposition)) - Number(Boolean(b.disposition)));
+
+    const byTag = new Map<string, KnownFinding>();
     /** PO number -> the ref that answers for it. What people actually type. */
     const byPoNumber = new Map<string, string>();
     /**
@@ -127,11 +185,12 @@ export async function collectIraReplies(
      * is exactly what happened the first time somebody actually replied.
      */
     const byTitle = new Map<string, string>();
-    for (const f of findings) {
+    for (const f of ordered) {
         const tag = replyTag(orgId, agentKey, String(f.finding_key));
         byTag.set(tag, {
             id: String(f.id), finding_key: String(f.finding_key), title: String(f.title ?? ''),
             refs: (f as { refs?: Array<{ label?: string }> }).refs ?? [],
+            disposition: (f as { disposition?: string | null }).disposition ?? null,
         });
         const title = norm(String(f.title ?? ''));
         if (title.length >= 12 && !byTitle.has(title)) byTitle.set(title, tag);
@@ -180,7 +239,7 @@ export async function collectIraReplies(
     for (const msg of messages) {
         const senderEmail = (msg.fromAddress ?? '').toLowerCase().trim();
         // Our own outbound mail, and anything the agent itself sent, is not a reply.
-        if (!senderEmail || senderEmail === box) continue;
+        if (!senderEmail || senderEmail === box || self.has(senderEmail)) continue;
         const subject = msg.subject ?? '';
         const subjectTag = tagFromSubject(subject);
 
@@ -213,6 +272,15 @@ export async function collectIraReplies(
             // Fall back to the summary rather than losing the reply entirely.
         }
         const ownText = stripQuotedText(raw);
+        /**
+         * WHO WROTE THIS, as opposed to who owns the address.
+         *
+         * purchase@worksquare.in is a shared mailbox registered to one person in
+         * `users`. Reading the greeting off that row thanked Priyanka for a mail
+         * Vidya wrote and signed. Header name first, then how they signed off,
+         * then nothing — a missing name is better than the wrong one.
+         */
+        const writer = msg.fromName ?? signOffName(ownText);
 
         /**
          * WHICH LINE IS THIS ABOUT, in order of how much we trust it:
@@ -263,6 +331,21 @@ export async function collectIraReplies(
             const isOurThread = quotedTags.length > 0
                 || (IS_REPLY.test(subject) && (/\bira\b/i.test(subject) || normSubject.includes(SCAN_MARKER)));
             if (!isOurThread) continue; // genuinely unrelated mail in a shared inbox
+
+            /**
+             * ASKED ALREADY, ON AN EARLIER PASS.
+             *
+             * The read window is a day wide, and re-reading is free for
+             * everything else here — a disposition re-applied is a no-op. A
+             * QUESTION is not: it is a new mail every pass. Bound it to what has
+             * arrived since the last run.
+             */
+            const arrived = Date.parse(msg.sentAt ?? '');
+            if (Number.isFinite(arrived) && arrived < askSince.getTime()) {
+                out.ignored.push({ from: senderEmail, subject, reason: 'could not place the line — asked on an earlier pass, not asking again' });
+                continue;
+            }
+
             // Only answer a person we can actually place in this org. An inbox is
             // a public surface; replying to an unknown sender is a way to be used
             // as a mailer.
@@ -306,12 +389,26 @@ export async function collectIraReplies(
         for (const seg of segmentsByTag(ownText, tags)) {
             const finding = byTag.get(seg.tag);
             if (!finding) {
-                out.ignored.push({ from: senderEmail, subject, reason: `ref ${seg.tag} matches no open line (already closed, or not this agent's)` });
+                out.ignored.push({ from: senderEmail, subject, reason: `ref ${seg.tag} matches no line of this agent's` });
                 continue;
             }
             out.matched++;
 
-            const parsed = parseReply(seg.text);
+            /**
+             * Already answered. This is the same mail, still inside the lookback
+             * window, on a line somebody has since dispositioned — and it is the
+             * common case, because a reply lives in that window for 24h after it
+             * lands. The person was acknowledged when it was applied. Say
+             * nothing, change nothing, and record why.
+             */
+            if (finding.disposition) {
+                out.ignored.push({ from: senderEmail, subject, reason: `${seg.tag} was already answered ("${finding.disposition}") — nothing to change` });
+                continue;
+            }
+
+            // Their words, without the sign-off, job title, phone number and
+            // confidentiality footer. What gets recorded is what gets quoted back.
+            const parsed = parseReply(stripSignature(seg.text));
             const spec = DISPOSITION_SPECS[parsed.disposition];
 
             // Copied in, not asked. Keep what was said; change nothing.
@@ -377,7 +474,7 @@ export async function collectIraReplies(
                 findingId: finding.id, findingKey: finding.finding_key, findingTitle: finding.title,
                 poLabels: (finding.refs ?? []).map((r) => String(r?.label ?? '')).filter(Boolean),
                 disposition: parsed.disposition, note: parsed.note,
-                senderEmail, senderName: user.full_name ?? null,
+                senderEmail, senderName: writer,
                 subject, messageId: msg.messageId, mailbox: box,
             });
 
@@ -386,7 +483,7 @@ export async function collectIraReplies(
                 out.needsAnswer.push({
                     findingId: finding.id, findingKey: finding.finding_key, findingTitle: finding.title,
                     because: parsed.disposition, disposition: parsed.disposition,
-                    senderEmail, senderUserId: user.id, senderName: user.full_name ?? null,
+                    senderEmail, senderUserId: user.id, senderName: writer,
                     text: seg.text, subject, messageId: msg.messageId, mailbox: box,
                 });
             }

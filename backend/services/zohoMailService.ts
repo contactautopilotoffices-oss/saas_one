@@ -13,6 +13,8 @@ export interface ZohoMailMessage {
     subject: string;
     summary: string;
     fromAddress: string;
+    /** The display name on the From header, when there is one. "Vidya Pawar". */
+    fromName: string | null;
     toAddress: string[];
     ccAddress: string[];
     sentAt: string;             // ISO
@@ -572,6 +574,7 @@ export class ZohoMailService {
             subject: decodeEntities(m?.subject || ''),
             summary: decodeEntities(m?.summary || ''),
             fromAddress: parseAddresses(m?.fromAddress)[0] || '',
+            fromName: displayName(m?.fromAddress),
             toAddress: parseAddresses(m?.toAddress),
             ccAddress: parseAddresses(m?.ccAddress),
             sentAt: new Date(ms).toISOString(),
@@ -587,6 +590,25 @@ function decodeEntities(s: string): string {
         .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
         .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
         .trim();
+}
+
+/**
+ * The human name in front of the address, if the sender's client put one there.
+ *
+ * Matters for SHARED mailboxes: purchase@ is one address and several people, so
+ * the name on the header is better evidence of who wrote than any row keyed on
+ * the address. Returns null when the name is just the mailbox again ("purchase")
+ * or missing, so the caller can fall back rather than greet the wrong person.
+ */
+function displayName(raw: unknown): string | null {
+    if (!raw) return null;
+    const decoded = decodeEntities(String(raw));
+    const before = decoded.split('<')[0].replace(/["']/g, '').trim();
+    if (!before || before.includes('@')) return null;
+    const local = (parseAddresses(raw)[0] ?? '').split('@')[0].toLowerCase();
+    if (!before.replace(/[^a-z]/gi, '').length) return null;
+    if (before.toLowerCase().replace(/[^a-z0-9]/g, '') === local.replace(/[^a-z0-9]/g, '')) return null;
+    return before.slice(0, 80);
 }
 
 function parseAddresses(raw: unknown): string[] {

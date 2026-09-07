@@ -149,6 +149,71 @@ export function stripQuotedText(body: string): string {
 }
 
 /**
+ * Where a person stops writing and their mail client starts.
+ *
+ * A sign-off, a job title, a phone number, a company address and eleven lines
+ * of confidentiality boilerplate are not part of what somebody told us. Quoting
+ * all of it back at them — which is what "What I recorded, in your words" did —
+ * reads like a machine, because no colleague has ever done it.
+ */
+const SIGN_OFF = /^\s*(thanks?( (and|&) regards)?|thank you|regards|best( regards)?|warm regards|kind regards|sincerely|cheers|yours (truly|faithfully|sincerely))\s*[,.!]*\s*$/i;
+const BOILERPLATE = [
+    /^\s*-{2,}\s*$/,                                     // the standard sig delimiter
+    /the information contained in this/i,
+    /this (e-?mail|message) (and any|is|may)/i,
+    /confidential and is directed/i,
+    /if you are not the intended/i,
+    /^\s*disclaimer\s*:?\s*$/i,
+];
+
+/** A line that is contact furniture rather than a sentence. */
+const CONTACT_LINE = /(\+?\d[\d\s()-]{7,}|@[\w.-]+\.\w+|https?:\/\/|www\.|\.com\b|\.in\b)/i;
+
+/**
+ * The person's own words, without the signature block.
+ *
+ * Cuts at the first sign-off or boilerplate line. If that would leave nothing —
+ * a reply that is only "Thanks" — the original is kept, because an empty note
+ * records less than a short one.
+ */
+export function stripSignature(text: string): string {
+    const lines = text.split('\n');
+    let cut = lines.length;
+    for (let i = 0; i < lines.length; i++) {
+        if (SIGN_OFF.test(lines[i]) || BOILERPLATE.some((re) => re.test(lines[i]))) { cut = i; break; }
+    }
+    const kept = lines.slice(0, cut).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+    return kept || text.trim();
+}
+
+/**
+ * Who actually wrote this, from how they signed it.
+ *
+ * purchase@worksquare.in is a SHARED mailbox. The users table maps that address
+ * to one person, so an acknowledgement addressed from the row greeted Priyanka
+ * for a mail Vidya had written and signed. The name in the message is evidence;
+ * the name attached to the address is a guess. Returns null rather than guess.
+ */
+export function signOffName(text: string): string | null {
+    const lines = text.split('\n').map((l) => l.trim());
+    for (let i = 0; i < lines.length; i++) {
+        if (!SIGN_OFF.test(lines[i])) continue;
+        for (let j = i + 1; j < Math.min(i + 4, lines.length); j++) {
+            const candidate = lines[j];
+            if (!candidate || CONTACT_LINE.test(candidate)) continue;
+            const words = candidate.split(/\s+/);
+            // A name, not a job title or a company line: two or three words, no
+            // punctuation doing work, nothing longer than a name gets.
+            if (words.length >= 1 && words.length <= 3 && candidate.length <= 40 && /^[\p{L}][\p{L}.'-]*(\s+[\p{L}][\p{L}.'-]*){0,2}$/u.test(candidate)) {
+                return candidate;
+            }
+            break;
+        }
+    }
+    return null;
+}
+
+/**
  * Read a disposition out of prose, deterministically.
  *
  * Rules first, model never — per docs/IRA_ARCHITECTURE_DECISION.md the AI

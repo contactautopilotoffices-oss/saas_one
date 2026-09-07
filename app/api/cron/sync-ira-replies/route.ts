@@ -20,6 +20,16 @@
  * 15 minutes. Overlap is free — a reply already applied is skipped by the
  * `.is('disposition', null)` guard in the collector — whereas a gap silently
  * loses somebody's answer, and they will not send it twice.
+ *
+ * OVERLAP IS FREE FOR READS, NOT FOR SENDS. That distinction was missing and it
+ * cost ~190 identical mails in a day: an answered reply stays in the 24h window,
+ * stopped matching once its line was dispositioned, and was re-read as
+ * "unmatched" on all 96 passes — twice over, because it sat in two polled
+ * mailboxes. Three separate bounds now hold it:
+ *   - the collector resolves refs against answered lines too, and stays quiet
+ *     on one that is already dispositioned;
+ *   - a question is only asked about mail newer than the last pass (askSince);
+ *   - the same reply seen in two mailboxes is answered once.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -37,6 +47,40 @@ export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
 
 const AGENT_KEY = 'ira';
+
+/** Stamped on every run of THIS job, so a pass can find where the last one got to. */
+const RUN_REF = 'ira:replies';
+
+/** If we cannot see the previous pass, ask only about mail newer than this. */
+const ASK_FALLBACK_MIN = 25;
+
+/**
+ * WHERE THE LAST PASS GOT TO.
+ *
+ * The read window is a day wide on purpose — a reply that is applied twice is a
+ * no-op, and a reply that is missed is somebody's answer thrown away. But an
+ * ASK is not idempotent: every pass that cannot place a reply sends a fresh
+ * mail. So questions are bounded by the previous run, and an unplaceable reply
+ * is asked about once rather than 96 times a day.
+ *
+ * Falls back to a single cron interval when the run log has nothing to say —
+ * the fallback errs towards asking too little, because too much is what this is
+ * here to stop.
+ */
+async function askSinceFor(orgId: string): Promise<Date> {
+    const fallback = new Date(Date.now() - ASK_FALLBACK_MIN * 60_000);
+    try {
+        const { data } = await supabaseAdmin
+            .from('oem_agent_runs')
+            .select('started_at')
+            .eq('organization_id', orgId).eq('agent_key', AGENT_KEY).eq('entity_ref', RUN_REF)
+            .order('started_at', { ascending: false }).limit(1).maybeSingle();
+        const t = data?.started_at ? Date.parse(String(data.started_at)) : NaN;
+        return Number.isFinite(t) ? new Date(t) : fallback;
+    } catch {
+        return fallback;
+    }
+}
 
 /** Every mailbox this org's agent reads. Falls back to the env default so nothing goes dark. */
 function mailboxesFor(runtime: AgentRuntimeConfig | null): string[] {
@@ -74,6 +118,11 @@ export async function GET(request: NextRequest) {
         const mailboxes = mailboxesFor(runtime);
         const delivery = await resolveDelivery(orgId, AGENT_KEY);
         const shadow = String(a.status) === 'shadow';
+        const askSince = await askSinceFor(orgId);
+        // Anything sent AS Ira is our own outbound wherever it turns up — she
+        // polls mailboxes that are also on the digest's To line.
+        const selfAddresses = [delivery.from, delivery.replyTo, runtime?.inbox?.from]
+            .map((x) => String(x ?? '').toLowerCase().trim()).filter(Boolean);
 
         const r = await withAgentRun(
             {
@@ -89,7 +138,7 @@ export async function GET(request: NextRequest) {
 
                 for (const box of mailboxes) {
                     const s = await step(`Reading ${box} since ${since.toISOString().slice(0, 16)}`, 'fetch', { mailbox: box });
-                    const c = await collectIraReplies(orgId, AGENT_KEY, since, box);
+                    const c = await collectIraReplies(orgId, AGENT_KEY, since, box, { askSince, selfAddresses });
                     scanned += c.scanned; matched += c.matched; applied += c.applied;
                     ignored.push(...c.ignored.map((i) => ({ ...i, mailbox: box })));
                     needsAnswer.push(...c.needsAnswer);
@@ -120,7 +169,7 @@ export async function GET(request: NextRequest) {
                     for (const a of appliedReplies) {
                         const msg = acknowledgement(
                             a.senderName, a.poLabels, a.disposition, a.note,
-                            replyTag(orgId, AGENT_KEY, a.findingKey),
+                            replyTag(orgId, AGENT_KEY, a.findingKey), a.subject,
                         );
                         try {
                             await sendDigest(
@@ -139,18 +188,38 @@ export async function GET(request: NextRequest) {
                 // Answer back — only where the console says to, never in shadow.
                 const answered: string[] = [];
                 const notAnswered: string[] = [];
-                if (needsAnswer.length) {
-                    const st = await step(`${needsAnswer.length} reply(ies) asked something`, 'notify');
-                    // The open refs addressed to a sender, so "which line?" can list them.
+                /**
+                 * ONE MAIL PER REPLY, not one per mailbox it landed in.
+                 *
+                 * A digest addressed to two people whose mailboxes are both
+                 * polled comes back as the same reply twice, with a different
+                 * per-account message id each time. Answering both sends the
+                 * sender two identical mails.
+                 */
+                const seen = new Set<string>();
+                const toAnswer = needsAnswer.filter((n) => {
+                    const k = `${n.senderEmail}|${n.findingId ?? ''}|${n.subject.trim().toLowerCase()}`;
+                    if (seen.has(k)) return false;
+                    seen.add(k);
+                    return true;
+                });
+
+                if (toAnswer.length) {
+                    const st = await step(`${toAnswer.length} reply(ies) asked something`, 'notify');
+                    // The lines still open, so "which line?" can offer something to
+                    // quote. NOT "addressed to you": routing is decided at send time
+                    // and not stored per finding, so claiming these are the sender's
+                    // own would be a claim we cannot support.
                     const { data: open } = await supabaseAdmin
                         .from('oem_agent_findings').select('finding_key, title')
-                        .eq('organization_id', orgId).eq('agent_key', AGENT_KEY).is('disposition', null).limit(20);
+                        .eq('organization_id', orgId).eq('agent_key', AGENT_KEY).is('disposition', null)
+                        .order('last_seen_at', { ascending: false }).limit(8);
                     const openRefs = (open ?? []).map((f) => `${replyTag(orgId, AGENT_KEY, String(f.finding_key))} — ${String(f.title).slice(0, 60)}`);
-                    for (const n of needsAnswer) {
+                    for (const n of toAnswer) {
                         if (shadow) { notAnswered.push(`${n.senderEmail}: shadow, not sent`); continue; }
                         const o = await respondToReply(orgId, AGENT_KEY, n, {
                             enabled: delivery.respond.enabled, on: delivery.respond.on,
-                            replyTo: delivery.replyTo, openRefsForSender: openRefs,
+                            replyTo: delivery.replyTo, openRefs,
                         });
                         (o.sent ? answered : notAnswered).push(`${n.senderEmail} (${n.because}): ${o.why}`);
                     }
@@ -164,6 +233,8 @@ export async function GET(request: NextRequest) {
                         ? `Closed ${applied} line(s) from ${matched} matched reply(ies) across ${mailboxes.length} mailbox(es)${answered.length ? `, answered ${answered.length}` : ''}.`
                         : `No replies applied${matched ? ` (${matched} matched but not applied)` : ''} across ${mailboxes.length} mailbox(es)${answered.length ? `, answered ${answered.length}` : ''}.`,
                     status: (applied === 0 && answered.length === 0 ? 'skipped' : 'succeeded') as 'skipped' | 'succeeded',
+                    // How the next pass finds where this one got to. See askSinceFor().
+                    entityRef: RUN_REF,
                     grounded: true,
                     result: { mailboxes, scanned, matched, applied, acknowledged: acked, ignored, answered, notAnswered, errors },
                 };

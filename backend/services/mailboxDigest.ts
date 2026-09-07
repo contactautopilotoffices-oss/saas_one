@@ -370,6 +370,8 @@ function mergeThreadMessages(thread: ZohoMailThread, prior?: StoredMessage[]): Z
             subject: p.subject || '',
             summary: p.summary || '',
             fromAddress: p.from || '',
+            // Stored rows predate the display name; the live copy carries it.
+            fromName: null,
             toAddress: p.to || [],
             ccAddress: p.cc || [],
             sentAt: p.sent_at,
