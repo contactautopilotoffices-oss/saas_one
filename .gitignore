@@ -74,3 +74,19 @@ scratch_check.mjs
 # session scratch
 scratch/
 .env.bak.*
+
+# ── Local AI tooling and vendored reference material ────────────────────────
+# Removed from tracking on 7 Sep 2026: these added ~39 MB and 380,000 lines to
+# the repository without being application code. .claude/skills and
+# .agents/skills are near-identical copies of the same Claude Code skill
+# definitions; docs/design-references is vendored reference material read by a
+# local design agent. All of it is regenerable and machine-local.
+#
+# They remain on disk — only git stops tracking them. If a fresh clone needs
+# docs/design-references for the design agent, un-ignore that one line.
+.claude/skills/
+.agents/skills/
+docs/design-references/
+
+# A 4 MB PDF committed to the repository root by accident.
+Tech - Flipkart options  (1).pdf
