@@ -156,7 +156,40 @@ const TRANSITIONS: Record<AgentStatus, AgentStatus[]> = {
     retired: ['draft', 'shadow'],
 };
 
-const EmailList = z.array(z.string().trim().email().max(160)).max(25);
+/**
+ * AN ADDRESS, WITH OR WITHOUT THE NAME IN FRONT OF IT.
+ *
+ * `z.string().email()` accepts `vidya@worksquare.in` and rejects
+ * `Vidya <purchase@worksquare.in>` — which is a perfectly ordinary RFC 5322
+ * mailbox, is what the console itself wrote into recipients.sites, and is what
+ * nodemailer sends to without complaint.
+ *
+ * The consequence was not a cosmetic warning. Saving the delivery form
+ * re-validates the WHOLE runtime object, so three site rows nobody was editing
+ * made every other change unsaveable — including switching off the reply
+ * responder while it was mailing a shared inbox every fifteen minutes. A
+ * validator that blocks an unrelated emergency edit is a worse bug than the
+ * looseness it was guarding against.
+ *
+ * So: accept both forms, and validate the part that actually has to be an
+ * address.
+ */
+const ADDRESS_WITH_NAME = /^\s*(?:"?([^"<>]*)"?\s*)?<\s*([^\s<>@]+@[^\s<>@]+\.[^\s<>@]+)\s*>\s*$/;
+
+const EmailAddress = z
+    .string()
+    .trim()
+    .max(160)
+    .refine(
+        (v) => {
+            const m = ADDRESS_WITH_NAME.exec(v);
+            const addr = m ? m[2] : v;
+            return z.string().email().safeParse(addr).success;
+        },
+        { message: 'Invalid email address — use name@example.com or Name <name@example.com>' },
+    );
+
+const EmailList = z.array(EmailAddress).max(25);
 
 const RuntimeSchema = z.looseObject({
     // --- delivery. Per-agent, editable from the console, never from env. -----
