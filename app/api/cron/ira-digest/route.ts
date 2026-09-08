@@ -81,8 +81,15 @@ async function recipientUserId(orgId: string, addresses: ReadonlyArray<string>):
         // Recipients may be stored as "Vidya <purchase@worksquare.in>".
         const email = (/<([^>]+)>/.exec(raw)?.[1] ?? raw).trim().toLowerCase();
         if (!email.includes('@')) continue;
-        const { data: user } = await supabaseAdmin
-            .from('users').select('id').ilike('email', email).maybeSingle();
+        // ilike() takes a PATTERN, not a literal: '_' matches any character and
+        // '%' matches anything. An address like accounts_payable@x.com would then
+        // also match accounts-payable@x.com, and maybeSingle() errors the moment
+        // two rows come back — returning null, so the whole digest silently loses
+        // its buttons. Escape the metacharacters and take the first match.
+        const pattern = email.replace(/[\\%_]/g, (c) => `\\${c}`);
+        const { data: matches } = await supabaseAdmin
+            .from('users').select('id').ilike('email', pattern).limit(1);
+        const user = matches?.[0];
         if (!user) continue;
         const { count } = await supabaseAdmin
             .from('organization_memberships').select('*', { count: 'exact', head: true })
