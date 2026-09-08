@@ -113,8 +113,35 @@ export function siteName(ctx: CheckContext, po: PoRow): string | null {
         const named = ctx.propName.get(po.property_id);
         if (named) return named;
     }
-    const text = po.project_name ?? (po.raw?.cf_site ? String(po.raw.cf_site) : null);
-    return text && text.trim() ? text : null;
+
+    /**
+     * THE FALLBACK LABEL DECIDES WHO GETS MAILED, so it has to be a site we
+     * actually know.
+     *
+     * `property` is not only printed — routing reads it. splitBySite matches it
+     * against the console's site rules, and a matched rule REPLACES the role
+     * list rather than narrowing it (sites.ts). So handing back raw Zoho free
+     * text would quietly re-address findings that used to go to the CEO and
+     * procurement: this org's rules point every site at one shared mailbox, and
+     * ruleFor matches on substrings in both directions, so "Arcil Sky Mark -
+     * Noida" catches the "Noida" rule and Saniel stops seeing the line.
+     *
+     * Nobody asked for that, and a silent change of recipient is the worst kind.
+     * So the fallback is accepted only when it names a property this org
+     * actually has — then the label is as trustworthy as the id-resolved one.
+     * Anything else stays null, exactly as it was before, and the finding goes
+     * to the role list.
+     */
+    const text = (po.project_name ?? (po.raw?.cf_site ? String(po.raw.cf_site) : null) ?? '').trim();
+    if (!text) return null;
+    const key = (v: string) => v.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const wanted = key(text);
+    if (!wanted) return null;
+    for (const name of ctx.propName.values()) {
+        const k = key(name);
+        if (k && (k === wanted || wanted.includes(k))) return name;
+    }
+    return null;
 }
 
 /** What a check looked at and found nothing wrong with. */
