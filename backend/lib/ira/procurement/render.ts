@@ -35,6 +35,16 @@ const BRAND  = '#16181C';  // primary text
 const BODY   = '#4A4E55';  // secondary text
 const MUTED  = '#797E86';  // labels
 
+/**
+ * The only monospace stack in this mail, used for exactly one thing: the item
+ * number on an evidence row. At 11.5px, proportional digits sitting next to a
+ * PO number read as part of the sentence; the reader has to be able to see at
+ * a glance that "1.2" is a handle they can quote back. Every client we send to
+ * has one of the named faces, and the trailing generic keeps Outlook honest.
+ * No new colour: the numbers are MUTED, like every other label here.
+ */
+const MONO = "'SF Mono',SFMono-Regular,Menlo,Consolas,monospace";
+
 /** Status tones are the digest's, not a second vocabulary. */
 const TONE: Record<Priority, { dot: string; fg: string; label: string }> = {
     critical: { dot: '#B0442E', fg: '#B0442E', label: 'Critical' },
@@ -149,6 +159,11 @@ function closeStrip(links: FeedbackLinks[string] | undefined, replyTo?: string, 
  * This is the whole point of the email: a person telling us, in their own
  * words, what they did. So it gets room, plain language, and no instruction to
  * quote a code at anybody.
+ *
+ * It is also the ONE place the 1.1 / 1.2 numbers beside the records are
+ * explained. A handle nobody is told about is a handle nobody types, and
+ * repeating the explanation under every finding is what turned this block into
+ * five identical paragraphs in the first place.
  */
 function replyFooter(replyTo: string | null, multi: boolean): string {
     if (!replyTo) return '';
@@ -166,7 +181,7 @@ function replyFooter(replyTo: string | null, multi: boolean): string {
             </div>
             <div style="font-size:13.5px;color:${BODY};line-height:1.7;margin-top:8px">
               Attach anything that helps &mdash; a credit note, a corrected order, a photo.
-              ${multi ? 'Answering about one order in particular? Just mention its number and we will file it against that one.' : ''}
+              ${multi ? `Answering about one line in particular? Mention its order number, or the small number printed beside it &mdash; &ldquo;<span style="font-family:${MONO}">1.2</span> done&rdquo; is enough &mdash; and we will file it against that one.` : ''}
             </div>
             <div style="font-size:12px;color:${MUTED};line-height:1.6;margin-top:10px;padding-top:9px;border-top:1px solid ${LINE}">
               Your reply goes to <b style="color:${BODY}">${esc(replyTo)}</b>.
@@ -216,7 +231,31 @@ function findingBlock(f: RoutedFinding, orgId: string, index: number, canDisposi
      * and it is not even the thing they would naturally type. A reply saying
      * "PO-26/27-0609 cancelled" is matched on that number instead.
      */
-    const linkable = f.refs.filter((r) => (r.url ?? entityUrl(r, orgId)) !== null);
+    /**
+     * ONE CHIP PER RECORD, AND ONLY UNDER A HEADING THAT IS TRUE OF IT.
+     *
+     * Two faults lived on this line. A finding built from
+     * `evidence.map((e) => e.ref)` can cite the same order twice — once as the
+     * original, once as the duplicate — and two identical chips read as two
+     * different orders, which is the exact confusion the finding exists to
+     * clear up. And the chip row was titled "Zoho Books" for every ref that
+     * happened to resolve, including a property or a requisition whose link
+     * goes to our own read-only page; a heading that names the wrong system
+     * sends the reader to the wrong tab and they do not come back.
+     *
+     * `url` is the Zoho Books deep link, set at detection time (see
+     * EntityRef.url in types.ts). Its PRESENCE is the test — never the entity
+     * kind, and never a guess about which host a URL belongs to.
+     */
+    const seenHref = new Set<string>();
+    const linkable = f.refs.filter((r) => {
+        const href = r.url ?? entityUrl(r, orgId);
+        if (!href || seenHref.has(href)) return false;
+        seenHref.add(href);
+        return true;
+    });
+    const inBooks = linkable.filter((r) => !!r.url);
+    const inApp = linkable.filter((r) => !r.url);
     // Only print the plain identifier line when the numbers are NOT already
     // shown as links below — otherwise every order number appears twice.
     const idLine = linkable.length ? null
@@ -232,10 +271,15 @@ function findingBlock(f: RoutedFinding, orgId: string, index: number, canDisposi
     // Only worth a chip row if the chips actually go somewhere. Otherwise the
     // numbers are already on the identifier line under the title and repeating
     // them is noise.
+    const chipRow = (heading: string, rs: ReadonlyArray<EntityRef>) => rs.length
+        ? `<div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:${MUTED};font-weight:600;margin-bottom:5px">${heading}</div>
+           ${rs.map((r) => refChip(r, orgId)).join('')}`
+        : '';
     const refs = linkable.length
         ? `<div style="margin:12px 0 0">
-             <div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:${MUTED};font-weight:600;margin-bottom:5px">Open the order in Zoho Books to comment</div>
-             ${linkable.map((r) => refChip(r, orgId)).join('')}
+             ${chipRow('Open in Zoho Books to comment', inBooks)}
+             ${inBooks.length && inApp.length ? '<div style="height:8px"></div>' : ''}
+             ${chipRow('Open the record', inApp)}
            </div>`
         : '';
 
@@ -245,6 +289,31 @@ function findingBlock(f: RoutedFinding, orgId: string, index: number, canDisposi
                    <div style="font-size:14px;line-height:1.55;color:${BRAND};margin-top:4px">${esc(a.action)}</div>
                  </td></tr>`)
         .join('<tr><td style="height:6px"></td></tr>');
+
+    /**
+     * SUB-NUMBERS — 1.1, 1.2, 2.1 …
+     *
+     * The finding already carries a number in its header ("2. Critical"), but
+     * the rows under it did not, so the smallest thing anyone could answer
+     * about was a whole finding. A reply saying "the second one is already
+     * credited" arrived attached to all six records and was therefore filed
+     * against none of them. Every supporting row now has a handle short enough
+     * to retype on a phone: "1.2 done", read back by itemNumbersFromText() in
+     * reply.ts.
+     *
+     * ONE COUNTER ACROSS BOTH TABLES. Restarting it at "What does not
+     * reconcile" would print 1.1 twice inside one finding, and a handle that
+     * points at two rows is worse than no handle at all. The counter is spent
+     * in source order — records first, then reconciliation — which is also the
+     * order the two blocks are printed in, so the same finding always numbers
+     * the same way. That determinism is the whole reason this file is a pure
+     * function: the number in the reader's reply has to mean today what it
+     * meant when the mail was built.
+     */
+    let subItems = 0;
+    const itemNo = () => `${index}.${++subItems}`;
+    const itemCell = (n: string) =>
+        `<td style="padding:6px 9px 6px 0;border-bottom:1px solid ${LINE};font-family:${MONO};font-size:11.5px;color:${MUTED};white-space:nowrap;vertical-align:top">${n}</td>`;
 
     /**
      * THE EVIDENCE, WITH THE FACTS ON IT.
@@ -260,6 +329,7 @@ function findingBlock(f: RoutedFinding, orgId: string, index: number, canDisposi
              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
                ${f.evidence.map((e) => `
                <tr>
+                 ${itemCell(itemNo())}
                  <td style="padding:6px 10px 6px 0;border-bottom:1px solid ${LINE};font-size:12.5px;font-weight:700;color:${BRAND};white-space:nowrap;vertical-align:top">${esc(e.ref.label)}</td>
                  <td style="padding:6px 0;border-bottom:1px solid ${LINE};font-size:12.5px;line-height:1.5;color:${BODY}">${esc(e.facts)}</td>
                </tr>`).join('')}
@@ -274,6 +344,7 @@ function findingBlock(f: RoutedFinding, orgId: string, index: number, canDisposi
              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
                ${f.reconcile.map((d) => `
                <tr>
+                 ${itemCell(itemNo())}
                  <td style="padding:6px 10px 6px 0;border-bottom:1px solid ${LINE};font-size:12.5px;color:${BODY};vertical-align:top">${esc(d.what)}</td>
                  <td style="padding:6px 10px 6px 0;border-bottom:1px solid ${LINE};font-size:12.5px;color:${MUTED};white-space:nowrap;vertical-align:top">expected ${esc(d.expected)}</td>
                  <td style="padding:6px 10px 6px 0;border-bottom:1px solid ${LINE};font-size:12.5px;font-weight:700;color:${BRAND};white-space:nowrap;vertical-align:top">actual ${esc(d.actual)}</td>

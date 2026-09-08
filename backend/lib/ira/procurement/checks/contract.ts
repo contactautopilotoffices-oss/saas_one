@@ -52,6 +52,9 @@ export interface PoRow {
     status: string | null;
     po_date: string | null;
     property_id: string | null;
+    /** Zoho's free-text site (cf_site), stored by the sync. property_id is
+     *  rarely populated, so this carries site identity for most rows. */
+    project_name: string | null;
     raw: Record<string, unknown> | null;
 }
 
@@ -97,6 +100,21 @@ export interface CheckContext {
     propName: Map<string, string>;
     /** Builds a verified, linkable reference to a purchase order. */
     poRef: (r: PoRow) => EntityRef;
+}
+
+/**
+ * The site a PO belongs to, best available. property_id resolves to the
+ * property's real name, but the sync never sets it, so most rows fall back
+ * to Zoho's own site text (project_name, then raw.cf_site). Null only when
+ * the order carries no site in any form.
+ */
+export function siteName(ctx: CheckContext, po: PoRow): string | null {
+    if (po.property_id) {
+        const named = ctx.propName.get(po.property_id);
+        if (named) return named;
+    }
+    const text = po.project_name ?? (po.raw?.cf_site ? String(po.raw.cf_site) : null);
+    return text && text.trim() ? text : null;
 }
 
 /** What a check looked at and found nothing wrong with. */

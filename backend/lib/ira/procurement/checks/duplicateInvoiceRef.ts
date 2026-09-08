@@ -30,7 +30,7 @@
  */
 
 import type { Check, CheckContext, CheckOutcome, PoRow } from './contract';
-import { inr, isBilled, newestRaisedAt, num, shortDate } from './contract';
+import { inr, isBilled, newestRaisedAt, num, shortDate, siteName } from './contract';
 import { inWindow } from '../cadence';
 import type { Evidence, Finding } from '../types';
 
@@ -109,7 +109,7 @@ export const duplicateInvoiceRef: Check = {
 
             const ref = String(matched[0].raw?.reference_number ?? '');
             const vendor = matched[0].vendor_name ?? 'Unknown vendor';
-            const site = matched[0].property_id ? ctx.propName.get(matched[0].property_id) ?? null : null;
+            const site = siteName(ctx, matched[0]);
             // Stable across scans: derived from the problem, never from a date
             // or row order, so a closed line stays closed next week.
             const key = `dup-ref:${normaliseVendor(vendor)}:${ref.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 40)}`;
@@ -162,7 +162,7 @@ export const duplicateInvoiceRef: Check = {
                         inr(num(r.po_amount)),
                         String(r.status ?? 'unknown status'),
                         isBilled(r) ? 'billed' : 'not billed',
-                        r.property_id ? ctx.propName.get(r.property_id) ?? '' : '',
+                        siteName(ctx, r) ?? '',
                         ambiguous && zohoId ? `Zoho id …${zohoId.slice(-6)}` : '',
                     ].filter(Boolean).join(' · '),
                 };

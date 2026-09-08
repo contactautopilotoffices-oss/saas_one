@@ -35,7 +35,7 @@
  * surface and anyone can send mail to it claiming anything.
  */
 
-import { ZohoMailService, grantOwning } from '@/backend/services/zohoMailService';
+import { ZohoMailService, grantOwning, type ZohoMailMessage } from '@/backend/services/zohoMailService';
 import { grantForMailbox, noteMailAccountResult } from '@/backend/lib/mail/accounts';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { parseReply, replyTag, tagFromSubject, tagsFromText, segmentsByTag, stripQuotedText, stripSignature, signOffName, poNumbersFromText } from './reply';
@@ -44,13 +44,40 @@ import { DISPOSITION_SPECS, signalFor, type Disposition } from './disposition';
 /** Feedback coins, mirroring the console's DEFAULT_COINS. */
 const COINS: Record<string, number> = { praise: 10, reject: -5, roi_flag: -15, correction: 0 };
 
+/**
+ * Where proof attachments are kept. Private bucket, created by
+ * supabase/migrations/20260908000001_ira_proof_bucket.sql — same storage shape
+ * as the electricity mailbox's 'electricity-bills' (backend/lib/electricity/ingest.ts).
+ */
+const PROOF_BUCKET = 'ira-proof';
+/** What counts as proof: a signed-off PDF or a screenshot. Anything else is logged and skipped. */
+const PROOF_TYPES = new Set(['application/pdf', 'image/png', 'image/jpeg']);
+const PROOF_MAX_BYTES = 10 * 1024 * 1024;
+const PROOF_MAX_FILES = 5;
+
+/** A proof attachment saved to storage, kept against the line it arrived on. */
+export interface ProofRef {
+    /** Path inside the PROOF_BUCKET — `${orgId}/${zohoMessageId}/${fileName}`. */
+    path: string;
+    fileName: string;
+    mimeType: string;
+    size: number;
+}
+
 /** A reply that was applied, and should be acknowledged straight away. */
 export interface AppliedReply {
     findingId: string; findingKey: string; findingTitle: string;
     poLabels: string[];
     disposition: Disposition; note: string;
     senderEmail: string; senderName: string | null;
+    /**
+     * The RFC 822 Message-ID of the mail being answered — what In-Reply-To
+     * needs. Falls back to Zoho's internal numeric id when the payload carried
+     * no RFC header (the pre-existing behaviour: threading by Re:-subject only).
+     */
     subject: string; messageId: string; mailbox: string;
+    /** Proof files that arrived with the reply, stored under 'ira-proof'. */
+    proofs?: ProofRef[];
 }
 
 /** One reply that needs a human-readable answer from the agent. */
@@ -66,8 +93,11 @@ export interface ReplyNeedingAnswer {
     senderName: string | null;
     text: string;
     subject: string;
+    /** RFC 822 Message-ID of the reply — see AppliedReply.messageId. */
     messageId: string;
     mailbox: string;
+    /** Proof files that arrived with the reply, stored under 'ira-proof'. */
+    proofs?: ProofRef[];
 }
 
 export interface CollectResult {
@@ -121,6 +151,97 @@ const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(
 const SCAN_MARKER = 'po scan';
 /** A reply, not an original. "Re:", "RE:", "Fwd:", and the stacked variants. */
 const IS_REPLY = /^\s*((re|fwd|fw)\s*:\s*)+/i;
+
+/**
+ * The proof a reply carried — a signed-off PDF, a screenshot of the credit note —
+ * downloaded from the mailbox and kept in storage.
+ *
+ * Preservation and visibility ONLY. Nothing here reads the contents: the files
+ * are stored and named on the finding's event so a person can open them, and
+ * that is the whole contract for now.
+ *
+ * TODO(adjudication): parse the stored files (PDF text, image OCR) and feed
+ * what they say into the disposition decision — that is the seam where parsed
+ * content would enter. Until then a "done" with a screenshot attached is
+ * believed on the same terms as a "done" without one.
+ *
+ * Never throws into the caller's loop: a reply's WORDS matter more than its
+ * attachments, and a storage outage must not lose the answer they came with.
+ */
+async function collectProofs(
+    orgId: string,
+    box: string,
+    msg: ZohoMailMessage,
+    connected: { refreshToken: string; dc: string } | null,
+): Promise<ProofRef[]> {
+    const attachments = connected
+        ? await ZohoMailService.listAttachmentsWithGrant(msg.messageId, { refreshToken: connected.refreshToken, dc: connected.dc }, box || undefined)
+        : await ZohoMailService.listAttachments(msg.messageId, (await grantOwning(box)) ?? 'ZOHO_MAIL', box || undefined);
+
+    const proofs: ProofRef[] = [];
+    /**
+     * ATTEMPTS, NOT SUCCESSES. The cap used to count stored files, so every
+     * skip — wrong type, oversize, a failed upload — left it untouched. With the
+     * bucket missing, EVERY attachment on every message would be downloaded in
+     * full and thrown away, bounded by nothing.
+     */
+    let tried = 0;
+    for (const att of attachments) {
+        if (++tried > PROOF_MAX_FILES) {
+            console.warn(`[ira replies] ${msg.messageId}: more than ${PROOF_MAX_FILES} attachments — the rest are not kept`);
+            break;
+        }
+        const mime = (att.mimeType || '').toLowerCase().trim();
+        if (!PROOF_TYPES.has(mime)) {
+            console.warn(`[ira replies] ${msg.messageId}: skipping ${att.attachmentName} (${mime || 'unknown type'}) — not a type we keep`);
+            continue;
+        }
+        if (att.attachmentSize > PROOF_MAX_BYTES) {
+            console.warn(`[ira replies] ${msg.messageId}: skipping ${att.attachmentName} — ${att.attachmentSize} bytes is over the ${PROOF_MAX_BYTES} cap`);
+            continue;
+        }
+        const bytes = connected
+            ? await ZohoMailService.downloadAttachmentWithGrant(msg.messageId, att.attachmentId, { refreshToken: connected.refreshToken, dc: connected.dc }, box || undefined)
+            : await ZohoMailService.downloadAttachment(msg.messageId, att.attachmentId, (await grantOwning(box)) ?? 'ZOHO_MAIL', box || undefined);
+        if (bytes.length > PROOF_MAX_BYTES) {
+            console.warn(`[ira replies] ${msg.messageId}: skipping ${att.attachmentName} — ${bytes.length} bytes is over the ${PROOF_MAX_BYTES} cap`);
+            continue;
+        }
+        /**
+         * THE FILENAME IS WRITTEN BY WHOEVER SENT THE MAIL.
+         *
+         * It arrives from Content-Disposition and reached the storage key raw.
+         * supabase-js interpolates the key into the request URL and fetch then
+         * normalises dot segments, so "../../../guest-photos/x.png" resolves out
+         * of this bucket entirely — and with the service-role key and upsert:true
+         * that is an arbitrary overwrite of any object in the project, including
+         * a public bucket. Anyone able to email a shared inbox could do it.
+         *
+         * Same shape as the console's own proof upload
+         * (backend/lib/emailActions/handlers.ts): reduce to a safe alphabet, cap
+         * the length, and prefix a timestamp so two files called "attachment"
+         * on one message cannot silently overwrite each other.
+         */
+        const safeName = (att.attachmentName || 'attachment')
+            .replace(/[^a-zA-Z0-9._-]/g, '_')
+            .replace(/^\.+/, '_')
+            .slice(0, 120);
+        const path = `${orgId}/${msg.messageId}/${Date.now()}_${safeName}`;
+        const { error } = await supabaseAdmin.storage
+            .from(PROOF_BUCKET).upload(path, bytes, { contentType: mime, upsert: true });
+        if (error) {
+            console.warn(`[ira replies] ${msg.messageId}: storing ${att.attachmentName} failed — ${error.message}`);
+            continue;
+        }
+        proofs.push({ path, fileName: safeName, mimeType: mime, size: bytes.length });
+    }
+    return proofs;
+}
+
+/** One line per stored proof, so the finding's history shows what arrived with the answer. */
+const proofNote = (proofs: ProofRef[]) => proofs.length
+    ? `\nProof attached:\n${proofs.map((p) => `- ${p.fileName} (${p.mimeType}) — ${PROOF_BUCKET}/${p.path}`).join('\n')}`
+    : '';
 
 /**
  * Read replies since `since` from ONE mailbox and apply them. Never throws — a
@@ -261,16 +382,63 @@ export async function collectIraReplies(
         const ccOnly = !inTo && inCc;
 
         // 3. Their words — fetched BEFORE matching, because the ref may be in them.
+        //
+        // The SAME fetch is where the RFC 822 Message-ID comes from when Zoho
+        // puts it in the payload. msg.messageId is Zoho's INTERNAL numeric id:
+        // handed to In-Reply-To it threads nothing, because no sender's mail
+        // client has ever seen it. The real header is what makes an answer file
+        // under their question. When no payload carries it, threadId falls back
+        // to the internal id — today's subject-only threading, unchanged.
+        const connected = box ? await grantForMailbox(orgId, box) : null;
         let raw = msg.summary ?? '';
+        let rfcMessageId: string | null = msg.rfcMessageId ?? null;
         try {
-            const connected = box ? await grantForMailbox(orgId, box) : null;
             const full = connected
                 ? await ZohoMailService.getMessageContentWithGrant(msg.messageId, msg.folderId, { refreshToken: connected.refreshToken, dc: connected.dc }, box)
                 : await ZohoMailService.getMessageContent(msg.messageId, msg.folderId, (await grantOwning(box)) ?? 'ZOHO_MAIL', box || undefined);
             if (full?.content) raw = full.content;
+            if (full?.rfcMessageId) rfcMessageId = full.rfcMessageId;
         } catch {
             // Fall back to the summary rather than losing the reply entirely.
         }
+        const threadId = rfcMessageId ?? msg.messageId;
+        /** When this mail reached the mailbox. Bounds every non-idempotent action below. */
+        const arrivedAt = Date.parse(msg.sentAt ?? '');
+
+        /**
+         * THE PROOF THAT CAME WITH THE REPLY — fetched LATE, and once.
+         *
+         * This used to run eagerly on every message carrying an attachment,
+         * which was wrong twice over:
+         *
+         *   · IT RAN BEFORE ANYONE WAS CHECKED. The membership gate and the
+         *     is-this-even-our-thread gate are both below, so a stranger's
+         *     vendor mail — anything with a PDF — was downloaded from Zoho and
+         *     written into our storage under the org's own prefix.
+         *   · IT RAN ON EVERY PASS. The read window is 24h and the cron is
+         *     quarter-hourly, so one attachment was re-listed, re-downloaded
+         *     and re-uploaded 96 times a day, per polled mailbox. That is the
+         *     exact shape of the incident this file was rewritten to end, with
+         *     Zoho's API quota paying for it instead of the recipient.
+         *
+         * So it is a thunk now: memoised, and invoked only once the sender is a
+         * member of this org AND the mail arrived since the previous pass. The
+         * files are still evidence and are still kept whether or not the words
+         * around them could be placed — but only for people we can name.
+         */
+        let proofs: ProofRef[] = [];
+        let proofsFetched = false;
+        const fetchProofs = async (): Promise<ProofRef[]> => {
+            if (proofsFetched || !msg.hasAttachment) return proofs;
+            proofsFetched = true;
+            if (!Number.isFinite(arrivedAt) || arrivedAt < askSince.getTime()) return proofs;
+            try {
+                proofs = await collectProofs(orgId, box, msg, connected);
+            } catch (e) {
+                console.warn(`[ira replies] ${msg.messageId}: proof attachments not kept — ${e instanceof Error ? e.message : e}`);
+            }
+            return proofs;
+        };
         const ownText = stripQuotedText(raw);
         /**
          * WHO WROTE THIS, as opposed to who owns the address.
@@ -328,8 +496,34 @@ export async function collectIraReplies(
              *
              * So: it must be a REPLY (Re:/Fwd:) as well as ours.
              */
-            const isOurThread = quotedTags.length > 0
+            /**
+             * A COLLEAGUE WRITING IN COLD, not replying to anything.
+             *
+             * "How much did we spend with Mahir this quarter?" sent fresh to Ira
+             * is the most natural way to ask her something, and it was dropped
+             * here without a trace — the entire question-answering path could
+             * only ever be reached by replying to a scan. Anyone this org can
+             * identify should be able to write to her.
+             *
+             * THREE CONDITIONS, and the third is the one that matters:
+             *   · she is on the To line, not merely copied in. Being CC'd on a
+             *     thread between two other people is not being asked;
+             *   · the subject is not itself a scan report. The CEO writes his
+             *     own under "PO Scan 11:30 — 06 Sep", and answering a person's
+             *     report as though it were a question to us is the specific
+             *     mistake this whole gate was added to prevent — so a
+             *     scan-shaped subject is only ours when it is a Re:;
+             *   · the sender resolves to an ACTIVE MEMBER of this org. That is
+             *     verified a few lines below, before anything is sent, and it
+             *     is what stops a public inbox turning us into a mailer.
+             */
+            const writingToHer = inTo && !ccOnly && !normSubject.includes(SCAN_MARKER);
+            const inAThreadOfOurs = quotedTags.length > 0
                 || (IS_REPLY.test(subject) && (/\bira\b/i.test(subject) || normSubject.includes(SCAN_MARKER)));
+            /** Reached us on its own, not by replying to anything we sent. */
+            const coldMail = !inAThreadOfOurs && writingToHer;
+
+            const isOurThread = inAThreadOfOurs || writingToHer;
             if (!isOurThread) continue; // genuinely unrelated mail in a shared inbox
 
             /**
@@ -340,8 +534,7 @@ export async function collectIraReplies(
              * QUESTION is not: it is a new mail every pass. Bound it to what has
              * arrived since the last run.
              */
-            const arrived = Date.parse(msg.sentAt ?? '');
-            if (Number.isFinite(arrived) && arrived < askSince.getTime()) {
+            if (Number.isFinite(arrivedAt) && arrivedAt < askSince.getTime()) {
                 out.ignored.push({ from: senderEmail, subject, reason: 'could not place the line — asked on an earlier pass, not asking again' });
                 continue;
             }
@@ -358,13 +551,36 @@ export async function collectIraReplies(
                     .eq('organization_id', orgId).eq('user_id', u.id);
                 isMember = (count ?? 0) > 0;
             }
-            out.ignored.push({ from: senderEmail, subject, reason: isMember ? 'could not tell which line this answers — asked the sender' : 'could not place the line, and the sender is not a member of this org' });
-            if (!isMember) continue;
+            /**
+             * A SHARED INBOX IS MOSTLY NOT ABOUT US.
+             *
+             * purchase@ receives vendor mail all day. Now that a cold mail from
+             * a colleague is accepted, the same door lets every quotation and
+             * delivery note reach this point too — and logging each one as
+             * "could not place the line" would bury the handful of entries an
+             * operator actually needs to see. So a stranger writing to the
+             * inbox is passed over in silence; only mail from someone this org
+             * can identify is worth a line in the run log.
+             */
+            if (!isMember) {
+                if (!coldMail) {
+                    out.ignored.push({ from: senderEmail, subject, reason: 'replied on our thread, but the sender is not a member of this org' });
+                }
+                continue;
+            }
+            out.ignored.push({
+                from: senderEmail, subject,
+                reason: coldMail
+                    ? 'wrote in directly — answering from the record'
+                    : 'could not tell which line this answers — asked the sender',
+            });
+            await fetchProofs();
             out.needsAnswer.push({
                 findingId: null, findingKey: null, findingTitle: null,
                 because: 'unmatched', disposition: null,
                 senderEmail, senderUserId: null, senderName: null,
-                text: ownText, subject, messageId: msg.messageId, mailbox: box,
+                text: ownText, subject, messageId: threadId, mailbox: box,
+                ...(proofs.length ? { proofs } : {}),
             });
             continue;
         }
@@ -380,6 +596,7 @@ export async function collectIraReplies(
                 .eq('organization_id', orgId).eq('user_id', user.id);
             member = (count ?? 0) > 0;
         }
+        if (user && member) await fetchProofs();
         if (!user || !member) {
             out.ignored.push({ from: senderEmail, subject, reason: user ? 'sender is not a member of this org — not applied' : 'sender is not a known user — not applied' });
             continue;
@@ -417,7 +634,7 @@ export async function collectIraReplies(
                     finding_id: finding.id,
                     organization_id: orgId,
                     disposition: null,
-                    note: `[overheard on a thread Ira was copied into, from ${senderEmail}]\n${seg.text.slice(0, 2000)}`,
+                    note: `[overheard on a thread Ira was copied into, from ${senderEmail}]\n${seg.text.slice(0, 2000)}${proofNote(proofs)}`,
                     source: 'email',
                     created_by: user.id,
                 });
@@ -449,7 +666,7 @@ export async function collectIraReplies(
                 finding_id: finding.id,
                 organization_id: orgId,
                 disposition: parsed.disposition,
-                note: parsed.note || null,
+                note: ((parsed.note || '') + proofNote(proofs)).trim() || null,
                 source: 'email',
                 created_by: user.id,
             });
@@ -475,7 +692,8 @@ export async function collectIraReplies(
                 poLabels: (finding.refs ?? []).map((r) => String(r?.label ?? '')).filter(Boolean),
                 disposition: parsed.disposition, note: parsed.note,
                 senderEmail, senderName: writer,
-                subject, messageId: msg.messageId, mailbox: box,
+                subject, messageId: threadId, mailbox: box,
+                ...(proofs.length ? { proofs } : {}),
             });
 
             // They asked something, or they're stuck. That earns an answer back.
@@ -484,7 +702,8 @@ export async function collectIraReplies(
                     findingId: finding.id, findingKey: finding.finding_key, findingTitle: finding.title,
                     because: parsed.disposition, disposition: parsed.disposition,
                     senderEmail, senderUserId: user.id, senderName: writer,
-                    text: seg.text, subject, messageId: msg.messageId, mailbox: box,
+                    text: seg.text, subject, messageId: threadId, mailbox: box,
+                    ...(proofs.length ? { proofs } : {}),
                 });
             }
         }

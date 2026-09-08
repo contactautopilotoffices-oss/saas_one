@@ -316,9 +316,12 @@ export async function POST(request: NextRequest) {
                     const s = await step(`Emailing ${who}`, 'notify',
                         { recipient: bundle.recipient.key, site: slice.label || null, owners: slice.ownerNames, findings: slice.bundle.counts.total });
                     try {
-                        await sendDigest(address, subject, html, replyTo);
+                        const outbound = await sendDigest(address, subject, html, replyTo);
                         sent.push(`${who} → ${address}`);
-                        await s.ok();
+                        // The RFC Message-ID of the scan mail, kept on the run trace
+                        // (oem_agent_run_steps.detail) so a later answer can chain
+                        // References back to the message it is answering.
+                        await s.ok(outbound.messageId ? { detail: { messageId: outbound.messageId } } : undefined);
                     } catch (e) {
                         // s.fail() is a no-op until the runtime tables exist, so the
                         // failure would otherwise vanish and the route still return 200.

@@ -870,13 +870,11 @@ function Composer({
 /**
  * What POST /api/agents/compose { mode:'fold' } returns.
  *
- * NOTE — THIS MODE DOES NOT EXIST YET. app/api/agents/compose/route.ts currently
- * has one mode: its schema requires `description` and its handler only calls
- * composeAgent(). The exact signature this component sends and expects is written
- * out in the WIRING STATUS block at the top of backend/lib/agents/compose.ts and
- * must be added there. Until it is, beginFold() below fails visibly and folds
- * nothing — which is the correct behaviour, not a regression: the alternative is
- * a browser-side append pretending to be a compiled prompt.
+ * The fold mode is live in app/api/agents/compose/route.ts: it reads the running
+ * prompt and the pending corrections, runs foldGuidance() server-side and
+ * returns a proposal. It never saves — commit happens through the registry's
+ * save_prompt with these applied_feedback_ids. When the call fails, beginFold()
+ * below folds nothing and opens the running prompt for hand-editing instead.
  */
 interface FoldResponse {
     provisioned?: boolean;

@@ -19,6 +19,12 @@ export interface ZohoMailMessage {
     ccAddress: string[];
     sentAt: string;             // ISO
     hasAttachment: boolean;
+    /**
+     * The RFC 822 Message-ID header — what In-Reply-To/References actually need,
+     * as opposed to `messageId` above, which is Zoho's INTERNAL numeric id and
+     * threads nothing outside Zoho. Present only when Zoho's payload carried it.
+     */
+    rfcMessageId: string | null;
 }
 
 export interface ZohoMailAttachment {
@@ -291,7 +297,7 @@ export class ZohoMailService {
     static async getMessageContentWithGrant(
         messageId: string, folderId: string | null | undefined,
         grant: { refreshToken: string; dc: string }, address?: string,
-    ): Promise<{ subject: string; content: string; fromAddress: string }> {
+    ): Promise<{ subject: string; content: string; fromAddress: string; rfcMessageId: string | null }> {
         const t = await this.tokenFromGrant(grant);
         return this.getMessageContentRaw(messageId, folderId, t.token, t.apiDomain, address);
     }
@@ -464,7 +470,7 @@ export class ZohoMailService {
         folderId?: string | null,
         prefix: ZohoMailEnv = 'ZOHO_MAIL',
         address?: string,
-    ): Promise<{ subject: string; content: string; fromAddress: string }> {
+    ): Promise<{ subject: string; content: string; fromAddress: string; rfcMessageId: string | null }> {
         const { token, apiDomain } = await this.getAccessToken(prefix);
         return this.getMessageContentRaw(messageId, folderId, token, apiDomain, address);
     }
@@ -475,7 +481,7 @@ export class ZohoMailService {
         token: string,
         apiDomain: string,
         address?: string,
-    ): Promise<{ subject: string; content: string; fromAddress: string }> {
+    ): Promise<{ subject: string; content: string; fromAddress: string; rfcMessageId: string | null }> {
         const acct = await this.accountIdFor(token, apiDomain, address);
 
         const path = folderId
@@ -496,6 +502,7 @@ export class ZohoMailService {
             // Zoho returns HTML in `content`; strip tags only for the text fallback.
             content: String(data.data.content || ''),
             fromAddress: parseAddresses(data.data.fromAddress)[0] || '',
+            rfcMessageId: rfcMessageIdOf(data.data),
         };
     }
 
@@ -503,10 +510,30 @@ export class ZohoMailService {
     static async listAttachments(
         messageId: string,
         prefix: ZohoMailEnv = 'ZOHO_MAIL',
+        address?: string,
     ): Promise<ZohoMailAttachment[]> {
         const { token, apiDomain } = await this.getAccessToken(prefix);
-        const acct = await this.accountId(token, apiDomain, prefix);
+        const acct = await this.accountId(token, apiDomain, prefix, address);
+        return this.listAttachmentsRaw(messageId, acct, token, apiDomain);
+    }
 
+    /** Same listing on a console-connected mailbox — no env prefix to name. */
+    static async listAttachmentsWithGrant(
+        messageId: string,
+        grant: { refreshToken: string; dc: string },
+        address?: string,
+    ): Promise<ZohoMailAttachment[]> {
+        const t = await this.tokenFromGrant(grant);
+        const acct = await this.accountIdFor(t.token, t.apiDomain, address);
+        return this.listAttachmentsRaw(messageId, acct, t.token, t.apiDomain);
+    }
+
+    private static async listAttachmentsRaw(
+        messageId: string,
+        acct: string,
+        token: string,
+        apiDomain: string,
+    ): Promise<ZohoMailAttachment[]> {
         const res = await fetch(`${apiDomain}/api/accounts/${acct}/messages/${messageId}/attachmentInfo`, {
             headers: { 'Authorization': `Zoho-oauthtoken ${token}` },
         });
@@ -538,10 +565,32 @@ export class ZohoMailService {
         messageId: string,
         attachmentId: string,
         prefix: ZohoMailEnv = 'ZOHO_MAIL',
+        address?: string,
     ): Promise<Buffer> {
         const { token, apiDomain } = await this.getAccessToken(prefix);
-        const acct = await this.accountId(token, apiDomain, prefix);
+        const acct = await this.accountId(token, apiDomain, prefix, address);
+        return this.downloadAttachmentRaw(messageId, attachmentId, acct, token, apiDomain);
+    }
 
+    /** Same bytes on a console-connected mailbox. */
+    static async downloadAttachmentWithGrant(
+        messageId: string,
+        attachmentId: string,
+        grant: { refreshToken: string; dc: string },
+        address?: string,
+    ): Promise<Buffer> {
+        const t = await this.tokenFromGrant(grant);
+        const acct = await this.accountIdFor(t.token, t.apiDomain, address);
+        return this.downloadAttachmentRaw(messageId, attachmentId, acct, t.token, t.apiDomain);
+    }
+
+    private static async downloadAttachmentRaw(
+        messageId: string,
+        attachmentId: string,
+        acct: string,
+        token: string,
+        apiDomain: string,
+    ): Promise<Buffer> {
         const res = await fetch(`${apiDomain}/api/accounts/${acct}/messages/${messageId}/attachments/${attachmentId}`, {
             headers: { 'Authorization': `Zoho-oauthtoken ${token}` },
         });
@@ -579,8 +628,31 @@ export class ZohoMailService {
             ccAddress: parseAddresses(m?.ccAddress),
             sentAt: new Date(ms).toISOString(),
             hasAttachment: String(m?.hasAttachment ?? '0') === '1' || m?.hasAttachment === true,
+            rfcMessageId: rfcMessageIdOf(m),
         };
     }
+}
+
+/**
+ * The RFC 822 Message-ID header out of a Zoho payload, if it carries one.
+ *
+ * Zoho's documented fields (messageId, threadId) are INTERNAL numeric ids —
+ * useless as an In-Reply-To target, because no sender's mail client files its
+ * replies against them. Some payloads additionally carry the real header under
+ * one of the keys below; when they do we take it, normalised to the bracketed
+ * form nodemailer writes into its own outgoing Message-IDs ("<id@host>"), so a
+ * value from here can be handed to SendOptions.inReplyTo unchanged. The `@`
+ * test is what keeps the numeric internal id from being mistaken for one.
+ */
+function rfcMessageIdOf(data: Record<string, unknown> | null | undefined): string | null {
+    for (const key of ['rfc822MessageId', 'internetMessageId', 'mailMessageId', 'msgId', 'messageId']) {
+        const v = String(data?.[key] ?? '').trim();
+        if (!v || !v.includes('@')) continue;
+        const inner = v.replace(/^<+|>+$/g, '').trim();
+        if (!inner.includes('@')) continue;
+        return `<${inner}>`;
+    }
+    return null;
 }
 
 // Zoho HTML-escapes address headers, so "Name" <a@b.com> arrives as &quot;Name&quot; &lt;a@b.com&gt;.

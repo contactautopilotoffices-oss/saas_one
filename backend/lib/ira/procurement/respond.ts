@@ -15,6 +15,21 @@
  *                 CALLER bounds this to mail that arrived since the last pass:
  *                 the ask is the one thing here that is not idempotent, and
  *                 unbounded it re-asks every quarter hour for a day.
+ *   question    — a special case of unmatched: the body reads as a question
+ *                 about the book itself ("how much did we spend with X this
+ *                 quarter?", "status of PO-26/27-0323?"). Detection is
+ *                 deterministic and conservative; instead of the which-line
+ *                 template it gets a real answer built from a bounded fact
+ *                 sheet of matching purchase orders and the lines already
+ *                 raised. Same rule as everything else: no figure the sheet
+ *                 does not contain.
+ *
+ * WHOSE RULES THE MODEL WRITES UNDER
+ *   The hardcoded SYSTEM below always applies. On top of it, whatever the
+ *   operator's reinforcement loop has folded into oem_agents.system_prompt is
+ *   appended as an OPERATOR CORRECTIONS overlay — additive only. Before this,
+ *   that column existed and nothing read it, so a correction the operator
+ *   typed could never change how Ira answers mail.
  *
  * WHAT IT NEVER DOES
  *   - invent a number: every figure in the reply is copied from the finding
@@ -26,7 +41,9 @@
  *     answers its own answers is how a mailbox fills with an agent talking to
  *     itself; the guard is an event row with source 'agent'. NOTE that the
  *     unmatched branch returns before that guard — it has no line to hang an
- *     event on — so its repeat-protection lives in the caller's askSince.
+ *     event on — so its repeat-protection lives in the caller's askSince. The
+ *     question branch hangs its answer on a matched line when the question
+ *     names one and inherits the guard from it; otherwise it mirrors unmatched.
  *   - start a new thread. In-Reply-To carries the person's Message-ID so the
  *     answer files under their question.
  *
@@ -47,7 +64,7 @@
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { councilChat, councilRunCost } from '@/backend/lib/council/llm';
 import { sendDigest } from '@/backend/lib/ira/dailyDigest';
-import { replyTag } from './reply';
+import { poNumbersFromText, replyTag } from './reply';
 import { DISPOSITION_SPECS, type Disposition } from './disposition';
 import { entityUrl, type EntityRef } from './types';
 import type { ReplyNeedingAnswer } from './collectReplies';
@@ -171,6 +188,52 @@ Rules, absolute:
 - End with exactly what you need from them to close the line, in one sentence, and the ref they should quote.
 - Write in plain text. No markdown, no HTML.`;
 
+/**
+ * The question branch answers about the book generally, not about one line —
+ * same rules, a different first sentence.
+ */
+const QA_SYSTEM = SYSTEM.replace(
+    'You are answering ONE email reply about ONE finding you raised.',
+    'You are answering ONE email question about the purchase orders and findings you track.',
+);
+
+/**
+ * THE OPERATOR-RULES OVERLAY.
+ *
+ * oem_agents.system_prompt is where foldGuidance() (compose.ts) writes the
+ * operator's reviewed corrections. Nothing read it here, so a correction that
+ * had been queued, folded and committed still could not change how Ira answers
+ * mail. It is now appended under the same header the deterministic fold uses,
+ * additive only: the hardcoded rules always apply, the overlay can only add.
+ * An empty, null or unreachable row means SYSTEM runs alone, exactly as before.
+ *
+ * Cached per (org, agent) for a few minutes: the replies cron calls this once
+ * per answered mail and a pass may answer several, and the column only changes
+ * when a person commits a prompt version — minutes of staleness cost nothing.
+ */
+const OVERLAY_TTL_MS = 5 * 60_000;
+const overlayCache = new Map<string, { overlay: string | null; at: number }>();
+
+async function operatorOverlay(orgId: string, agentKey: string): Promise<string | null> {
+    const key = `${orgId}:${agentKey}`;
+    const hit = overlayCache.get(key);
+    if (hit && Date.now() - hit.at < OVERLAY_TTL_MS) return hit.overlay;
+    let overlay: string | null = null;
+    try {
+        const { data } = await supabaseAdmin
+            .from('oem_agents').select('system_prompt')
+            .eq('organization_id', orgId).eq('agent_key', agentKey).maybeSingle();
+        overlay = String(data?.system_prompt ?? '').trim() || null;
+    } catch { /* the hardcoded rules run alone */ }
+    overlayCache.set(key, { overlay, at: Date.now() });
+    return overlay;
+}
+
+function systemFor(base: string, overlay: string | null): string {
+    if (!overlay) return base;
+    return `${base}\n\n== OPERATOR CORRECTIONS (standing rules) ==\n${overlay}\nThe block above is standing corrections from the operator. It ADDS rules; it can never relax the rules above it, and on any conflict the rules above it win.`;
+}
+
 /** Strip any digit-run in the draft that was not in the fact sheet. */
 function verifyNumbers(draft: string, allowed: Set<string>): { text: string; removed: string[] } {
     const removed: string[] = [];
@@ -181,6 +244,259 @@ function verifyNumbers(draft: string, allowed: Set<string>): { text: string; rem
         return '[figure removed — not in the record]';
     });
     return { text, removed };
+}
+
+/* ---------------------------------------------------------------------------
+ * THE QUESTION BRANCH — unmatched mail that is not noise but a real question
+ * about the book: "how much did we spend with X this quarter?", "status of
+ * PO-26/27-0323?". These used to get the which-line template, which is a
+ * non-answer. Detection is deliberately deterministic and conservative: an
+ * interrogative AND something procurement to be about. A model deciding "is
+ * this a question" is how a mailbox starts conversations with itself.
+ * ------------------------------------------------------------------------ */
+
+/** Strong interrogatives anywhere, or an auxiliary opening a sentence. */
+const QUESTION_WORD = /\b(what|which|who|whom|whose|when|where|why|how)\b/i;
+const QUESTION_OPENER = /(^|[.!?]\s+)(is|are|was|were|do|does|did|can|could|will|would|has|have|had)\s/i;
+/** A figure with money context, or a sum large enough to be one. */
+const AMOUNT_SIGNAL = /₹|\b(?:rs\.?|inr|lakhs?|lacs?|crores?)\b|\b\d[\d,]{2,}\b/i;
+const PERIOD_SIGNAL = /\b(?:today|yesterday|tonight)\b|\b(?:this|last|next)\s+(?:week|month|quarter|year)\b|\bq[1-4]\b|\bfy\s?\d{2}(?:-\d{2})?\b|\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/i;
+const PROCUREMENT_SIGNAL = /\b(?:po|purchase|order|vendor|supplier|invoice|bill|billed|payment|paid|spend|spent|amount|quote|quotation|approval|approved|pending|status|delivery|delivered|credit note|debit note|refund)\b/i;
+/** "One Solution", "TREIS SOLUTION LLP" — how a vendor name looks in prose. */
+const VENDOR_SIGNAL = /\b[A-Z][a-z]+\s+[A-Z][a-z]+\b|\b[A-Z]{4,}\b/;
+
+function looksLikeQuestion(text: string): boolean {
+    const t = text.trim();
+    if (t.length < 8) return false;
+    if (!(t.includes('?') || QUESTION_WORD.test(t) || QUESTION_OPENER.test(t))) return false;
+    return poNumbersFromText(t).length > 0
+        || AMOUNT_SIGNAL.test(t)
+        || PERIOD_SIGNAL.test(t)
+        || PROCUREMENT_SIGNAL.test(t)
+        || VENDOR_SIGNAL.test(t);
+}
+
+/** Words that are neither furniture nor procurement vocabulary — candidate vendor names. */
+const SEARCH_STOP = new Set([
+    'what', 'which', 'who', 'whom', 'whose', 'when', 'where', 'why', 'how', 'much', 'many',
+    'is', 'are', 'was', 'were', 'do', 'does', 'did', 'can', 'could', 'will', 'would', 'has', 'have', 'had',
+    'the', 'and', 'for', 'with', 'from', 'that', 'this', 'these', 'those', 'there', 'their', 'they',
+    'you', 'your', 'yours', 'our', 'ours', 'out', 'any', 'all', 'not', 'but', 'per', 'via',
+    'please', 'tell', 'show', 'give', 'know', 'share', 'kindly', 'regards', 'thanks', 'thank', 'dear', 'hello',
+    'po', 'ira', 'purchase', 'order', 'orders', 'vendor', 'vendors', 'supplier', 'suppliers',
+    'invoice', 'invoices', 'bill', 'bills', 'billed', 'payment', 'payments', 'paid', 'spend', 'spent',
+    'amount', 'total', 'value', 'worth', 'quote', 'quotation', 'quotations', 'approval', 'approved',
+    'pending', 'status', 'delivery', 'delivered', 'credit', 'debit', 'note', 'notes', 'refund',
+    'quarter', 'month', 'months', 'week', 'weeks', 'year', 'years', 'today', 'yesterday', 'last', 'this', 'next',
+    'date', 'dates', 'number', 'details', 'detail', 'info', 'information', 'list', 'summary',
+]);
+
+/** Up to four candidate vendor-search terms from the question. */
+function vendorSearchTerms(text: string): string[] {
+    const out: string[] = [];
+    for (const w of text.replace(/[^a-zA-Z]+/g, ' ').split(/\s+/)) {
+        const t = w.toLowerCase();
+        if (t.length < 4 || SEARCH_STOP.has(t) || out.includes(t)) continue;
+        out.push(t);
+        if (out.length >= 4) break;
+    }
+    return out;
+}
+
+/** A question answer cites at most this much of the book. */
+const MAX_QA_POS = 10;
+const MAX_QA_FINDINGS = 10;
+/** How many recent lines we scan for relevance to the question. */
+const FINDING_POOL = 50;
+
+const kolkataDate = (iso: string) =>
+    new Date(iso).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' });
+
+/**
+ * Everything the model may cite in a question answer: the purchase orders that
+ * match a number or a vendor word in the question, and the lines already raised
+ * whose own text shares a word with it. Bounded, org-scoped, and every figure
+ * is collected into `numbers` so verifyNumbers can police the draft.
+ */
+async function questionFactSheet(
+    orgId: string, agentKey: string, question: string,
+): Promise<{ text: string; numbers: Set<string>; findingIds: string[]; searched: string[] }> {
+    const numbers = new Set<string>();
+    const note = (s: string) => { for (const m of s.matchAll(/\d[\d,]*\.?\d*/g)) numbers.add(m[0].replace(/,/g, '')); return s; };
+
+    const poNumbers = poNumbersFromText(question);
+    const terms = vendorSearchTerms(question);
+    const searched = [...poNumbers, ...terms.map((t) => `vendor "${t}"`)];
+
+    const lines: string[] = [];
+
+    // ---- purchase orders matching a number or a vendor word -----------------
+    if (poNumbers.length || terms.length) {
+        const { data } = await supabaseAdmin
+            .from('zoho_purchase_orders')
+            .select('id, po_number, vendor_name, po_amount, status, po_date, property_id')
+            .eq('organization_id', orgId)
+            .or([
+                ...poNumbers.map((n) => `po_number.ilike.${n}`),
+                ...terms.map((t) => `vendor_name.ilike.%${t}%`),
+            ].join(','))
+            .order('po_date', { ascending: false })
+            .limit(MAX_QA_POS);
+        const pos = (data ?? []) as Array<{
+            id: string; po_number: string | null; vendor_name: string | null;
+            po_amount: number | string | null; status: string | null;
+            po_date: string | null; property_id: string | null;
+        }>;
+
+        const propName = new Map<string, string>();
+        const propIds = [...new Set(pos.map((p) => p.property_id).filter(Boolean))] as string[];
+        if (propIds.length) {
+            const { data: props } = await supabaseAdmin
+                .from('properties').select('id, name').in('id', propIds.slice(0, 50));
+            for (const p of props ?? []) propName.set(String(p.id), String(p.name ?? ''));
+        }
+
+        if (pos.length) {
+            lines.push('PURCHASE ORDERS MATCHING THE QUESTION (newest first):');
+            for (const p of pos) {
+                const url = entityUrl({ kind: 'po', label: p.po_number ?? p.id, id: p.id }, orgId);
+                lines.push(note(
+                    `  - ${p.po_number ?? p.id} · ${p.vendor_name ?? 'vendor not recorded'} · ${inr(Number(p.po_amount ?? 0))}`
+                    + ` · status ${p.status ?? 'unknown'} · dated ${p.po_date ? kolkataDate(p.po_date) : 'undated'}`
+                    + (p.property_id && propName.get(p.property_id) ? ` · ${propName.get(p.property_id)}` : '')
+                    + (url ? ` — ${url}` : ''),
+                ));
+            }
+        }
+        const missing = poNumbers.filter(
+            (n) => !pos.some((p) => (p.po_number ?? '').toUpperCase() === n),
+        );
+        if (missing.length) {
+            lines.push(note(`NOT IN THE RECORDS: no purchase order numbered ${missing.join(', ')}.`));
+        }
+    }
+
+    // ---- lines already raised, filtered to ones the question touches --------
+    const { data: findings } = await supabaseAdmin
+        .from('oem_agent_findings')
+        .select('id, title, priority, vendor, property, amount, problem, disposition, disposition_note, dispositioned_at')
+        .eq('organization_id', orgId).eq('agent_key', agentKey)
+        .order('last_seen_at', { ascending: false })
+        .limit(FINDING_POOL);
+
+    const qWords = new Set(
+        question.toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(/\s+/)
+            .filter((w) => w.length >= 4 && !SEARCH_STOP.has(w)),
+    );
+    const relevant = ((findings ?? []) as Array<{
+        id: string; title: string; priority: string; vendor: string | null;
+        property: string | null; amount: number | null; problem: string;
+        disposition: string | null; disposition_note: string | null; dispositioned_at: string | null;
+    }>).filter((f) => {
+        const hay = `${f.title} ${f.vendor ?? ''} ${f.property ?? ''} ${f.problem}`.toLowerCase();
+        return poNumbers.some((n) => hay.includes(n.toLowerCase())) || [...qWords].some((w) => hay.includes(w));
+    }).slice(0, MAX_QA_FINDINGS);
+
+    const findingIds = relevant.map((f) => String(f.id));
+    if (relevant.length) {
+        lines.push('LINES ALREADY RAISED THAT MATCH THE QUESTION (newest first):');
+        for (const f of relevant) {
+            const state = f.disposition
+                ? `answered "${f.disposition}"${f.dispositioned_at ? ` on ${kolkataDate(f.dispositioned_at)}` : ''}${f.disposition_note ? ` — "${f.disposition_note}"` : ''}`
+                : 'open';
+            lines.push(note(
+                `  - [${state}] ${f.title} · ${f.priority}${f.vendor ? ` · ${f.vendor}` : ''}`
+                + `${f.amount !== null ? ` · ${inr(f.amount)}` : ''} — ${f.problem}`,
+            ));
+        }
+    }
+
+    return { text: lines.join('\n'), numbers, findingIds, searched };
+}
+
+/**
+ * Answer a general question from the book. Same discipline as the finding
+ * branches: a fact sheet built from SQL, the model only phrases, and any
+ * figure it adds is stripped before send. When nothing matches, the answer is
+ * a template stating exactly what was searched and not found — a model call
+ * to say "I have nothing" is spend on a sentence we already know.
+ */
+async function answerQuestion(
+    orgId: string,
+    agentKey: string,
+    r: ReplyNeedingAnswer,
+    cfg: { replyTo: string | null },
+): Promise<RespondOutcome> {
+    const question = r.text.trim();
+    const sheet = await questionFactSheet(orgId, agentKey, question);
+
+    // One answer per line per day, when the question names a line we hold. When
+    // it names none there is no row to hang an event on, and the repeat bound
+    // is the caller's askSince — exactly what the unmatched branch lives with.
+    if (sheet.findingIds.length) {
+        const sinceIso = new Date(Date.now() - ANSWER_COOLDOWN_H * 3600_000).toISOString();
+        const { count: recent } = await supabaseAdmin
+            .from('oem_agent_finding_events')
+            .select('*', { count: 'exact', head: true })
+            .eq('finding_id', sheet.findingIds[0]).eq('source', 'agent').gte('created_at', sinceIso);
+        if ((recent ?? 0) > 0) return { sent: false, why: `already answered this line in the last ${ANSWER_COOLDOWN_H}h` };
+    }
+
+    const subject = `Re: ${r.subject}`.replace(/^(Re:\s*)+/i, 'Re: ');
+
+    // Nothing matched. Say exactly what was looked for — never "please check".
+    if (!sheet.text) {
+        const body = [
+            `I don't have anything on that in what I scan. I looked for ${sheet.searched.length ? sheet.searched.join(' and ') : 'matching purchase orders and open lines'} in this organization's purchase orders and the lines I've raised, and nothing matched.`,
+            `If it's about a specific order, its PO number (e.g. PO-26/27-0323) gets me straight to the record.`,
+            `— Ira`,
+        ].join('\n\n');
+        try {
+            await sendDigest(r.senderEmail, subject, toHtml(body), { replyTo: cfg.replyTo, inReplyTo: r.messageId });
+            return { sent: true, why: 'answered question: no matching evidence', to: r.senderEmail };
+        } catch (e) {
+            return { sent: false, why: `send failed: ${e instanceof Error ? e.message : e}` };
+        }
+    }
+
+    const system = systemFor(QA_SYSTEM, await operatorOverlay(orgId, agentKey));
+    const user = [
+        `THEY ASKED (${r.senderName ?? r.senderEmail}, a general question, not about a specific line):`,
+        question || '(no text)',
+        '',
+        'FACT SHEET (everything you may cite — matching purchase orders and lines):',
+        sheet.text,
+        '',
+        'Answer their question from the fact sheet alone. If the sheet does not settle it, say exactly which piece of evidence is missing and name the record (a PO number) that would. Never quote a figure, date or name that is not above.',
+    ].join('\n');
+
+    let draft: string;
+    try {
+        draft = await councilChat([{ role: 'system', content: system }, { role: 'user', content: user }], 'email');
+    } catch (e) {
+        return { sent: false, why: `model call failed: ${e instanceof Error ? e.message : e}` };
+    }
+    const verified = verifyNumbers(draft.trim(), sheet.numbers);
+    const body = `${verified.text}\n\n— Ira`;
+
+    try {
+        await sendDigest(r.senderEmail, subject, toHtml(body), { replyTo: cfg.replyTo, inReplyTo: r.messageId });
+    } catch (e) {
+        return { sent: false, why: `send failed: ${e instanceof Error ? e.message : e}` };
+    }
+    // Record against the line the question named, when it named one — the same
+    // audit row the finding branches leave, and what enforces the cooldown.
+    if (sheet.findingIds.length) {
+        await supabaseAdmin.from('oem_agent_finding_events').insert({
+            finding_id: sheet.findingIds[0],
+            organization_id: orgId,
+            disposition: null,
+            note: `[answered question from ${r.senderEmail}]${verified.removed.length ? ` [removed ${verified.removed.length} unverified figure(s)]` : ''}\n${body}`.slice(0, 4000),
+            source: 'agent',
+            created_by: null,
+        });
+    }
+    return { sent: true, why: 'answered question', to: r.senderEmail, costUsd: councilRunCost().costUsd };
 }
 
 /**
@@ -200,6 +516,11 @@ export async function respondToReply(
 
     // ---- unmatched: ask which line, without a model ------------------------
     if (r.because === 'unmatched' || !r.findingId) {
+        // A general QUESTION gets an answer from the book, not the which-line
+        // template. Detection is deterministic; anything else falls through.
+        if (r.text.trim() && looksLikeQuestion(r.text)) {
+            return answerQuestion(orgId, agentKey, r, cfg);
+        }
         const refs = (cfg.openRefs ?? []).slice(0, MAX_REFS_LISTED);
         const body = [
             `Thanks — I couldn't tell which line this is about.`,
@@ -264,7 +585,8 @@ export async function respondToReply(
 
     let draft: string;
     try {
-        draft = await councilChat([{ role: 'system', content: SYSTEM }, { role: 'user', content: user }], 'email');
+        const system = systemFor(SYSTEM, await operatorOverlay(orgId, agentKey));
+        draft = await councilChat([{ role: 'system', content: system }, { role: 'user', content: user }], 'email');
     } catch (e) {
         return { sent: false, why: `model call failed: ${e instanceof Error ? e.message : e}` };
     }

@@ -370,8 +370,10 @@ function mergeThreadMessages(thread: ZohoMailThread, prior?: StoredMessage[]): Z
             subject: p.subject || '',
             summary: p.summary || '',
             fromAddress: p.from || '',
-            // Stored rows predate the display name; the live copy carries it.
+            // Stored rows predate the display name and the RFC id; the live copy
+            // carries both, and this path only rehydrates what was persisted.
             fromName: null,
+            rfcMessageId: null,
             toAddress: p.to || [],
             ccAddress: p.cc || [],
             sentAt: p.sent_at,
