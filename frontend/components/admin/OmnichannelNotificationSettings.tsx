@@ -526,6 +526,33 @@ const MODULES_META: ModuleMeta[] = [
                 description: 'Sent to designated property managers when an on-ground staff member marks the facility request as resolved.',
             }
         ]
+    },
+    {
+        id: 'visitor_management',
+        name: 'Visitor Management & Host Approvals',
+        description: 'Omnichannel alerts for visitor check-in, host approval requests, and entry confirmations.',
+        icon: UserCheck,
+        color: 'text-emerald-600 bg-emerald-50 border-emerald-100',
+        events: [
+            {
+                key: 'visitor_approval_requested',
+                name: 'Visitor Approval Request (Sent to Host)',
+                description: 'Alert sent to host user when a visitor checks in to meet them.',
+                hasContextual: { assignee: true }
+            },
+            {
+                key: 'visitor_approved',
+                name: 'Visitor Entry Approved Confirmation',
+                description: 'Alert sent to security and receptionist when entry is approved by host.',
+                hasContextual: { requester: true }
+            },
+            {
+                key: 'visitor_rejected',
+                name: 'Visitor Entry Rejected Alert',
+                description: 'Alert sent to security and receptionist when entry is rejected by host.',
+                hasContextual: { requester: true }
+            }
+        ]
     }
 ];
 
@@ -582,6 +609,11 @@ const DEFAULT_NOTIFICATION_MATRIX: NotificationMatrix = {
     facility_requests: {
         facility_request_created: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin', 'staff', 'mst'], user_ids: [], notify_assignee: true },
         facility_request_resolved: { channels: { email: false, whatsapp: true, push: true }, roles: ['property_admin'], user_ids: [] }
+    },
+    visitor_management: {
+        visitor_approval_requested: { channels: { email: true, whatsapp: true, push: true, voice: true }, roles: [], user_ids: [], notify_assignee: true },
+        visitor_approved: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: ['security', 'property_admin'], user_ids: [], notify_requester: true },
+        visitor_rejected: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: ['security', 'property_admin'], user_ids: [], notify_requester: true }
     }
 };
 
@@ -603,6 +635,9 @@ const DEFAULT_VOICE_TEMPLATES: Record<string, string> = {
     reminder_ppm: "Hi {{user_name}}, this is Pratiksha from the Operations team. Preventive maintenance for {{system_name}} at {{property_name}} is scheduled for {{due_date}}. Please coordinate with the vendor and arrange site clearance.",
     reminder_ticket_sla: "Hi {{user_name}}, this is Pratiksha from Operations. Service ticket #{{ticket_number}} at {{property_name}} is approaching its resolution SLA deadline. Please take immediate action.",
     vendor_revenue_reminder: "Hi {{user_name}}, this is Pratiksha from the Operations team. This is a quick reminder that today's revenue for {{shop_name}} at {{property_name}} has not been recorded yet. Please open the AutoPilot app and submit your sales figures before the day ends.",
+    visitor_approval_requested: "Hi {{user_name}}, this is Pratiksha from the Operations team. A visitor named {{visitor_name}} from {{coming_from}} has checked in at {{property_name}} to meet you. Please check your app or WhatsApp to approve gate entry.",
+    visitor_approved: "Hi {{user_name}}, this is Pratiksha from Operations. Gate entry for visitor {{visitor_name}} to meet {{whom_to_meet}} at {{property_name}} has been approved.",
+    visitor_rejected: "Hi {{user_name}}, this is Pratiksha from Operations. Gate entry for visitor {{visitor_name}} to meet {{whom_to_meet}} at {{property_name}} was rejected.",
     test_call: "Hi {{user_name}}, this is Pratiksha from the Operations team. This is a quick test call to confirm that your phone notifications and voice alerts are working properly."
 };
 
@@ -1723,7 +1758,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
 
                                                             <div className="flex flex-wrap items-center gap-1.5">
                                                                 <span className="text-[10px] text-slate-500 font-semibold">Dynamic Variables:</span>
-                                                                {['{{user_name}}', '{{checklist_title}}', '{{property_name}}', '{{shift_time}}', '{{due_date}}'].map(v => (
+                                                                {['{{user_name}}', '{{visitor_name}}', '{{coming_from}}', '{{whom_to_meet}}', '{{property_name}}', '{{checklist_title}}', '{{shift_time}}', '{{due_date}}'].map(v => (
                                                                     <button
                                                                         key={v}
                                                                         type="button"

@@ -50,6 +50,16 @@ export default function PropertyLayout({
                     return;
                 }
 
+                // 1.2 ALL PROPERTIES SELECTION (for Ops Super Admin / Org Admin / Elevated Users)
+                if (propertyId === 'all') {
+                    const role = membership?.org_role || (membership?.properties.length ? membership.properties[0].role : 'ops_super_admin');
+                    setIsAuthorized(true);
+                    setUserRole(role);
+                    validatePath(role);
+                    setIsCheckingAccess(false);
+                    return;
+                }
+
                 // 1.5 USER APPROVAL GATE
                 if (membership?.is_approved === false) {
                     router.replace('/waiting-approval');

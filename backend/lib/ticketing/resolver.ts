@@ -145,9 +145,13 @@ export async function resolveClassification(ticketText: string, dbPriority?: str
             // (We trust the LLM's situational reasoning over rules in Zone B/C)
             finalResult.skill_group = llmResult.primary_category as SkillGroup;
 
-            // Map primary category back to an issue_code if possible (best guess from candidates)
-            const matchedCandidate = topCandidates.find(c => c.skill_group === llmResult.primary_category);
-            finalResult.issue_code = matchedCandidate ? matchedCandidate.issue_code : null;
+            // Map primary category back to an issue_code (LLM explicit issue_code preferred, or rule candidate with positive match score)
+            if (llmResult.primary_issue_code) {
+                finalResult.issue_code = llmResult.primary_issue_code;
+            } else {
+                const matchedCandidate = topCandidates.find(c => c.skill_group === llmResult.primary_category && c.score > 0);
+                finalResult.issue_code = matchedCandidate ? matchedCandidate.issue_code : null;
+            }
 
             finalResult.confidence = 'high';
             finalResult.decisionSource = 'llm';

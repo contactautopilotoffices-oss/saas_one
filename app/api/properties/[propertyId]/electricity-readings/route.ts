@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { WhatsAppService } from '@/backend/services/WhatsAppService';
 
 /**
@@ -15,7 +16,6 @@ export async function GET(
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
-    const supabase = await createClient();
     const { searchParams } = new URL(request.url);
 
     const startDate = searchParams.get('startDate');
@@ -25,7 +25,7 @@ export async function GET(
 
     console.log('[ElectricityReadings] GET request for property:', propertyId, { startDate, endDate, meterId, period });
 
-    let query = supabase
+    let query = supabaseAdmin
         .from('electricity_readings')
         .select(`
             *,
@@ -83,7 +83,7 @@ interface ReadingInput {
 
 // POST: Submit a daily electricity reading with multiplier and cost computation
 // Helper function to compute cost for a single reading
-async function computeReadingWithCost(supabase: any, propertyId: string, reading: ReadingInput, userId: string) {
+async function computeReadingWithCost(client: any, propertyId: string, reading: ReadingInput, userId: string) {
     const readingDate = reading.reading_date || new Date().toISOString().split('T')[0];
     const rawUnits = reading.closing_reading - (reading.opening_reading || 0);
 
@@ -92,19 +92,10 @@ async function computeReadingWithCost(supabase: any, propertyId: string, reading
     let tariffRate = 0;
     let tariffId = null;
 
-    // Priority for multiplier value:
-    // 1. If multiplier_value_used is explicitly provided (e.g., from CSV import), use ONLY that value
-    // 2. If multiplier_id is provided but NOT multiplier_value_used, fetch the value from DB
-    // 3. If neither is provided, fetch from active multiplier for the meter
-
     if (reading.multiplier_value_used !== undefined && reading.multiplier_value_used !== null) {
-        // CSV/Import provided explicit multiplier value - use it DIRECTLY
-        // This value should NOT be multiplied by CT/PT ratios from meter multiplier
         multiplierValue = reading.multiplier_value_used;
-        // Don't fetch meter multiplier - use the CSV value as-is
     } else if (!multiplierId && reading.meter_id) {
-        // No explicit multiplier provided, fetch active multiplier from meter
-        const { data: multiplierData } = await supabase
+        const { data: multiplierData } = await supabaseAdmin
             .rpc('get_active_multiplier', {
                 p_meter_id: reading.meter_id,
                 p_date: readingDate
@@ -115,8 +106,7 @@ async function computeReadingWithCost(supabase: any, propertyId: string, reading
             multiplierValue = multiplierData[0].multiplier_value || 1;
         }
     } else if (multiplierId) {
-        // Fetch the multiplier value from the provided multiplier_id
-        const { data: mult } = await supabase
+        const { data: mult } = await supabaseAdmin
             .from('meter_multipliers')
             .select('multiplier_value')
             .eq('id', multiplierId)
@@ -127,8 +117,7 @@ async function computeReadingWithCost(supabase: any, propertyId: string, reading
         }
     }
 
-    // Get active tariff for the property
-    const { data: tariffData } = await supabase
+    const { data: tariffData } = await supabaseAdmin
         .rpc('get_active_grid_tariff', {
             p_property_id: propertyId,
             p_date: readingDate
@@ -139,7 +128,6 @@ async function computeReadingWithCost(supabase: any, propertyId: string, reading
         tariffRate = tariffData[0].rate_per_unit || 0;
     }
 
-    // Compute final values (PRD: Cost = Units × Tariff × Multiplier)
     const finalUnits = rawUnits * multiplierValue;
     const computedCost = finalUnits * tariffRate;
 
@@ -152,13 +140,11 @@ async function computeReadingWithCost(supabase: any, propertyId: string, reading
         notes: reading.notes || null,
         alert_status: reading.alert_status || 'normal',
         created_by: userId,
-        // OCR Fields
         photo_url: reading.photo_url || null,
         ocr_reading: reading.ocr_reading || null,
         ocr_confidence: reading.ocr_confidence || null,
         ocr_status: reading.ocr_status || 'verified',
         ocr_raw_response: reading.ocr_raw_response || null,
-        // New v2 fields
         multiplier_id: multiplierId,
         multiplier_value_used: multiplierValue,
         tariff_id: tariffId,
@@ -190,12 +176,12 @@ export async function POST(
         console.log('[ElectricityReadings] Batch submission with', body.readings.length, 'readings');
 
         const processedReadings = await Promise.all(
-            body.readings.map((r: ReadingInput) => computeReadingWithCost(supabase, propertyId, r, user.id))
+            body.readings.map((r: ReadingInput) => computeReadingWithCost(supabaseAdmin, propertyId, r, user.id))
         );
 
         try {
             for (const reading of processedReadings) {
-                const { data: existingReading } = await supabase
+                const { data: existingReading } = await supabaseAdmin
                     .from('electricity_readings')
                     .select('id')
                     .eq('meter_id', reading.meter_id)
@@ -204,14 +190,14 @@ export async function POST(
 
                 if (existingReading) {
                     console.log('[ElectricityReadings] Updating existing batch reading:', existingReading.id);
-                    const { error: updateError } = await supabase
+                    const { error: updateError } = await supabaseAdmin
                         .from('electricity_readings')
                         .update(reading)
                         .eq('id', existingReading.id);
                     if (updateError) throw updateError;
                 } else {
                     console.log('[ElectricityReadings] Creating new batch reading record');
-                    const { error: insertError } = await supabase
+                    const { error: insertError } = await supabaseAdmin
                         .from('electricity_readings')
                         .insert(reading);
                     if (insertError) throw insertError;
@@ -220,7 +206,7 @@ export async function POST(
 
             // Update last_reading on meters
             for (const r of body.readings) {
-                await supabase
+                await supabaseAdmin
                     .from('electricity_meters')
                     .update({ last_reading: r.closing_reading, updated_at: new Date().toISOString() })
                     .eq('id', r.meter_id);
@@ -239,7 +225,7 @@ export async function POST(
                 updated_at: new Date().toISOString()
             }));
 
-            await supabase
+            await supabaseAdmin
                 .from('facility_meter_readings')
                 .upsert(facilityPayload, {
                     onConflict: 'meter_id,reading_date',
@@ -257,10 +243,10 @@ export async function POST(
 
     // Single reading submission
     console.log('[ElectricityReadings] Single reading submission');
-    const processedReading = await computeReadingWithCost(supabase, propertyId, body, user.id);
+    const processedReading = await computeReadingWithCost(supabaseAdmin, propertyId, body, user.id);
 
     // 2. Store/Update Reading (Safe Lookup-then-Update)
-    const { data: existingReading } = await supabase
+    const { data: existingReading } = await supabaseAdmin
         .from('electricity_readings')
         .select('id')
         .eq('meter_id', processedReading.meter_id)
@@ -270,7 +256,7 @@ export async function POST(
     let dbResult;
     if (existingReading) {
         console.log('[ElectricityReadings] Updating existing single reading:', existingReading.id);
-        dbResult = await supabase
+        dbResult = await supabaseAdmin
             .from('electricity_readings')
             .update(processedReading)
             .eq('id', existingReading.id)
@@ -278,7 +264,7 @@ export async function POST(
             .single();
     } else {
         console.log('[ElectricityReadings] Creating new single reading record');
-        dbResult = await supabase
+        dbResult = await supabaseAdmin
             .from('electricity_readings')
             .insert(processedReading)
             .select()
@@ -293,13 +279,13 @@ export async function POST(
     const data = dbResult.data;
 
     // Update last_reading on meter
-    await supabase
+    await supabaseAdmin
         .from('electricity_meters')
         .update({ last_reading: body.closing_reading, updated_at: new Date().toISOString() })
         .eq('id', body.meter_id);
 
     // --- DUAL WRITE: Sync to Spreadsheet facility_meter_readings ---
-    await supabase
+    await supabaseAdmin
         .from('facility_meter_readings')
         .upsert({
             meter_id: processedReading.meter_id,

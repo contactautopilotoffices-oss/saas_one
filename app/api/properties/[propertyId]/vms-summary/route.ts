@@ -36,10 +36,12 @@ export async function GET(
     const periodFilter = startDate ? startDate.toISOString() : null;
 
     // --- Optimized Aggregation using SQL-side counts ---
+    const visitorQuery = (q: any) => propertyId === 'all' ? q : q.eq('property_id', propertyId);
+
     const [totalStatsRes, checkedInRes, checkedOutRes] = await Promise.all([
-        supabaseAdmin.from('visitor_logs').select('id', { count: 'exact', head: true }).eq('property_id', propertyId).gte('checkin_time', periodFilter || '1970-01-01'),
-        supabaseAdmin.from('visitor_logs').select('id', { count: 'exact', head: true }).eq('property_id', propertyId).gte('checkin_time', periodFilter || '1970-01-01').is('checkout_time', null),
-        supabaseAdmin.from('visitor_logs').select('id', { count: 'exact', head: true }).eq('property_id', propertyId).gte('checkin_time', periodFilter || '1970-01-01').not('checkout_time', 'is', null),
+        visitorQuery(supabaseAdmin.from('visitor_logs').select('id', { count: 'exact', head: true })).gte('checkin_time', periodFilter || '1970-01-01'),
+        visitorQuery(supabaseAdmin.from('visitor_logs').select('id', { count: 'exact', head: true })).gte('checkin_time', periodFilter || '1970-01-01').is('checkout_time', null),
+        visitorQuery(supabaseAdmin.from('visitor_logs').select('id', { count: 'exact', head: true })).gte('checkin_time', periodFilter || '1970-01-01').not('checkout_time', 'is', null),
     ]);
 
     return NextResponse.json({

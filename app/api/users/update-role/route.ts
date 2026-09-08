@@ -128,7 +128,56 @@ export async function POST(request: NextRequest) {
         const isDemotionToProperty = PROPERTY_LEVEL_ROLES.includes(newRole) && oldRoleSource === 'org' && organizationId;
 
         // 3. Perform the role update
-        if (isPromotionToOrg) {
+        if (newRole === 'ops_super_admin' && organizationId) {
+            // SPECIAL CASE: Ops Super Admin gets org membership AND active property membership in ALL properties of the org
+            const { data: existingOrgMembership } = await adminClient
+                .from('organization_memberships')
+                .select('user_id')
+                .eq('user_id', userId)
+                .eq('organization_id', organizationId)
+                .maybeSingle();
+
+            if (existingOrgMembership) {
+                const { error: orgUpdateError } = await adminClient
+                    .from('organization_memberships')
+                    .update({ role: 'ops_super_admin', is_active: true })
+                    .eq('user_id', userId)
+                    .eq('organization_id', organizationId);
+                if (orgUpdateError) throw orgUpdateError;
+            } else {
+                const { error: orgInsertError } = await adminClient
+                    .from('organization_memberships')
+                    .insert({
+                        user_id: userId,
+                        organization_id: organizationId,
+                        role: 'ops_super_admin',
+                        is_active: true
+                    });
+                if (orgInsertError) throw orgInsertError;
+            }
+
+            // Assign all properties in the organization
+            const { data: orgProperties } = await adminClient
+                .from('properties')
+                .select('id')
+                .eq('organization_id', organizationId);
+
+            if (orgProperties && orgProperties.length > 0) {
+                const propMembershipsToUpsert = orgProperties.map(p => ({
+                    user_id: userId,
+                    property_id: p.id,
+                    organization_id: organizationId,
+                    role: 'ops_super_admin',
+                    is_active: true
+                }));
+                const { error: propUpsertError } = await adminClient
+                    .from('property_memberships')
+                    .upsert(propMembershipsToUpsert, { onConflict: 'user_id,property_id' });
+                if (propUpsertError) {
+                    console.error('Failed to assign ops_super_admin property memberships:', propUpsertError);
+                }
+            }
+        } else if (isPromotionToOrg) {
             // CROSS-LEVEL PROMOTION: property_admin → org_super_admin
 
             // Step A: Check if org membership already exists (could be inactive from previous demotion)

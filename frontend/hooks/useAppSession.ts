@@ -39,21 +39,38 @@ export function useAppSession() {
             }
 
             // ✅ Parallelize ALL database queries to prevent waterfall hangs
-            const [{ data: orgMem }, { data: propMems }] = await Promise.all([
+            const [{ data: orgMems }, { data: propMems }] = await Promise.all([
                 supabase
                     .from('organization_memberships')
                     .select('role, organization_id')
                     .eq('user_id', user.id)
-                    .neq('is_active', false)
-                    .order('created_at', { ascending: false })
-                    .limit(1)
-                    .maybeSingle(),
+                    .neq('is_active', false),
                 supabase
                     .from('property_memberships')
                     .select('property_id, role')
                     .eq('user_id', user.id)
                     .eq('is_active', true),
             ]);
+
+            // Sort org memberships by priority (org_super_admin > ops_super_admin > org_admin ...)
+            const ORG_ROLE_PRIORITY: Record<string, number> = {
+                'org_super_admin': 1,
+                'ops_super_admin': 2,
+                'org_admin': 3,
+                'super_tenant': 4,
+                'owner': 5,
+                'admin': 6,
+                'bd_super_admin': 7,
+                'bd_admin': 8,
+                'procurement': 9,
+            };
+
+            const sortedOrgMems = [...(orgMems || [])].sort((a, b) => {
+                const aP = ORG_ROLE_PRIORITY[a.role] ?? 99;
+                const bP = ORG_ROLE_PRIORITY[b.role] ?? 99;
+                return aP - bP;
+            });
+            const orgMem = sortedOrgMems[0] || null;
 
             // Prioritize roles: Org Member > Property Member > Metadata > Default (tenant)
             const propRole = propMems?.find(p => p.role && p.role !== 'tenant')?.role || propMems?.[0]?.role;

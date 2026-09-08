@@ -97,23 +97,215 @@ function useCountUp(target: number, duration = 1400): number {
     return display;
 }
 
-const PropertyAdminDashboard = () => {
+interface PropertyAdminDashboardProps {
+    propertyId?: string;
+}
+
+interface PropertySelectorDropdownProps {
+    currentProperty: { id?: string; name?: string; code?: string; image_url?: string } | null;
+    assignedProperties: { id: string; name: string; code?: string; image_url?: string }[];
+    onSelectProperty: (propertyId: string) => void;
+    variant?: 'dark' | 'light';
+}
+
+const PropertySelectorDropdown = memo(function PropertySelectorDropdown({
+    currentProperty,
+    assignedProperties,
+    onSelectProperty,
+    variant = 'light'
+}: PropertySelectorDropdownProps) {
+    const [isOpen, setIsOpen] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
+    const dropdownRef = useRef<HTMLDivElement>(null);
+    const searchInputRef = useRef<HTMLInputElement>(null);
+
+    useEffect(() => {
+        const handler = (e: MouseEvent) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+                setIsOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, []);
+
+    useEffect(() => {
+        if (isOpen) {
+            setTimeout(() => searchInputRef.current?.focus(), 50);
+        } else {
+            setSearchQuery('');
+        }
+    }, [isOpen]);
+
+    const displayProperties = useMemo(() => {
+        if (assignedProperties.length <= 1) return assignedProperties;
+        const allOption = { id: 'all', name: 'All Properties', code: 'ALL' };
+        return [allOption, ...assignedProperties];
+    }, [assignedProperties]);
+
+    const filteredProperties = useMemo(() => {
+        if (!searchQuery.trim()) return displayProperties;
+        const q = searchQuery.toLowerCase().trim();
+        return displayProperties.filter(
+            p => p.name?.toLowerCase().includes(q) || p.code?.toLowerCase().includes(q)
+        );
+    }, [displayProperties, searchQuery]);
+
+    const isSingleProperty = assignedProperties.length <= 1;
+
+    return (
+        <div className="relative z-[300]" ref={dropdownRef}>
+            <button
+                type="button"
+                onClick={() => !isSingleProperty && setIsOpen(prev => !prev)}
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl transition-all text-xs font-bold shadow-sm ${
+                    variant === 'dark'
+                        ? 'bg-white/15 hover:bg-white/25 text-white border border-white/25 backdrop-blur-md'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200'
+                } ${isSingleProperty ? 'cursor-default' : 'cursor-pointer'}`}
+            >
+                <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 ${
+                    variant === 'dark' ? 'bg-white/20 text-white' : 'bg-primary/10 text-primary'
+                }`}>
+                    <Building2 className="w-3.5 h-3.5" />
+                </div>
+                <span className="max-w-[120px] sm:max-w-[160px] md:max-w-[200px] truncate leading-tight font-black">
+                    {currentProperty?.name || 'Select Property'}
+                </span>
+                {!isSingleProperty && (
+                    <ChevronDown className={`w-4 h-4 flex-shrink-0 transition-transform duration-200 ${
+                        variant === 'dark' ? 'text-white/80' : 'text-slate-400'
+                    } ${isOpen ? 'rotate-180' : ''}`} />
+                )}
+            </button>
+
+            <AnimatePresence>
+                {isOpen && !isSingleProperty && (
+                    <motion.div
+                        initial={{ opacity: 0, y: -6, scale: 0.98 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: -6, scale: 0.98 }}
+                        transition={{ duration: 0.15, ease: 'easeOut' }}
+                        className="absolute top-full right-0 mt-2 bg-white border border-slate-200/80 rounded-2xl shadow-2xl z-[400] overflow-hidden w-[290px] sm:w-[320px] max-w-[calc(100vw-2rem)] text-slate-900"
+                    >
+                        {/* Header & Search */}
+                        <div className="p-3 bg-slate-50/80 border-b border-slate-100 space-y-2">
+                            <div className="flex items-center justify-between px-1">
+                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Select Property</span>
+                                <span className="text-[10px] font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-full">
+                                    {assignedProperties.length} total
+                                </span>
+                            </div>
+                            <div className="relative">
+                                <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                <input
+                                    ref={searchInputRef}
+                                    type="text"
+                                    placeholder="Search properties..."
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    className="w-full pl-8 pr-7 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                                />
+                                {searchQuery && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setSearchQuery('')}
+                                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                                    >
+                                        <X className="w-3 h-3" />
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Property List */}
+                        <div className="max-h-[260px] overflow-y-auto p-1.5 space-y-1 custom-scrollbar">
+                            {filteredProperties.length === 0 ? (
+                                <div className="p-4 text-center text-xs font-semibold text-slate-400">
+                                    No properties match "{searchQuery}"
+                                </div>
+                            ) : (
+                                filteredProperties.map(p => {
+                                    const isSelected = p.id === currentProperty?.id;
+                                    return (
+                                        <button
+                                            key={p.id}
+                                            type="button"
+                                            onClick={() => {
+                                                setIsOpen(false);
+                                                if (!isSelected) onSelectProperty(p.id);
+                                            }}
+                                            className={`w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl transition-all text-left group ${
+                                                isSelected
+                                                    ? 'bg-primary/10 text-primary font-bold'
+                                                    : 'hover:bg-slate-50 text-slate-700 hover:pl-4'
+                                            }`}
+                                        >
+                                            <div className="flex items-center gap-2.5 min-w-0">
+                                                <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 transition-colors ${
+                                                    isSelected ? 'bg-primary text-white' : 'bg-slate-100 text-slate-500 group-hover:bg-slate-200'
+                                                }`}>
+                                                    <Building2 className="w-4 h-4" />
+                                                </div>
+                                                <div className="min-w-0">
+                                                    <div className={`text-xs font-bold truncate ${isSelected ? 'text-primary' : 'text-slate-800'}`}>
+                                                        {p.name}
+                                                    </div>
+                                                    {p.code && (
+                                                        <div className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
+                                                            {p.code}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            {isSelected && (
+                                                <div className="w-5 h-5 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
+                                                    <Check className="w-3 h-3 text-primary font-bold" />
+                                                </div>
+                                            )}
+                                        </button>
+                                    );
+                                })
+                            )}
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+        </div>
+    );
+});
+
+const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDashboardProps = {}) => {
     const { user, signOut, membership } = useAuth();
     const { theme, toggleTheme } = useTheme();
     const params = useParams();
     const router = useRouter();
     const orgSlug = params?.orgId as string;
-    const propertyId = params?.propertyId as string;
+    const urlPropertyId = params?.propertyId as string;
+    const searchParams = useSearchParams();
+
+    // Resolved active property id: prop -> url param -> searchParam
+    const [activePropId, setActivePropId] = useState<string | undefined>(
+        propPropertyId || urlPropertyId || searchParams.get('propertyId') || undefined
+    );
+
+    useEffect(() => {
+        const nextId = propPropertyId || urlPropertyId || searchParams.get('propertyId');
+        if (nextId && nextId !== activePropId) {
+            setActivePropId(nextId);
+        }
+    }, [propPropertyId, urlPropertyId, searchParams]);
+
+    const propertyId = activePropId || (params?.propertyId as string) || '';
 
     // State
     const [openTab, setActiveTab] = useState<Tab>('overview');
     const supabase = useMemo(() => createClient(), []);
     const { getCachedData, setCachedData } = useDataCache();
     const cacheKey = `property-${propertyId}`;
-    const searchParams = useSearchParams();
 
     // State initialized from cache if available
-    const [property, setProperty] = useState<Property | null>(() => getCachedData(cacheKey));
+    const [property, setProperty] = useState<Property | null>(() => propertyId ? getCachedData(cacheKey) : null);
     const [tickets, setTickets] = useState<TicketData[]>([]);
     const [isLoading, setIsLoading] = useState(!property);
     const [errorMsg, setErrorMsg] = useState('');
@@ -128,23 +320,62 @@ const PropertyAdminDashboard = () => {
     const [preSelectedStockItemId, setPreSelectedStockItemId] = useState<string | undefined>();
     const [pendingStatusFilter, setPendingStatusFilter] = useState('all');
 
-    // Property switcher — derive directly from AuthContext membership (already fetched + cached)
-    const assignedProperties = useMemo(() =>
-        (membership?.properties || [])
+    const userOrgRole = (membership?.org_role || '').toLowerCase();
+    const isOpsSuperAdmin = userOrgRole === 'ops_super_admin';
+    const isElevatedRole = ['ops_super_admin', 'org_super_admin', 'master_admin', 'org_admin'].includes(userOrgRole);
+
+    // Organization properties for ops/super admins
+    const [orgProperties, setOrgProperties] = useState<any[]>([]);
+
+    useEffect(() => {
+        const fetchOrgProperties = async () => {
+            const orgId = property?.organization_id || membership?.org_id;
+            if (!orgId) return;
+            const { data } = await supabase
+                .from('properties')
+                .select('id, name, code, image_url, organization_id')
+                .eq('organization_id', orgId)
+                .is('deleted_at', null)
+                .order('name');
+            if (data && data.length > 0) {
+                setOrgProperties(data);
+                if (!activePropId) {
+                    setActivePropId(data[0].id);
+                }
+            }
+        };
+
+        if (isElevatedRole) {
+            fetchOrgProperties();
+        }
+    }, [membership?.org_id, property?.organization_id, isElevatedRole, activePropId, supabase]);
+
+    // Property switcher — derive from all org properties for ops/super admins, or membership properties
+    const assignedProperties = useMemo(() => {
+        if (isElevatedRole && orgProperties.length > 0) {
+            return orgProperties;
+        }
+        return (membership?.properties || [])
             .filter(p => !['tenant', 'super_tenant'].includes((p.role || '').toLowerCase()))
-            .filter((p, i, arr) => arr.findIndex(x => x.id === p.id) === i),
-        [membership]
-    );
+            .filter((p, i, arr) => arr.findIndex(x => x.id === p.id) === i);
+    }, [membership, isElevatedRole, orgProperties]);
+
+    useEffect(() => {
+        if (!activePropId && assignedProperties.length > 0) {
+            setActivePropId(assignedProperties[0].id);
+        }
+    }, [activePropId, assignedProperties]);
+
     const [showPropertyDropdown, setShowPropertyDropdown] = useState(false);
     const [showClientQRModal, setShowClientQRModal] = useState(false);
     const propertyDropdownRef = useRef<HTMLDivElement>(null);
 
     // Ref to prevent duplicate fetches
-    const hasFetchedProperty = useRef(false);
+    const fetchedPropertyId = useRef<string | null>(null);
 
     useEffect(() => {
-        if (propertyId && !hasFetchedProperty.current) {
-            hasFetchedProperty.current = true;
+        if (propertyId && fetchedPropertyId.current !== propertyId) {
+            fetchedPropertyId.current = propertyId;
             fetchPropertyDetails(true);
         }
     }, [propertyId]);
@@ -198,7 +429,21 @@ const PropertyAdminDashboard = () => {
     };
 
     const fetchPropertyDetails = async (isInitial = false) => {
-        const cached = getCachedData(cacheKey);
+        if (!propertyId) return;
+        if (propertyId === 'all') {
+            const allPropertyObj: Property = {
+                id: 'all',
+                name: 'All Properties',
+                code: 'ALL',
+                address: 'All Organization Properties',
+                organization_id: orgProperties[0]?.organization_id || membership?.org_id || ''
+            };
+            setProperty(allPropertyObj);
+            setIsLoading(false);
+            return;
+        }
+        const currentCacheKey = `property-${propertyId}`;
+        const cached = getCachedData(currentCacheKey);
 
         // If we have cached data, use it and only fetch if explicitly needed
         if (cached) {
@@ -209,7 +454,7 @@ const PropertyAdminDashboard = () => {
             }
         }
 
-        if (!property) setIsLoading(true);
+        if (!property || property.id !== propertyId) setIsLoading(true);
         setErrorMsg('');
 
         try {
@@ -223,7 +468,7 @@ const PropertyAdminDashboard = () => {
                 setErrorMsg('Property not found.');
             } else {
                 setProperty(data);
-                setCachedData(cacheKey, data);
+                setCachedData(currentCacheKey, data);
             }
         } catch (err) {
             setErrorMsg('Network error. Please try again.');
@@ -313,7 +558,7 @@ const PropertyAdminDashboard = () => {
                 <div className="p-4 lg:p-5 pb-2">
                     <div className="flex flex-col items-center gap-1 mb-3">
                         <img src="/autopilot-logo-new.png" alt="Autopilot Logo" className="h-10 w-auto object-contain" />
-                        <p className="text-[10px] text-text-tertiary font-black uppercase tracking-[0.2em]">Property Manager</p>
+                        <p className="text-[10px] text-text-tertiary font-black uppercase tracking-[0.2em]">{isOpsSuperAdmin ? 'Ops Super Admin' : 'Property Manager'}</p>
                     </div>
 
                 </div>
@@ -688,53 +933,19 @@ const PropertyAdminDashboard = () => {
                         </div>
                         <div className="flex items-center gap-2 md:gap-3">
                             {/* Property Indicator / Switcher — always visible, dropdown when 2+ properties */}
-                            <div className="relative" ref={propertyDropdownRef}>
-                                <button
-                                    onClick={() => assignedProperties.length > 1 && setShowPropertyDropdown(v => !v)}
-                                    className={`flex items-center gap-1.5 px-2.5 py-2 bg-slate-100 border border-slate-200 rounded-xl transition-colors text-xs font-bold text-slate-800 h-9 ${assignedProperties.length > 1 ? 'hover:bg-slate-200 cursor-pointer open:bg-slate-300' : 'cursor-default'}`}
-                                >
-                                    <Building2 className="w-4 h-4 text-primary flex-shrink-0" />
-                                    <span className="max-w-[80px] sm:max-w-[120px] md:max-w-[160px] truncate">{property?.name || 'Property'}</span>
-                                    {assignedProperties.length > 1 && (
-                                        <ChevronDown className={`w-4 h-4 text-slate-400 flex-shrink-0 transition-transform ${showPropertyDropdown ? 'rotate-180' : ''}`} />
-                                    )}
-                                </button>
-                                <AnimatePresence>
-                                    {showPropertyDropdown && assignedProperties.length > 1 && (
-                                        <motion.div
-                                            initial={{ opacity: 0, y: -4 }}
-                                            animate={{ opacity: 1, y: 0 }}
-                                            exit={{ opacity: 0, y: -4 }}
-                                            transition={{ duration: 0.15 }}
-                                            className="absolute top-full right-0 mt-1 bg-white border border-slate-200 rounded-2xl shadow-xl z-[300] overflow-hidden w-[220px] max-w-[calc(100vw-1rem)]"
-                                        >
-                                            {assignedProperties.map(p => (
-                                                <button
-                                                    key={p.id}
-                                                    onClick={() => {
-                                                        setShowPropertyDropdown(false);
-                                                        if (p.id !== propertyId) {
-                                                            router.push(window.location.pathname.replace(propertyId, p.id));
-                                                        }
-                                                    }}
-                                                    className="w-full flex items-center justify-between gap-3 px-4 py-3.5 hover:bg-slate-50 open:bg-slate-100 transition-colors text-left"
-                                                >
-                                                    <div className="flex items-center gap-2.5 min-w-0">
-                                                        <div className="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center flex-shrink-0">
-                                                            <Building2 className="w-4 h-4 text-slate-400" />
-                                                        </div>
-                                                        <div className="min-w-0">
-                                                            <div className="text-sm font-bold text-slate-800 truncate">{p.name}</div>
-                                                            <div className="text-[11px] text-slate-400 font-medium">{p.code}</div>
-                                                        </div>
-                                                    </div>
-                                                    {p.id === propertyId && <Check className="w-4 h-4 text-primary flex-shrink-0" />}
-                                                </button>
-                                            ))}
-                                        </motion.div>
-                                    )}
-                                </AnimatePresence>
-                            </div>
+                            <PropertySelectorDropdown
+                                currentProperty={property}
+                                assignedProperties={assignedProperties}
+                                onSelectProperty={(id) => {
+                                    setActivePropId(id);
+                                    if (propertyId && window.location.pathname.includes(propertyId)) {
+                                        router.push(window.location.pathname.replace(propertyId, id));
+                                    } else {
+                                        router.push(`/property/${id}/dashboard?tab=${openTab}`);
+                                    }
+                                }}
+                                variant="light"
+                            />
 
                             {/* Notification Bell */}
                             <NotificationBell />
@@ -749,7 +960,7 @@ const PropertyAdminDashboard = () => {
                                 </div>
                                 <div className="text-left hidden md:block">
                                     <h4 className="text-[13px] font-black text-text-primary leading-none mb-0.5 group-hover:text-primary transition-colors">
-                                        {user?.user_metadata?.full_name || 'Property Admin'}
+                                        {user?.user_metadata?.full_name || (isOpsSuperAdmin ? 'Ops Super Admin' : 'Property Admin')}
                                     </h4>
                                     <p className="text-[10px] text-text-tertiary font-black uppercase tracking-[0.15em]">
                                         View Profile
@@ -759,7 +970,7 @@ const PropertyAdminDashboard = () => {
 
                             <div className="hidden lg:flex flex-col items-end border-l border-border pl-4 h-8 justify-center">
                                 <span className="text-[11px] font-black text-text-tertiary uppercase tracking-widest leading-none mb-1">Access Level</span>
-                                <span className="text-xs text-primary font-black uppercase tracking-widest leading-none">Property admin</span>
+                                <span className="text-xs text-primary font-black uppercase tracking-widest leading-none">{isOpsSuperAdmin ? 'Ops super admin' : 'Property admin'}</span>
                             </div>
                         </div>
                     </header>
@@ -783,7 +994,14 @@ const PropertyAdminDashboard = () => {
                             onRefresh={() => setStatsVersion(v => v + 1)}
                             onTabChange={handleTabChange}
                             assignedProperties={assignedProperties}
-                            onPropertySwitch={(id) => router.push(window.location.pathname.replace(propertyId, id))}
+                            onPropertySwitch={(id) => {
+                                setActivePropId(id);
+                                if (propertyId && window.location.pathname.includes(propertyId)) {
+                                    router.push(window.location.pathname.replace(propertyId, id));
+                                } else {
+                                    router.push(`/property/${id}/dashboard?tab=${openTab}`);
+                                }
+                            }}
                         />}
                         {openTab === 'users' && <UserDirectory
                             propertyId={propertyId}
@@ -1154,14 +1372,39 @@ const OverviewTab = memo(function OverviewTab({
                 const d = new Date();
                 const monthStart = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
 
-                let openQuery = supabase.from('tickets').select('id', { count: 'exact', head: true }).eq('property_id', propertyId).in('status', ['open', 'waitlist', 'blocked', 'client_raised']);
-                let waitlistQuery = supabase.from('tickets').select('id', { count: 'exact', head: true }).eq('property_id', propertyId).in('status', ['waitlist']);
-                let inProgressQuery = supabase.from('tickets').select('id', { count: 'exact', head: true }).eq('property_id', propertyId).in('status', ['assigned', 'in_progress', 'paused', 'work_started']);
-                let resolvedQuery = supabase.from('tickets').select('id', { count: 'exact', head: true }).eq('property_id', propertyId).in('status', ['resolved', 'closed', 'satisfied', 'pending_validation']);
-                let totalQuery = supabase.from('tickets').select('id', { count: 'exact', head: true }).eq('property_id', propertyId);
-                let pendingValQuery = supabase.from('tickets').select('id', { count: 'exact', head: true }).eq('property_id', propertyId).eq('status', 'pending_validation');
-                let urgentOpenQuery = supabase.from('tickets').select('id', { count: 'exact', head: true }).eq('property_id', propertyId).in('priority', ['urgent', 'high', 'critical']).not('status', 'in', '("resolved","closed","satisfied")');
-                let slaBreachedQuery = supabase.from('tickets').select('id', { count: 'exact', head: true }).eq('property_id', propertyId).or(`sla_deadline.lt.${new Date().toISOString()},sla_breached.eq.true`).not('status', 'in', '("resolved","closed")');
+                const validPropIds = assignedProperties.filter(p => p.id !== 'all').map(p => p.id);
+
+                let openQuery = supabase.from('tickets').select('id', { count: 'exact', head: true }).in('status', ['open', 'waitlist', 'blocked', 'client_raised']);
+                let waitlistQuery = supabase.from('tickets').select('id', { count: 'exact', head: true }).in('status', ['waitlist']);
+                let inProgressQuery = supabase.from('tickets').select('id', { count: 'exact', head: true }).in('status', ['assigned', 'in_progress', 'paused', 'work_started']);
+                let resolvedQuery = supabase.from('tickets').select('id', { count: 'exact', head: true }).in('status', ['resolved', 'closed', 'satisfied', 'pending_validation']);
+                let totalQuery = supabase.from('tickets').select('id', { count: 'exact', head: true });
+                let pendingValQuery = supabase.from('tickets').select('id', { count: 'exact', head: true }).eq('status', 'pending_validation');
+                let urgentOpenQuery = supabase.from('tickets').select('id', { count: 'exact', head: true }).in('priority', ['urgent', 'high', 'critical']).not('status', 'in', '("resolved","closed","satisfied")');
+                let slaBreachedQuery = supabase.from('tickets').select('id', { count: 'exact', head: true }).or(`sla_deadline.lt.${new Date().toISOString()},sla_breached.eq.true`).not('status', 'in', '("resolved","closed")');
+                let recentsQuery = supabase.from('tickets').select('id, title, status, created_at').order('created_at', { ascending: false }).limit(5);
+
+                if (propertyId !== 'all') {
+                    openQuery = openQuery.eq('property_id', propertyId);
+                    waitlistQuery = waitlistQuery.eq('property_id', propertyId);
+                    inProgressQuery = inProgressQuery.eq('property_id', propertyId);
+                    resolvedQuery = resolvedQuery.eq('property_id', propertyId);
+                    totalQuery = totalQuery.eq('property_id', propertyId);
+                    pendingValQuery = pendingValQuery.eq('property_id', propertyId);
+                    urgentOpenQuery = urgentOpenQuery.eq('property_id', propertyId);
+                    slaBreachedQuery = slaBreachedQuery.eq('property_id', propertyId);
+                    recentsQuery = recentsQuery.eq('property_id', propertyId);
+                } else if (validPropIds.length > 0) {
+                    openQuery = openQuery.in('property_id', validPropIds);
+                    waitlistQuery = waitlistQuery.in('property_id', validPropIds);
+                    inProgressQuery = inProgressQuery.in('property_id', validPropIds);
+                    resolvedQuery = resolvedQuery.in('property_id', validPropIds);
+                    totalQuery = totalQuery.in('property_id', validPropIds);
+                    pendingValQuery = pendingValQuery.in('property_id', validPropIds);
+                    urgentOpenQuery = urgentOpenQuery.in('property_id', validPropIds);
+                    slaBreachedQuery = slaBreachedQuery.in('property_id', validPropIds);
+                    recentsQuery = recentsQuery.in('property_id', validPropIds);
+                }
 
                 if (timePeriod === 'today') {
                     openQuery = openQuery.gte('created_at', todayForTickets);
@@ -1183,17 +1426,21 @@ const OverviewTab = memo(function OverviewTab({
                     slaBreachedQuery = slaBreachedQuery.gte('created_at', monthStart);
                 }
 
+                const validationFeaturePromise = propertyId === 'all'
+                    ? Promise.resolve({ data: { is_enabled: true }, error: null })
+                    : supabase.from('property_features').select('is_enabled').eq('property_id', propertyId).eq('feature_key', 'ticket_validation').maybeSingle();
+
                 const [openRes, waitlistRes, inProgressRes, resolvedRes, totalRes, recentsRes, pendingValRes, urgentOpenRes, slaBreachedRes, validationFeatureRes] = await Promise.all([
                     openQuery,
                     waitlistQuery,
                     inProgressQuery,
                     resolvedQuery,
                     totalQuery,
-                    supabase.from('tickets').select('id, title, status, created_at').eq('property_id', propertyId).order('created_at', { ascending: false }).limit(5),
+                    recentsQuery,
                     pendingValQuery,
                     urgentOpenQuery,
                     slaBreachedQuery,
-                    supabase.from('property_features').select('is_enabled').eq('property_id', propertyId).eq('feature_key', 'ticket_validation').maybeSingle(),
+                    validationFeaturePromise,
                 ]);
 
                 // --- Electricity, VMS, Vendors (all in parallel via APIs) ---
@@ -1201,14 +1448,26 @@ const OverviewTab = memo(function OverviewTab({
                 const apiPeriod = timePeriod; // 'today' | 'month' | 'all'
 
                 // Optimize electricity fetch: only fetch what's needed for the period
-                let electricityQuery = supabase.from('electricity_readings').select('computed_units, final_units, computed_cost, closing_reading, reading_date, electricity_meters!inner(meter_type)').eq('property_id', propertyId).eq('electricity_meters.meter_type', 'main').order('reading_date', { ascending: false });
+                let electricityQuery = supabase.from('electricity_readings').select('computed_units, final_units, computed_cost, closing_reading, reading_date, electricity_meters!inner(meter_type)').eq('electricity_meters.meter_type', 'main').order('reading_date', { ascending: false });
+                if (propertyId !== 'all') {
+                    electricityQuery = electricityQuery.eq('property_id', propertyId);
+                } else if (validPropIds.length > 0) {
+                    electricityQuery = electricityQuery.in('property_id', validPropIds);
+                }
+
                 if (timePeriod === 'today') {
                     electricityQuery = electricityQuery.eq('reading_date', today);
                 } else if (timePeriod === 'month') {
                     electricityQuery = electricityQuery.gte('reading_date', monthStart);
                 }
                 
-                let dieselQuery = supabase.from('diesel_readings').select('computed_consumed_litres, closing_kwh, opening_kwh, reading_date').eq('property_id', propertyId);
+                let dieselQuery = supabase.from('diesel_readings').select('computed_consumed_litres, closing_kwh, opening_kwh, reading_date');
+                if (propertyId !== 'all') {
+                    dieselQuery = dieselQuery.eq('property_id', propertyId);
+                } else if (validPropIds.length > 0) {
+                    dieselQuery = dieselQuery.in('property_id', validPropIds);
+                }
+
                 if (timePeriod === 'today') {
                     dieselQuery = dieselQuery.eq('reading_date', today);
                 } else if (timePeriod === 'month') {
@@ -1219,7 +1478,13 @@ const OverviewTab = memo(function OverviewTab({
                 const todayForChecklist = new Date().toISOString().split('T')[0];
                 const monthStartForChecklist = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
 
-                let checklistQuery = supabase.from('sop_completions').select('status, due_at').eq('property_id', propertyId);
+                let checklistQuery = supabase.from('sop_completions').select('status, due_at');
+                if (propertyId !== 'all') {
+                    checklistQuery = checklistQuery.eq('property_id', propertyId);
+                } else if (validPropIds.length > 0) {
+                    checklistQuery = checklistQuery.in('property_id', validPropIds);
+                }
+
                 if (timePeriod === 'today') {
                     checklistQuery = checklistQuery.eq('completion_date', todayForChecklist);
                 } else if (timePeriod === 'month') {
@@ -1437,58 +1702,12 @@ const OverviewTab = memo(function OverviewTab({
 
                         {/* Property Indicator / Switcher — icon + name + chevron pill */}
                         {property && (
-                            <div className="relative" ref={overviewPropDropdownRef}>
-                                <button
-                                    onClick={() => assignedProperties.length > 1 && setShowOverviewPropDropdown(v => !v)}
-                                    className={`flex items-center gap-1.5 md:gap-2 pl-1 pr-2.5 md:pr-3 py-1 bg-white/20 border border-white/25 backdrop-blur-sm rounded-full transition-colors min-h-[40px] ${assignedProperties.length > 1 ? 'hover:bg-white/30 cursor-pointer open:bg-white/35' : 'cursor-default'}`}
-                                >
-                                    {/* Property icon circle */}
-                                    <div className="w-8 h-8 rounded-full bg-white/30 border border-white/30 overflow-hidden flex items-center justify-center flex-shrink-0">
-                                        {property.image_url ? (
-                                            <img src={property.image_url} alt={property.name} className="w-full h-full object-cover" />
-                                        ) : (
-                                            <Building2 className="w-4 h-4 text-white" />
-                                        )}
-                                    </div>
-                                    <span className="text-white font-bold text-xs md:text-sm max-w-[70px] sm:max-w-[110px] md:max-w-[140px] truncate">{property.name}</span>
-                                    {assignedProperties.length > 1 && (
-                                        <ChevronDown className={`w-3.5 h-3.5 md:w-4 md:h-4 text-white/80 flex-shrink-0 transition-transform ${showOverviewPropDropdown ? 'rotate-180' : ''}`} />
-                                    )}
-                                </button>
-                                <AnimatePresence>
-                                    {showOverviewPropDropdown && assignedProperties.length > 1 && (
-                                        <motion.div
-                                            initial={{ opacity: 0, y: -4 }}
-                                            animate={{ opacity: 1, y: 0 }}
-                                            exit={{ opacity: 0, y: -4 }}
-                                            transition={{ duration: 0.15 }}
-                                            className="absolute top-full right-0 mt-2 bg-white border border-slate-200 rounded-2xl shadow-xl z-[300] overflow-hidden w-[220px] max-w-[calc(100vw-1rem)]"
-                                        >
-                                            {assignedProperties.map(p => (
-                                                <button
-                                                    key={p.id}
-                                                    onClick={() => {
-                                                        setShowOverviewPropDropdown(false);
-                                                        if (p.id !== propertyId) onPropertySwitch?.(p.id);
-                                                    }}
-                                                    className="w-full flex items-center justify-between gap-3 px-4 py-3.5 hover:bg-slate-50 open:bg-slate-100 transition-colors text-left"
-                                                >
-                                                    <div className="flex items-center gap-2.5 min-w-0">
-                                                        <div className="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 overflow-hidden flex items-center justify-center flex-shrink-0">
-                                                            <Building2 className="w-4 h-4 text-slate-400" />
-                                                        </div>
-                                                        <div className="min-w-0">
-                                                            <div className="text-sm font-bold text-slate-800 truncate">{p.name}</div>
-                                                            <div className="text-[11px] text-slate-400 font-medium">{p.code}</div>
-                                                        </div>
-                                                    </div>
-                                                    {p.id === propertyId && <Check className="w-4 h-4 text-primary flex-shrink-0" />}
-                                                </button>
-                                            ))}
-                                        </motion.div>
-                                    )}
-                                </AnimatePresence>
-                            </div>
+                            <PropertySelectorDropdown
+                                currentProperty={property}
+                                assignedProperties={assignedProperties}
+                                onSelectProperty={(id) => onPropertySwitch?.(id)}
+                                variant="dark"
+                            />
                         )}
                     </div>
                 </div>

@@ -40,6 +40,7 @@ const VMSKioskContent: React.FC<VMSKioskProps> = ({ propertyId, propertyName }) 
         whom_to_meet: '',
         photo_url: '',
     });
+    const [hostId, setHostId] = useState<string | null>(null);
     const [photoBlob, setPhotoBlob] = useState<Blob | null>(null);
     const [visitorId, setVisitorId] = useState('');
     const [customVisitorId, setCustomVisitorId] = useState('');
@@ -60,6 +61,7 @@ const VMSKioskContent: React.FC<VMSKioskProps> = ({ propertyId, propertyName }) 
         setStep('home');
         setCategory('visitor');
         setFormData({ name: '', mobile: '', coming_from: '', whom_to_meet: '', photo_url: '' });
+        setHostId(null);
         setPhotoBlob(null);
         setVisitorId('');
         setCustomVisitorId('');
@@ -74,8 +76,8 @@ const VMSKioskContent: React.FC<VMSKioskProps> = ({ propertyId, propertyName }) 
     };
 
     const handleCheckin = async () => {
-        if (!formData.name || !formData.whom_to_meet) {
-            setError('Please fill all required fields');
+        if (!formData.name) {
+            setError('Please enter visitor name');
             return;
         }
 
@@ -93,6 +95,7 @@ const VMSKioskContent: React.FC<VMSKioskProps> = ({ propertyId, propertyName }) 
                     mobile: formData.mobile ? `+91${formData.mobile}` : null,
                     coming_from: formData.coming_from,
                     whom_to_meet: formData.whom_to_meet,
+                    host_id: hostId,
                     visitor_id: customVisitorId.trim() || null,
                     photo_url: null, // Will be updated after upload
                 }),
@@ -351,6 +354,7 @@ const VMSKioskContent: React.FC<VMSKioskProps> = ({ propertyId, propertyName }) 
                             propertyId={propertyId}
                             value={formData.whom_to_meet}
                             onChange={(value) => setFormData(prev => ({ ...prev, whom_to_meet: value }))}
+                            onSelectHostId={(id) => setHostId(id)}
                         />
 
                         {/* Camera */}

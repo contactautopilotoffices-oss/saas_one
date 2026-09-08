@@ -60,6 +60,23 @@ export async function GET(
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
+    // Populate creator user info if created_by is present
+    if (data && data.length > 0) {
+        const creatorIds = Array.from(new Set(data.map((v: any) => v.created_by).filter(Boolean)));
+        if (creatorIds.length > 0) {
+            const { data: creatorUsers } = await supabaseAdmin
+                .from('users')
+                .select('id, full_name, email')
+                .in('id', creatorIds);
+            const creatorMap = new Map((creatorUsers || []).map(u => [u.id, u]));
+            data.forEach((v: any) => {
+                if (v.created_by && creatorMap.has(v.created_by)) {
+                    v.creator = creatorMap.get(v.created_by);
+                }
+            });
+        }
+    }
+
     // Stats that respect the same date filter as the visitor list
     let statsStart: string | null = null;
     let statsEnd: string | null = null;
@@ -86,7 +103,7 @@ export async function GET(
 
     const [{ count: totalVisitors }, { count: checkedIn }, { count: checkedOut }] = await Promise.all([
         buildStatsQuery(supabaseAdmin.from('visitor_logs').select('*', { count: 'exact', head: true }).eq('organization_id', orgId)),
-        buildStatsQuery(supabaseAdmin.from('visitor_logs').select('*', { count: 'exact', head: true }).eq('organization_id', orgId).eq('status', 'checked_in')),
+        buildStatsQuery(supabaseAdmin.from('visitor_logs').select('*', { count: 'exact', head: true }).eq('organization_id', orgId).eq('status', 'checked_in').neq('approval_status', 'pending').neq('approval_status', 'rejected')),
         buildStatsQuery(supabaseAdmin.from('visitor_logs').select('*', { count: 'exact', head: true }).eq('organization_id', orgId).eq('status', 'checked_out')),
     ]);
 

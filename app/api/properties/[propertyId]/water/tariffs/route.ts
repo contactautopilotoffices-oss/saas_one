@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 
 export async function POST(
     request: NextRequest,
@@ -13,14 +14,14 @@ export async function POST(
 
     // Ensure older open-ended tariffs for this source are closed
     if (body.effective_from) {
-        await supabase
+        await supabaseAdmin
             .from('water_tariffs')
             .update({ effective_to: new Date(new Date(body.effective_from).getTime() - 86400000).toISOString().split('T')[0] })
             .eq('source_id', body.source_id)
             .is('effective_to', null);
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
         .from('water_tariffs')
         .insert({
             source_id: body.source_id,

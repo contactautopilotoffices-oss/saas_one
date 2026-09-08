@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 
 export async function GET(
     request: NextRequest,
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
-    const supabase = await createClient();
 
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
         .from('water_sources')
         .select(`
             *,
@@ -36,7 +36,7 @@ export async function POST(
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
         .from('water_sources')
         .insert({
             property_id: propertyId,

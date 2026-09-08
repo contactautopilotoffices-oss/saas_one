@@ -3,10 +3,11 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     Users, LogIn, LogOut, Search, FileDown,
-    User, Truck, Building2, X, ChevronDown, MapPin, Plus
+    User, Truck, Building2, X, ChevronDown, MapPin, Plus, CheckCircle2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import VMSKiosk from './VMSKiosk';
+import { useAuth } from '@/frontend/context/AuthContext';
 
 interface VMSOrgVisitorDashboardProps {
     orgId: string;
@@ -20,10 +21,14 @@ interface VisitorLog {
     mobile: string;
     coming_from: string;
     whom_to_meet: string;
+    host_id?: string;
+    created_by?: string;
+    creator?: { id: string; full_name?: string; email?: string } | null;
     photo_url: string;
     checkin_time: string;
     checkout_time: string | null;
     status: string;
+    approval_status?: string;
     property_id: string;
     properties?: { id: string; name: string } | null;
 }
@@ -36,8 +41,30 @@ interface Property {
 type DateFilter = 'today' | 'yesterday' | 'week' | 'month' | 'custom' | 'all';
 
 const VMSOrgVisitorDashboard: React.FC<VMSOrgVisitorDashboardProps> = ({ orgId }) => {
+    const { user, membership } = useAuth();
     const [visitors, setVisitors] = useState<VisitorLog[]>([]);
     const [properties, setProperties] = useState<Property[]>([]);
+
+    const isUserHost = (visitor: VisitorLog) => {
+        if (!user) return false;
+        const currentUserId = user.id;
+        const currentUserEmail = (user.email || '').toLowerCase();
+        const currentUserName = (user.user_metadata?.full_name || '').toLowerCase();
+
+        if ((visitor as any).host_id && String((visitor as any).host_id) === String(currentUserId)) return true;
+        if ((visitor as any).whom_to_meet_uid && String((visitor as any).whom_to_meet_uid) === String(currentUserId)) return true;
+        if (visitor.whom_to_meet) {
+            const wtm = visitor.whom_to_meet.toLowerCase();
+            if (currentUserEmail && wtm.includes(currentUserEmail)) return true;
+            if (currentUserName && (wtm === currentUserName || wtm.includes(currentUserName))) return true;
+        }
+        if (!(visitor as any).host_id && !(visitor as any).whom_to_meet_uid) {
+            const userRole = (membership?.org_role || '').toLowerCase();
+            const isElevated = ['ops_super_admin', 'org_super_admin', 'master_admin', 'org_admin', 'property_admin', 'security'].includes(userRole);
+            if (isElevated) return true;
+        }
+        return false;
+    };
     const [stats, setStats] = useState({ total_visitors: 0, checked_in: 0, checked_out: 0 });
     const [isLoading, setIsLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
@@ -105,6 +132,33 @@ const VMSOrgVisitorDashboard: React.FC<VMSOrgVisitorDashboardProps> = ({ orgId }
             }
         } catch (err) {
             console.error('Force checkout error:', err);
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    const handleApproveEntry = async (visitor: VisitorLog, newStatus: 'approved' | 'rejected') => {
+        setActionLoading(true);
+        try {
+            const res = await fetch(`/api/vms/${visitor.property_id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'approval',
+                    visitor_id: visitor.id,
+                    approval_status: newStatus,
+                    approved_by_name: 'Super Admin',
+                }),
+            });
+            if (res.ok) {
+                fetchVisitors();
+                setSelectedVisitor(null);
+            } else {
+                const err = await res.json();
+                alert(err.error || `Failed to update entry status`);
+            }
+        } catch (err) {
+            console.error('Approve entry error:', err);
         } finally {
             setActionLoading(false);
         }
@@ -378,6 +432,9 @@ const VMSOrgVisitorDashboard: React.FC<VMSOrgVisitorDashboardProps> = ({ orgId }
                                     <td className="px-5 py-4">
                                         <div className="text-sm font-bold text-slate-900">{visitor.whom_to_meet}</div>
                                         <div className="text-xs text-slate-500">{visitor.coming_from || '-'}</div>
+                                        <div className="text-[10px] text-slate-400 mt-1 font-medium">
+                                            Logged by: <span className="font-semibold text-slate-600">{visitor.creator?.full_name || 'Gate / Kiosk'}</span>
+                                        </div>
                                     </td>
                                     <td className="px-5 py-4">
                                         <div className="text-xs font-bold text-slate-900">
@@ -394,23 +451,58 @@ const VMSOrgVisitorDashboard: React.FC<VMSOrgVisitorDashboardProps> = ({ orgId }
                                         )}
                                     </td>
                                     <td className="px-5 py-4">
-                                        <span className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${visitor.status === 'checked_in'
-                                            ? 'bg-emerald-50 text-emerald-700'
-                                            : 'bg-slate-100 text-slate-600'
+                                        <div className="flex flex-col gap-1 items-start">
+                                            <span className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${
+                                                visitor.approval_status === 'pending'
+                                                    ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                                    : visitor.approval_status === 'rejected'
+                                                    ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                                    : visitor.status === 'checked_in'
+                                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                                    : 'bg-slate-100 text-slate-600'
                                             }`}>
-                                            {visitor.status === 'checked_in' ? 'On Premise' : 'Checked Out'}
-                                        </span>
+                                                {visitor.approval_status === 'pending'
+                                                    ? 'Pending Approval'
+                                                    : visitor.approval_status === 'rejected'
+                                                    ? 'Rejected'
+                                                    : visitor.status === 'checked_in'
+                                                    ? 'On Premise'
+                                                    : 'Checked Out'}
+                                            </span>
+                                        </div>
                                     </td>
                                     <td className="px-5 py-4 text-center" onClick={(e) => e.stopPropagation()}>
-                                        {visitor.status === 'checked_in' && (
-                                            <button
-                                                onClick={() => handleForceCheckout(visitor)}
-                                                disabled={actionLoading}
-                                                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm disabled:opacity-50"
-                                            >
-                                                <LogOut className="w-3.5 h-3.5" /> Check Out
-                                            </button>
-                                        )}
+                                        <div className="flex items-center justify-center gap-1.5">
+                                            {visitor.approval_status === 'pending' && visitor.status === 'checked_in' && isUserHost(visitor) && (
+                                                <>
+                                                    <button
+                                                        onClick={() => handleApproveEntry(visitor, 'approved')}
+                                                        disabled={actionLoading}
+                                                        title="Approve Visitor Entry"
+                                                        className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl text-xs font-bold transition-all disabled:opacity-50 cursor-pointer"
+                                                    >
+                                                        <CheckCircle2 className="w-3.5 h-3.5" /> Approve
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleApproveEntry(visitor, 'rejected')}
+                                                        disabled={actionLoading}
+                                                        title="Reject Visitor Entry"
+                                                        className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition-all disabled:opacity-50 cursor-pointer"
+                                                    >
+                                                        <X className="w-3.5 h-3.5" /> Reject
+                                                    </button>
+                                                </>
+                                            )}
+                                            {visitor.status === 'checked_in' && (
+                                                <button
+                                                    onClick={() => handleForceCheckout(visitor)}
+                                                    disabled={actionLoading}
+                                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all disabled:opacity-50 cursor-pointer"
+                                                >
+                                                    <LogOut className="w-3.5 h-3.5" /> Check Out
+                                                </button>
+                                            )}
+                                        </div>
                                     </td>
                                 </tr>
                             ))}
@@ -444,8 +536,16 @@ const VMSOrgVisitorDashboard: React.FC<VMSOrgVisitorDashboardProps> = ({ orgId }
                                         <p className="text-[10px] text-slate-400 font-medium">{visitor.properties?.name}</p>
                                     </div>
                                 </div>
-                                <span className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${visitor.status === 'checked_in' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
-                                    {visitor.status === 'checked_in' ? 'In' : 'Out'}
+                                <span className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${
+                                    visitor.approval_status === 'pending'
+                                        ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                        : visitor.approval_status === 'rejected'
+                                        ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                        : visitor.status === 'checked_in'
+                                        ? 'bg-emerald-50 text-emerald-700'
+                                        : 'bg-slate-100 text-slate-600'
+                                }`}>
+                                    {visitor.approval_status === 'pending' ? 'Pending' : visitor.approval_status === 'rejected' ? 'Rejected' : visitor.status === 'checked_in' ? 'In' : 'Out'}
                                 </span>
                             </div>
 
@@ -453,6 +553,11 @@ const VMSOrgVisitorDashboard: React.FC<VMSOrgVisitorDashboardProps> = ({ orgId }
                                 <div>
                                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Host</p>
                                     <p className="font-medium text-slate-900 truncate">{visitor.whom_to_meet}</p>
+                                    {visitor.creator?.full_name && (
+                                        <p className="text-[10px] text-slate-400 mt-0.5 font-medium">
+                                            Logged by: {visitor.creator.full_name}
+                                        </p>
+                                    )}
                                 </div>
                                 <div>
                                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Check-in</p>
@@ -463,11 +568,29 @@ const VMSOrgVisitorDashboard: React.FC<VMSOrgVisitorDashboardProps> = ({ orgId }
                             </div>
 
                             {visitor.status === 'checked_in' && (
-                                <div className="pt-3 border-t border-slate-200/50 flex justify-end">
+                                <div className="pt-3 border-t border-slate-200/50 flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+                                    {visitor.approval_status === 'pending' && isUserHost(visitor) && (
+                                        <>
+                                            <button
+                                                onClick={() => handleApproveEntry(visitor, 'approved')}
+                                                disabled={actionLoading}
+                                                className="px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg text-xs font-bold hover:bg-emerald-100 border border-emerald-200"
+                                            >
+                                                Approve
+                                            </button>
+                                            <button
+                                                onClick={() => handleApproveEntry(visitor, 'rejected')}
+                                                disabled={actionLoading}
+                                                className="px-3 py-1.5 bg-rose-50 text-rose-700 rounded-lg text-xs font-bold hover:bg-rose-100 border border-rose-200"
+                                            >
+                                                Reject
+                                            </button>
+                                        </>
+                                    )}
                                     <button
-                                        onClick={(e) => { e.stopPropagation(); handleForceCheckout(visitor); }}
+                                        onClick={() => handleForceCheckout(visitor)}
                                         disabled={actionLoading}
-                                        className="px-4 py-1.5 bg-rose-50 text-rose-600 rounded-lg text-xs font-bold hover:bg-rose-100 transition-all border border-rose-100"
+                                        className="px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg text-xs font-bold hover:bg-slate-200"
                                     >
                                         Force Out
                                     </button>
@@ -523,8 +646,22 @@ const VMSOrgVisitorDashboard: React.FC<VMSOrgVisitorDashboardProps> = ({ orgId }
                                     </div>
                                     <div>
                                         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Status</p>
-                                        <span className={`inline-block px-2.5 py-0.5 rounded-lg text-xs font-black uppercase tracking-wider mt-0.5 ${selectedVisitor.status === 'checked_in' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
-                                            {selectedVisitor.status === 'checked_in' ? 'On Premise' : 'Checked Out'}
+                                        <span className={`inline-block px-2.5 py-0.5 rounded-lg text-xs font-black uppercase tracking-wider mt-0.5 ${
+                                            selectedVisitor.approval_status === 'pending'
+                                                ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                                : selectedVisitor.approval_status === 'rejected'
+                                                ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                                : selectedVisitor.status === 'checked_in'
+                                                ? 'bg-emerald-50 text-emerald-700'
+                                                : 'bg-slate-100 text-slate-600'
+                                        }`}>
+                                            {selectedVisitor.approval_status === 'pending'
+                                                ? 'Pending Host Approval'
+                                                : selectedVisitor.approval_status === 'rejected'
+                                                ? 'Entry Rejected'
+                                                : selectedVisitor.status === 'checked_in'
+                                                ? 'On Premise'
+                                                : 'Checked Out'}
                                         </span>
                                     </div>
                                     <div>
@@ -538,6 +675,11 @@ const VMSOrgVisitorDashboard: React.FC<VMSOrgVisitorDashboardProps> = ({ orgId }
                                     <div className="col-span-2">
                                         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Whom to Meet</p>
                                         <p className="text-slate-900 font-medium">{selectedVisitor.whom_to_meet}</p>
+                                        {selectedVisitor.creator?.full_name && (
+                                            <p className="text-[10px] text-slate-400 mt-0.5 font-medium">
+                                                Logged by: {selectedVisitor.creator.full_name}
+                                            </p>
+                                        )}
                                     </div>
                                 </div>
 
@@ -563,13 +705,33 @@ const VMSOrgVisitorDashboard: React.FC<VMSOrgVisitorDashboardProps> = ({ orgId }
                                 </div>
 
                                 {selectedVisitor.status === 'checked_in' && (
-                                    <button
-                                        onClick={() => handleForceCheckout(selectedVisitor)}
-                                        disabled={actionLoading}
-                                        className="w-full py-3 bg-rose-500 text-white rounded-xl font-bold hover:bg-rose-600 transition-all disabled:opacity-50"
-                                    >
-                                        {actionLoading ? 'Processing...' : 'Force Checkout'}
-                                    </button>
+                                    <div className="space-y-3 pt-2">
+                                        {selectedVisitor.approval_status === 'pending' && (
+                                            <div className="grid grid-cols-2 gap-3">
+                                                <button
+                                                    onClick={() => handleApproveEntry(selectedVisitor, 'approved')}
+                                                    disabled={actionLoading}
+                                                    className="w-full py-3 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-all flex items-center justify-center gap-2 shadow-md shadow-emerald-600/20 disabled:opacity-50 cursor-pointer"
+                                                >
+                                                    <CheckCircle2 className="w-4 h-4" /> Approve Entry
+                                                </button>
+                                                <button
+                                                    onClick={() => handleApproveEntry(selectedVisitor, 'rejected')}
+                                                    disabled={actionLoading}
+                                                    className="w-full py-3 bg-rose-50 text-rose-700 border border-rose-200 rounded-xl font-bold hover:bg-rose-100 transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
+                                                >
+                                                    <X className="w-4 h-4" /> Reject Entry
+                                                </button>
+                                            </div>
+                                        )}
+                                        <button
+                                            onClick={() => handleForceCheckout(selectedVisitor)}
+                                            disabled={actionLoading}
+                                            className="w-full py-3 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-xl font-bold transition-all disabled:opacity-50 cursor-pointer"
+                                        >
+                                            {actionLoading ? 'Processing...' : 'Force Checkout'}
+                                        </button>
+                                    </div>
                                 )}
                             </div>
                         </motion.div>

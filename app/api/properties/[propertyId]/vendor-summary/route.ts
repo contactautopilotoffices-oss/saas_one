@@ -29,10 +29,13 @@ export async function GET(
         .toISOString().split('T')[0];
 
     // Fetch vendors for count, commission rates, status
-    const { data: vendors, error: vendorErr } = await supabaseAdmin
+    let vendorQuery = supabaseAdmin
         .from('vendors')
-        .select('id, commission_rate, status')
-        .eq('property_id', propertyId);
+        .select('id, commission_rate, status');
+    if (propertyId !== 'all') {
+        vendorQuery = vendorQuery.eq('property_id', propertyId);
+    }
+    const { data: vendors, error: vendorErr } = await vendorQuery;
 
     if (vendorErr) {
         return NextResponse.json({ error: vendorErr.message }, { status: 500 });
@@ -47,8 +50,10 @@ export async function GET(
     // Directly query vendor_daily_revenue with property_id + date filter
     let revenueQuery = supabaseAdmin
         .from('vendor_daily_revenue')
-        .select('vendor_id, revenue_amount')
-        .eq('property_id', propertyId);
+        .select('vendor_id, revenue_amount');
+    if (propertyId !== 'all') {
+        revenueQuery = revenueQuery.eq('property_id', propertyId);
+    }
 
     if (period === 'today') revenueQuery = revenueQuery.eq('revenue_date', today);
     else if (period === 'month') revenueQuery = revenueQuery.gte('revenue_date', monthStart);

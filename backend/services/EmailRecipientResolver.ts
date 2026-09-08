@@ -30,7 +30,11 @@ const ALIAS_MAP: Record<string, string> = {
     vendor_revenue: 'vendor_revenue_recorded',
     user_management: 'user_pending_approval',
     user_pending_approval: 'user_pending_approval',
-    user_approved: 'user_approved'
+    user_approved: 'user_approved',
+    visitor_management: 'visitor_approval_requested',
+    visitor_approval_requested: 'visitor_approval_requested',
+    visitor_approved: 'visitor_approved',
+    visitor_rejected: 'visitor_rejected'
 };
 
 export const DEFAULT_EMAIL_SERVICE_CONFIG: Record<string, FeatureEmailConfig> = {
@@ -70,7 +74,10 @@ export const DEFAULT_EMAIL_SERVICE_CONFIG: Record<string, FeatureEmailConfig> = 
     lead_assigned: { enabled: true, roles: [], user_ids: [], notify_assignee: true },
     crm_leads: { enabled: true, roles: ['org_super_admin'], user_ids: [], notify_assignee: true },
     user_pending_approval: { enabled: true, roles: ['org_super_admin', 'property_admin'], user_ids: [] },
-    user_approved: { enabled: true, roles: [], user_ids: [], notify_requester: true }
+    user_approved: { enabled: true, roles: [], user_ids: [], notify_requester: true },
+    visitor_approval_requested: { enabled: true, roles: [], user_ids: [], notify_assignee: true },
+    visitor_approved: { enabled: true, roles: [], user_ids: [], notify_requester: true },
+    visitor_rejected: { enabled: true, roles: [], user_ids: [], notify_requester: true }
 };
 
 const ORG_SCOPED_ROLES = new Set([
@@ -132,9 +139,15 @@ export const EmailRecipientResolver = {
                 propOverride = matrixRule.property_overrides[propertyId];
             }
 
-            const isEmailEnabled = (propOverride && propOverride.channels && propOverride.channels.email !== undefined)
-                ? (propOverride.channels.email === true)
-                : (matrixRule.channels?.email === true);
+            const isMasterEnabled = (propOverride && propOverride.enabled !== undefined)
+                ? propOverride.enabled !== false
+                : (matrixRule.enabled !== false);
+
+            const isEmailEnabled = isMasterEnabled && (
+                (propOverride && propOverride.channels && propOverride.channels.email !== undefined)
+                    ? (propOverride.channels.email === true)
+                    : (matrixRule.channels?.email === true)
+            );
 
             featureConfig = {
                 enabled: isEmailEnabled,

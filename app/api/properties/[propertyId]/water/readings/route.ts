@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 
 export async function GET(
     request: NextRequest,
@@ -11,7 +12,7 @@ export async function GET(
 
     const month = searchParams.get('month'); // YYYY-MM
     
-    let query = supabase
+    let query = supabaseAdmin
         .from('water_readings')
         .select(`
             *,
@@ -52,7 +53,7 @@ export async function POST(
         let tariffRate = 0;
         let tariffId = null;
 
-        const { data: tariffData } = await supabase
+        const { data: tariffData } = await supabaseAdmin
             .from('water_tariffs')
             .select('id, rate_per_unit')
             .eq('source_id', reading.source_id)
@@ -85,12 +86,15 @@ export async function POST(
             body.readings.map((r: any) => computeReadingWithCost(r))
         );
 
-        const { data, error } = await supabase
+        const { data, error } = await supabaseAdmin
             .from('water_readings')
             .upsert(processedReadings, { onConflict: 'source_id,reading_date' })
             .select();
 
-        if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+        if (error) {
+            console.error('[WaterReadings POST Error]:', error);
+            return NextResponse.json({ error: error.message }, { status: 500 });
+        }
         return NextResponse.json(data, { status: 201 });
     }
 

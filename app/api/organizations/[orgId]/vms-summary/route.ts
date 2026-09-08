@@ -56,7 +56,7 @@ export async function GET(
     // 1. Total Stats for the Org
     const [totalStatsRes, checkedInRes, checkedOutRes, todayStatsRes] = await Promise.all([
         supabase.from('visitor_logs').select('id', { count: 'exact', head: true }).in('property_id', propertyIds).gte('checkin_time', periodFilter || '1970-01-01'),
-        supabase.from('visitor_logs').select('id', { count: 'exact', head: true }).in('property_id', propertyIds).gte('checkin_time', periodFilter || '1970-01-01').is('checkout_time', null),
+        supabase.from('visitor_logs').select('id', { count: 'exact', head: true }).in('property_id', propertyIds).gte('checkin_time', periodFilter || '1970-01-01').is('checkout_time', null).neq('approval_status', 'pending').neq('approval_status', 'rejected'),
         supabase.from('visitor_logs').select('id', { count: 'exact', head: true }).in('property_id', propertyIds).gte('checkin_time', periodFilter || '1970-01-01').not('checkout_time', 'is', null),
         supabase.from('visitor_logs').select('id', { count: 'exact', head: true }).in('property_id', propertyIds).gte('checkin_time', todayISO),
     ]);
@@ -66,7 +66,7 @@ export async function GET(
         const [pTotal, pToday, pIn, pOut] = await Promise.all([
             supabase.from('visitor_logs').select('id', { count: 'exact', head: true }).eq('property_id', id).gte('checkin_time', periodFilter || '1970-01-01'),
             supabase.from('visitor_logs').select('id', { count: 'exact', head: true }).eq('property_id', id).gte('checkin_time', todayISO),
-            supabase.from('visitor_logs').select('id', { count: 'exact', head: true }).eq('property_id', id).gte('checkin_time', periodFilter || '1970-01-01').is('checkout_time', null),
+            supabase.from('visitor_logs').select('id', { count: 'exact', head: true }).eq('property_id', id).gte('checkin_time', periodFilter || '1970-01-01').is('checkout_time', null).neq('approval_status', 'pending').neq('approval_status', 'rejected'),
             supabase.from('visitor_logs').select('id', { count: 'exact', head: true }).eq('property_id', id).gte('checkin_time', periodFilter || '1970-01-01').not('checkout_time', 'is', null),
         ]);
         const prop = properties?.find(p => p.id === id);

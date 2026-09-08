@@ -3,11 +3,12 @@
 import React, { useState, useEffect } from 'react';
 import {
     Users, Clock, LogIn, LogOut, Search, FileDown,
-    CheckCircle2, User, Truck, Building2, X, Calendar, ChevronDown, Plus, QrCode
+    CheckCircle2, User, Truck, Building2, X, Calendar, ChevronDown, Plus, QrCode, Shield
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import VMSKiosk from './VMSKiosk';
 import ClientQRGeneratorModal from './ClientQRGeneratorModal';
+import { useAuth } from '@/frontend/context/AuthContext';
 
 interface VMSAdminDashboardProps {
     propertyId: string;
@@ -21,17 +22,43 @@ interface VisitorLog {
     mobile: string;
     coming_from: string;
     whom_to_meet: string;
+    host_id?: string;
+    created_by?: string;
+    creator?: { id: string; full_name?: string; email?: string } | null;
     photo_url: string;
     checkin_time: string;
     checkout_time: string | null;
     status: string;
+    approval_status?: 'pending' | 'approved' | 'rejected' | string;
 }
 
 type DateFilter = 'today' | 'yesterday' | 'week' | 'month' | 'custom' | 'all';
 
 const VMSAdminDashboard: React.FC<VMSAdminDashboardProps> = ({ propertyId }) => {
+    const { user, membership } = useAuth();
     const [visitors, setVisitors] = useState<VisitorLog[]>([]);
     const [stats, setStats] = useState({ total_today: 0, checked_in: 0, checked_out: 0 });
+
+    const isUserHost = (visitor: VisitorLog) => {
+        if (!user) return false;
+        const currentUserId = user.id;
+        const currentUserEmail = (user.email || '').toLowerCase();
+        const currentUserName = (user.user_metadata?.full_name || '').toLowerCase();
+
+        if (visitor.host_id && String(visitor.host_id) === String(currentUserId)) return true;
+        if ((visitor as any).whom_to_meet_uid && String((visitor as any).whom_to_meet_uid) === String(currentUserId)) return true;
+        if (visitor.whom_to_meet) {
+            const wtm = visitor.whom_to_meet.toLowerCase();
+            if (currentUserEmail && wtm.includes(currentUserEmail)) return true;
+            if (currentUserName && (wtm === currentUserName || wtm.includes(currentUserName))) return true;
+        }
+        if (!visitor.host_id && !(visitor as any).whom_to_meet_uid) {
+            const userRole = (membership?.org_role || '').toLowerCase();
+            const isElevated = ['ops_super_admin', 'org_super_admin', 'master_admin', 'org_admin', 'property_admin', 'security'].includes(userRole);
+            if (isElevated) return true;
+        }
+        return false;
+    };
     const [isLoading, setIsLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
     const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -116,6 +143,35 @@ const VMSAdminDashboard: React.FC<VMSAdminDashboardProps> = ({ propertyId }) => 
             }
         } catch (err) {
             console.error('Force checkout error:', err);
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    const handleApproveEntry = async (visitor: VisitorLog, status: 'approved' | 'rejected') => {
+        setActionLoading(true);
+        try {
+            const response = await fetch(`/api/vms/${propertyId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    visitor_id: visitor.id,
+                    action: 'approval',
+                    approval_status: status,
+                    approved_by_name: 'Property Manager'
+                }),
+            });
+            if (response.ok) {
+                fetchVisitors();
+                if (selectedVisitor && selectedVisitor.id === visitor.id) {
+                    setSelectedVisitor(prev => prev ? { ...prev, approval_status: status } : null);
+                }
+            } else {
+                const err = await response.json();
+                alert(err.error || `Failed to update approval status`);
+            }
+        } catch (err) {
+            console.error('Approval status update error:', err);
         } finally {
             setActionLoading(false);
         }
@@ -474,6 +530,9 @@ const VMSAdminDashboard: React.FC<VMSAdminDashboardProps> = ({ propertyId }) => 
                                         <td className="px-6 py-4">
                                             <div className="text-sm font-bold text-slate-900">{visitor.whom_to_meet}</div>
                                             <div className="text-xs text-slate-500">{visitor.coming_from || '-'}</div>
+                                            <div className="text-[10px] text-slate-400 mt-1 font-medium">
+                                                Logged by: <span className="font-semibold text-slate-600">{visitor.creator?.full_name || 'Gate / Kiosk'}</span>
+                                            </div>
                                         </td>
                                         <td className="px-6 py-4">
                                             <div className="text-xs font-bold text-slate-900">
@@ -490,23 +549,58 @@ const VMSAdminDashboard: React.FC<VMSAdminDashboardProps> = ({ propertyId }) => 
                                             )}
                                         </td>
                                         <td className="px-6 py-4">
-                                            <span className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${visitor.status === 'checked_in'
-                                                ? 'bg-primary/10 text-primary'
-                                                : 'bg-slate-100 text-slate-600'
+                                            <div className="flex flex-col gap-1 items-start">
+                                                <span className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${
+                                                    visitor.approval_status === 'pending'
+                                                        ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                                        : visitor.approval_status === 'rejected'
+                                                        ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                                        : visitor.status === 'checked_in'
+                                                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                                        : 'bg-slate-100 text-slate-600'
                                                 }`}>
-                                                {visitor.status === 'checked_in' ? 'On Premise' : 'Checked Out'}
-                                            </span>
+                                                    {visitor.approval_status === 'pending'
+                                                        ? 'Pending Approval'
+                                                        : visitor.approval_status === 'rejected'
+                                                        ? 'Rejected'
+                                                        : visitor.status === 'checked_in'
+                                                        ? 'On Premise'
+                                                        : 'Checked Out'}
+                                                </span>
+                                            </div>
                                         </td>
                                         <td className="px-6 py-4 text-center" onClick={(e) => e.stopPropagation()}>
-                                            {visitor.status === 'checked_in' && (
-                                                <button
-                                                    onClick={() => handleForceCheckout(visitor)}
-                                                    disabled={actionLoading}
-                                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm disabled:opacity-50"
-                                                >
-                                                    <LogOut className="w-3.5 h-3.5" /> Check Out
-                                                </button>
-                                            )}
+                                            <div className="flex items-center justify-center gap-1.5">
+                                                {visitor.approval_status === 'pending' && visitor.status === 'checked_in' && isUserHost(visitor) && (
+                                                    <>
+                                                        <button
+                                                            onClick={() => handleApproveEntry(visitor, 'approved')}
+                                                            disabled={actionLoading}
+                                                            title="Approve Visitor Entry"
+                                                            className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl text-xs font-bold transition-all disabled:opacity-50 cursor-pointer"
+                                                        >
+                                                            <CheckCircle2 className="w-3.5 h-3.5" /> Approve
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleApproveEntry(visitor, 'rejected')}
+                                                            disabled={actionLoading}
+                                                            title="Reject Visitor Entry"
+                                                            className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition-all disabled:opacity-50 cursor-pointer"
+                                                        >
+                                                            <X className="w-3.5 h-3.5" /> Reject
+                                                        </button>
+                                                    </>
+                                                )}
+                                                {visitor.status === 'checked_in' && (
+                                                    <button
+                                                        onClick={() => handleForceCheckout(visitor)}
+                                                        disabled={actionLoading}
+                                                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all disabled:opacity-50 cursor-pointer"
+                                                    >
+                                                        <LogOut className="w-3.5 h-3.5" /> Check Out
+                                                    </button>
+                                                )}
+                                            </div>
                                         </td>
                                     </tr>
                                 ))
@@ -556,6 +650,11 @@ const VMSAdminDashboard: React.FC<VMSAdminDashboardProps> = ({ propertyId }) => 
                                     <div>
                                         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Host</p>
                                         <p className="text-sm font-medium text-slate-900 truncate">{visitor.whom_to_meet}</p>
+                                        {visitor.creator?.full_name && (
+                                            <p className="text-[10px] text-slate-400 mt-0.5 font-medium">
+                                                Logged by: {visitor.creator.full_name}
+                                            </p>
+                                        )}
                                     </div>
                                     <div>
                                         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Time</p>
@@ -567,9 +666,23 @@ const VMSAdminDashboard: React.FC<VMSAdminDashboardProps> = ({ propertyId }) => 
 
                                 <div className="flex items-center justify-between pt-3 border-t border-slate-200/50">
                                     <div className="flex items-center gap-2">
-                                        <span className={`w-2 h-2 rounded-full ${visitor.status === 'checked_in' ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`} />
+                                        <span className={`w-2 h-2 rounded-full ${
+                                            visitor.approval_status === 'pending'
+                                                ? 'bg-amber-500 animate-pulse'
+                                                : visitor.approval_status === 'rejected'
+                                                ? 'bg-rose-500'
+                                                : visitor.status === 'checked_in'
+                                                ? 'bg-emerald-500 animate-pulse'
+                                                : 'bg-slate-300'
+                                        }`} />
                                         <span className="text-xs font-bold text-slate-600">
-                                            {visitor.status === 'checked_in' ? 'Currently On Premise' : 'Checked Out'}
+                                            {visitor.approval_status === 'pending'
+                                                ? 'Pending Host Approval'
+                                                : visitor.approval_status === 'rejected'
+                                                ? 'Entry Rejected'
+                                                : visitor.status === 'checked_in'
+                                                ? 'On Premise'
+                                                : 'Checked Out'}
                                         </span>
                                     </div>
                                     {visitor.status === 'checked_in' && (
@@ -650,6 +763,11 @@ const VMSAdminDashboard: React.FC<VMSAdminDashboardProps> = ({ propertyId }) => 
                                     <div>
                                         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Whom to Meet</p>
                                         <p className="text-slate-900 font-medium">{selectedVisitor.whom_to_meet}</p>
+                                        {selectedVisitor.creator?.full_name && (
+                                            <p className="text-[10px] text-slate-400 mt-0.5 font-medium">
+                                                Logged by: {selectedVisitor.creator.full_name}
+                                            </p>
+                                        )}
                                     </div>
                                 </div>
 
@@ -680,13 +798,34 @@ const VMSAdminDashboard: React.FC<VMSAdminDashboardProps> = ({ propertyId }) => 
 
                                 {/* Actions */}
                                 {selectedVisitor.status === 'checked_in' && (
-                                    <button
-                                        onClick={() => handleForceCheckout(selectedVisitor)}
-                                        disabled={actionLoading}
-                                        className="w-full py-3 bg-rose-500 text-white rounded-xl font-bold hover:bg-rose-600 transition-all disabled:opacity-50"
-                                    >
-                                        {actionLoading ? 'Processing...' : 'Force Checkout'}
-                                    </button>
+                                    <div className="space-y-3 pt-2">
+                                        {(selectedVisitor.approval_status === 'pending' || !selectedVisitor.approval_status) && (
+                                            <div className="grid grid-cols-2 gap-3">
+                                                <button
+                                                    onClick={() => handleApproveEntry(selectedVisitor, 'approved')}
+                                                    disabled={actionLoading}
+                                                    className="w-full py-3 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-all flex items-center justify-center gap-2 shadow-md shadow-emerald-600/20 disabled:opacity-50 cursor-pointer"
+                                                >
+                                                    <CheckCircle2 className="w-4 h-4" /> Approve Entry
+                                                </button>
+                                                <button
+                                                    onClick={() => handleApproveEntry(selectedVisitor, 'rejected')}
+                                                    disabled={actionLoading}
+                                                    className="w-full py-3 bg-rose-600 text-white rounded-xl font-bold hover:bg-rose-700 transition-all flex items-center justify-center gap-2 shadow-md shadow-rose-600/20 disabled:opacity-50 cursor-pointer"
+                                                >
+                                                    <X className="w-4 h-4" /> Reject Entry
+                                                </button>
+                                            </div>
+                                        )}
+
+                                        <button
+                                            onClick={() => handleForceCheckout(selectedVisitor)}
+                                            disabled={actionLoading}
+                                            className="w-full py-3 bg-slate-100 text-slate-700 hover:bg-rose-50 hover:text-rose-600 rounded-xl font-bold transition-all disabled:opacity-50 text-xs flex items-center justify-center gap-2 cursor-pointer"
+                                        >
+                                            <LogOut className="w-4 h-4" /> Force Checkout
+                                        </button>
+                                    </div>
                                 )}
                             </div>
                         </motion.div>

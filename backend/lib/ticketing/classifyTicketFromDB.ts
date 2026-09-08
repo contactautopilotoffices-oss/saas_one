@@ -102,11 +102,16 @@ export async function classifyTicketFromDB(text: string): Promise<Classification
     // Match against DB config
     for (const category of config) {
         for (const keyword of category.keywords) {
-            if (lowerText.includes(keyword.toLowerCase())) {
+            const cleanKw = (keyword || '').trim();
+            if (!cleanKw) continue;
+            const escaped = cleanKw.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const isMatch = new RegExp(`\\b${escaped}\\b`, 'i').test(lowerText);
+
+            if (isMatch) {
                 matches.push({
                     issue_code: category.code,
                     skill_group: category.skill_group_code as SkillGroup,
-                    keyword_length: keyword.length
+                    keyword_length: cleanKw.length
                 });
             }
         }
