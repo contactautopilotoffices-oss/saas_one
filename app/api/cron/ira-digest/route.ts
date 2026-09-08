@@ -59,6 +59,39 @@ function istHour(now: Date): number {
     }).format(now));
 }
 
+/**
+ * WHO THE BUTTONS BELONG TO.
+ *
+ * mintFeedbackLinks returns {} the moment userId is falsy, and this cron passed
+ * the empty string — so every digest ever sent rendered NO buttons, and the
+ * whole one-tap page behind them (radio options, comment box, proof upload,
+ * confirmation screen) has been unreachable dead code since it was written.
+ *
+ * email_action_tokens.user_id is NOT NULL REFERENCES users(id), so a token
+ * genuinely needs a real person. We take the first recipient address that maps
+ * to a member of this org. A shared mailbox resolves to whoever owns that row,
+ * which is correct: that is the account the action is recorded against.
+ *
+ * Returns null when nobody resolves — buttons are then omitted rather than
+ * broken, and the run log says so. A dead button teaches people their answer is
+ * ignored, which is worse than not asking.
+ */
+async function recipientUserId(orgId: string, addresses: ReadonlyArray<string>): Promise<string | null> {
+    for (const raw of addresses) {
+        // Recipients may be stored as "Vidya <purchase@worksquare.in>".
+        const email = (/<([^>]+)>/.exec(raw)?.[1] ?? raw).trim().toLowerCase();
+        if (!email.includes('@')) continue;
+        const { data: user } = await supabaseAdmin
+            .from('users').select('id').ilike('email', email).maybeSingle();
+        if (!user) continue;
+        const { count } = await supabaseAdmin
+            .from('organization_memberships').select('*', { count: 'exact', head: true })
+            .eq('organization_id', orgId).eq('user_id', user.id);
+        if ((count ?? 0) > 0) return String(user.id);
+    }
+    return null;
+}
+
 export async function GET(request: NextRequest) {
     if (request.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -203,9 +236,13 @@ export async function GET(request: NextRequest) {
                         const who = slice.label ? `${b.recipient.key}/${slice.label}` : b.recipient.key;
                         if (!slice.to.length) { skipped.push(`${who}: no address configured`); continue; }
 
-                        const links: FeedbackLinks = b.recipient.canDisposition
-                            ? await mintFeedbackLinks({ organizationId: orgId, userId: '', agentKey: AGENT_KEY, runId: null, findings: slice.bundle.findings })
+                        const actorId = b.recipient.canDisposition ? await recipientUserId(orgId, slice.to) : null;
+                        const links: FeedbackLinks = actorId
+                            ? await mintFeedbackLinks({ organizationId: orgId, userId: actorId, agentKey: AGENT_KEY, runId: null, findings: slice.bundle.findings })
                             : {};
+                        if (b.recipient.canDisposition && !actorId) {
+                            skipped.push(`${who}: no buttons — no recipient maps to a user in this org`);
+                        }
                         const subjects: Record<string, string> = {};
                         for (const f of slice.bundle.findings) subjects[f.key] = taggedSubject(f.title, replyTag(orgId, AGENT_KEY, f.key));
 
@@ -223,9 +260,13 @@ export async function GET(request: NextRequest) {
                         try {
                             // Shadow never mails anyone. It proves the run without the send.
                             if (shadow) { skipped.push(`${who}: shadow, not sent`); await st.ok({ detail: { shadow: true } }); continue; }
-                            await sendDigest(slice.to.join(', '), subject, html, delivery.replyTo);
+                            const outbound = await sendDigest(slice.to.join(', '), subject, html, delivery.replyTo);
                             sent.push(`${who} → ${slice.to.join(', ')}`);
-                            await st.ok();
+                            // The RFC Message-ID of the scan mail itself, kept on the
+                            // run trace (oem_agent_run_steps.detail — oem_agent_runs has
+                            // no result column) so a later answer can chain References
+                            // back to the message it is answering.
+                            await st.ok(outbound.messageId ? { detail: { messageId: outbound.messageId } } : undefined);
                         } catch (e) {
                             const msg = e instanceof Error ? e.message : String(e);
                             console.error('[ira-digest]', orgId, who, msg);
