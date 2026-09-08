@@ -36,7 +36,7 @@
  */
 
 import type { Check, CheckContext, CheckOutcome, PoLine, PoRow } from './contract';
-import { inr, isBilled, newestRaisedAt, num, shortDate } from './contract';
+import { inr, isBilled, newestRaisedAt, num, shortDate, siteName } from './contract';
 import { inWindow } from '../cadence';
 import { normaliseVendor } from './duplicateInvoiceRef';
 import type { Evidence, Finding } from '../types';
@@ -150,7 +150,7 @@ export const contractPeriodOverlap: Check = {
             if (!swallowed.length) { rejected.noContainment++; continue; }
 
             const vendor = outer.po.vendor_name ?? 'Unknown vendor';
-            const site = outer.po.property_id ? ctx.propName.get(outer.po.property_id) ?? null : null;
+            const site = siteName(ctx, outer.po);
             const doubled = swallowed.reduce((s, o) => s + num(o.line.item_total ?? o.po.po_amount), 0);
             const outerValue = num(outer.line.item_total ?? outer.po.po_amount);
 

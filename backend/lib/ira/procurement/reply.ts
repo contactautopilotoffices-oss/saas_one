@@ -60,6 +60,60 @@ export function poNumbersFromText(text: string): string[] {
 }
 
 /**
+ * ITEM NUMBERS — "1.2 done".
+ *
+ * The digest numbers each finding 1, 2, 3, and every supporting row under
+ * finding N as N.1, N.2, … (render.ts, findingBlock). Those numbers exist so a
+ * reply can point at ONE row of a six-row finding. Without them the smallest
+ * thing a person could answer about was the whole finding, so "the second one
+ * is already credited" arrived attached to all six records and was filed
+ * against none of them.
+ *
+ * LINE-ANCHORED, DELIBERATELY. Matching "1.2" anywhere in the prose would eat
+ * every figure a procurement reply is made of — "1.66 lakh short", "revision
+ * 2.1", "2.5% over" — and filing an answer against a row it was never about is
+ * precisely the failure the numbering is supposed to end. Somebody answering
+ * by number writes the number first; that is the only shape accepted here.
+ *
+ * Recognised:  1.2   1.2)   (1.2)   #1.2   1.2 -   1.2:   - 1.2   Item 1.2
+ * Not recognised, on purpose: anything mid-sentence, and anything three levels
+ * deep ("1.2.3" is a version, not one of our rows).
+ *
+ * ADDITIVE. parseReply, segmentsByTag and the rest are untouched: matching a
+ * reply to a line is load-bearing in production and a change there re-opens an
+ * incident that is closed. This function decides nothing — it reports what it
+ * saw, in the order it saw it, and leaves the mapping to the caller.
+ */
+const ITEM_NO_RE = /^[\s>*•-]*(?:item\s*|point\s*|no\.?\s*)?[#(\[]?\s*(\d{1,2})\.(\d{1,2})(?![\d.])\s*[)\].:;,–—-]?(?:\s|$)/i;
+
+/**
+ * A figure, not a handle. "1.5 lakh still to recover" and "2.5% over" open with
+ * something shaped exactly like an item number; the unit word straight after
+ * it is the tell, and it is cheaper to check than to mis-file the reply.
+ */
+const FIGURE_TAIL = /^\s*(l|lakhs?|lacs?|cr|crores?|k|%|per\s?cent|percent|times|x|days?|weeks?|months?|years?)\b/i;
+
+/**
+ * Every item number the person typed, in order, deduplicated. Pass the
+ * STRIPPED body (see stripQuotedText) — the quoted digest underneath contains
+ * every number in the mail, and matching those would answer for lines nobody
+ * mentioned.
+ */
+export function itemNumbersFromText(text: string): string[] {
+    const out: string[] = [];
+    for (const line of text.split('\n')) {
+        const m = line.match(ITEM_NO_RE);
+        if (!m) continue;
+        if (FIGURE_TAIL.test(line.slice(m[0].length))) continue;
+        // "01.2" and "1.02" are the same row as "1.2" to the person typing it;
+        // normalising here means the caller compares against one form only.
+        const n = `${Number(m[1])}.${Number(m[2])}`;
+        if (!out.includes(n)) out.push(n);
+    }
+    return out;
+}
+
+/**
  * Every ref the person typed, in the order they typed them, deduplicated.
  *
  * WHY THE BODY AND NOT ONLY THE SUBJECT. One digest carries N findings, so one

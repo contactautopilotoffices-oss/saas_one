@@ -79,7 +79,7 @@ export async function scanPurchaseOrders(
     for (let from = 0; ; from += 1000) {
         const { data, error } = await supabaseAdmin
             .from('zoho_purchase_orders')
-            .select('id, created_at, synced_at, po_number, vendor_name, po_amount, status, po_date, property_id, raw')
+            .select('id, created_at, synced_at, po_number, vendor_name, po_amount, status, po_date, property_id, project_name, raw')
             .eq('organization_id', orgId)
             .lte('po_date', asOf.toISOString().slice(0, 10))
             .range(from, from + 999);

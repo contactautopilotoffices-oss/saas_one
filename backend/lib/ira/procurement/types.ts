@@ -178,6 +178,18 @@ export interface Finding {
     ask?: string | null;
     /** Days since first raised. Filled from the store, never by a check. */
     ageDays?: number | null;
+    /**
+     * WHICH PART OF THE MAIL THIS BELONGS UNDER.
+     *
+     * 'new'      — it happened inside the window. Today's news.
+     * 'standing' — true every day until somebody fixes it: orders with no
+     *              approver, a vendor recorded under two names. NOT news, and
+     *              must never be printed as though it were — that mistake put
+     *              May-2025 orders under a "7 Sept" heading.
+     *
+     * Stamped by the runner from the check's own `nature`, never by the check.
+     */
+    section?: 'new' | 'standing';
 }
 
 /* ---------------------------------------------------------------------------

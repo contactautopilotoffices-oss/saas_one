@@ -29,6 +29,8 @@ import { duplicateInvoiceRef } from './duplicateInvoiceRef';
 import { contractPeriodOverlap } from './contractPeriodOverlap';
 import { vendorNameVariants } from './vendorNameVariants';
 import { approvalTrail } from './approvalTrail';
+import { approvalQueueAging } from './approvalQueueAging';
+import { orphanedApprovals } from './orphanedApprovals';
 
 /**
  * ORDER MATTERS ONLY FOR THE FIRST ONE. If the feed is dead, everything below
@@ -41,6 +43,12 @@ export const CHECKS: readonly Check[] = [
     contractPeriodOverlap,
     vendorNameVariants,
     approvalTrail,
+    // The approval queue, from both ends: who is sitting on orders, and which
+    // orders nobody was ever asked to decide. They are deliberately two checks —
+    // "chase this person" and "nobody owns this" are different asks, addressed to
+    // different people, and one finding trying to say both would say neither.
+    approvalQueueAging,
+    orphanedApprovals,
 ] as const;
 
 /**
@@ -92,7 +100,12 @@ export async function runChecks(ctx: CheckContext): Promise<{ findings: Finding[
         const started = Date.now();
         try {
             const out = await check.run(ctx);
-            findings.push(...out.findings);
+            // The check answers its question; the runner decides where the
+            // answer is printed. A check must not be able to promote its own
+            // standing condition into "new today".
+            for (const f of out.findings) {
+                findings.push({ ...f, section: check.nature === 'structural' ? 'standing' : 'new' });
+            }
             reports.push({
                 id: check.id,
                 question: check.question,

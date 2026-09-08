@@ -154,7 +154,7 @@ export async function vetFindings(
     resetCouncilCost();
     let raw: string;
     try {
-        raw = await councilChat(buildVettingMessages(reviewer, agentName, findings, window), 'vet');
+        raw = await councilChat(buildVettingMessages(reviewer, agentName, findings, window), 'vet', { model: reviewer.model ?? null });
     } catch (e) {
         return { ...EMPTY, reviewer: who, why: `model call failed: ${e instanceof Error ? e.message : e}`, findingsReviewed: findings.length };
     }
