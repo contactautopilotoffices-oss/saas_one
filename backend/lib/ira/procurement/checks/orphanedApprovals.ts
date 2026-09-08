@@ -61,9 +61,18 @@ export const orphanedApprovals: Check = {
     async run(ctx: CheckContext): Promise<CheckOutcome> {
         // Structural: an unowned order is unowned every morning. A daily would be
         // the same paragraph, seven times a week.
-        if (ctx.window && ctx.window.cadence === 'daily') {
-            return { findings: [], skipped: 'structural — reported on weekly and slower cadences, not daily' };
-        }
+        /**
+         * A STANDING CONDITION IS REPORTED EVERY DAY, under its own heading.
+         *
+         * This used to bail out on the daily cadence, on the reasoning that a
+         * thing which is true every morning is nagging. The result was a daily
+         * scan that went out EMPTY while 109 orders worth ₹84 lakh sat with no
+         * approver — the reader learned nothing, and read the silence as "all
+         * clear". The nagging was never the daily repetition; it was printing a
+         * standing condition as though it had just happened. The runner marks
+         * these `section: 'standing'` and the mail prints them apart from
+         * today's news, which is what makes the repetition honest.
+         */
 
         const pending = ctx.live.filter((r) => String(r.status ?? '') === PENDING_APPROVAL);
         if (!pending.length) {

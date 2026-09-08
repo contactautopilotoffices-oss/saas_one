@@ -100,7 +100,12 @@ export async function runChecks(ctx: CheckContext): Promise<{ findings: Finding[
         const started = Date.now();
         try {
             const out = await check.run(ctx);
-            findings.push(...out.findings);
+            // The check answers its question; the runner decides where the
+            // answer is printed. A check must not be able to promote its own
+            // standing condition into "new today".
+            for (const f of out.findings) {
+                findings.push({ ...f, section: check.nature === 'structural' ? 'standing' : 'new' });
+            }
             reports.push({
                 id: check.id,
                 question: check.question,

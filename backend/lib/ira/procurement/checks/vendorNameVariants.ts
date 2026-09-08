@@ -34,9 +34,18 @@ export const vendorNameVariants: Check = {
     run(ctx: CheckContext): CheckOutcome {
         // Structural findings are true every day. Reporting them daily is
         // nagging; they belong to the weekly and slower cadences.
-        if (ctx.window && ctx.window.cadence === 'daily') {
-            return { findings: [], skipped: 'structural — reported on weekly and slower cadences, not daily' };
-        }
+        /**
+         * A STANDING CONDITION IS REPORTED EVERY DAY, under its own heading.
+         *
+         * This used to bail out on the daily cadence, on the reasoning that a
+         * thing which is true every morning is nagging. The result was a daily
+         * scan that went out EMPTY while 109 orders worth ₹84 lakh sat with no
+         * approver — the reader learned nothing, and read the silence as "all
+         * clear". The nagging was never the daily repetition; it was printing a
+         * standing condition as though it had just happened. The runner marks
+         * these `section: 'standing'` and the mail prints them apart from
+         * today's news, which is what makes the repetition honest.
+         */
 
         const byVendor = new Map<string, Set<string>>();
         const spend = new Map<string, number>();
