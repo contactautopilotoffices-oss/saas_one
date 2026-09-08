@@ -31,6 +31,9 @@ import { vendorNameVariants } from './vendorNameVariants';
 import { approvalTrail } from './approvalTrail';
 import { approvalQueueAging } from './approvalQueueAging';
 import { orphanedApprovals } from './orphanedApprovals';
+import { lineDetailMissing } from './lineDetailMissing';
+import { unitContradictsDescription } from './unitContradictsDescription';
+import { lumpSumNoMeasure } from './lumpSumNoMeasure';
 
 /**
  * ORDER MATTERS ONLY FOR THE FIRST ONE. If the feed is dead, everything below
@@ -49,6 +52,17 @@ export const CHECKS: readonly Check[] = [
     // different people, and one finding trying to say both would say neither.
     approvalQueueAging,
     orphanedApprovals,
+    // The three line-detail checks. They ask about the SAME rows the duplicate
+    // and overlap checks read, but about a different failure: not "this was
+    // bought twice" — "nobody can tell what this was bought at". Kept apart
+    // because the asks differ. A blank unit is typed in by procurement, a unit
+    // that contradicts the description is a decision about which of the two is
+    // right, and a lump sum with the measurement missing is a pricing basis the
+    // CEO may want to hold the vendor to. One finding trying to say all three
+    // would say none of them.
+    lineDetailMissing,
+    unitContradictsDescription,
+    lumpSumNoMeasure,
 ] as const;
 
 /**

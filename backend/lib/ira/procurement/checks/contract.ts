@@ -203,9 +203,22 @@ export function shortDate(iso: string | null | undefined): string {
     return new Date(t).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-/** Zoho's own word for whether a bill exists against the order. */
+/**
+ * DOES A BILL EXIST AGAINST THIS ORDER?
+ *
+ * This read `.includes('billed')` — and Zoho's word for NOT billed is
+ * `to_be_billed`, which contains it. So it answered true for all 5,501 orders
+ * in this org, where only 445 are genuinely billed, and every duplicate finding
+ * told the reader the money was already spent, ranked itself critical on the
+ * strength of that, and asked for a debit note instead of a cancellation.
+ *
+ * A substring test on a status vocabulary is a bug waiting for the vocabulary
+ * to grow one term. Match the whole word.
+ */
+const BILLED_STATUSES = new Set(['billed', 'partially_billed']);
+
 export function isBilled(r: PoRow): boolean {
-    return String(r.raw?.billed_status ?? r.status ?? '').toLowerCase().includes('billed');
+    return BILLED_STATUSES.has(String(r.raw?.billed_status ?? r.status ?? '').toLowerCase().trim());
 }
 
 /**
