@@ -7,7 +7,8 @@ import { planPaymentTransition, paymentActorFromAccess } from '@/backend/lib/acc
 import { logPoActivity } from '@/backend/lib/accounts/activity';
 import type { PoActivityAction } from '@/backend/lib/accounts/trackerTypes';
 import type { EmailActionToken } from './tokens';
-import { DISPOSITION_SPECS, isDisposition } from '@/backend/lib/ira/procurement/disposition';
+import { DISPOSITION_SPECS, isDisposition, type Disposition } from '@/backend/lib/ira/procurement/disposition';
+import { isOrgMember } from '@/backend/lib/ira/procurement/guard';
 
 /**
  * Per-entity handlers for one-click email actions.
@@ -188,8 +189,37 @@ function pastTense(action: string): string {
  * an emailed click must never silently rewrite an agent's instructions.
  * ------------------------------------------------------------------------- */
 
-/** Mirrors the CHECK on oem_agent_feedback.signal. */
-const FEEDBACK_SIGNALS = new Set(['praise', 'reject', 'correction', 'roi_flag']);
+/**
+ * Why this answer cannot be accepted, or null.
+ *
+ * EXPORTED SO IT RUNS BEFORE THE TOKEN IS BURNED. Three of the five dispositions
+ * ('not_an_issue', 'blocked', 'need_info') are meaningless without a sentence, and
+ * the route used to consume the single-use token first and only then discover the
+ * note was missing — telling the responder "your link still works" when it had just
+ * been spent. Their answer was then unrecoverable from the inbox. The route now
+ * calls this on the submitted form BEFORE consuming, so a missing note costs a
+ * re-render and nothing else. handleAgentFeedback re-checks it as a backstop.
+ */
+export function feedbackInputProblem(signal: string, note: string): { title: string; message: string } | null {
+    if (!isDisposition(signal)) {
+        return { title: 'Unrecognised answer', message: 'That answer is not one this agent accepts.' };
+    }
+    const spec = DISPOSITION_SPECS[signal];
+    if (spec.requiresNote && !note.trim()) {
+        return {
+            title: `"${spec.label}" needs a line of explanation`,
+            message: `Nothing has been recorded yet, so this link still works. Add a sentence saying why, then submit again.`,
+        };
+    }
+    return null;
+}
+
+/**
+ * Where proof-of-completion files go. Same private bucket the mailed-in replies
+ * use (backend/lib/ira/procurement/collectReplies.ts), so one finding's evidence
+ * lives in one place whether it arrived by reply or through the digest form.
+ */
+const PROOF_BUCKET = 'ira-proof';
 
 /** Same defaults the console applies, so an emailed verdict scores identically. */
 const FEEDBACK_COINS: Record<string, number> = {
@@ -210,29 +240,39 @@ async function handleAgentFeedback(
         return { ok: false, status: 400, title: 'Malformed link', message: 'This link is missing the finding it refers to.' };
     }
 
+    /**
+     * PERMISSION, RE-DERIVED FROM LIVE MEMBERSHIP — the thing every other handler
+     * in this file does and this one did not.
+     *
+     * A feedback token is a 72-hour bearer credential. Without this, someone whose
+     * membership was revoked yesterday could still stamp a disposition, close a
+     * finding so the next scan stops raising it, and queue guidance that folds into
+     * the agent's next prompt version — all after losing access to the org. The
+     * other two handlers reach this via resolvePettyCashAccessForUser /
+     * resolveAccountsAccessForUser; agent feedback has no such domain gate, so it
+     * uses the membership check the digest's own API routes use.
+     */
+    if (!(await isOrgMember(t.organization_id, t.user_id))) return denied();
+
     // `remark` is "<disposition>|<note>". Split on the FIRST pipe only, so a note
     // that itself contains a pipe survives intact.
     const sep = remark.indexOf('|');
     const rawDisp = (sep >= 0 ? remark.slice(0, sep) : remark).trim();
     const note = (sep >= 0 ? remark.slice(sep + 1) : '').trim();
-    if (!isDisposition(rawDisp)) {
-        return { ok: false, status: 400, title: 'Unrecognised answer', message: 'That answer is not one this agent accepts.' };
-    }
-    const spec = DISPOSITION_SPECS[rawDisp];
 
-    if (spec.requiresNote && !note) {
-        return {
-            ok: false, status: 400,
-            title: `"${spec.label}" needs a line of explanation`,
-            message: 'Nothing was recorded, so your link still works — open it again and add a sentence.',
-        };
-    }
+    // Backstop. The route checks this BEFORE burning the token; if it is reached
+    // here the token is already spent, so the message must not promise otherwise.
+    const problem = feedbackInputProblem(rawDisp, note);
+    if (problem) return { ok: false, status: 400, ...problem };
+    // feedbackInputProblem returns non-null for anything that is not a Disposition.
+    const disposition = rawDisp as Disposition;
+    const spec = DISPOSITION_SPECS[disposition];
 
     // --- 1. UPSERT the finding and stamp the disposition ---------------------
     const { data: finding, error: findErr } = await supabaseAdmin
         .from('oem_agent_findings')
         .update({
-            disposition: rawDisp,
+            disposition,
             disposition_note: note || null,
             dispositioned_by: t.user_id,
             dispositioned_at: new Date().toISOString(),
@@ -258,14 +298,19 @@ async function handleAgentFeedback(
     }
 
     // --- 2. Store the proof, if one came with it ----------------------------
-    // Reuses the existing PRIVATE po_documents bucket under its own path prefix,
-    // rather than creating a bucket. The PATH is stored; readers sign it.
+    // The PRIVATE 'ira-proof' bucket — the one this agent's mailed-in proofs already
+    // land in (collectReplies.ts), provisioned by migration 20260908000001.
+    //
+    // This said 'po_documents' and that bucket DOES NOT EXIST in this project: only
+    // the po_documents TABLE does. Every attachment submitted through this form would
+    // have failed to upload, silently, and the responder would be told to "attach it
+    // from the console". The PATH is stored; readers sign it.
     let proofPath: string | null = null;
     if (proof) {
         const safe = proof.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120);
         const path = `${t.organization_id}/findings/${finding.id}/${Date.now()}_${safe}`;
         const { error: upErr } = await supabaseAdmin.storage
-            .from('po_documents')
+            .from(PROOF_BUCKET)
             .upload(path, proof.bytes, { contentType: proof.type, upsert: false });
         // A failed upload must NOT lose the disposition — the answer matters more
         // than the attachment, and the responder is told which happened.
@@ -276,7 +321,7 @@ async function handleAgentFeedback(
     await supabaseAdmin.from('oem_agent_finding_events').insert({
         finding_id: finding.id,
         organization_id: t.organization_id,
-        disposition: rawDisp,
+        disposition,
         note: note || null,
         source: 'email',
         proof_path: proofPath,

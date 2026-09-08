@@ -19,6 +19,13 @@ interface FeedbackPage {
     context: string;
     /** Preselected answer from the button they tapped in the email. */
     signal: string;
+    /**
+     * What they already typed, carried across a rejected submit. Without this a
+     * missing-note error threw away the paragraph they had just written.
+     */
+    note?: string;
+    /** Why the previous submit was not accepted. The link is still live. */
+    error?: { title: string; message: string } | null;
     /** The answer set. Supplied by the caller so this file owns no domain vocabulary. */
     options: Array<{ v: string; label: string; hint: string }>;
 }
@@ -69,6 +76,10 @@ export function actionPage(input: ActionPageInput): string {
         const OPTIONS = input.options;
         return shell(`
         <h1>${escapeHtml(input.title)}</h1>
+        ${input.error ? `<div style="text-align:left;border:1px solid #E4C4BB;background:#F6E7E3;color:#B0442E;border-radius:4px;padding:11px 13px;margin:0 0 16px">
+          <div style="font-weight:700;font-size:13.5px">${escapeHtml(input.error.title)}</div>
+          <div style="font-size:12.5px;line-height:1.55;margin-top:2px">${escapeHtml(input.error.message)}</div>
+        </div>` : ''}
         <p style="text-align:left;font-size:13px;color:#4A4E55;border-left:2px solid #E4E3DE;padding-left:12px;margin:0 0 20px">${escapeHtml(input.context)}</p>
         <form id="f" method="POST" action="" enctype="multipart/form-data" style="text-align:left">
           <label for="g" style="display:block;font-weight:700;font-size:15px;margin:0 0 4px;letter-spacing:-0.01em">
@@ -81,7 +92,7 @@ export function actionPage(input: ActionPageInput): string {
           </p>
           <textarea id="g" name="guidance" rows="5" autofocus
             placeholder="e.g. Credit note CN/2026/118 received from One Solution and blocked from the Sep payment run. Going forward they submit one invoice per site, so this pair should not recur."
-            style="width:100%;box-sizing:border-box;border:1px solid #D3D2CB;border-radius:4px;padding:12px 13px;font:inherit;font-size:14px;line-height:1.6;resize:vertical;background:#fff;color:#16181C"></textarea>
+            style="width:100%;box-sizing:border-box;border:1px solid ${input.error ? '#B0442E' : '#D3D2CB'};border-radius:4px;padding:12px 13px;font:inherit;font-size:14px;line-height:1.6;resize:vertical;background:#fff;color:#16181C">${escapeHtml(input.note ?? '')}</textarea>
 
           <div style="font-weight:700;font-size:13px;margin:18px 0 6px">And which is it?</div>
           <div style="display:grid;gap:6px;margin:0 0 16px">
@@ -102,7 +113,7 @@ export function actionPage(input: ActionPageInput): string {
             accept="application/pdf,image/png,image/jpeg,.xlsx,.xls,.csv"
             style="width:100%;box-sizing:border-box;border:1px dashed #D3D2CB;border-radius:4px;padding:11px 13px;font:inherit;font-size:13px;background:#FBFBF9">
           <p style="font-size:12px;color:#797E86;margin:6px 0 16px">
-            Credit note, corrected PO, or signed confirmation. PDF, image or spreadsheet, up to 15&nbsp;MB. Stored against this finding as the audit record.
+            Credit note, corrected PO, or signed confirmation. PDF, image or spreadsheet, up to 10&nbsp;MB. Stored against this finding as the audit record.
           </p>
 
           <button class="btn" type="submit" style="width:100%">Submit</button>
