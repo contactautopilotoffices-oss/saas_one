@@ -25,11 +25,12 @@
  *                 does not contain.
  *
  * WHOSE RULES THE MODEL WRITES UNDER
- *   The hardcoded SYSTEM below always applies. On top of it, whatever the
- *   operator's reinforcement loop has folded into oem_agents.system_prompt is
- *   appended as an OPERATOR CORRECTIONS overlay — additive only. Before this,
- *   that column existed and nothing read it, so a correction the operator
- *   typed could never change how Ira answers mail.
+ *   The hardcoded SYSTEM below always applies. On top of it, only the
+ *   == OPERATOR CORRECTIONS (standing rules) == block that the operator's
+ *   reinforcement loop folded into oem_agents.system_prompt is appended —
+ *   additive only. The rest of that column is a whole composed persona with
+ *   its own style rules; it belongs to the console agent and never crosses
+ *   into this voice.
  *
  * WHAT IT NEVER DOES
  *   - invent a number: every figure in the reply is copied from the finding
@@ -64,7 +65,7 @@
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { councilChat, councilRunCost } from '@/backend/lib/council/llm';
 import { sendDigest } from '@/backend/lib/ira/dailyDigest';
-import { poNumbersFromText, replyTag } from './reply';
+import { poNumbersFromText, replyTag, stripSignature } from './reply';
 import { DISPOSITION_SPECS, type Disposition } from './disposition';
 import { entityUrl, type EntityRef } from './types';
 import type { ReplyNeedingAnswer } from './collectReplies';
@@ -200,12 +201,15 @@ const QA_SYSTEM = SYSTEM.replace(
 /**
  * THE OPERATOR-RULES OVERLAY.
  *
- * oem_agents.system_prompt is where foldGuidance() (compose.ts) writes the
- * operator's reviewed corrections. Nothing read it here, so a correction that
- * had been queued, folded and committed still could not change how Ira answers
- * mail. It is now appended under the same header the deterministic fold uses,
- * additive only: the hardcoded rules always apply, the overlay can only add.
- * An empty, null or unreachable row means SYSTEM runs alone, exactly as before.
+ * oem_agents.system_prompt holds a WHOLE COMPOSED PERSONA, not a corrections
+ * list — the composer rewrites the entire prompt on every fold. Appending it
+ * here would stack a second persona (with its own style rules) on top of
+ * SYSTEM. The only part allowed to cross into Ira's reply voice is the
+ * == OPERATOR CORRECTIONS (standing rules) == block the fold maintains
+ * (compose.ts): standing instructions a person reviewed and committed.
+ * Everything else in the column belongs to the console agent and is ignored.
+ * A prompt without that block, an empty row, or an unreachable row means
+ * SYSTEM runs alone, exactly as before.
  *
  * Cached per (org, agent) for a few minutes: the replies cron calls this once
  * per answered mail and a pass may answer several, and the column only changes
@@ -213,6 +217,16 @@ const QA_SYSTEM = SYSTEM.replace(
  */
 const OVERLAY_TTL_MS = 5 * 60_000;
 const overlayCache = new Map<string, { overlay: string | null; at: number }>();
+const CORRECTIONS_HEADER = '== OPERATOR CORRECTIONS (standing rules) ==';
+
+function correctionsOnly(prompt: string): string | null {
+    const at = prompt.indexOf(CORRECTIONS_HEADER);
+    if (at < 0) return null;
+    const rest = prompt.slice(at + CORRECTIONS_HEADER.length);
+    const next = rest.search(/^== /m);
+    const block = (next < 0 ? rest : rest.slice(0, next)).trim();
+    return block || null;
+}
 
 async function operatorOverlay(orgId: string, agentKey: string): Promise<string | null> {
     const key = `${orgId}:${agentKey}`;
@@ -223,7 +237,7 @@ async function operatorOverlay(orgId: string, agentKey: string): Promise<string 
         const { data } = await supabaseAdmin
             .from('oem_agents').select('system_prompt')
             .eq('organization_id', orgId).eq('agent_key', agentKey).maybeSingle();
-        overlay = String(data?.system_prompt ?? '').trim() || null;
+        overlay = correctionsOnly(String(data?.system_prompt ?? ''));
     } catch { /* the hardcoded rules run alone */ }
     overlayCache.set(key, { overlay, at: Date.now() });
     return overlay;
@@ -325,7 +339,19 @@ async function questionFactSheet(
     const note = (s: string) => { for (const m of s.matchAll(/\d[\d,]*\.?\d*/g)) numbers.add(m[0].replace(/,/g, '')); return s; };
 
     const poNumbers = poNumbersFromText(question);
-    const terms = vendorSearchTerms(question);
+    /**
+     * SEARCH WHAT THEY ASKED, NOT HOW THEY SIGNED OFF.
+     *
+     * `question` is the raw body: this path never had the signature removed
+     * (the collector strips it only where a reply matched a line). A
+     * procurement question is made almost entirely of stop-listed words, so the
+     * term scan ran straight past it into the footer — "how much is pending on
+     * PO-25/26-0031? Thanks, Vidya Pawar, Work Square" searched for vendors
+     * named vidya, pawar, work and square. Those matches then crowded the real
+     * order out of the result, and the answer told her the PO does not exist.
+     * They also went out verbatim: "I looked for vendor "pawar"".
+     */
+    const terms = vendorSearchTerms(stripSignature(question));
     const searched = [...poNumbers, ...terms.map((t) => `vendor "${t}"`)];
 
     const lines: string[] = [];
@@ -368,11 +394,33 @@ async function questionFactSheet(
                 ));
             }
         }
-        const missing = poNumbers.filter(
-            (n) => !pos.some((p) => (p.po_number ?? '').toUpperCase() === n),
-        );
-        if (missing.length) {
-            lines.push(note(`NOT IN THE RECORDS: no purchase order numbered ${missing.join(', ')}.`));
+        /**
+         * "THIS ORDER DOES NOT EXIST" IS A CLAIM, AND IT NEEDS ITS OWN QUERY.
+         *
+         * It used to be inferred from the list above — which is an OR across the
+         * PO number AND up to four vendor words, capped at ten rows and ordered
+         * by a nullable date (Postgres sorts NULLS FIRST on a bare DESC, so
+         * undated orders take the head). Ten vendor matches, or ten undated
+         * rows, and the real order fell off the end — and Ira mailed a person to
+         * say a purchase order she was holding does not exist.
+         *
+         * Absence is now established by asking about exactly those numbers and
+         * nothing else. If that query fails we say NOTHING: an unproven absence
+         * must never be reported as a fact.
+         */
+        if (poNumbers.length) {
+            const { data: exact, error: exactErr } = await supabaseAdmin
+                .from('zoho_purchase_orders')
+                .select('po_number')
+                .eq('organization_id', orgId)
+                .or(poNumbers.map((n) => `po_number.ilike.${n}`).join(','));
+            if (!exactErr) {
+                const held = new Set((exact ?? []).map((p) => String(p.po_number ?? '').toUpperCase()));
+                const missing = poNumbers.filter((n) => !held.has(n));
+                if (missing.length) {
+                    lines.push(note(`NOT IN THE RECORDS: no purchase order numbered ${missing.join(', ')}.`));
+                }
+            }
         }
     }
 
