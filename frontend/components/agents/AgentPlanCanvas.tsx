@@ -86,7 +86,26 @@ function columnsOf(steps: PlanStep[]): PlanStep[][] {
 
 /* ------------------------------------------------------------------------- */
 
-export default function AgentPlanCanvas({ plan }: { plan: AgentPlan }) {
+export default function AgentPlanCanvas({ plan, onAccept, accepting }: {
+    plan: AgentPlan;
+    /**
+     * WHAT ACCEPTING A PLAN ACTUALLY DOES.
+     *
+     * This button had no onClick. None. It rendered enabled once the required
+     * slots were filled, it looked exactly like a button that works, and
+     * pressing it did nothing at all — no build, no error, no console line.
+     * Someone answering four questions and pressing it learned nothing about
+     * why their agent never appeared.
+     *
+     * The plan is not the agent: it is the rule-based shape plus the facts the
+     * request did not carry. Accepting it means "these answers are right, now
+     * build with them", so the answers are handed up and the composer runs with
+     * them folded into the description. Without that the operator answers the
+     * questions and the model never sees a single one.
+     */
+    onAccept?: (answers: Record<string, string>) => void;
+    accepting?: boolean;
+}) {
     const cols = useMemo(() => columnsOf(plan.steps), [plan.steps]);
     const [answers, setAnswers] = useState<Record<string, string>>({});
     const [selected, setSelected] = useState<string | null>(null);
@@ -127,13 +146,15 @@ export default function AgentPlanCanvas({ plan }: { plan: AgentPlan }) {
                     </span>
                     <button
                         type="button"
-                        disabled={!ready}
+                        disabled={!ready || !onAccept || Boolean(accepting)}
+                        onClick={() => onAccept?.(answers)}
+                        title={!onAccept ? 'This plan is read-only here.' : undefined}
                         className={`rounded-lg px-3 py-1.5 text-[12px] font-medium ${
-                            ready
+                            ready && onAccept && !accepting
                                 ? 'bg-foreground text-background'
                                 : 'cursor-not-allowed bg-muted text-text-tertiary'}`}
                     >
-                        {ready ? 'Accept plan' : 'Answer to continue'}
+                        {accepting ? 'Building…' : ready ? 'Accept plan & build' : 'Answer to continue'}
                     </button>
                 </div>
             </div>

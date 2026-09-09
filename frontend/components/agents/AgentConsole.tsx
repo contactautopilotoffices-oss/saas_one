@@ -1497,7 +1497,29 @@ function ComposeBox({
 
             {plan && (
                 <div className="mt-4">
-                    <AgentPlanCanvas plan={plan} />
+                    <AgentPlanCanvas
+                        plan={plan}
+                        accepting={busy}
+                        onAccept={(answers) => {
+                            /**
+                             * The answers were collected and then thrown away.
+                             * The composer only ever saw the original sentence,
+                             * so the four questions the plan insisted were
+                             * facts it "cannot infer safely" were inferred
+                             * anyway. They are appended as stated facts, under
+                             * a heading, so the model reads them as given
+                             * rather than as more prose to interpret.
+                             */
+                            const stated = plan.slots
+                                .map((sl) => [sl.question, (answers[sl.key] ?? '').split('|').filter(Boolean).join(', ')] as const)
+                                .filter(([, v]) => v.length > 0)
+                                .map(([q, v]) => `- ${q} ${v}`);
+                            if (stated.length) {
+                                setDescription((d) => `${d.trim()}\n\nAnswers already given (treat these as fact):\n${stated.join('\n')}`);
+                            }
+                            void build();
+                        }}
+                    />
                 </div>
             )}
 
