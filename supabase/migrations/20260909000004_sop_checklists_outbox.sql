@@ -70,10 +70,11 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- Drop trigger if exists
+DROP TRIGGER IF EXISTS trg_sop_runs_outbox ON public.sop_completions;
 DROP TRIGGER IF EXISTS trg_sop_runs_outbox ON public.sop_runs;
 
--- Create After Insert or Update trigger on sop_runs
+-- Create After Insert or Update trigger on sop_completions
 CREATE TRIGGER trg_sop_runs_outbox
-    AFTER INSERT OR UPDATE OF status ON public.sop_runs
+    AFTER INSERT OR UPDATE OF status ON public.sop_completions
     FOR EACH ROW
     EXECUTE FUNCTION public.fn_sop_runs_outbox();

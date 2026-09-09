@@ -1,4 +1,4 @@
--- Migration: Add event_outbox trigger for VMS visitors table
+-- Migration: Add event_outbox trigger for VMS visitor_logs table
 -- Automatically generates event_outbox records when visitors check in, get approved, or get rejected.
 -- Enables 4-channel dispatch (Email, Push, WhatsApp, Voice) from Web UI, Gate Kiosk, Mobile App, or direct DB operations.
 
@@ -9,17 +9,24 @@ DECLARE
     v_payload JSONB;
     v_org_id UUID;
     v_property_name TEXT;
+    v_host_id UUID;
     v_host_name TEXT;
     v_host_email TEXT;
     v_host_phone TEXT;
+    v_app_status TEXT;
+    v_old_app_status TEXT;
 BEGIN
+    v_app_status := COALESCE(NEW.approval_status, 'approved');
+    v_old_app_status := CASE WHEN TG_OP = 'UPDATE' THEN OLD.approval_status ELSE NULL END;
+    v_host_id := COALESCE(NEW.host_id, NEW.whom_to_meet_uid);
+
     -- Determine Event Type
     IF TG_OP = 'INSERT' THEN
         v_event_type := 'VISITOR_APPROVAL_REQUESTED';
     ELSIF TG_OP = 'UPDATE' THEN
-        IF NEW.status = 'approved' AND (OLD.status IS NULL OR OLD.status != 'approved') THEN
+        IF v_app_status = 'approved' AND (v_old_app_status IS NULL OR v_old_app_status != 'approved') THEN
             v_event_type := 'VISITOR_APPROVED';
-        ELSIF NEW.status = 'rejected' AND (OLD.status IS NULL OR OLD.status != 'rejected') THEN
+        ELSIF v_app_status = 'rejected' AND (v_old_app_status IS NULL OR v_old_app_status != 'rejected') THEN
             v_event_type := 'VISITOR_REJECTED';
         END IF;
     END IF;
@@ -36,12 +43,16 @@ BEGIN
         WHERE id = NEW.property_id;
     END IF;
 
+    IF v_org_id IS NULL AND NEW.organization_id IS NOT NULL THEN
+        v_org_id := NEW.organization_id;
+    END IF;
+
     -- Resolve host user details
-    IF NEW.host_user_id IS NOT NULL THEN
+    IF v_host_id IS NOT NULL THEN
         SELECT full_name, email, phone
         INTO v_host_name, v_host_email, v_host_phone
         FROM public.users
-        WHERE id = NEW.host_user_id;
+        WHERE id = v_host_id;
     END IF;
 
     -- Assemble payload
@@ -49,15 +60,17 @@ BEGIN
         'visitor_id', NEW.id,
         'id', NEW.id,
         'name', NEW.name,
-        'phone', NEW.phone,
+        'phone', COALESCE(NEW.mobile, NEW.phone),
         'email', NEW.email,
         'coming_from', NEW.coming_from,
         'purpose', NEW.purpose,
         'status', NEW.status,
+        'approval_status', v_app_status,
         'property_id', NEW.property_id,
         'property_name', COALESCE(v_property_name, 'Property'),
         'organization_id', v_org_id,
-        'host_user_id', NEW.host_user_id,
+        'host_user_id', v_host_id,
+        'host_id', v_host_id,
         'host_name', COALESCE(v_host_name, NEW.whom_to_meet, 'Host'),
         'host_email', v_host_email,
         'host_phone', v_host_phone,
@@ -74,10 +87,11 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- Drop trigger if exists
+DROP TRIGGER IF EXISTS trg_vms_visitors_outbox ON public.visitor_logs;
 DROP TRIGGER IF EXISTS trg_vms_visitors_outbox ON public.visitors;
 
--- Create After Insert or Update trigger on visitors
+-- Create After Insert or Update trigger on visitor_logs
 CREATE TRIGGER trg_vms_visitors_outbox
-    AFTER INSERT OR UPDATE OF status ON public.visitors
+    AFTER INSERT OR UPDATE ON public.visitor_logs
     FOR EACH ROW
     EXECUTE FUNCTION public.fn_vms_visitors_outbox();
