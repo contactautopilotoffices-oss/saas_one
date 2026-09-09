@@ -62,6 +62,7 @@ import {
 import AgentPlanCanvas, { type AgentPlan } from '@/frontend/components/agents/AgentPlanCanvas';
 import AgentDelivery from '@/frontend/components/agents/AgentDelivery';
 import TabBoundary from '@/frontend/components/agents/TabBoundary';
+import useAgentDraft from '@/frontend/components/agents/useAgentDraft';
 import Hint from '@/frontend/components/agents/Hint';
 import AgentPreflight from '@/frontend/components/agents/AgentPreflight';
 import AgentFirstRun from '@/frontend/components/agents/AgentFirstRun';
@@ -418,6 +419,20 @@ export default function AgentConsole({ orgId }: AgentConsoleProps) {
     const [statusBusy, setStatusBusy] = useState(false);
     const [statusError, setStatusError] = useState<string | null>(null);
 
+    /**
+     * UNFINISHED WORK, VISIBLE AND RESUMABLE.
+     *
+     * The composer was one-shot: describe an agent, answer its questions, and
+     * lose all of it to a closed tab or a stray click. There was no list of work
+     * in progress and no way back to it, so the only safe way to use it was in
+     * one sitting — which is not how anyone actually works.
+     *
+     * The drafts hook degrades on its own: until 20260910000001_agent_drafts is
+     * applied it reports provisioned:false and this whole strip renders nothing,
+     * so a missing migration costs the feature and not the console.
+     */
+    const draftStore = useAgentDraft(orgId);
+
     const changeStatus = async (next: AgentLifecycleStatus) => {
         if (!selected || statusBusy) return;
         setStatusBusy(true);
@@ -651,6 +666,43 @@ export default function AgentConsole({ orgId }: AgentConsoleProps) {
                                     />
                                 ))
                             )}
+
+                            {/* Unfinished compositions, newest first. Renders
+                                nothing at all when the table is absent or the
+                                list is empty — an empty heading is worse than
+                                no heading. */}
+                            {(draftStore.drafts?.length ?? 0) > 0 && (
+                                <div className="mt-3 border-t border-border pt-3">
+                                    <p className="mb-2 px-1 text-[10.5px] font-semibold uppercase tracking-wide text-text-tertiary">
+                                        Unfinished — pick up where you left off
+                                    </p>
+                                    <div className="space-y-1.5">
+                                        {(draftStore.drafts ?? []).map((d) => (
+                                            <button
+                                                key={d.id}
+                                                type="button"
+                                                onClick={async () => {
+                                                    const row = await draftStore.resume(d.id);
+                                                    if (!row) return;
+                                                    setCreatingNew(true);
+                                                    if (row.agent_key) setSelectedKey(row.agent_key);
+                                                }}
+                                                className="w-full rounded-xl border border-dashed border-border bg-card px-3 py-2 text-left hover:border-primary/40 hover:bg-card-tint"
+                                            >
+                                                <span className="block truncate text-[12px] font-medium text-foreground">
+                                                    {d.title || 'Untitled draft'}
+                                                </span>
+                                                <span className="mt-0.5 block text-[10.5px] text-text-tertiary">
+                                                    {d.is_new_agent ? 'New agent' : d.agent_key}
+                                                    {d.answered_count > 0 ? ` · ${d.answered_count} answered` : ''}
+                                                    {' · '}
+                                                    {new Date(d.updated_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                                                </span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
                         </div>
                         </>)}
                     </div>
@@ -693,6 +745,12 @@ export default function AgentConsole({ orgId }: AgentConsoleProps) {
                                 if (!v) setCreatingNew(false);
                             }}
                             agent={creatingNew ? null : selected}
+                            draft={draftStore.provisioned === false ? undefined : {
+                                save: draftStore.save,
+                                resumed: draftStore.current,
+                                saving: draftStore.saving,
+                                lastSavedAt: draftStore.lastSavedAt,
+                            }}
                             onApplied={async (key) => {
                                 setCreatingNew(false);
                                 setComposeOpen(false);
@@ -1143,15 +1201,51 @@ function ComposeBox({
     onOpenChange,
     agent,
     onApplied,
+    draft,
 }: {
     orgId: string;
     open: boolean;
     onOpenChange: (v: boolean) => void;
     agent: ConsoleAgent | null;
     onApplied: (agentKey: string) => void | Promise<void>;
+    /**
+     * Where unfinished work goes. Optional on purpose: the composer must run
+     * exactly as it does today when drafts are unavailable, so every use is
+     * guarded rather than assumed.
+     */
+    draft?: {
+        save: (patch: { description?: string; answers?: Record<string, string>; agent_key?: string | null; status?: 'describing' | 'proposed' }) => void;
+        resumed: { description?: string } | null;
+        saving: boolean;
+        lastSavedAt: Date | null;
+    };
 }) {
     const [description, setDescription] = useState('');
     const [busy, setBusy] = useState(false);
+
+    /**
+     * A RESUMED DRAFT SEEDS THE BOX ONCE, never on every render.
+     *
+     * The parent hands a new object each time it re-renders, so depending on
+     * the object itself would overwrite whatever is being typed — the exact bug
+     * AgentDelivery documents at its own re-seed effect. Depend on the text.
+     */
+    const resumedText = draft?.resumed?.description ?? null;
+    useEffect(() => {
+        if (resumedText) setDescription(resumedText);
+    }, [resumedText]);
+
+    /**
+     * Autosave what has been typed. The hook debounces and refuses to write an
+     * unchanged value, so calling it on every keystroke is correct and cheap —
+     * and a sentence half-written at the moment a tab closes survives.
+     * Below 12 characters there is nothing worth keeping.
+     */
+    const saveDraft = draft?.save;
+    useEffect(() => {
+        if (!saveDraft || description.trim().length < 12) return;
+        saveDraft({ description, agent_key: agent?.agent_key ?? null, status: 'describing' });
+    }, [description, saveDraft, agent?.agent_key]);
     const [error, setError] = useState<string | null>(null);
     const [result, setResult] = useState<ComposeResponse | null>(null);
 
