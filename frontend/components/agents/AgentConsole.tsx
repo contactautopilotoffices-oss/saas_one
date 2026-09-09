@@ -63,6 +63,7 @@ import AgentPlanCanvas, { type AgentPlan } from '@/frontend/components/agents/Ag
 import AgentDelivery from '@/frontend/components/agents/AgentDelivery';
 import TabBoundary from '@/frontend/components/agents/TabBoundary';
 import useAgentDraft from '@/frontend/components/agents/useAgentDraft';
+import AgentIdentityStep, { type AgentIdentity } from '@/frontend/components/agents/AgentIdentityStep';
 import Hint from '@/frontend/components/agents/Hint';
 import AgentPreflight from '@/frontend/components/agents/AgentPreflight';
 import AgentFirstRun from '@/frontend/components/agents/AgentFirstRun';
@@ -433,6 +434,17 @@ export default function AgentConsole({ orgId }: AgentConsoleProps) {
      */
     const draftStore = useAgentDraft(orgId);
 
+    /**
+     * WHO IS BEING HIRED, held until the job is described.
+     *
+     * Creating an agent used to open straight onto "describe the job", so the
+     * composer invented a name and a department from a sentence and the
+     * operator met their new colleague inside a generated proposal. Identity
+     * comes first now; this is where it waits so the composer can be handed it
+     * as fact rather than inferring it.
+     */
+    const [identity, setIdentity] = useState<AgentIdentity | null>(null);
+
     const changeStatus = async (next: AgentLifecycleStatus) => {
         if (!selected || statusBusy) return;
         setStatusBusy(true);
@@ -711,8 +723,18 @@ export default function AgentConsole({ orgId }: AgentConsoleProps) {
                 {/* ---------- detail ---------- */}
                 <section className="min-w-0 flex-1">
                     <div className="rounded-[24px] border border-border bg-card p-4 sm:p-5">
-                        {creatingNew ? (
-                            <NewAgentHeader onCancel={() => setCreatingNew(false)} />
+                        {creatingNew && !identity ? (
+                            <AgentIdentityStep
+                                takenEmails={agents
+                                    .map((a) => String((a.runtime as { inbox?: { from?: string } } | null)?.inbox?.from ?? '').trim())
+                                    .filter(Boolean)}
+                                departments={[...new Set(agents.map((a) => a.department).filter((d): d is string => Boolean(d)))]}
+                                colleagues={agents.map((a) => ({ key: a.agent_key, name: a.display_name }))}
+                                onCancel={() => { setCreatingNew(false); setIdentity(null); }}
+                                onContinue={(v) => setIdentity(v)}
+                            />
+                        ) : creatingNew ? (
+                            <NewAgentHeader onCancel={() => { setCreatingNew(false); setIdentity(null); }} />
                         ) : selected ? (
                             <DetailHeader
                                 agent={selected}
@@ -742,9 +764,10 @@ export default function AgentConsole({ orgId }: AgentConsoleProps) {
                             open={composeOpen || creatingNew || (agents.length === 0 && !registryUnreadable)}
                             onOpenChange={(v) => {
                                 setComposeOpen(v);
-                                if (!v) setCreatingNew(false);
+                                if (!v) { setCreatingNew(false); setIdentity(null); }
                             }}
                             agent={creatingNew ? null : selected}
+                            identity={creatingNew ? identity : null}
                             draft={draftStore.provisioned === false ? undefined : {
                                 save: draftStore.save,
                                 resumed: draftStore.current,
@@ -1201,6 +1224,7 @@ function ComposeBox({
     onOpenChange,
     agent,
     onApplied,
+    identity,
     draft,
 }: {
     orgId: string;
@@ -1208,6 +1232,14 @@ function ComposeBox({
     onOpenChange: (v: boolean) => void;
     agent: ConsoleAgent | null;
     onApplied: (agentKey: string) => void | Promise<void>;
+    /**
+     * Who is being hired, collected before the job was described.
+     *
+     * Handed to the composer as STATED FACT rather than left for it to invent
+     * from a sentence. A job description written with no idea who holds it
+     * drifts, because there is no subject for it to be about.
+     */
+    identity?: AgentIdentity | null;
     /**
      * Where unfinished work goes. Optional on purpose: the composer must run
      * exactly as it does today when drafts are unavailable, so every use is
@@ -1349,7 +1381,24 @@ function ComposeBox({
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     orgId,
-                    description: description.trim(),
+                    /**
+                     * The identity leads. Everything the operator already told
+                     * us is stated as fact so the composer writes the job for a
+                     * named person in a named department, and does not spend a
+                     * guess on either.
+                     */
+                    description: [
+                        identity ? [
+                            'This agent already has an identity. Treat every line as given, do not invent alternatives:',
+                            `- Name: ${identity.display_name}`,
+                            identity.department ? `- Department: ${identity.department}` : '',
+                            identity.email ? `- Sends mail from: ${identity.email}` : '',
+                            identity.phone ? `- Phone: ${identity.phone}` : '',
+                            identity.reports_to ? `- Reports to: ${identity.reports_to}` : '',
+                            '',
+                        ].filter(Boolean).join('\n') : '',
+                        description.trim(),
+                    ].filter(Boolean).join('\n'),
                     ...(agent ? { agentKey: agent.agent_key } : {}),
                 }),
             });
