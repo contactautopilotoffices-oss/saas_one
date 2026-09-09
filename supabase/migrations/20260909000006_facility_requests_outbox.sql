@@ -1,4 +1,4 @@
--- Migration: Add event_outbox trigger for facility_requests (QR Service Desk Requests)
+-- Migration: Add event_outbox trigger for guest_requests (QR Service Desk Requests)
 -- Automatically generates event_outbox records when QR requests are created or resolved.
 -- Enables 4-channel dispatch (Email, Push, WhatsApp) from QR Kiosks, Mobile App, Web UI, or SQL.
 
@@ -14,7 +14,7 @@ BEGIN
     IF TG_OP = 'INSERT' THEN
         v_event_type := 'FACILITY_REQUEST_CREATED';
     ELSIF TG_OP = 'UPDATE' THEN
-        IF NEW.status IN ('resolved', 'closed') AND (OLD.status IS NULL OR OLD.status NOT IN ('resolved', 'closed')) THEN
+        IF NEW.status IN ('resolved', 'closed', 'RESOLVED', 'CLOSED') AND (OLD.status IS NULL OR OLD.status NOT IN ('resolved', 'closed', 'RESOLVED', 'CLOSED')) THEN
             v_event_type := 'FACILITY_REQUEST_RESOLVED';
         END IF;
     END IF;
@@ -31,27 +31,20 @@ BEGIN
         WHERE id = NEW.property_id;
     END IF;
 
-    -- Resolve requester user name if created_by / requested_by exists
-    IF NEW.created_by IS NOT NULL THEN
-        SELECT full_name
-        INTO v_requester_name
-        FROM public.users
-        WHERE id = NEW.created_by;
-    END IF;
-
     -- Assemble payload
     v_payload := jsonb_build_object(
         'request_id', NEW.id,
         'id', NEW.id,
-        'title', NEW.title,
-        'category', NEW.category,
-        'location', NEW.location,
+        'title', COALESCE(NEW.ai_category, 'Guest Facility Request'),
+        'category', NEW.ai_category,
         'description', NEW.description,
         'property_id', NEW.property_id,
         'property_name', COALESCE(v_property_name, 'Property'),
-        'organization_id', COALESCE(v_org_id, NEW.organization_id),
-        'created_by', NEW.created_by,
-        'requester_name', COALESCE(v_requester_name, NEW.guest_name, 'Guest User'),
+        'organization_id', v_org_id,
+        'guest_name', NEW.guest_name,
+        'guest_phone', NEW.guest_phone,
+        'guest_email', NEW.guest_email,
+        'requester_name', COALESCE(NEW.guest_name, 'Guest User'),
         'status', NEW.status,
         'created_at', NEW.created_at
     );
@@ -65,10 +58,11 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- Drop trigger if exists
+DROP TRIGGER IF EXISTS trg_facility_requests_outbox ON public.guest_requests;
 DROP TRIGGER IF EXISTS trg_facility_requests_outbox ON public.facility_requests;
 
--- Create After Insert or Update trigger on facility_requests
+-- Create After Insert or Update trigger on guest_requests
 CREATE TRIGGER trg_facility_requests_outbox
-    AFTER INSERT OR UPDATE OF status ON public.facility_requests
+    AFTER INSERT OR UPDATE OF status ON public.guest_requests
     FOR EACH ROW
     EXECUTE FUNCTION public.fn_facility_requests_outbox();
