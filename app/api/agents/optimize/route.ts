@@ -20,7 +20,24 @@ import { optimizePrompt } from '@/backend/lib/agents/optimizePrompt';
 import { AGENT_TABLE_CATALOG, AGENT_MODULE_DESCRIPTORS } from '@/app/api/agents/_shared';
 
 /** One model round-trip. */
-export const maxDuration = 60;
+/**
+ * 300, NOT 60 — the model call inside this route was allowed to run LONGER than
+ * the function itself.
+ *
+ * LLM_TIMEOUT_MS defaults to 120s (backend/lib/council/llm.ts) for a good
+ * reason: a persona reads the whole data pack and a reasoning model thinks
+ * before it emits. But the function was capped at 60, so any call past a minute
+ * was killed by the platform mid-flight — and a killed function never reaches
+ * the catch below that returns a proper JSON error. The caller got Vercel's own
+ * plain-text error page and died parsing it:
+ *
+ *     Failed to execute 'json' on 'Response':
+ *     Unexpected token 'A', "An error o"... is not valid JSON
+ *
+ * The rule is that the function must outlive its slowest call, never the
+ * reverse. 300 matches the other model-calling routes in this repo.
+ */
+export const maxDuration = 300;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

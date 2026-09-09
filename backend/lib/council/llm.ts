@@ -112,7 +112,16 @@ export const COUNCIL_MODEL =
  * a persona reads the entire data pack and a reasoning model may think for a
  * while before emitting. 10s would abort nearly every real call.
  */
-const LLM_TIMEOUT_MS = Number(process.env.COUNCIL_LLM_TIMEOUT_MS || 120_000);
+/**
+ * MUST STAY BELOW THE CALLING ROUTE'S maxDuration.
+ *
+ * Whatever this is, the platform kills the function at its own limit — and a
+ * killed function cannot return the clean error the caller is waiting for. So
+ * this is the number that has to be smaller: abort here, in our code, where we
+ * can say "timed out" in JSON, rather than being killed there, where we say
+ * nothing at all. Routes that call this run maxDuration = 300.
+ */
+const LLM_TIMEOUT_MS = Number(process.env.COUNCIL_LLM_TIMEOUT_MS || 240_000);
 
 /** USD per million tokens. Only rates this repo documents having actually been billed. */
 const MODEL_PRICING: Record<string, { input: number; output: number }> = {

@@ -223,6 +223,39 @@ export interface AgentConsoleProps {
     orgId: string;
 }
 
+/**
+ * READ A RESPONSE THAT MIGHT NOT BE JSON.
+ *
+ * Five call sites here did `await res.json()` bare. When anything upstream of
+ * the route answers instead — a killed function, a 502, a deploy swapping out
+ * mid-request, a rate limiter — the body is HTML or plain text, and the parser
+ * throws with the first few characters of it as the message. What an operator
+ * saw was:
+ *
+ *     Failed to execute 'json' on 'Response':
+ *     Unexpected token 'A', "An error o"... is not valid JSON
+ *
+ * which says nothing about the composer having timed out, and sends whoever
+ * reads it looking for a bug in our JSON.
+ *
+ * So: take the text first, parse it only if it parses, and otherwise surface
+ * the status and the beginning of what actually came back. The failure is the
+ * same; the sentence describing it is now true.
+ */
+async function readJson<T>(res: Response): Promise<T> {
+    const text = await res.text();
+    try {
+        return JSON.parse(text) as T;
+    } catch {
+        const head = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
+        throw new Error(
+            res.status === 504 || /timeout/i.test(head)
+                ? `The server took too long and was cut off (HTTP ${res.status}). Try again, or narrow the description.`
+                : `The server replied with ${res.status} and not JSON${head ? `: ${head}` : '.'}`,
+        );
+    }
+}
+
 export default function AgentConsole({ orgId }: AgentConsoleProps) {
     const [payload, setPayload] = useState<RegistryPayload | null>(null);
     const [loading, setLoading] = useState(true);
@@ -251,7 +284,7 @@ export default function AgentConsole({ orgId }: AgentConsoleProps) {
             else setLoading(true);
             try {
                 const res = await fetch(`/api/agents/registry?orgId=${encodeURIComponent(orgId)}`, { cache: 'no-store' });
-                const json = (await res.json()) as RegistryPayload;
+                const json = await readJson<RegistryPayload>(res);
                 setPayload(json);
                 setLoadError(json.error ?? null);
             } catch (e) {
@@ -394,7 +427,7 @@ export default function AgentConsole({ orgId }: AgentConsoleProps) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ orgId, action: 'set_status', agent_key: selected.agent_key, status: next }),
             });
-            const json = (await res.json()) as { error?: string };
+            const json = await readJson<{ error?: string }>(res);
             if (json.error) setStatusError(json.error);
             else await load(true);
         } catch (e) {
@@ -1148,7 +1181,7 @@ function ComposeBox({
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ description: raw }),
             });
-            const json = (await res.json()) as OptimizeResult & { error?: string };
+            const json = await readJson<OptimizeResult & { error?: string }>(res);
             if (json.error || !json.optimized) {
                 setError(json.error ?? 'The optimizer returned nothing usable.');
                 return;
@@ -1185,7 +1218,7 @@ function ComposeBox({
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ description: description.trim() }),
             });
-            const json = (await res.json()) as { plan?: AgentPlan; error?: string };
+            const json = await readJson<{ plan?: AgentPlan; error?: string }>(res);
             if (json.error) setError(json.error);
             setPlan(json.plan ?? null);
         } catch (e) {
@@ -1210,7 +1243,7 @@ function ComposeBox({
                     ...(agent ? { agentKey: agent.agent_key } : {}),
                 }),
             });
-            const json = (await res.json()) as ComposeResponse;
+            const json = await readJson<ComposeResponse>(res);
             if (json.error) setError(json.error);
             setResult(json);
         } catch (e) {
@@ -1232,7 +1265,7 @@ function ComposeBox({
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ orgId, ...body }),
             });
-            return (await res.json()) as Record<string, unknown>;
+            return await readJson<Record<string, unknown>>(res);
         };
         const errorOf = (r: Record<string, unknown>): string | null =>
             typeof r.error === 'string' ? r.error : null;
