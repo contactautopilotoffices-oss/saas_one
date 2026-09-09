@@ -88,7 +88,6 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- Drop trigger if exists
 DROP TRIGGER IF EXISTS trg_vms_visitors_outbox ON public.visitor_logs;
-DROP TRIGGER IF EXISTS trg_vms_visitors_outbox ON public.visitors;
 
 -- Create After Insert or Update trigger on visitor_logs
 CREATE TRIGGER trg_vms_visitors_outbox
