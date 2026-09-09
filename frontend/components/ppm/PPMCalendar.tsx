@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { ChevronLeft, ChevronRight, ChevronDown, Upload, X, CheckCircle2, Clock, AlertCircle, SkipForward, Loader2, FileSpreadsheet, CalendarDays, Camera, FileText, Receipt, Building2, LayoutDashboard } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, Upload, X, CheckCircle2, Clock, AlertCircle, SkipForward, Loader2, FileSpreadsheet, CalendarDays, Camera, FileText, Receipt, Building2, LayoutDashboard, Maximize2, ExternalLink, Eye } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useAuth } from '@/frontend/context/AuthContext';
 
@@ -38,6 +38,7 @@ interface Props {
     organizationId: string;
     propertyId?: string;
     properties?: { id: string; name: string }[];
+    readOnly?: boolean;
 }
 
 const STATUS_CONFIG = {
@@ -62,7 +63,7 @@ function getFrequencyStyle(frequency: string | null) {
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December'];
 
-export default function PPMCalendar({ organizationId, propertyId, properties = [] }: Props) {
+export default function PPMCalendar({ organizationId, propertyId, properties = [], readOnly = false }: Props) {
     const { user, membership } = useAuth();
     const today = new Date();
 
@@ -72,6 +73,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
     const [isLoading, setIsLoading] = useState(false);
     const [selectedDate, setSelectedDate] = useState<string | null>(null);
     const [selectedTask, setSelectedTask] = useState<PPMSchedule | null>(null);
+    const [previewPhotoUrl, setPreviewPhotoUrl] = useState<string | null>(null);
     const [isUpdating, setIsUpdating] = useState(false);
 
     // Upload state
@@ -187,7 +189,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
         setEditVendorName(task.vendor_name || '');
         setEditVendorPhone(task.vendor_phone || '');
         setEditVendorContact(task.vendor_contact_person || '');
-        setIsEditMode(task.status !== 'done');
+        setIsEditMode(readOnly ? false : task.status !== 'done');
     };
 
     const handleUpdateTask = async () => {
@@ -356,13 +358,15 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                             </span>
                         ))}
                     </div>
-                    <button
-                        onClick={() => setShowUpload(true)}
-                        className="flex items-center gap-2 px-4 py-2 bg-primary text-white text-sm font-bold rounded-xl hover:bg-primary/90 transition-all flex-shrink-0 ml-2"
-                    >
-                        <Upload className="w-4 h-4" />
-                        Upload Excel
-                    </button>
+                    {!readOnly && (
+                        <button
+                            onClick={() => setShowUpload(true)}
+                            className="flex items-center gap-2 px-4 py-2 bg-primary text-white text-sm font-bold rounded-xl hover:bg-primary/90 transition-all flex-shrink-0 ml-2"
+                        >
+                            <Upload className="w-4 h-4" />
+                            Upload Excel
+                        </button>
+                    )}
                 </div>
             </div>
 
@@ -378,13 +382,16 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                             {/* Day headers */}
                             <div className="grid grid-cols-7 mb-2">
                                 {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
-                                    <div key={d} className="text-center text-xs font-black text-slate-400 uppercase tracking-widest py-2">{d}</div>
+                                    <div key={d} className="text-center text-[10px] sm:text-xs font-black text-slate-400 uppercase tracking-wider py-1 sm:py-2">
+                                        <span className="hidden sm:inline">{d}</span>
+                                        <span className="sm:hidden">{d[0]}</span>
+                                    </div>
                                 ))}
                             </div>
                             {/* Cells */}
-                            <div className="grid grid-cols-7 gap-1">
+                            <div className="grid grid-cols-7 gap-1 sm:gap-1.5 md:gap-2">
                                 {calendarCells.map((day, idx) => {
-                                    if (!day) return <div key={idx} />;
+                                    if (!day) return <div key={idx} className="min-h-[56px] sm:min-h-[76px] md:min-h-[96px]" />;
                                     const d = dateStr(day);
                                     const tasks = byDate[d] || [];
                                     const isToday = d === today.toISOString().split('T')[0];
@@ -397,38 +404,50 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                         <div
                                             key={d}
                                             onClick={() => handleDayClick(day)}
-                                            className={`min-h-[90px] rounded-xl border p-2 cursor-pointer transition-all
-                                                ${isSelected ? 'border-primary bg-primary/5 shadow-sm' : 'border-slate-100 hover:border-primary/40 hover:bg-slate-50'}
-                                                ${isToday ? 'ring-2 ring-primary' : ''}
+                                            className={`min-h-[56px] sm:min-h-[76px] md:min-h-[96px] rounded-lg md:rounded-xl border p-1 sm:p-2 cursor-pointer transition-all flex flex-col justify-between
+                                                ${isSelected ? 'border-primary bg-primary/5 shadow-xs ring-1 ring-primary' : 'border-slate-100 hover:border-primary/40 hover:bg-slate-50'}
+                                                ${isToday ? 'ring-2 ring-primary bg-primary/5' : 'bg-white'}
                                             `}
                                         >
-                                            <div className={`text-sm font-black mb-1.5 w-7 h-7 flex items-center justify-center rounded-full
-                                                ${isToday ? 'bg-primary text-white' : 'text-slate-700'}`}>
-                                                {day}
+                                            <div className="flex items-center justify-between">
+                                                <div className={`text-xs sm:text-sm font-black w-5 h-5 sm:w-6 sm:h-6 md:w-7 md:h-7 flex items-center justify-center rounded-full
+                                                    ${isToday ? 'bg-primary text-white shadow-xs' : 'text-slate-700'}`}>
+                                                    {day}
+                                                </div>
+                                                {/* Mobile task badge indicator */}
+                                                {tasks.length > 0 && (
+                                                    <span className="md:hidden text-[9px] font-extrabold text-primary bg-primary/10 px-1 py-0.5 rounded-md">
+                                                        {tasks.length}
+                                                    </span>
+                                                )}
                                             </div>
+
                                             {tasks.length > 0 && (
-                                                <div className="space-y-0.5">
+                                                <div className="space-y-1 mt-1">
                                                     {/* Status dots */}
-                                                    <div className="flex flex-wrap gap-1 mb-1">
-                                                        {pendingCnt > 0 && <span className="w-2 h-2 rounded-full bg-amber-500" title="Pending" />}
-                                                        {doneCnt > 0 && <span className="w-2 h-2 rounded-full bg-emerald-500" title="Done" />}
-                                                        {postponedCnt > 0 && <span className="w-2 h-2 rounded-full bg-rose-500" title="Postponed" />}
+                                                    <div className="flex flex-wrap gap-1">
+                                                        {pendingCnt > 0 && <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-amber-500" title={`${pendingCnt} Pending`} />}
+                                                        {doneCnt > 0 && <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-emerald-500" title={`${doneCnt} Done`} />}
+                                                        {postponedCnt > 0 && <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-rose-500" title={`${postponedCnt} Postponed`} />}
                                                     </div>
-                                                    {/* Task pills — show up to 2 */}
-                                                    {tasks.slice(0, 2).map(t => {
-                                                        const fcfg = getFrequencyStyle(t.frequency);
-                                                        return (
-                                                            <div
-                                                                key={t.id}
-                                                                className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md truncate ${fcfg.bg} ${fcfg.text}`}
-                                                            >
-                                                                {t.system_name}
-                                                            </div>
-                                                        );
-                                                    })}
-                                                    {tasks.length > 2 && (
-                                                        <div className="text-[10px] font-black text-slate-400">+{tasks.length - 2} more</div>
-                                                    )}
+
+                                                    {/* Task pills — Desktop only (md and up) */}
+                                                    <div className="hidden md:block space-y-0.5">
+                                                        {tasks.slice(0, 2).map(t => {
+                                                            const fcfg = getFrequencyStyle(t.frequency);
+                                                            return (
+                                                                <div
+                                                                    key={t.id}
+                                                                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md truncate ${fcfg.bg} ${fcfg.text}`}
+                                                                >
+                                                                    {t.system_name}
+                                                                </div>
+                                                            );
+                                                        })}
+                                                        {tasks.length > 2 && (
+                                                            <div className="text-[10px] font-black text-slate-400">+{tasks.length - 2} more</div>
+                                                        )}
+                                                    </div>
                                                 </div>
                                             )}
                                         </div>
@@ -439,69 +458,95 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                     )}
                 </div>
 
-                {/* Side Panel — Day Detail */}
-                {selectedDate && (
-                    <div className="w-80 border-l border-slate-100 flex flex-col" style={{ maxHeight: 'calc(100vh - 64px)', position: 'sticky', top: 0 }}>
-                        <div className="flex items-center justify-between p-4 border-b border-slate-100 flex-shrink-0">
-                            <div>
-                                <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Tasks for</p>
-                                <p className="text-lg font-black text-slate-900">
-                                    {new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}
-                                </p>
-                            </div>
-                            <button onClick={() => setSelectedDate(null)} className="p-1.5 hover:bg-slate-100 rounded-lg">
-                                <X className="w-4 h-4 text-slate-500" />
-                            </button>
-                        </div>
-                        <div className="flex-1 overflow-y-auto p-3 space-y-2">
-                            {dayTasks.length === 0 ? (
-                                <div className="text-center py-10 text-slate-400">
-                                    <CalendarDays className="w-8 h-8 mx-auto mb-2 opacity-40" />
-                                    <p className="text-sm font-semibold">No tasks scheduled</p>
-                                </div>
-                            ) : dayTasks.map(task => {
-                                const cfg = STATUS_CONFIG[task.status];
-                                const fcfg = getFrequencyStyle(task.frequency);
-                                const Icon = cfg.icon;
-                                return (
-                                    <div
-                                        key={task.id}
-                                        onClick={() => handleTaskClick(task)}
-                                        className={`p-3 rounded-xl border cursor-pointer hover:shadow-sm transition-all ${fcfg.bg} ${fcfg.border}`}
-                                    >
-                                        <div className="flex items-start gap-2">
-                                            <Icon className={`w-4 h-4 mt-0.5 flex-shrink-0 ${cfg.text}`} />
-                                            <div className="flex-1 min-w-0">
-                                                <p className={`text-xs font-black ${fcfg.text}`}>{task.system_name}</p>
-                                                {task.detail_name && <p className="text-[10px] text-slate-600 truncate">{task.detail_name}</p>}
-                                                {(task.vendor_name || task.vendor_phone) && (
-                                    <p className="text-[10px] text-slate-500 mt-0.5">
-                                        Vendor: {task.vendor_name || '—'}
-                                        {task.vendor_contact_person && ` · ${task.vendor_contact_person}`}
-                                        {task.vendor_phone && ` · ${task.vendor_phone}`}
-                                    </p>
-                                )}
-                                                {task.location && <p className="text-[10px] text-slate-500">📍 {task.location}</p>}
-                                                <p className={`text-[10px] font-bold mt-0.5 ${fcfg.text}`}>{fcfg.label}</p>
-                                                {task.remark && <p className="text-[10px] text-slate-500 italic mt-1">"{task.remark}"</p>}
-                                                {task.status === 'done' && task.attachments?.completed_by_name && (
-                                                    <p className="text-[10px] text-emerald-600 font-bold mt-1">
-                                                        Completed by {task.attachments.completed_by_name}
-                                                    </p>
-                                                )}
-                                                {task.verification_status === 'submitted' && (
-                                                    <span className="inline-block mt-1 px-1.5 py-0.5 bg-blue-100 text-blue-700 text-[9px] font-bold rounded-md">
-                                                        PROOF SUBMITTED — REVIEW
-                                                    </span>
-                                                )}
-                                            </div>
-                                        </div>
+                {/* Side Panel / Mobile Bottom Sheet — Day Detail */}
+                <AnimatePresence>
+                    {selectedDate && (
+                        <>
+                            {/* Backdrop for Mobile */}
+                            <motion.div
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                exit={{ opacity: 0 }}
+                                onClick={() => setSelectedDate(null)}
+                                className="fixed inset-0 bg-black/40 backdrop-blur-xs z-40 md:hidden"
+                            />
+                            <motion.div
+                                initial={{ y: '100%' }}
+                                animate={{ y: 0 }}
+                                exit={{ y: '100%' }}
+                                transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                                className="fixed inset-x-0 bottom-0 z-50 bg-white rounded-t-3xl shadow-2xl border-t border-slate-100 max-h-[80vh] flex flex-col
+                                           md:relative md:inset-auto md:z-auto md:w-80 lg:w-96 md:rounded-none md:border-t-0 md:border-l md:shadow-none md:max-h-none md:h-full md:transform-none"
+                            >
+                                {/* Mobile handle bar */}
+                                <div className="w-12 h-1.5 bg-slate-200 rounded-full mx-auto my-2 md:hidden" />
+
+                                <div className="flex items-center justify-between p-4 border-b border-slate-100 flex-shrink-0">
+                                    <div>
+                                        <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Tasks for</p>
+                                        <p className="text-lg font-black text-slate-900">
+                                            {new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}
+                                        </p>
                                     </div>
-                                );
-                            })}
-                        </div>
-                    </div>
-                )}
+                                    <button onClick={() => setSelectedDate(null)} className="p-2 hover:bg-slate-100 rounded-xl transition-colors">
+                                        <X className="w-5 h-5 text-slate-500" />
+                                    </button>
+                                </div>
+                                <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
+                                    {dayTasks.length === 0 ? (
+                                        <div className="text-center py-10 text-slate-400">
+                                            <CalendarDays className="w-10 h-10 mx-auto mb-2 opacity-40" />
+                                            <p className="text-sm font-semibold">No tasks scheduled for this date</p>
+                                        </div>
+                                    ) : dayTasks.map(task => {
+                                        const cfg = STATUS_CONFIG[task.status];
+                                        const fcfg = getFrequencyStyle(task.frequency);
+                                        const Icon = cfg.icon;
+                                        return (
+                                            <div
+                                                key={task.id}
+                                                onClick={() => handleTaskClick(task)}
+                                                className={`p-3.5 rounded-xl border cursor-pointer hover:shadow-md transition-all ${fcfg.bg} ${fcfg.border}`}
+                                            >
+                                                <div className="flex items-start gap-2.5">
+                                                    <Icon className={`w-4 h-4 mt-0.5 flex-shrink-0 ${cfg.text}`} />
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="flex items-center justify-between gap-2">
+                                                            <p className={`text-xs font-black ${fcfg.text}`}>{task.system_name}</p>
+                                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${cfg.bg} ${cfg.text}`}>
+                                                                {cfg.label}
+                                                            </span>
+                                                        </div>
+                                                        {task.detail_name && <p className="text-xs text-slate-600 font-medium mt-0.5 truncate">{task.detail_name}</p>}
+                                                        {(task.vendor_name || task.vendor_phone) && (
+                                                            <p className="text-[11px] text-slate-500 mt-1">
+                                                                Vendor: {task.vendor_name || '—'}
+                                                                {task.vendor_contact_person && ` · ${task.vendor_contact_person}`}
+                                                                {task.vendor_phone && ` · ${task.vendor_phone}`}
+                                                            </p>
+                                                        )}
+                                                        {task.location && <p className="text-[11px] text-slate-500 mt-0.5">📍 {task.location}</p>}
+                                                        {task.remark && <p className="text-xs text-slate-600 italic mt-1 bg-white/60 p-1.5 rounded-lg border border-slate-100">"{task.remark}"</p>}
+                                                        {task.status === 'done' && task.attachments?.completed_by_name && (
+                                                            <p className="text-[11px] text-emerald-600 font-bold mt-1">
+                                                                Completed by {task.attachments.completed_by_name}
+                                                            </p>
+                                                        )}
+                                                        {task.verification_status === 'submitted' && (
+                                                            <span className="inline-block mt-1 px-2 py-0.5 bg-blue-100 text-blue-700 text-[10px] font-extrabold rounded-md">
+                                                                PROOF SUBMITTED — REVIEW
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </motion.div>
+                        </>
+                    )}
+                </AnimatePresence>
             </div>
 
             {/* Task Update Modal */}
@@ -664,16 +709,31 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                             )}
                                         </div>
                                         {((selectedTask.attachments?.photos as string[]) || selectedTask.completion_photos || []).length > 0 ? (
-                                            <div className="flex flex-wrap gap-2">
+                                            <div className="flex flex-wrap gap-2.5 pt-1">
                                                 {((selectedTask.attachments?.photos as string[]) || selectedTask.completion_photos || []).map((photoUrl, idx) => (
-                                                    <div key={idx} className="relative group">
-                                                        <img src={photoUrl} alt={`Photo ${idx + 1}`} className="w-16 h-16 object-cover rounded-lg border border-slate-200" />
+                                                    <div
+                                                        key={idx}
+                                                        className="relative group cursor-pointer overflow-hidden rounded-xl border border-slate-200 bg-slate-100"
+                                                        onClick={() => setPreviewPhotoUrl(photoUrl)}
+                                                    >
+                                                        <img
+                                                            src={photoUrl}
+                                                            alt={`Completion photo ${idx + 1}`}
+                                                            className="w-20 h-20 object-cover group-hover:scale-105 transition-transform duration-200"
+                                                        />
+                                                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center text-white gap-1">
+                                                            <Maximize2 className="w-4 h-4" />
+                                                            <span className="text-[9px] font-bold">Enlarge</span>
+                                                        </div>
                                                         {isEditMode && (
                                                             <button
-                                                                onClick={() => handleAttachmentDelete(photoUrl, 'photo')}
-                                                                className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-rose-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    handleAttachmentDelete(photoUrl, 'photo');
+                                                                }}
+                                                                className="absolute top-1 right-1 w-5 h-5 bg-rose-500 text-white rounded-full flex items-center justify-center shadow-md hover:bg-rose-600 transition-colors z-10"
                                                             >
-                                                                <X className="w-2.5 h-2.5" />
+                                                                <X className="w-3 h-3" />
                                                             </button>
                                                         )}
                                                     </div>
@@ -774,61 +834,68 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                     {selectedTask.attachments && Object.keys(selectedTask.attachments).length > 0 && (
                                         <div className="space-y-2">
                                             {Array.isArray(selectedTask.attachments.photos) && selectedTask.attachments.photos.map((url: string, i: number) => (
-                                                <a key={i} href={url} target="_blank" rel="noopener noreferrer"
-                                                    className="flex items-center gap-2 text-xs text-blue-700 underline">
-                                                    <Camera className="w-3.5 h-3.5" /> Photo {i + 1}
-                                                </a>
+                                                <button
+                                                    key={i}
+                                                    type="button"
+                                                    onClick={() => setPreviewPhotoUrl(url)}
+                                                    className="flex items-center gap-2 text-xs font-bold text-blue-700 hover:text-blue-900 underline group text-left"
+                                                >
+                                                    <Camera className="w-3.5 h-3.5 flex-shrink-0" /> Photo {i + 1}
+                                                    <span className="text-[10px] text-blue-500 opacity-80 font-medium">(Click to enlarge)</span>
+                                                </button>
                                             ))}
                                             {selectedTask.attachments.certificate && (
                                                 <a href={selectedTask.attachments.certificate} target="_blank" rel="noopener noreferrer"
-                                                    className="flex items-center gap-2 text-xs text-blue-700 underline">
-                                                    <FileText className="w-3.5 h-3.5" /> Completion Certificate
+                                                    className="flex items-center gap-2 text-xs font-bold text-blue-700 underline">
+                                                    <FileText className="w-3.5 h-3.5 flex-shrink-0" /> Completion Certificate
                                                 </a>
                                             )}
                                             {selectedTask.attachments.invoice && (
                                                 <a href={selectedTask.attachments.invoice} target="_blank" rel="noopener noreferrer"
-                                                    className="flex items-center gap-2 text-xs text-blue-700 underline">
-                                                    <Receipt className="w-3.5 h-3.5" /> Invoice
+                                                    className="flex items-center gap-2 text-xs font-bold text-blue-700 underline">
+                                                    <Receipt className="w-3.5 h-3.5 flex-shrink-0" /> Invoice
                                                 </a>
                                             )}
                                         </div>
                                     )}
-                                    <div className="flex gap-2 pt-1">
-                                        <button
-                                            onClick={async () => {
-                                                setIsUpdating(true);
-                                                await fetch(`/api/ppm/schedules/${selectedTask.id}`, {
-                                                    method: 'PATCH',
-                                                    headers: { 'Content-Type': 'application/json' },
-                                                    body: JSON.stringify({ verification_status: 'verified' }),
-                                                });
-                                                setSchedules(prev => prev.map(s => s.id === selectedTask.id ? { ...s, verification_status: 'verified' } : s));
-                                                setSelectedTask(t => t ? { ...t, verification_status: 'verified' } : t);
-                                                setIsUpdating(false);
-                                            }}
-                                            disabled={isUpdating}
-                                            className="flex-1 py-2 bg-emerald-600 text-white text-xs font-bold rounded-xl hover:bg-emerald-700 disabled:opacity-60 flex items-center justify-center gap-1"
-                                        >
-                                            <CheckCircle2 className="w-3.5 h-3.5" /> Approve
-                                        </button>
-                                        <button
-                                            onClick={async () => {
-                                                setIsUpdating(true);
-                                                await fetch(`/api/ppm/schedules/${selectedTask.id}`, {
-                                                    method: 'PATCH',
-                                                    headers: { 'Content-Type': 'application/json' },
-                                                    body: JSON.stringify({ verification_status: 'rejected', status: 'pending' }),
-                                                });
-                                                setSchedules(prev => prev.map(s => s.id === selectedTask.id ? { ...s, verification_status: 'rejected', status: 'pending' } : s));
-                                                setSelectedTask(t => t ? { ...t, verification_status: 'rejected', status: 'pending' } : t);
-                                                setIsUpdating(false);
-                                            }}
-                                            disabled={isUpdating}
-                                            className="flex-1 py-2 bg-red-50 text-red-600 border border-red-200 text-xs font-bold rounded-xl hover:bg-red-100 disabled:opacity-60 flex items-center justify-center gap-1"
-                                        >
-                                            <X className="w-3.5 h-3.5" /> Reject
-                                        </button>
-                                    </div>
+                                    {!readOnly && (
+                                        <div className="flex gap-2 pt-1">
+                                            <button
+                                                onClick={async () => {
+                                                    setIsUpdating(true);
+                                                    await fetch(`/api/ppm/schedules/${selectedTask.id}`, {
+                                                        method: 'PATCH',
+                                                        headers: { 'Content-Type': 'application/json' },
+                                                        body: JSON.stringify({ verification_status: 'verified' }),
+                                                    });
+                                                    setSchedules(prev => prev.map(s => s.id === selectedTask.id ? { ...s, verification_status: 'verified' } : s));
+                                                    setSelectedTask(t => t ? { ...t, verification_status: 'verified' } : t);
+                                                    setIsUpdating(false);
+                                                }}
+                                                disabled={isUpdating}
+                                                className="flex-1 py-2 bg-emerald-600 text-white text-xs font-bold rounded-xl hover:bg-emerald-700 disabled:opacity-60 flex items-center justify-center gap-1"
+                                            >
+                                                <CheckCircle2 className="w-3.5 h-3.5" /> Approve
+                                            </button>
+                                            <button
+                                                onClick={async () => {
+                                                    setIsUpdating(true);
+                                                    await fetch(`/api/ppm/schedules/${selectedTask.id}`, {
+                                                        method: 'PATCH',
+                                                        headers: { 'Content-Type': 'application/json' },
+                                                        body: JSON.stringify({ verification_status: 'rejected', status: 'pending' }),
+                                                    });
+                                                    setSchedules(prev => prev.map(s => s.id === selectedTask.id ? { ...s, verification_status: 'rejected', status: 'pending' } : s));
+                                                    setSelectedTask(t => t ? { ...t, verification_status: 'rejected', status: 'pending' } : t);
+                                                    setIsUpdating(false);
+                                                }}
+                                                disabled={isUpdating}
+                                                className="flex-1 py-2 bg-red-50 text-red-600 border border-red-200 text-xs font-bold rounded-xl hover:bg-red-100 disabled:opacity-60 flex items-center justify-center gap-1"
+                                            >
+                                                <X className="w-3.5 h-3.5" /> Reject
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
                             )}
 
@@ -842,10 +909,15 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                         <div className="space-y-1.5 pt-1 border-t border-emerald-100">
                                             <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wide">Uploaded Documents</p>
                                             {Array.isArray(selectedTask.attachments.photos) && selectedTask.attachments.photos.map((url: string, i: number) => (
-                                                <a key={i} href={url} target="_blank" rel="noopener noreferrer"
-                                                    className="flex items-center gap-2 text-xs text-emerald-700 hover:underline">
+                                                <button
+                                                    key={i}
+                                                    type="button"
+                                                    onClick={() => setPreviewPhotoUrl(url)}
+                                                    className="flex items-center gap-2 text-xs font-bold text-emerald-700 hover:text-emerald-900 underline group text-left"
+                                                >
                                                     <Camera className="w-3.5 h-3.5 flex-shrink-0" /> Photo {i + 1}
-                                                </a>
+                                                    <span className="text-[10px] text-emerald-600 opacity-80 font-medium">(Click to enlarge)</span>
+                                                </button>
                                             ))}
                                             {selectedTask.attachments.certificate && (
                                                 <a href={selectedTask.attachments.certificate} target="_blank" rel="noopener noreferrer"
@@ -867,7 +939,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                 </div>
                             )}
 
-                            {!isEditMode && selectedTask.status === 'done' && (
+                            {!readOnly && !isEditMode && selectedTask.status === 'done' && (
                                 <button
                                     onClick={() => setIsEditMode(true)}
                                     className="w-full py-3 bg-slate-100 text-slate-700 font-bold rounded-xl hover:bg-slate-200 transition-all flex items-center justify-center gap-2"
@@ -1018,6 +1090,52 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                     </div>
                 </div>
             )}
+
+            {/* Photo Lightbox Modal */}
+            <AnimatePresence>
+                {previewPhotoUrl && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center p-4"
+                        onClick={() => setPreviewPhotoUrl(null)}
+                    >
+                        <div className="absolute top-4 right-4 flex items-center gap-3 z-10">
+                            <a
+                                href={previewPhotoUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={e => e.stopPropagation()}
+                                className="p-2.5 bg-white/10 hover:bg-white/20 text-white rounded-full transition-colors backdrop-blur-sm"
+                                title="Open original image in new tab"
+                            >
+                                <ExternalLink className="w-5 h-5" />
+                            </a>
+                            <button
+                                onClick={() => setPreviewPhotoUrl(null)}
+                                className="p-2.5 bg-white/10 hover:bg-white/20 text-white rounded-full transition-colors backdrop-blur-sm"
+                                title="Close preview"
+                            >
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+                        <motion.div
+                            initial={{ scale: 0.9, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0.9, opacity: 0 }}
+                            className="max-w-4xl max-h-[85vh] relative flex items-center justify-center p-2"
+                            onClick={e => e.stopPropagation()}
+                        >
+                            <img
+                                src={previewPhotoUrl}
+                                alt="PPM Completion Proof"
+                                className="max-w-full max-h-[85vh] object-contain rounded-2xl shadow-2xl border border-white/10"
+                            />
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
         </div>
     );
 }

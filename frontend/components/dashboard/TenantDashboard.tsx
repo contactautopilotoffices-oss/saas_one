@@ -25,10 +25,13 @@ import SettingsView from './SettingsView';
 import Loader from '@/frontend/components/ui/Loader';
 import TicketCard from '@/frontend/components/shared/TicketCard';
 import TenantRoomBooking from '@/frontend/components/meeting-rooms/TenantRoomBooking';
+import PPMCalendar from '@/frontend/components/ppm/PPMCalendar';
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
+import TenantVisitorManagement from '@/frontend/components/vms/TenantVisitorManagement';
+import { CalendarDays } from 'lucide-react';
 
 // Types
-type Tab = 'overview' | 'requests' | 'create_request' | 'visitors' | 'room_booking' | 'settings' | 'profile';
+type Tab = 'overview' | 'requests' | 'create_request' | 'visitors' | 'room_booking' | 'ppm' | 'settings' | 'profile';
 
 interface Property {
     id: string;
@@ -99,6 +102,7 @@ const TenantDashboard = () => {
         create_request: { title: 'New Request', subtitle: 'Quick report' },
         visitors: { title: 'Visitors', subtitle: 'Manage guests' },
         room_booking: { title: 'Meeting Rooms', subtitle: 'Book your workspace' },
+        ppm: { title: 'PPM Calendar', subtitle: 'Planned Maintenance Schedule' },
         settings: { title: 'Settings', subtitle: 'App preferences' },
         profile: { title: 'Profile', subtitle: 'Your account' },
     };
@@ -108,7 +112,7 @@ const TenantDashboard = () => {
     // Restore tab from URL and handle back navigation
     useEffect(() => {
         const tab = searchParams.get('tab');
-        if (tab && ['overview', 'requests', 'create_request', 'visitors', 'room_booking', 'settings', 'profile'].includes(tab)) {
+        if (tab && ['overview', 'requests', 'create_request', 'visitors', 'room_booking', 'ppm', 'settings', 'profile'].includes(tab)) {
             setActiveTab(tab as Tab);
         }
     }, [searchParams]);
@@ -511,6 +515,16 @@ const TenantDashboard = () => {
                                         <Calendar className="w-4 h-4" />
                                         Meeting Rooms
                                     </button>
+                                    <button
+                                        onClick={() => { handleTabChange('ppm'); setSidebarOpen(false); }}
+                                        className={`w-full flex items-center gap-3 px-4 py-3 rounded-[var(--radius-md)] transition-smooth font-bold text-sm ${activeTab === 'ppm'
+                                            ? 'bg-primary text-text-inverse shadow-sm'
+                                            : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                            }`}
+                                    >
+                                        <CalendarDays className="w-4 h-4" />
+                                        PPM Calendar
+                                    </button>
                                 </div>
                             </div>
 
@@ -634,17 +648,28 @@ const TenantDashboard = () => {
                                     onSuccess={fetchTickets}
                                 />
                             )}
-                            {activeTab === 'visitors' && (
-                                <ComingSoonView
-                                    title="Visitor Management"
-                                    icon={UsersRound}
-                                    description="We're building a seamless way for you to manage guests, pre-authorize entries, and track visitor history."
+                            {activeTab === 'visitors' && property && user && (
+                                <TenantVisitorManagement
+                                    propertyId={property.id}
+                                    user={{
+                                        id: user.id,
+                                        full_name: user.user_metadata?.full_name || user.email?.split('@')[0] || 'Host',
+                                        email: user.email,
+                                    }}
+                                    propertyName={property.name}
                                 />
                             )}
                             {activeTab === 'room_booking' && property && (
                                 <TenantRoomBooking
                                     propertyId={property.id}
                                     user={user}
+                                />
+                            )}
+                            {activeTab === 'ppm' && property && (
+                                <PPMCalendar
+                                    organizationId={property.organization_id}
+                                    propertyId={property.id}
+                                    readOnly={true}
                                 />
                             )}
 

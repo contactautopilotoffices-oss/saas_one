@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
         }
 
         // Role enum guard — reject any value not in the allowed set to prevent privilege escalation
-        const ALLOWED_ROLES = ['master_admin', 'org_super_admin', 'property_admin', 'staff', 'mst', 'tenant', 'procurement', 'vendor', 'super_tenant'] as const;
+        const ALLOWED_ROLES = ['master_admin', 'org_super_admin', 'ops_super_admin', 'property_admin', 'staff', 'mst', 'tenant', 'procurement', 'vendor', 'super_tenant'] as const;
         if (!ALLOWED_ROLES.includes(role as any)) {
             return NextResponse.json(
                 { error: `Invalid role "${role}". Allowed: ${ALLOWED_ROLES.join(', ')}` },
@@ -188,10 +188,10 @@ export async function POST(request: NextRequest) {
         const { property_id } = body
 
         // Membership logic:
-        // org_super_admin & procurement & super_tenant → organization_memberships
+        // org_super_admin, ops_super_admin, procurement & super_tenant → organization_memberships
         // all other roles               → property_memberships
         // On failure: delete the auth user to avoid stranded accounts (partial state cleanup)
-        if (role === 'org_super_admin' || role === 'procurement' || role === 'super_tenant') {
+        if (role === 'org_super_admin' || role === 'ops_super_admin' || role === 'procurement' || role === 'super_tenant') {
             if (organization_id) {
                 const { error: memberError } = await adminClient
                     .from('organization_memberships')
@@ -205,9 +205,34 @@ export async function POST(request: NextRequest) {
                 }
             }
         }
+
+        // For ops_super_admin, automatically assign ALL properties in the organization
+        if (role === 'ops_super_admin' && organization_id) {
+            const { data: orgProps } = await adminClient
+                .from('properties')
+                .select('id')
+                .eq('organization_id', organization_id);
+
+            if (orgProps && orgProps.length > 0) {
+                const propMembershipsToInsert = orgProps.map(p => ({
+                    property_id: p.id,
+                    organization_id,
+                    user_id: userData.user.id,
+                    role: 'ops_super_admin',
+                    is_active: true,
+                }));
+                const { error: opsPropErr } = await adminClient
+                    .from('property_memberships')
+                    .upsert(propMembershipsToInsert, { onConflict: 'user_id,property_id' });
+
+                if (opsPropErr) {
+                    console.error('Failed to assign all properties to ops_super_admin:', opsPropErr);
+                }
+            }
+        }
         
-        // Always assign property membership if provided (even for procurement/org admins)
-        if (property_id) {
+        // Always assign property membership if provided (even for procurement/org admins, unless ops_super_admin already assigned all)
+        if (property_id && role !== 'ops_super_admin') {
             const { error: propMemberError } = await adminClient
                 .from('property_memberships')
                 .insert({
@@ -219,7 +244,7 @@ export async function POST(request: NextRequest) {
                 })
             if (propMemberError) {
                 // If it's not a procurement user (who already has org membership), delete the user on error
-                if (role !== 'org_super_admin' && role !== 'procurement') {
+                if (role !== 'org_super_admin' && role !== 'ops_super_admin' && role !== 'procurement') {
                     await adminClient.auth.admin.deleteUser(userData.user.id)
                 }
                 return NextResponse.json(

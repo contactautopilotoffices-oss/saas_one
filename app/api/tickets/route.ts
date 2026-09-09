@@ -96,8 +96,9 @@ export async function GET(request: NextRequest) {
         const materialsRequired = searchParams.get('materialsRequired');
         const floorNumber = searchParams.get('floorNumber') || searchParams.get('floor_number') || searchParams.get('floor');
 
-        // Use admin client for org-wide queries to bypass RLS row restrictions
-        const queryClient = (organizationId && !propertyId) ? createAdminClient() : supabase;
+        // Use admin client for org-wide or all-property queries to bypass RLS row restrictions
+        const isAllProperties = propertyId === 'all';
+        const queryClient = ((organizationId && (!propertyId || isAllProperties)) || isAllProperties) ? createAdminClient() : supabase;
 
         let selectStr = `
                 id, ticket_number, title, status, priority, created_at, internal, raised_by, assigned_to,
@@ -123,7 +124,7 @@ export async function GET(request: NextRequest) {
                 (offsetParam ? parseInt(offsetParam) : 0) + (limitParam ? parseInt(limitParam) : 100) - 1
             );
 
-        if (propertyId) query = query.eq('property_id', propertyId);
+        if (propertyId && !isAllProperties) query = query.eq('property_id', propertyId);
         if (organizationId) query = query.eq('organization_id', organizationId);
         if (status) {
             if (status.includes(',')) {

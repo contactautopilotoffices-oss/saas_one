@@ -180,11 +180,9 @@ const UnifiedDashboard = () => {
         return <OrgAdminDashboard />;
     }
 
-    // Ops Super Admin — electricity checker. Lands on the org admin dashboard variant
-    // (ops widgets via registry); the sidebar routes them into the electricity
-    // validation queue / disputes / reports views.
+    // Ops Super Admin — operations management dashboard with all property access & pending validation card
     if (role === 'ops_super_admin') {
-        return <OrgAdminDashboard />;
+        return <PropertyAdminDashboard />;
     }
 
     // Procurement role - global dashboard

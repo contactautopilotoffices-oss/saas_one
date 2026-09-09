@@ -16,6 +16,7 @@ interface DispatchOptions {
         assigneeId?: string | null;
         requesterId?: string | null;
         approverId?: string | null;
+        extraUserIds?: string[];
     };
     excludeUserIds?: string[];
 }
@@ -207,6 +208,17 @@ export const WhatsAppEventProcessor = {
                 await this.handleVendorRevenuePendingDigest(payload);
                 break;
 
+            // Visitor Management
+            case 'VISITOR_APPROVAL_REQUESTED':
+                await this.handleVisitorApprovalRequested(payload);
+                break;
+            case 'VISITOR_APPROVED':
+                await this.handleVisitorApproved(payload);
+                break;
+            case 'VISITOR_REJECTED':
+                await this.handleVisitorRejected(payload);
+                break;
+
             default:
                 break;
         }
@@ -230,7 +242,8 @@ export const WhatsAppEventProcessor = {
             contextualUserIds: contextualUserIds ? [
                 contextualUserIds.assigneeId,
                 contextualUserIds.requesterId,
-                contextualUserIds.approverId
+                contextualUserIds.approverId,
+                ...(contextualUserIds.extraUserIds || [])
             ].filter(Boolean) as string[] : []
         });
 
@@ -245,6 +258,9 @@ export const WhatsAppEventProcessor = {
         if (config.notify_assignee && contextualUserIds?.assigneeId) contextualIds.push(contextualUserIds.assigneeId);
         if (config.notify_requester && contextualUserIds?.requesterId) contextualIds.push(contextualUserIds.requesterId);
         if (contextualUserIds?.approverId) contextualIds.push(contextualUserIds.approverId);
+        if ((config.notify_requester || config.notify_assignee) && contextualUserIds?.extraUserIds) {
+            contextualIds.push(...contextualUserIds.extraUserIds);
+        }
 
         const missingIds = contextualIds.filter(id => !userMap.has(id));
         if (missingIds.length > 0) {
@@ -325,7 +341,10 @@ export const WhatsAppEventProcessor = {
             checklist_rated: { campaign_name: 'checklist_rated', params: ['user_name', 'checklist_name', 'property', 'rating', 'rater_name'] },
             vendor_revenue_recorded: { campaign_name: 'vendor_revenue_recorded_v1', params: ['user_name', 'shop_name', 'property_name', 'date', 'revenue_amount', 'commission_rate', 'commission_due', 'property_id'] },
             vendor_revenue_reminder: { campaign_name: 'vendor_revenue_reminder_v1', params: ['user_name', 'shop_name', 'property_name', 'date', 'property_id'] },
-            vendor_revenue_pending_digest: { campaign_name: 'vendor_revenue_pending_digest_v1', params: ['user_name', 'property_name', 'date', 'total_vendors', 'submitted_count', 'pending_count', 'pending_list', 'property_id'] }
+            vendor_revenue_pending_digest: { campaign_name: 'vendor_revenue_pending_digest_v1', params: ['user_name', 'property_name', 'date', 'total_vendors', 'submitted_count', 'pending_count', 'pending_list', 'property_id'] },
+            visitor_approval_requested: { campaign_name: 'visitor_approval_requested_v1', params: ['user_name', 'visitor_name', 'coming_from', 'category', 'property', 'checkin_time'] },
+            visitor_approved: { campaign_name: 'visitor_approved_v1', params: ['user_name', 'visitor_name', 'whom_to_meet', 'property', 'approved_by'] },
+            visitor_rejected: { campaign_name: 'visitor_rejected_v1', params: ['user_name', 'visitor_name', 'whom_to_meet', 'property', 'rejected_by'] }
         };
 
         // Intelligent routing: if media exists and org or system default has a media-specific template, use it; otherwise standard template
@@ -443,7 +462,16 @@ export const WhatsAppEventProcessor = {
             'checklist_overdue_alert': ['checklist_name', 'property', 'slot_time'],
 
             'checklist_rated_v1': ['user_name', 'checklist_name', 'property', 'rating', 'rater_name'],
-            'checklist_rated': ['user_name', 'checklist_name', 'property', 'rating', 'rater_name']
+            'checklist_rated': ['user_name', 'checklist_name', 'property', 'rating', 'rater_name'],
+
+            'visitor_approval_requested_v1': ['user_name', 'visitor_name', 'coming_from', 'category', 'property', 'checkin_time'],
+            'visitor_approval_requested': ['user_name', 'visitor_name', 'coming_from', 'category', 'property', 'checkin_time'],
+
+            'visitor_approved_v1': ['user_name', 'visitor_name', 'whom_to_meet', 'property', 'approved_by'],
+            'visitor_approved': ['user_name', 'visitor_name', 'whom_to_meet', 'property', 'approved_by'],
+
+            'visitor_rejected_v1': ['user_name', 'visitor_name', 'whom_to_meet', 'property', 'rejected_by'],
+            'visitor_rejected': ['user_name', 'visitor_name', 'whom_to_meet', 'property', 'rejected_by']
         };
 
         const paramKeys = CANONICAL_CAMPAIGN_PARAMS[template.campaign_name]
@@ -1758,6 +1786,122 @@ export const WhatsAppEventProcessor = {
                 property_id: propertyId || ''
             },
             summaryMessage: summary
+        });
+    },
+
+    async handleVisitorApprovalRequested(payload: any): Promise<void> {
+        const visitorId = payload.visitor_log_id || payload.id;
+        const { data: visitor } = await supabaseAdmin
+            .from('visitor_logs')
+            .select('*, property:properties(id, name, organization_id)')
+            .eq('id', visitorId)
+            .maybeSingle();
+
+        const propertyName = visitor?.property?.name || await this.getPropertyName(payload.property_id);
+        const orgId = visitor?.organization_id || payload.organization_id;
+        const propId = visitor?.property_id || payload.property_id;
+        const hostId = payload.host_id || visitor?.host_id;
+
+        await this.dispatch({
+            featureKey: 'visitor_approval_requested',
+            templateEventKey: 'visitor_approval_requested',
+            organizationId: orgId,
+            propertyId: propId,
+            entityId: visitorId,
+            mediaUrl: visitor?.photo_url || payload.photo_url || null,
+            mediaType: (visitor?.photo_url || payload.photo_url) ? 'image' : undefined,
+            paramValues: {
+                user_name: payload.host_name || 'Host',
+                visitor_name: visitor?.name || payload.name || 'Visitor',
+                coming_from: visitor?.coming_from || payload.coming_from || 'N/A',
+                category: visitor?.category || payload.category || 'Visitor',
+                property: propertyName,
+                checkin_time: formatWhatsAppDateTime(visitor?.checkin_time || payload.checkin_time)
+            },
+            summaryMessage: `Visitor approval request: ${visitor?.name || payload.name} at ${propertyName}`,
+            contextualUserIds: { assigneeId: hostId }
+        });
+    },
+
+    async handleVisitorApproved(payload: any): Promise<void> {
+        const visitorId = payload.visitor_log_id || payload.id;
+        const { data: visitor } = await supabaseAdmin
+            .from('visitor_logs')
+            .select('*, property:properties(id, name, organization_id)')
+            .eq('id', visitorId)
+            .maybeSingle();
+
+        const propertyName = visitor?.property?.name || await this.getPropertyName(payload.property_id);
+        const orgId = visitor?.organization_id || payload.organization_id;
+        const propId = visitor?.property_id || payload.property_id;
+
+        const securityIds = Array.isArray(payload.security_ids) ? payload.security_ids : [];
+        const requestedBy = payload.requested_by || payload.created_by || (visitor as any)?.created_by || null;
+
+        const allRequesterIds = Array.from(new Set([
+            requestedBy,
+            ...securityIds
+        ])).filter(Boolean) as string[];
+
+        await this.dispatch({
+            featureKey: 'visitor_approved',
+            templateEventKey: 'visitor_approved',
+            organizationId: orgId,
+            propertyId: propId,
+            entityId: visitorId,
+            paramValues: {
+                user_name: 'Security Team',
+                visitor_name: visitor?.name || payload.name || 'Visitor',
+                whom_to_meet: visitor?.whom_to_meet || payload.whom_to_meet || 'Host',
+                property: propertyName,
+                approved_by: payload.approved_by_name || 'Host'
+            },
+            summaryMessage: `Visitor approved: ${visitor?.name || payload.name} meeting ${visitor?.whom_to_meet || payload.whom_to_meet} at ${propertyName}`,
+            contextualUserIds: {
+                requesterId: requestedBy,
+                extraUserIds: securityIds
+            }
+        });
+    },
+
+    async handleVisitorRejected(payload: any): Promise<void> {
+        const visitorId = payload.visitor_log_id || payload.id;
+        const { data: visitor } = await supabaseAdmin
+            .from('visitor_logs')
+            .select('*, property:properties(id, name, organization_id)')
+            .eq('id', visitorId)
+            .maybeSingle();
+
+        const propertyName = visitor?.property?.name || await this.getPropertyName(payload.property_id);
+        const orgId = visitor?.organization_id || payload.organization_id;
+        const propId = visitor?.property_id || payload.property_id;
+
+        const securityIds = Array.isArray(payload.security_ids) ? payload.security_ids : [];
+        const requestedBy = payload.requested_by || payload.created_by || (visitor as any)?.created_by || null;
+
+        const allRequesterIds = Array.from(new Set([
+            requestedBy,
+            ...securityIds
+        ])).filter(Boolean) as string[];
+
+        await this.dispatch({
+            featureKey: 'visitor_rejected',
+            templateEventKey: 'visitor_rejected',
+            organizationId: orgId,
+            propertyId: propId,
+            entityId: visitorId,
+            paramValues: {
+                user_name: 'Security Team',
+                visitor_name: visitor?.name || payload.name || 'Visitor',
+                whom_to_meet: visitor?.whom_to_meet || payload.whom_to_meet || 'Host',
+                property: propertyName,
+                rejected_by: payload.rejected_by_name || 'Host'
+            },
+            summaryMessage: `Visitor rejected: ${visitor?.name || payload.name} meeting ${visitor?.whom_to_meet || payload.whom_to_meet} at ${propertyName}`,
+            contextualUserIds: {
+                requesterId: requestedBy,
+                extraUserIds: securityIds
+            }
         });
     }
 };

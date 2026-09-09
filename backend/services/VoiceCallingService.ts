@@ -45,6 +45,9 @@ export const DEFAULT_VOICE_TEMPLATES: Record<string, string> = {
     ppm_reminder: "Hi {{user_name}}, this is Pratiksha from the Operations team. Preventive maintenance for {{system_name}} at {{property_name}} is scheduled for {{due_date}}. Please coordinate with the vendor and arrange site clearance.",
     vendor_revenue_reminder: "Hi {{user_name}}, this is Pratiksha from the Operations team. This is a quick reminder that today's revenue for {{shop_name}} at {{property_name}} has not been recorded yet. Please open the AutoPilot app and submit your sales figures before the day ends.",
     vendor_revenue_missed: "Hi {{user_name}}, this is Pratiksha from the Operations team. This is a quick reminder that today's revenue for {{shop_name}} at {{property_name}} has not been recorded yet. Please open the AutoPilot app and submit your sales figures before the day ends.",
+    visitor_approval_requested: "Hi {{user_name}}, this is Pratiksha from the Operations team. A visitor named {{visitor_name}} from {{coming_from}} has checked in at {{property_name}} to meet you. Please check your app or WhatsApp to approve gate entry.",
+    visitor_approved: "Hi {{user_name}}, this is Pratiksha from Operations. Gate entry for visitor {{visitor_name}} to meet {{whom_to_meet}} at {{property_name}} has been approved.",
+    visitor_rejected: "Hi {{user_name}}, this is Pratiksha from Operations. Gate entry for visitor {{visitor_name}} to meet {{whom_to_meet}} at {{property_name}} was rejected.",
     test_call: "Hi {{user_name}}, this is Pratiksha from the Operations team. This is a quick test call to confirm that your phone notifications and voice alerts are working properly."
 };
 
@@ -69,7 +72,7 @@ export class VoiceCallingService {
 
         return {
             enabled: orgConfig.enabled ?? true,
-            provider: orgConfig.provider || (orgConfig.bolna_api_key || process.env.BOLNA_API_KEY ? 'bolna_plivo' : 'plivo_direct'),
+            provider: orgConfig.provider || 'plivo_direct',
             plivo_auth_id: orgConfig.plivo_auth_id || process.env.PLIVO_AUTH_ID,
             plivo_auth_token: orgConfig.plivo_auth_token || process.env.PLIVO_AUTH_TOKEN,
             plivo_virtual_number: orgConfig.plivo_virtual_number || process.env.PLIVO_VIRTUAL_NUMBER,
@@ -113,7 +116,14 @@ export class VoiceCallingService {
             .replace(/\{\{\s*ticket_number\s*\}\}/gi, vars.ticketNumber || vars.ticket_number || 'Ticket')
             .replace(/\{\{\s*title\s*\}\}/gi, vars.title || 'Service Request')
             .replace(/\{\{\s*priority\s*\}\}/gi, vars.priority || 'High')
-            .replace(/\{\{\s*deadline\s*\}\}/gi, vars.deadline || 'scheduled SLA');
+            .replace(/\{\{\s*deadline\s*\}\}/gi, vars.deadline || 'scheduled SLA')
+            .replace(/\{\{\s*visitor_name\s*\}\}/gi, vars.visitorName || vars.visitor_name || 'a visitor')
+            .replace(/\{\{\s*coming_from\s*\}\}/gi, vars.comingFrom || vars.coming_from || 'Guest')
+            .replace(/\{\{\s*whom_to_meet\s*\}\}/gi, vars.whomToMeet || vars.whom_to_meet || vars.hostName || 'Host')
+            .replace(/\{\{\s*shop_name\s*\}\}/gi, vars.shopName || vars.shop_name || 'Vendor')
+            .replace(/\{\{\s*category\s*\}\}/gi, vars.category || 'Guest')
+            .replace(/\{\{\s*pass_code\s*\}\}/gi, vars.passCode || vars.pass_code || '')
+            .replace(/\{\{\s*otp\s*\}\}/gi, vars.otp || '');
     }
 
     /**

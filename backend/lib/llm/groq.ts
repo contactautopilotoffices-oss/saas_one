@@ -21,6 +21,7 @@ const LLMInputSchema = z.object({
 // Output schema (what we expect from Groq)
 const LLMOutputSchema = z.object({
     primary_category: z.string(),
+    primary_issue_code: z.string().nullable().optional(),
     secondary_category: z.string().nullable().optional(),
     priority: z.enum(['Low', 'Medium', 'High', 'Urgent']),
     risk_flag: z.string().nullable().optional(),
@@ -54,19 +55,24 @@ const MIN_CONFIDENCE_THRESHOLD = 0.65; // Below this, suggest human review
  */
 function buildSystemPrompt(): string {
     return `You are an expert facilities incident triage system.
-Your job is to infer the primary cause, secondary contributing factors, correct priority, and safety risks of maintenance tickets.
+Your job is to infer the primary skill group, specific issue category code, correct priority, and safety risks of maintenance tickets.
+
+Available Skill Groups & Issue Codes:
+- technical: carpentry_civil (door, door handle, door lock, latch, hinge, carpentry, window, glass, wall repair), ac_breakdown (AC cooling/HVAC), power_outage (electrical/switch/power), wifi_down (network/lan/cable), lighting_issue (light/bulb), dg_issue (generator/diesel)
+- plumbing: water_leakage (leak/seepage/pipe), no_water_supply (tap/pressure), washroom_hygiene (toilet/flush/urinal)
+- vendor: lift_breakdown (elevator), stuck_lift (trapped), fire_alarm (fire exit/alarm/extinguisher), wall_painting (paint/wall)
+- soft_services: chair_broken (seating), desk_alignment (furniture/table/workstation), deep_cleaning (carpet/pest/stains), cleaning_required (trash/dustbin/janitor)
 
 Rules:
 1. Reason about context, negation, time, and cause vs symptom.
-2. Identify the PRIMARY category responsible (from the provided list).
-3. Identify a SECONDARY category if relevant (from the provided list), otherwise null.
+2. Identify the PRIMARY skill group (technical, plumbing, vendor, soft_services).
+3. Identify the PRIMARY issue code (e.g. carpentry_civil, ac_breakdown, water_leakage, fire_alarm, power_outage, etc.).
 4. Assign priority using these strict definitions:
    - Urgent: Immediate threat to life/safety — fire, flood, structural collapse, complete power failure, stuck lift with person inside.
-   - High: Risk of damage, injury, or major service disruption — any leakage/water damage, electrical faults, broken locks, lift malfunction, sewage issues, AC failure in server room.
-   - Medium: Affects comfort or routine operations — AC not cooling, lighting issues, minor plumbing (dripping tap without damage risk), cleaning requests, furniture issues.
+   - High: Risk of damage, injury, or major service disruption — any leakage/water damage, electrical faults, broken door locks/emergency handles, lift malfunction, sewage issues.
+   - Medium: Affects comfort or routine operations — AC not cooling, lighting issues, minor plumbing, cleaning requests, furniture issues.
    - Low: Purely cosmetic, no service impact — paint scuff, minor stain, aesthetic complaints.
-   When in doubt between two levels, always choose the HIGHER priority.
-5. Flag safety risks explicitly (e.g., "Fire risk", "Slip hazard", "Water damage risk").
+5. Flag safety risks explicitly (e.g., "Fire risk", "Security risk", "Slip hazard", "Water damage risk").
 6. Provide a concise one-line reasoning.
 
 Respond ONLY in valid JSON format matching the requested schema.`;
@@ -79,7 +85,7 @@ function buildUserPrompt(input: LLMInput): string {
     const priorityExamples = `
 Priority Examples (use these as reference):
 - Urgent: "lift stuck with person inside", "fire alarm triggered", "electrical spark near server room", "flooding on floor"
-- High: "urinal tap leakage", "water pipe leaking", "AC not working in server room", "exposed wiring", "broken door lock", "sewage smell", "ceiling water seepage"
+- High: "emergency door handle broken", "urinal tap leakage", "water pipe leaking", "AC not working in server room", "exposed wiring", "broken door lock", "sewage smell", "ceiling water seepage"
 - Medium: "AC not cooling properly", "light flickering", "wifi slow", "chair broken", "tap dripping slightly", "washroom cleaning needed", "dustbin not cleared"
 - Low: "paint scuff on wall", "minor stain on carpet", "desk slightly misaligned", "fingerprints on glass"`;
 

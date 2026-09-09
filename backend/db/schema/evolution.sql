@@ -424,6 +424,11 @@ CREATE TABLE IF NOT EXISTS visitor_logs (
   created_at timestamptz DEFAULT now()
 );
 
+-- Safe column additions for visitor_logs
+ALTER TABLE visitor_logs ADD COLUMN IF NOT EXISTS approval_status varchar(20) DEFAULT 'pending';
+ALTER TABLE visitor_logs ADD COLUMN IF NOT EXISTS host_id uuid REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE visitor_logs ADD COLUMN IF NOT EXISTS whom_to_meet_uid uuid REFERENCES users(id) ON DELETE SET NULL;
+
 -- VMS Tickets Table (for reporting issues)
 CREATE TABLE IF NOT EXISTS vms_tickets (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -861,6 +866,79 @@ CREATE POLICY tickets_update_role ON tickets FOR UPDATE USING (
   -- Or Creator
   OR (tickets.created_by = auth.uid())
 );
+
+-- =========================================================
+-- SEED: Carpentry & Door Repair Issue Category (Technical)
+-- =========================================================
+CREATE TABLE IF NOT EXISTS issue_categories (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    property_id uuid REFERENCES properties(id) ON DELETE CASCADE,
+    code text NOT NULL,
+    name text NOT NULL,
+    description text,
+    skill_group_id uuid REFERENCES skill_groups(id) ON DELETE SET NULL,
+    priority integer DEFAULT 0,
+    is_active boolean DEFAULT true,
+    created_at timestamptz DEFAULT now(),
+    updated_at timestamptz DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS issue_keywords (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    issue_category_id uuid NOT NULL REFERENCES issue_categories(id) ON DELETE CASCADE,
+    keyword text NOT NULL,
+    match_type text DEFAULT 'contains' CHECK (match_type IN ('exact', 'contains', 'regex')),
+    created_at timestamptz DEFAULT now(),
+    UNIQUE (issue_category_id, keyword)
+);
+
+DO $$
+DECLARE
+    r_prop RECORD;
+    v_tech_id uuid;
+    v_cat_id uuid;
+BEGIN
+    FOR r_prop IN SELECT id FROM properties LOOP
+        SELECT id INTO v_tech_id FROM skill_groups WHERE property_id = r_prop.id AND code = 'technical';
+        IF v_tech_id IS NULL THEN
+            SELECT id INTO v_tech_id FROM skill_groups WHERE property_id IS NULL AND code = 'technical';
+        END IF;
+
+        INSERT INTO issue_categories (property_id, code, name, skill_group_id, priority)
+        VALUES (r_prop.id, 'carpentry_civil', 'Carpentry & Door Repair', v_tech_id, 2)
+        ON CONFLICT (property_id, code) DO UPDATE SET skill_group_id = v_tech_id, name = EXCLUDED.name
+        RETURNING id INTO v_cat_id;
+
+        IF v_cat_id IS NOT NULL THEN
+            INSERT INTO issue_keywords (issue_category_id, keyword) VALUES
+                (v_cat_id, 'door'),
+                (v_cat_id, 'door handle'),
+                (v_cat_id, 'door lock'),
+                (v_cat_id, 'handle'),
+                (v_cat_id, 'lock'),
+                (v_cat_id, 'latch'),
+                (v_cat_id, 'hinge'),
+                (v_cat_id, 'carpentry'),
+                (v_cat_id, 'woodwork'),
+                (v_cat_id, 'glass door'),
+                (v_cat_id, 'emergency door'),
+                (v_cat_id, 'exit door'),
+                (v_cat_id, 'window')
+            ON CONFLICT DO NOTHING;
+        END IF;
+    END LOOP;
+END $$;
+
+-- Global Fallback Entry (Technical)
+DO $$
+DECLARE
+    v_global_tech_id uuid;
+BEGIN
+    SELECT id INTO v_global_tech_id FROM skill_groups WHERE property_id IS NULL AND code = 'technical' LIMIT 1;
+    INSERT INTO issue_categories (property_id, code, name, skill_group_id, priority)
+    VALUES (NULL, 'carpentry_civil', 'Carpentry & Door Repair', v_global_tech_id, 2)
+    ON CONFLICT (code) WHERE property_id IS NULL DO UPDATE SET skill_group_id = v_global_tech_id;
+END $$;
 
 -- =========================================================
 -- END OF FILE — SAFE TO RE-RUN

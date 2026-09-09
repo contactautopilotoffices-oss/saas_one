@@ -310,7 +310,7 @@ function AuthContent() {
                 // Property-level roles (property_admin, staff, tenant, etc.) may also have
                 // an org_membership row (created by the user-create API), but they should
                 // be routed via Step 4 (property_memberships) instead.
-                const ORG_LEVEL_ROLES = ['org_super_admin', 'super_tenant', 'owner', 'admin', 'org_admin', 'maintenance_vendor', 'procurement', 'bd_admin', 'bd_super_admin', 'bd_rep', 'accounts'];
+                const ORG_LEVEL_ROLES = ['org_super_admin', 'ops_super_admin', 'super_tenant', 'owner', 'admin', 'org_admin', 'maintenance_vendor', 'procurement', 'bd_admin', 'bd_super_admin', 'bd_rep', 'accounts'];
                 const activeOrgMemberships = (orgMemberships || []).filter(
                     (m) => ORG_LEVEL_ROLES.includes(m.role) && (m.is_active === true || m.is_active === null)
                 );
@@ -339,8 +339,8 @@ function AuthContent() {
                 }
 
                 if (activeOrgMemberships.length > 0) {
-                    // Pick best by priority (org_super_admin first, then super_tenant, then others)
-                    const ORG_PRIORITY = ['org_super_admin', 'bd_super_admin', 'bd_admin', 'org_admin', 'super_tenant', 'owner', 'admin', 'member', 'bd_rep'];
+                    // Pick best by priority (org_super_admin first, then ops_super_admin, then super_tenant, then others)
+                    const ORG_PRIORITY = ['org_super_admin', 'ops_super_admin', 'bd_super_admin', 'bd_admin', 'org_admin', 'super_tenant', 'owner', 'admin', 'member', 'bd_rep'];
                     const best = [...activeOrgMemberships].sort((a, b) => {
                         const ai = ORG_PRIORITY.indexOf(a.role) === -1 ? 99 : ORG_PRIORITY.indexOf(a.role);
                         const bi = ORG_PRIORITY.indexOf(b.role) === -1 ? 99 : ORG_PRIORITY.indexOf(b.role);

@@ -97,6 +97,35 @@ export async function POST(request: NextRequest) {
         }
 
         // 4. Role-specific organization memberships
+        if (selectedRole === 'ops_super_admin') {
+            await adminClient
+                .from('organization_memberships')
+                .upsert({
+                    user_id: authUser.id,
+                    organization_id: targetOrgId,
+                    role: 'ops_super_admin',
+                    is_active: false
+                }, { onConflict: 'user_id,organization_id' });
+
+            const { data: allProps } = await adminClient
+                .from('properties')
+                .select('id')
+                .eq('organization_id', targetOrgId);
+
+            if (allProps && allProps.length > 0) {
+                const propMems = allProps.map(p => ({
+                    user_id: authUser.id,
+                    organization_id: targetOrgId,
+                    property_id: p.id,
+                    role: 'ops_super_admin',
+                    is_active: false
+                }));
+                await adminClient
+                    .from('property_memberships')
+                    .upsert(propMems, { onConflict: 'user_id,property_id' });
+            }
+        }
+
         if (selectedRole === 'procurement') {
             await adminClient
                 .from('organization_memberships')

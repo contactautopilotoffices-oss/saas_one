@@ -143,6 +143,8 @@ const OrgAdminDashboard = () => {
     const [escalationPropertyId, setEscalationPropertyId] = useState<string>('all');
     const [roomsPropertyId, setRoomsPropertyId] = useState<string>('all');
     const [userRole, setUserRole] = useState<string>('User');
+    const rawOrgRole = (membership?.org_role || userRole || '').toLowerCase();
+    const isOpsSuperAdmin = rawOrgRole.includes('ops_super_admin') || rawOrgRole.includes('ops super admin');
     const [isSelectorOpen, setIsSelectorOpen] = useState(false); // Global toggle state
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [pendingStatusFilter, setPendingStatusFilter] = useState('all');
@@ -511,10 +513,14 @@ const OrgAdminDashboard = () => {
     // Restore tab from URL
     useEffect(() => {
         const tab = searchParams.get('tab');
-        if (tab && ['overview', 'properties', 'requests', 'reports', 'visitors', 'settings', 'profile', 'revenue', 'users', 'diesel_logger', 'diesel', 'electricity_logger', 'electricity', 'stock_reports', 'checklist', 'super_tenants', 'escalation', 'rooms', 'ppm', 'vendors', 'procurement', 'roster', 'water_logger', 'water', 'guest_experience', 'agent_console'].includes(tab)) {
-            setActiveTab(tab as Tab);
+        if (tab && ['overview', 'properties', 'requests', 'reports', 'visitors', 'settings', 'profile', 'revenue', 'users', 'diesel_logger', 'diesel', 'electricity_logger', 'electricity', 'stock_reports', 'checklist', 'super_tenants', 'escalation', 'rooms', 'ppm', 'vendors', 'procurement', 'roster', 'water_logger', 'water', 'guest_experience', 'agent_console', 'org_progress', 'org_efficiency'].includes(tab)) {
+            if (isOpsSuperAdmin && (tab === 'org_progress' || tab === 'org_efficiency' || tab === 'agent_console')) {
+                setActiveTab('overview');
+            } else {
+                setActiveTab(tab as Tab);
+            }
         }
-    }, [searchParams]);
+    }, [searchParams, isOpsSuperAdmin]);
 
 
     // Fetch properties ONCE when org is loaded (not on every tab change)
@@ -941,11 +947,12 @@ const OrgAdminDashboard = () => {
     };
 
     const handleTabChange = (tab: Tab, filter: string = 'all', dateFrom?: string, dateTo?: string, procurementTab?: string) => {
-        setActiveTab(tab);
+        const effectiveTab = (isOpsSuperAdmin && (tab === 'org_progress' || tab === 'org_efficiency' || tab === 'agent_console')) ? 'overview' : tab;
+        setActiveTab(effectiveTab);
         setPendingStatusFilter(filter);
         setSidebarOpen(false);
         const params = new URLSearchParams(window.location.search);
-        params.set('tab', tab);
+        params.set('tab', effectiveTab);
         if (filter !== 'all') {
             params.set('filter', filter);
         } else {
@@ -1094,36 +1101,40 @@ const OrgAdminDashboard = () => {
                                 <LayoutDashboard className="w-4 h-4" />
                                 Dashboard
                             </button>
-                            <button
-                                onClick={() => handleTabChange('org_progress')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'org_progress'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
-                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
-                                    }`}
-                            >
-                                <Gauge className="w-4 h-4" />
-                                Organization Progress
-                            </button>
-                            <button
-                                onClick={() => handleTabChange('org_efficiency')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'org_efficiency'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
-                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
-                                    }`}
-                            >
-                                <TrendingUp className="w-4 h-4" />
-                                Org Efficiency
-                            </button>
-                            <button
-                                onClick={() => handleTabChange('agent_console')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'agent_console'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
-                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
-                                    }`}
-                            >
-                                <Cpu className="w-4 h-4" />
-                                Agent Console
-                            </button>
+                            {!isOpsSuperAdmin && (
+                                <>
+                                    <button
+                                        onClick={() => handleTabChange('org_progress')}
+                                        className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'org_progress'
+                                            ? 'bg-primary text-text-inverse shadow-sm'
+                                            : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                            }`}
+                                    >
+                                        <Gauge className="w-4 h-4" />
+                                        Organization Progress
+                                    </button>
+                                    <button
+                                        onClick={() => handleTabChange('org_efficiency')}
+                                        className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'org_efficiency'
+                                            ? 'bg-primary text-text-inverse shadow-sm'
+                                            : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                            }`}
+                                    >
+                                        <TrendingUp className="w-4 h-4" />
+                                        Org Efficiency
+                                    </button>
+                                    <button
+                                        onClick={() => handleTabChange('agent_console')}
+                                        className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'agent_console'
+                                            ? 'bg-primary text-text-inverse shadow-sm'
+                                            : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                            }`}
+                                    >
+                                        <Cpu className="w-4 h-4" />
+                                        Agent Console
+                                    </button>
+                                </>
+                            )}
                             <button
                                 onClick={() => handleTabChange('requests')}
                                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'requests'
@@ -1659,12 +1670,12 @@ const OrgAdminDashboard = () => {
                                 properties={properties}
                             />
                         )}
-                        {activeTab === 'org_progress' && <OrgProgressTracker key="org-progress-tab" />}
-                        {activeTab === 'org_efficiency' && <OrgEfficiencyMeter key="org-efficiency-tab" />}
+                        {!isOpsSuperAdmin && activeTab === 'org_progress' && <OrgProgressTracker key="org-progress-tab" />}
+                        {!isOpsSuperAdmin && activeTab === 'org_efficiency' && <OrgEfficiencyMeter key="org-efficiency-tab" />}
                         {/* Agentic employee console — a TAB of this dashboard, not a route of its own.
                             Registry, sandbox, live activity, uptime, reliability profile, reinforcement
                             and credentials all live behind it. */}
-                        {activeTab === 'agent_console' && <AgentConsole key="agent-console-tab" orgId={org?.id ?? ''} />}
+                        {!isOpsSuperAdmin && activeTab === 'agent_console' && <AgentConsole key="agent-console-tab" orgId={org?.id ?? ''} />}
                         {activeTab === 'ai_tickets' && <AITicketsDashboard propertyId={selectedPropertyId === 'all' ? undefined : selectedPropertyId} />}
                         {activeTab === 'revenue' && <RevenueTab key="revenue-tab" properties={properties} selectedPropertyId={selectedPropertyId} />}
                         {activeTab === 'properties' && (
@@ -3883,6 +3894,9 @@ const VisitorsTab = ({ properties, selectedPropertyId }: { properties: any[], se
                                         <td className="px-5 py-4">
                                             <div className="text-sm font-bold text-slate-900">{visitor.whom_to_meet}</div>
                                             <div className="text-xs text-slate-500 capitalize">{visitor.category}</div>
+                                            <div className="text-[10px] text-slate-400 mt-1 font-medium">
+                                                Logged by: <span className="font-semibold text-slate-600">{visitor.creator?.full_name || 'Gate / Kiosk'}</span>
+                                            </div>
                                         </td>
                                         <td className="px-5 py-4">
                                             <div className="text-xs font-bold text-slate-900">

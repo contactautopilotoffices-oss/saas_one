@@ -222,9 +222,13 @@ function textContent(text: string) {
  */
 async function imageContent(pdfBytes: Buffer) {
     const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
-    // Dynamic specifier on purpose: optional peer, must not break compilation when absent.
-    const canvasSpec = '@napi-rs/canvas';
-    const { createCanvas } = await import(canvasSpec);
+    let createCanvas: any;
+    try {
+        const canvasModule = await import('@napi-rs/canvas');
+        createCanvas = canvasModule.createCanvas;
+    } catch (e) {
+        throw new Error('@napi-rs/canvas is not available');
+    }
 
     const doc = await pdfjs.getDocument({ data: new Uint8Array(pdfBytes), useWorkerFetch: false, isEvalSupported: false } as any).promise;
     const pages = Math.min(doc.numPages, MAX_PAGES);

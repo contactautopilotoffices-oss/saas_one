@@ -66,16 +66,17 @@ export function classifyTicketEnhanced(text: string): EnhancedClassificationResu
             if (!Array.isArray(keywords)) continue;
 
             for (const keyword of keywords) {
-                const isMatch = keyword.length <= 3
-                    ? new RegExp(`\\b${keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(lowerText)
-                    : lowerText.includes(keyword);
+                const cleanKw = keyword.trim();
+                if (!cleanKw) continue;
+                const escaped = cleanKw.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const isMatch = new RegExp(`\\b${escaped}\\b`, 'i').test(lowerText);
 
                 if (isMatch) {
                     matches.push({
                         issue_code: issueCode,
                         skill_group: skillGroup,
-                        keyword: keyword,
-                        keyword_length: keyword.length,
+                        keyword: cleanKw,
+                        keyword_length: cleanKw.length,
                     });
                 }
             }

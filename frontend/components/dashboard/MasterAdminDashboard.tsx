@@ -2317,6 +2317,9 @@ const MasterVisitorsTab = () => {
                                         <td className="px-5 py-4">
                                             <div className="text-sm font-bold text-slate-900">{visitor.whom_to_meet}</div>
                                             <div className="text-xs text-slate-500 capitalize">{visitor.category}</div>
+                                            <div className="text-[10px] text-slate-400 mt-1 font-medium">
+                                                Logged by: <span className="font-semibold text-slate-600">{visitor.creator?.full_name || 'Gate / Kiosk'}</span>
+                                            </div>
                                         </td>
                                         <td className="px-5 py-4">
                                             <div className="text-xs font-bold text-slate-900">

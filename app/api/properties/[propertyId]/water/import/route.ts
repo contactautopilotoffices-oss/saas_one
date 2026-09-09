@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import Papa from 'papaparse';
 import * as xlsx from 'xlsx';
 
@@ -42,7 +43,7 @@ export async function POST(
     }
 
     try {
-        const { data: sources } = await supabase
+        const { data: sources } = await supabaseAdmin
             .from('water_sources')
             .select('*')
             .eq('property_id', propertyId);
@@ -67,7 +68,7 @@ export async function POST(
                 const quantityStr = row[source.name];
                 if (quantityStr !== undefined && quantityStr !== '') {
                     // Get active tariff securely without RPC
-                    const { data: tariffData, error: tariffError } = await supabase
+                    const { data: tariffData, error: tariffError } = await supabaseAdmin
                         .from('water_tariffs')
                         .select('id, rate_per_unit')
                         .eq('source_id', source.id)
@@ -106,7 +107,7 @@ export async function POST(
         }
 
         if (readingsToSave.length > 0) {
-            const { error } = await supabase
+            const { error } = await supabaseAdmin
                 .from('water_readings')
                 .upsert(readingsToSave, { onConflict: 'source_id,reading_date' });
                 

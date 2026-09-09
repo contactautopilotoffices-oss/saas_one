@@ -55,7 +55,11 @@ const ALIAS_MAP: Record<string, string> = {
     vendor_revenue: 'vendor_revenue_recorded',
     user_management: 'user_pending_approval',
     user_pending_approval: 'user_pending_approval',
-    user_approved: 'user_approved'
+    user_approved: 'user_approved',
+    visitor_management: 'visitor_approval_requested',
+    visitor_approval_requested: 'visitor_approval_requested',
+    visitor_approved: 'visitor_approved',
+    visitor_rejected: 'visitor_rejected'
 };
 
 export const DEFAULT_WHATSAPP_SERVICE_CONFIG: Record<string, FeatureWhatsAppConfig> = {
@@ -97,7 +101,10 @@ export const DEFAULT_WHATSAPP_SERVICE_CONFIG: Record<string, FeatureWhatsAppConf
     lead_assigned: { enabled: true, roles: [], user_ids: [], notify_assignee: true },
     crm_leads: { enabled: true, roles: ['sales', 'org_super_admin'], user_ids: [] },
     user_pending_approval: { enabled: true, roles: ['org_super_admin', 'property_admin'], user_ids: [] },
-    user_approved: { enabled: true, roles: [], user_ids: [], notify_requester: true }
+    user_approved: { enabled: true, roles: [], user_ids: [], notify_requester: true },
+    visitor_approval_requested: { enabled: true, roles: [], user_ids: [], notify_assignee: true },
+    visitor_approved: { enabled: true, roles: [], user_ids: [], notify_requester: true },
+    visitor_rejected: { enabled: true, roles: [], user_ids: [], notify_requester: true }
 };
 
 export const WhatsAppRecipientResolver = {

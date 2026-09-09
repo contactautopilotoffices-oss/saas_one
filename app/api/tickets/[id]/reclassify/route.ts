@@ -23,7 +23,7 @@ export async function POST(
         // Get ticket
         const { data: ticket } = await supabase
             .from('tickets')
-            .select('id, description, property_id, category_id, confidence_score')
+            .select('id, title, description, property_id, category_id, confidence_score')
             .eq('id', ticketId)
             .single();
 
@@ -31,18 +31,20 @@ export async function POST(
             return NextResponse.json({ error: 'Ticket not found' }, { status: 404 });
         }
 
-        // Re-classify
-        const classification = classifyTicket(ticket.description);
+        // Re-classify using full hybrid classification engine (Groq LLM + Rules)
+        const { resolveClassification } = await import('@/backend/lib/ticketing/resolver');
+        const classification = await resolveClassification(ticket.title ? `${ticket.title} ${ticket.description}` : ticket.description);
 
         let categoryId = null;
         let skillGroupId = null;
 
         if (classification.issue_code) {
-            // Look up category globally (not property-specific)
+            // Look up category globally or for property
             const { data: category } = await supabase
                 .from('issue_categories')
                 .select('id, skill_group_id')
                 .eq('code', classification.issue_code)
+                .limit(1)
                 .maybeSingle();
 
             if (category) {
@@ -51,12 +53,16 @@ export async function POST(
             }
         }
 
-        // Get skill group code
-        const { data: skillGroup } = await supabase
-            .from('skill_groups')
-            .select('code')
-            .eq('id', skillGroupId)
-            .maybeSingle();
+        // Fallback: If no skill group ID found from category, look up skill group by code
+        if (!skillGroupId && classification.skill_group) {
+            const { data: sg } = await supabase
+                .from('skill_groups')
+                .select('id')
+                .eq('code', classification.skill_group)
+                .limit(1)
+                .maybeSingle();
+            if (sg) skillGroupId = sg.id;
+        }
 
         const isVague = classification.confidence === 'low';
 
@@ -96,7 +102,7 @@ export async function POST(
         try {
             const { processIntelligentAssignment } = await import('@/backend/lib/ticketing/assignment');
             const propertyId = ticket.property_id;
-            const skillGroupCode = skillGroup?.code || classification.skill_group;
+            const skillGroupCode = classification.skill_group;
             await processIntelligentAssignment(
                 supabase,
                 [{ id: ticketId, property_id: propertyId, skill_group_code: skillGroupCode }],

@@ -14,9 +14,10 @@ interface HostAutoCompleteProps {
     propertyId: string;
     value: string;
     onChange: (value: string) => void;
+    onSelectHostId?: (hostId: string | null) => void;
 }
 
-const HostAutoComplete: React.FC<HostAutoCompleteProps> = ({ propertyId, value, onChange }) => {
+const HostAutoComplete: React.FC<HostAutoCompleteProps> = ({ propertyId, value, onChange, onSelectHostId }) => {
     const [query, setQuery] = useState(value);
     const [hosts, setHosts] = useState<Host[]>([]);
     const [isOpen, setIsOpen] = useState(false);
@@ -65,6 +66,7 @@ const HostAutoComplete: React.FC<HostAutoCompleteProps> = ({ propertyId, value, 
     const handleSelect = (host: Host) => {
         setQuery(host.name);
         onChange(host.name);
+        onSelectHostId?.(host.id);
         setIsOpen(false);
     };
 
@@ -72,13 +74,14 @@ const HostAutoComplete: React.FC<HostAutoCompleteProps> = ({ propertyId, value, 
         const val = e.target.value;
         setQuery(val);
         onChange(val); // Sync free-text input immediately to parent state
+        onSelectHostId?.(null);
         setIsOpen(true);
     };
 
     return (
         <div className="relative" ref={dropdownRef}>
             <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
-                Whom to Meet *
+                Whom to Meet (Optional)
             </label>
             <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
