@@ -11,18 +11,23 @@ DECLARE
     v_user_email TEXT;
     v_user_phone TEXT;
     v_org_name TEXT;
+    v_is_active BOOLEAN;
+    v_old_is_active BOOLEAN;
 BEGIN
+    v_is_active := COALESCE(NEW.is_active, false);
+    v_old_is_active := CASE WHEN TG_OP = 'UPDATE' THEN COALESCE(OLD.is_active, false) ELSE false END;
+
     IF TG_OP = 'INSERT' THEN
-        IF NEW.status IN ('pending_approval', 'pending') THEN
+        IF v_is_active = false THEN
             v_event_type := 'USER_PENDING_APPROVAL';
-        ELSIF NEW.status IN ('approved', 'active') THEN
+        ELSE
             v_event_type := 'USER_APPROVED';
         END IF;
     ELSIF TG_OP = 'UPDATE' THEN
-        IF NEW.status IN ('pending_approval', 'pending') AND (OLD.status IS NULL OR OLD.status NOT IN ('pending_approval', 'pending')) THEN
-            v_event_type := 'USER_PENDING_APPROVAL';
-        ELSIF NEW.status IN ('approved', 'active') AND OLD.status IN ('pending_approval', 'pending') THEN
+        IF v_is_active = true AND v_old_is_active = false THEN
             v_event_type := 'USER_APPROVED';
+        ELSIF v_is_active = false AND v_old_is_active = true THEN
+            v_event_type := 'USER_PENDING_APPROVAL';
         END IF;
     END IF;
 
@@ -54,7 +59,8 @@ BEGIN
         'requested_role', NEW.role,
         'organization_id', NEW.organization_id,
         'organization_name', COALESCE(v_org_name, 'Organization'),
-        'status', NEW.status,
+        'is_active', v_is_active,
+        'status', CASE WHEN v_is_active THEN 'approved' ELSE 'pending_approval' END,
         'created_at', NEW.created_at
     );
 
@@ -71,6 +77,6 @@ DROP TRIGGER IF EXISTS trg_organization_memberships_outbox ON public.organizatio
 
 -- Create After Insert or Update trigger on organization_memberships
 CREATE TRIGGER trg_organization_memberships_outbox
-    AFTER INSERT OR UPDATE OF status ON public.organization_memberships
+    AFTER INSERT OR UPDATE OF is_active ON public.organization_memberships
     FOR EACH ROW
     EXECUTE FUNCTION public.fn_organization_memberships_outbox();
