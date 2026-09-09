@@ -283,6 +283,21 @@ function procurementSlots(): PlanSlot[] {
             required: true,
             allowAll: true,
             fanOut: true,
+            /**
+             * SEVERAL SITES IS THE COMMON ANSWER, and a <select> could not say it.
+             *
+             * The choice was one site or "All properties" — nothing in between.
+             * An operator wanting the four Bengaluru buildings had to raise the
+             * agent four times or widen it to all 23, and neither is what they
+             * meant. `multi` is what the canvas already renders as checkboxes;
+             * this slot simply never asked for it.
+             *
+             * fanOut stays true and still means what it says: each chosen site
+             * is its own run, because budget, approver and delivery address are
+             * per-site and cannot be collapsed. Picking three sites fans out to
+             * three, not to one run that mentions three.
+             */
+            multi: true,
         },
         {
             key: 'item_spec',
@@ -474,6 +489,11 @@ function genericPlan(description: string): Pick<AgentPlan, 'slots' | 'steps' | '
                 required: true,
                 allowAll: true,
                 fanOut: false,
+                // Same reasoning as the requisition slot above: a report that
+                // covers three named sites is one honest answer, and a
+                // single-select cannot express it. fanOut is false here — this
+                // one widens a single run rather than multiplying it.
+                multi: true,
             },
             {
                 key: 'cadence',

@@ -149,14 +149,14 @@ export default function SiteOwnersBuilder({
             {/* ---- coverage line ------------------------------------------- */}
             <div className="flex flex-wrap items-center gap-2 text-[11.5px] text-text-secondary">
                 <MapPin className="h-3.5 w-3.5 text-text-tertiary" />
-                {props === null ? 'Loading properties…'
-                    : total === 0 ? 'No properties found for this org.'
+                {props === null ? 'Loading your sites…'
+                    : total === 0 ? 'No sites found for this organisation.'
                     : <>
-                        <b className="text-foreground">{assignedCount}</b> of <b className="text-foreground">{total}</b> properties
-                        have an owner
+                        <b className="text-foreground">{assignedCount}</b> of <b className="text-foreground">{total}</b> sites
+                        have been added to a city
                         {total - assignedCount > 0 && (
                             <span className="rounded-full bg-amber-500/12 px-2 py-0.5 font-semibold text-amber-700">
-                                {total - assignedCount} unassigned → one &ldquo;Unassigned&rdquo; mail
+                                {total - assignedCount} not added yet — these all arrive in one email
                             </span>
                         )}
                     </>}
@@ -225,7 +225,7 @@ export default function SiteOwnersBuilder({
             {props && props.length > 0 && (
                 <div>
                     <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">
-                        Your properties — click one to assign it to the highlighted city
+                        Your sites — click one to add it to the city you selected above
                     </div>
                     <div className="flex flex-wrap gap-1.5">
                         {props.map((p) => {
@@ -251,7 +251,7 @@ export default function SiteOwnersBuilder({
             <button type="button" onClick={() => { setRaw(Object.entries(toMap(groups)).map(([k, v]) => `${k}: ${v.join(', ')}`).join('\n')); setShowAdvanced((v) => !v); }}
                 className="flex items-center gap-1 self-start text-[11px] text-text-tertiary hover:text-foreground">
                 {showAdvanced ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                Advanced — edit as text
+Prefer to type it? Edit as text
             </button>
             {showAdvanced && (
                 <textarea rows={4} value={raw} spellCheck={false}

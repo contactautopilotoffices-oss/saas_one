@@ -61,6 +61,7 @@ import {
     X, Workflow, Send,PanelLeftClose,PanelLeftOpen, Crown,} from 'lucide-react';
 import AgentPlanCanvas, { type AgentPlan } from '@/frontend/components/agents/AgentPlanCanvas';
 import AgentDelivery from '@/frontend/components/agents/AgentDelivery';
+import TabBoundary from '@/frontend/components/agents/TabBoundary';
 import Hint from '@/frontend/components/agents/Hint';
 import AgentPreflight from '@/frontend/components/agents/AgentPreflight';
 import AgentFirstRun from '@/frontend/components/agents/AgentFirstRun';
@@ -736,7 +737,21 @@ export default function AgentConsole({ orgId }: AgentConsoleProps) {
                                     })}
                                 </nav>
 
+                                {/**
+                                  * EVERY TAB IS WRAPPED, because the Delivery
+                                  * tab went white and there was no way to tell
+                                  * a crash from an empty panel without opening
+                                  * a browser console — which nobody does from a
+                                  * phone. One boundary per tab keeps the blast
+                                  * radius at the panel: a crash in Delivery
+                                  * costs Delivery, and names itself on screen.
+                                  *
+                                  * resetKey clears a stale error when the
+                                  * operator switches agent or tab, so a fixed
+                                  * problem does not keep showing its old face.
+                                  */}
                                 <div className="pt-4">
+                                  <TabBoundary name={tab} resetKey={`${selected.agent_key}:${tab}`}>
                                     {tab === 'configure' && (
                                         <div className="flex flex-col gap-4">
                                             <AgentPreflight orgId={orgId} agentKey={selected.agent_key} />
@@ -787,6 +802,7 @@ export default function AgentConsole({ orgId }: AgentConsoleProps) {
                                     {tab === 'credentials' && (
                                         <AgentCredentials orgId={orgId} agentKey={selected.agent_key} />
                                     )}
+                                  </TabBoundary>
                                 </div>
                             </>
                         )}
