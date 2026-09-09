@@ -2468,5 +2468,200 @@ export class NotificationService {
             console.error('[NotificationService] afterVisitorRejected error:', err);
         }
     }
+
+    /**
+     * Triggered after a Property Admin submits monthly requisition feedback.
+     * Dispatches notifications to selected recipients from Omnichannel UI across:
+     * 1. Email (HTML evaluation report & ratings)
+     * 2. Push / In-App Notifications
+     * 3. WhatsApp (Meta approved template with fallback message)
+     * 4. AI Voice Call (Outbound audio alerts)
+     */
+    static async afterMonthlyFeedbackSubmitted(feedbackId: string) {
+        try {
+            const { data: fb, error } = await supabaseAdmin
+                .from('monthly_requisition_feedback')
+                .select('*, properties(name, organization_id), submitter:users!submitted_by(full_name, email, phone)')
+                .eq('id', feedbackId)
+                .single();
+
+            if (error || !fb) {
+                console.error('[NotificationService] afterMonthlyFeedbackSubmitted feedback record not found:', error);
+                return;
+            }
+
+            const featureKey = 'monthly_requisition_feedback_submitted';
+
+            const monthNames = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+            const monthShortNames = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            const monthStr = `${monthNames[fb.month] || fb.month} ${fb.year}`;
+            const propertyName = (fb.properties as any)?.name || 'Property';
+            const submitterName = (fb.submitter as any)?.full_name || 'Property Admin';
+            const organizationId = fb.organization_id || (fb.properties as any)?.organization_id;
+
+            const remarksText = fb.remarks ? `\n\n💬 *Remarks:* ${fb.remarks}` : '';
+
+            // 1. Resolve WhatsApp recipients dynamically via Omnichannel Notification Matrix
+            const { WhatsAppRecipientResolver } = await import('./WhatsAppRecipientResolver');
+            const waResult = await WhatsAppRecipientResolver.resolveRecipients({
+                organizationId,
+                propertyId: fb.property_id,
+                featureKey,
+                contextualUserIds: [fb.submitted_by]
+            });
+
+            // 2. Resolve Email recipients dynamically via Omnichannel Notification Matrix
+            const { EmailRecipientResolver } = await import('./EmailRecipientResolver');
+            const emailResult = await EmailRecipientResolver.resolveRecipients({
+                organizationId,
+                propertyId: fb.property_id,
+                featureKey,
+                contextualEmails: [(fb.submitter as any)?.email].filter(Boolean)
+            });
+
+            const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'https://autopilotoffices.com').replace(/\/$/, '');
+            const feedbackUrl = `${APP_URL}/procurement?tab=feedback&id=${fb.id}`;
+
+            // --- CHANNEL 1: WhatsApp Dispatch ---
+            if (waResult.enabled && waResult.users.length > 0) {
+                const waMessage = [
+                    `📋 *Monthly Requisition Feedback Submitted*`,
+                    ``,
+                    `🏢 *Property:* ${propertyName}`,
+                    `📅 *Month:* ${monthStr}`,
+                    `👤 *Submitted By:* ${submitterName}`,
+                    `🕒 *Time:* ${new Date(fb.created_at).toLocaleString('en-IN')}`,
+                    ``,
+                    `📊 *Ratings Summary:*`,
+                    `• HK & Materials: ${fb.hk_received_as_approved === 'Yes' ? 'Approved' : 'Mismatch'} (${fb.hk_material_quality} Quality)`,
+                    `• Manpower: ${fb.manpower_quality_satisfaction} (Reliever On Time: ${fb.manpower_reliever_on_time})`,
+                    `• AMC Vendors: Services ${fb.amc_services_on_schedule === 'Yes' ? 'On Schedule' : 'Delayed'}`,
+                    remarksText,
+                    ``,
+                    `View report in app:`,
+                    `🔗 ${feedbackUrl}`
+                ].join('\n');
+
+                const templateName = 'monthly_requisition_feedback_submitted_v1';
+
+                for (const u of waResult.users) {
+                    if (u.phone) {
+                        const templateParams = [
+                            u.name || 'Manager',
+                            propertyName,
+                            monthShortNames[fb.month] || String(fb.month),
+                            String(fb.year),
+                            submitterName,
+                            `${fb.hk_received_as_approved === 'Yes' ? 'Approved' : 'Mismatch'} (${fb.hk_material_quality})`,
+                            `${fb.manpower_quality_satisfaction} (Reliever: ${fb.manpower_reliever_on_time})`,
+                            `Report: ${fb.amc_service_report_on_time} | Service: ${fb.amc_services_on_schedule}`
+                        ];
+
+                        WhatsAppService.send(u.phone, {
+                            message: waMessage,
+                            templateName,
+                            templateParams,
+                            deepLink: `/procurement?tab=feedback`
+                        });
+                    }
+                }
+            }
+
+            // --- CHANNEL 2: Email Dispatch ---
+            if (emailResult.enabled && emailResult.emails.length > 0) {
+                const subject = `📋 [Autopilot] Monthly Requisition Feedback Submitted: ${propertyName} (${monthStr})`;
+
+                const remarksHtml = fb.remarks
+                    ? `<p style="font-size:13px; color:#4b5563; margin-top:12px; font-style:italic;"><strong>💬 Submitter Remarks:</strong> "${fb.remarks}"</p>`
+                    : '';
+
+                const htmlBody = `
+                    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1f2937; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden;">
+                        <div style="background-color: #2563eb; padding: 20px; text-align: center; color: #ffffff;">
+                            <h2 style="margin: 0; font-size: 20px;">📋 Monthly Requisition Evaluation Submitted</h2>
+                            <p style="margin: 4px 0 0 0; opacity: 0.9; font-size: 14px;">${propertyName} &bull; ${monthStr}</p>
+                        </div>
+                        <div style="padding: 24px;">
+                            <p style="margin-top: 0;">Hello,</p>
+                            <p>Monthly requisition feedback has been submitted by <strong>${submitterName}</strong> for <strong>${propertyName}</strong>.</p>
+
+                            <h3 style="font-size: 15px; color: #111827; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-top: 20px;">Evaluation Breakdown</h3>
+                            <table style="width: 100%; border-collapse: collapse; font-size: 13px; margin: 12px 0;">
+                                <tr style="border-bottom: 1px solid #f3f4f6;">
+                                    <td style="padding: 8px 0; color: #6b7280; font-weight: bold;">HK & Tissue Requisition:</td>
+                                    <td style="padding: 8px 0; font-weight: 600;">Received: ${fb.hk_received_as_approved} | Quality: <span style="color: ${fb.hk_material_quality === 'Low' ? '#dc2626' : '#16a34a'};">${fb.hk_material_quality}</span></td>
+                                </tr>
+                                <tr style="border-bottom: 1px solid #f3f4f6;">
+                                    <td style="padding: 8px 0; color: #6b7280; font-weight: bold;">Manpower Services:</td>
+                                    <td style="padding: 8px 0; font-weight: 600;">Satisfaction: <span style="color: ${fb.manpower_quality_satisfaction === 'Poor' ? '#dc2626' : '#16a34a'};">${fb.manpower_quality_satisfaction}</span> | Reliever On-Time: ${fb.manpower_reliever_on_time}</td>
+                                </tr>
+                                <tr style="border-bottom: 1px solid #f3f4f6;">
+                                    <td style="padding: 8px 0; color: #6b7280; font-weight: bold;">AMC Vendor Compliance:</td>
+                                    <td style="padding: 8px 0; font-weight: 600;">Report On-Time: ${fb.amc_service_report_on_time} | Service On-Schedule: ${fb.amc_services_on_schedule}</td>
+                                </tr>
+                            </table>
+
+                            ${remarksHtml}
+
+                            <div style="margin-top: 28px; text-align: center;">
+                                <a href="${feedbackUrl}" style="background-color: #2563eb; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 14px; display: inline-block;">Open Feedback Dashboard</a>
+                            </div>
+                        </div>
+                    </div>
+                `;
+
+                for (const email of emailResult.emails) {
+                    await EmailService.sendGenericNotificationEmail({
+                        emailTo: email,
+                        subject,
+                        title: 'Monthly Requisition Feedback Submitted 📋',
+                        htmlBody
+                    }).catch(err => console.error('[NotificationService] Feedback email send error:', err));
+                }
+            }
+
+            // --- CHANNEL 3: In-App / Push Notification Dispatch ---
+            const targetUserIds = Array.from(new Set([
+                ...(waResult.users || []).map(u => u.id),
+                fb.submitted_by
+            ])).filter(Boolean);
+
+            if (targetUserIds.length > 0) {
+                await this.sendToMany(targetUserIds, {
+                    propertyId: fb.property_id,
+                    organizationId,
+                    type: 'MONTHLY_FEEDBACK_SUBMITTED',
+                    title: `Monthly Requisition Feedback Submitted 📋`,
+                    message: `Monthly requisition feedback for ${propertyName} (${monthStr}) submitted by ${submitterName}.`,
+                    deepLink: `/procurement?tab=feedback&id=${fb.id}`
+                });
+            }
+
+            // --- CHANNEL 4: AI Voice Call Dispatch ---
+            const voiceUsers = (waResult.users || []).filter(u => u.phone);
+            if (voiceUsers.length > 0) {
+                const { VoiceCallingService } = await import('./VoiceCallingService');
+                for (const u of voiceUsers) {
+                    VoiceCallingService.triggerCall({
+                        organizationId,
+                        propertyId: fb.property_id,
+                        recipientPhone: u.phone,
+                        recipientUserId: u.id,
+                        recipientName: u.name || submitterName,
+                        eventType: featureKey,
+                        variables: {
+                            userName: u.name || 'Manager',
+                            propertyName,
+                            month: monthStr,
+                            submitterName
+                        }
+                    }).catch(err => console.error('[NotificationService] Feedback voice call error for user:', u.id, err));
+                }
+            }
+        } catch (err) {
+            console.error('[NotificationService] afterMonthlyFeedbackSubmitted error:', err);
+        }
+    }
 }
+
 

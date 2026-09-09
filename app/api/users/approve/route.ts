@@ -142,13 +142,7 @@ export async function POST(request: NextRequest) {
                 .update({ is_active: true })
                 .eq('user_id', userId);
 
-            // 4. Send Omnichannel notification to the approved user (non-blocking)
-            NotificationService.afterUserApproved({
-                userId,
-                approverId: currentUser.id,
-                propertyId: targetPropId || undefined,
-                organizationId: targetOrgId || undefined,
-            }).catch(err => console.error('[Approve API] Notification error:', err));
+            // Notification is handled automatically via DB event_outbox trigger (trg_user_management_outbox)
 
             return NextResponse.json({
                 success: true,

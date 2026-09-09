@@ -18,12 +18,12 @@ import { supabaseAdmin } from '@/backend/lib/supabase/admin';
  */
 
 const TENANT_LIKE_ROLES = ['tenant', 'tenant_user', 'super_tenant', 'vendor'];
-const ORG_ADMIN_ROLES = ['org_super_admin', 'org_admin', 'master_admin'];
+const ORG_ADMIN_ROLES = ['org_super_admin', 'org_admin', 'master_admin', 'ops_super_admin'];
 const APPROVER_ROLES = [
-    'org_super_admin', 'org_admin', 'master_admin',
+    'org_super_admin', 'org_admin', 'master_admin', 'ops_super_admin',
     'property_admin', 'manager_executive', 'soft_service_manager', 'soft_service_supervisor',
 ];
-const FINANCE_ROLES = ['accounts', 'org_super_admin', 'master_admin'];
+const FINANCE_ROLES = ['accounts', 'org_super_admin', 'master_admin', 'ops_super_admin'];
 
 export interface PettyCashAccess {
     user: { id: string; email?: string };

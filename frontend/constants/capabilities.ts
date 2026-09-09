@@ -27,13 +27,20 @@ export const CAPABILITY_MATRIX: Record<RoleKey, CapabilityMatrix> = {
         petty_cash: ['view', 'create', 'update', 'approve'],
         accounts: ['view', 'approve']
     },
-    // Ops Super Admin — org-scoped electricity checker (validation sign-off, dispute
-    // accept/reject). Sits below org_super_admin: no procurement approval authority.
     ops_super_admin: {
-        users: ['view'],
-        tickets: ['view', 'approve'],
+        users: ['view', 'create', 'update', 'approve', 'assign', 'delete', 'suspend'],
+        properties: ['view', 'create', 'update', 'delete'],
+        tickets: ['view', 'create', 'update', 'approve', 'assign', 'delete'],
+        assets: ['view', 'create', 'update', 'delete'],
+        procurement: ['view', 'create', 'update', 'approve', 'delete'],
+        visitors: ['view', 'create', 'update', 'delete'],
+        security: ['view', 'create', 'update', 'delete'],
         dashboards: ['view'],
-        reports: ['view']
+        reports: ['view'],
+        vendors: ['view', 'create', 'update', 'delete'],
+        crm: ['view', 'create', 'update', 'approve', 'assign', 'delete', 'suspend'],
+        petty_cash: ['view', 'create', 'update', 'approve', 'delete'],
+        accounts: ['view', 'create', 'update', 'approve', 'delete']
     },
     property_admin: {
         users: ['view', 'create', 'update', 'assign', 'suspend'],

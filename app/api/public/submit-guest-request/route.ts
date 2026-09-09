@@ -88,10 +88,7 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: 'Failed to submit request' }, { status: 500 });
         }
 
-        // Trigger Omnichannel Notifications (WhatsApp, Email, In-App / Push) asynchronously
-        NotificationService.afterFacilityRequestCreated(request.id).catch(notifErr => {
-            console.error('[submit-guest-request] Failed to dispatch omnichannel notifications:', notifErr);
-        });
+        // Notification is handled automatically via DB event_outbox trigger (trg_facility_requests_outbox)
 
         return NextResponse.json({ success: true, data: request });
     } catch (error: any) {

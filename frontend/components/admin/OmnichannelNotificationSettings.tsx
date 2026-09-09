@@ -400,6 +400,12 @@ const MODULES_META: ModuleMeta[] = [
                 name: 'Vendor Aligned / Arranged',
                 description: 'Sent when procurement schedules an external vendor for a ticket.',
                 hasContextual: { requester: true, assignee: true }
+            },
+            {
+                key: 'monthly_requisition_feedback_submitted',
+                name: 'Monthly Requisition Feedback Submitted',
+                description: 'Sent to procurement & management when Property Admin submits monthly requisition feedback.',
+                hasContextual: { requester: true }
             }
         ]
     },
@@ -584,7 +590,8 @@ const DEFAULT_NOTIFICATION_MATRIX: NotificationMatrix = {
         requisition_status_updated: { channels: { email: true, whatsapp: true, push: true }, roles: ['procurement'], user_ids: [], notify_requester: true },
         requisition_po_issued: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin'], user_ids: [], notify_requester: true },
         procurement_vendor_tag: { channels: { email: true, whatsapp: true, push: true }, roles: ['procurement'], user_ids: [] },
-        procurement_vendor_aligned: { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [], notify_requester: true }
+        procurement_vendor_aligned: { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [], notify_requester: true },
+        monthly_requisition_feedback_submitted: { channels: { email: true, whatsapp: true, push: true, voice: true }, roles: ['procurement', 'purchase_manager', 'org_super_admin'], user_ids: [] }
     },
     meeting_rooms: {
         meeting_room_booked: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin'], user_ids: [], notify_requester: true },
@@ -638,6 +645,7 @@ const DEFAULT_VOICE_TEMPLATES: Record<string, string> = {
     visitor_approval_requested: "Hi {{user_name}}, this is Pratiksha from the Operations team. A visitor named {{visitor_name}} from {{coming_from}} has checked in at {{property_name}} to meet you. Please check your app or WhatsApp to approve gate entry.",
     visitor_approved: "Hi {{user_name}}, this is Pratiksha from Operations. Gate entry for visitor {{visitor_name}} to meet {{whom_to_meet}} at {{property_name}} has been approved.",
     visitor_rejected: "Hi {{user_name}}, this is Pratiksha from Operations. Gate entry for visitor {{visitor_name}} to meet {{whom_to_meet}} at {{property_name}} was rejected.",
+    monthly_requisition_feedback_submitted: "Hi {{user_name}}, this is Pratiksha from the Operations team. Monthly requisition feedback for {{property_name}} for {{month}} has been submitted by {{submitter_name}}. Please review the report in your app.",
     test_call: "Hi {{user_name}}, this is Pratiksha from the Operations team. This is a quick test call to confirm that your phone notifications and voice alerts are working properly."
 };
 

@@ -18,7 +18,7 @@ This document contains the revised, copy-paste ready message template copy for A
 3. [AI Multi-Property Daily Executive Report](#3-ai-multi-property-daily-executive-report)
 4. [Procurement & Material Management Suite](#4-procurement--material-management-suite)
    - *Material Requests & Comparative Statements (Templates 8–12)*
-   - *Monthly Site Requisitions Suite (Templates 13–13D)*
+   - *Monthly Site Requisitions & Feedback Suite (Templates 13–13E)*
    - *Vendor Procurement Tagging (Templates 14–15)*
 5. [Preventive Maintenance (PPM)](#5-preventive-maintenance-ppm)
 6. [Meeting Room Reservations](#6-meeting-room-reservations)
@@ -721,6 +721,40 @@ Items will be delivered to site as per schedule.
   - `{{5}}`: `Reliable Spares & Supplies`
   - `{{6}}`: `PO-2026-089`
   - `{{7}}`: `41,200`
+
+---
+
+### Template 13E: `monthly_requisition_feedback_submitted_v1`
+- **Template Name:** `monthly_requisition_feedback_submitted_v1`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Text` &rarr; `Monthly Feedback Submitted 📋`
+- **Body:**
+```text
+Hello {{1}},
+
+Monthly requisition feedback for {{2}} for {{3}} {{4}} has been submitted by {{5}}.
+
+📊 Service Evaluation:
+• HK & Tissue: {{6}}
+• Manpower Services: {{7}}
+• AMC Vendors: {{8}}
+
+Please review the complete evaluation report in the app.
+```
+- **Footer:** `AutoPilot Procurement`
+- **Button Type:** `Call to Action (Website URL)`
+  - **Button Text:** `View Feedback Report`
+  - **URL Type:** `Static` &rarr; `https://fms-dev-saas-one.vercel.app/procurement?tab=feedback`
+- **Sample Values:**
+  - `{{1}}`: `Procurement Manager`
+  - `{{2}}`: `Rabale (2nd Floor)`
+  - `{{3}}`: `September`
+  - `{{4}}`: `2026`
+  - `{{5}}`: `Harsh (Property Admin)`
+  - `{{6}}`: `Approved Requisition (High Quality)`
+  - `{{7}}`: `Good (Reliever on time)`
+  - `{{8}}`: `Report on time & Services on schedule`
 
 ---
 

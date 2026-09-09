@@ -715,7 +715,8 @@ export default function TicketDetailPage() {
       if (
         userProfile?.is_master_admin ||
         userProfile?.role === "master_admin" ||
-        userProfile?.role === "org_super_admin"
+        userProfile?.role === "org_super_admin" ||
+        userProfile?.role === "ops_super_admin"
       ) {
         setUserRole("admin");
         setIsOrgAdminUser(true);
@@ -730,7 +731,7 @@ export default function TicketDetailPage() {
         .eq("is_active", true);
 
       const isOrgAdmin = orgMembers?.some((m) =>
-        ["master_admin", "org_super_admin", "org_admin", "owner"].includes(m.role)
+        ["master_admin", "org_super_admin", "ops_super_admin", "org_admin", "owner"].includes(m.role)
       );
 
       if (isOrgAdmin) {
@@ -753,11 +754,15 @@ export default function TicketDetailPage() {
         (m) => m.property_id === propertyId
       );
 
+      const isElevatedRole = (r?: string) => 
+        ["property_admin", "ops_super_admin", "org_super_admin", "org_admin", "master_admin", "owner"].includes(r || "");
+
       if (
-        currentPropMember?.role === "property_admin" ||
-        propMembers?.some((m) => m.role === "property_admin")
+        isElevatedRole(currentPropMember?.role) ||
+        propMembers?.some((m) => isElevatedRole(m.role))
       ) {
         setUserRole("admin");
+        setIsOrgAdminUser(true);
       } else if (
         currentPropMember?.role?.toLowerCase().includes("procurement") ||
         propMembers?.some((m) => m.role?.toLowerCase().includes("procurement"))

@@ -136,13 +136,7 @@ export async function POST(
             return NextResponse.json({ error: insertError.message }, { status: 500 });
         }
 
-        // Fire notification: host & security
-        NotificationService.afterVisitorCheckedIn(
-            visitor.id,
-            propertyId,
-            property.organization_id,
-            body.host_id || null
-        ).catch(err => console.error('[VMS] Notification error:', err));
+        // Notification is handled automatically via DB event_outbox trigger (trg_vms_visitors_outbox)
 
         return NextResponse.json({
             success: true,
@@ -351,23 +345,7 @@ export async function PATCH(
             return NextResponse.json({ error: updateError.message }, { status: 500 });
         }
 
-        const orgId = visitor.organization_id || visitor.properties?.organization_id;
-
-        if (approvalStatus === 'approved' && orgId) {
-            NotificationService.afterVisitorApproved(
-                visitor.id,
-                propertyId,
-                orgId,
-                body.approved_by_name || 'Host'
-            ).catch(err => console.error('[VMS Approval] Notification error:', err));
-        } else if (approvalStatus === 'rejected' && orgId) {
-            NotificationService.afterVisitorRejected(
-                visitor.id,
-                propertyId,
-                orgId,
-                body.approved_by_name || 'Host'
-            ).catch(err => console.error('[VMS Rejection] Notification error:', err));
-        }
+        // Notification is handled automatically via DB event_outbox trigger (trg_vms_visitors_outbox)
 
         return NextResponse.json({
             success: true,

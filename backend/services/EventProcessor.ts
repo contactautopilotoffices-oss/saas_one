@@ -51,9 +51,34 @@ export const EventProcessor = {
             await this.handleVendorRevenueRecorded(payload);
         } else if (['VENDOR_REVENUE_REMINDER', 'VENDOR_REVENUE_MISSED'].includes(event_type)) {
             await this.handleVendorRevenueReminder(payload);
+        } else if (['MONTHLY_REQUISITION_FEEDBACK_SUBMITTED', 'MONTHLY_FEEDBACK_SUBMITTED'].includes(event_type)) {
+            await this.handleMonthlyRequisitionFeedbackSubmitted(payload);
+        } else if (event_type === 'VISITOR_APPROVAL_REQUESTED') {
+            await this.handleVisitorApprovalRequested(payload);
+        } else if (event_type === 'VISITOR_APPROVED') {
+            await this.handleVisitorApproved(payload);
+        } else if (event_type === 'VISITOR_REJECTED') {
+            await this.handleVisitorRejected(payload);
+        } else if (event_type === 'USER_PENDING_APPROVAL') {
+            await this.handleUserPendingApproval(payload);
+        } else if (event_type === 'USER_APPROVED') {
+            await this.handleUserApproved(payload);
+        } else if (event_type === 'FACILITY_REQUEST_CREATED') {
+            await this.handleFacilityRequestCreated(payload);
         } else {
             console.warn(`[EventProcessor] Unknown event type: ${event_type}`);
         }
+    },
+
+    async handleMonthlyRequisitionFeedbackSubmitted(payload: any) {
+        const feedbackId = payload.feedback_id || payload.id;
+        if (!feedbackId) {
+            console.error('[EventProcessor] MONTHLY_REQUISITION_FEEDBACK_SUBMITTED payload missing feedback_id:', payload);
+            return;
+        }
+        console.log(`[EventProcessor] Processing MONTHLY_REQUISITION_FEEDBACK_SUBMITTED for feedback ID ${feedbackId}`);
+        const { NotificationService } = await import('@/backend/services/NotificationService');
+        await NotificationService.afterMonthlyFeedbackSubmitted(feedbackId);
     },
 
     async handleMeetingRoomEvent(eventType: string, payload: any) {
@@ -1080,6 +1105,69 @@ export const EventProcessor = {
         if (!enabled || emails.length === 0) return;
 
         console.log(`[EventProcessor] Vendor revenue reminder email triggered for ${payload.shop_name} at property ${propertyId} to ${emails.join(', ')}`);
+    },
+
+    async handleVisitorApprovalRequested(payload: any) {
+        const visitorId = payload.visitor_id || payload.id;
+        const { property_id, organization_id, host_user_id } = payload;
+        if (!visitorId || !property_id || !organization_id) return;
+        console.log(`[EventProcessor] Processing VISITOR_APPROVAL_REQUESTED for visitor ${visitorId}`);
+        const { NotificationService } = await import('@/backend/services/NotificationService');
+        await NotificationService.afterVisitorCheckedIn(visitorId, property_id, organization_id, host_user_id || null);
+    },
+
+    async handleVisitorApproved(payload: any) {
+        const visitorId = payload.visitor_id || payload.id;
+        const { property_id, organization_id, approved_by_user_id } = payload;
+        if (!visitorId || !property_id || !organization_id) return;
+        console.log(`[EventProcessor] Processing VISITOR_APPROVED for visitor ${visitorId}`);
+        const { NotificationService } = await import('@/backend/services/NotificationService');
+        await NotificationService.afterVisitorApproved(visitorId, property_id, organization_id, approved_by_user_id || null);
+    },
+
+    async handleVisitorRejected(payload: any) {
+        const visitorId = payload.visitor_id || payload.id;
+        const { property_id, organization_id, rejected_by_user_id } = payload;
+        if (!visitorId || !property_id || !organization_id) return;
+        console.log(`[EventProcessor] Processing VISITOR_REJECTED for visitor ${visitorId}`);
+        const { NotificationService } = await import('@/backend/services/NotificationService');
+        await NotificationService.afterVisitorRejected(visitorId, property_id, organization_id, rejected_by_user_id || null);
+    },
+
+    async handleUserPendingApproval(payload: any) {
+        const userId = payload.user_id || payload.id;
+        const { organization_id, property_id, requested_role } = payload;
+        if (!userId || !organization_id) return;
+        console.log(`[EventProcessor] Processing USER_PENDING_APPROVAL for user ${userId}`);
+        const { NotificationService } = await import('@/backend/services/NotificationService');
+        await NotificationService.afterUserRegisteredPendingApproval({
+            userId,
+            propertyId: property_id,
+            organizationId: organization_id,
+            requestedRole: requested_role || 'member'
+        });
+    },
+
+    async handleUserApproved(payload: any) {
+        const userId = payload.user_id || payload.id;
+        const { organization_id, property_id, approved_by_user_id } = payload;
+        if (!userId || !organization_id) return;
+        console.log(`[EventProcessor] Processing USER_APPROVED for user ${userId}`);
+        const { NotificationService } = await import('@/backend/services/NotificationService');
+        await NotificationService.afterUserApproved({
+            userId,
+            approverId: approved_by_user_id,
+            propertyId: property_id,
+            organizationId: organization_id
+        });
+    },
+
+    async handleFacilityRequestCreated(payload: any) {
+        const requestId = payload.request_id || payload.id;
+        if (!requestId) return;
+        console.log(`[EventProcessor] Processing FACILITY_REQUEST_CREATED for request ${requestId}`);
+        const { NotificationService } = await import('@/backend/services/NotificationService');
+        await NotificationService.afterFacilityRequestCreated(requestId);
     }
 };
 

@@ -92,7 +92,7 @@ export default function PropertyLayout({
                     // Check if user is an admin of this organization (Pre-fetched)
                     const orgMatch = membership?.all_org_memberships.find(m => 
                         m.org_id === property.organization_id && 
-                        ['org_admin', 'org_super_admin', 'owner'].includes(m.role)
+                        ['org_admin', 'org_super_admin', 'owner', 'ops_super_admin', 'master_admin'].includes(m.role)
                     );
 
                     if (orgMatch) {
@@ -198,6 +198,7 @@ function getRoleAllowedPaths(role: string, propertyId: string): string[] {
         case 'property_admin':
         case 'org_admin':
         case 'org_super_admin':
+        case 'ops_super_admin':
         case 'master_admin':
         case 'owner':
             // Full access
@@ -242,6 +243,7 @@ function getRoleDefaultPath(role: string, propertyId: string): string {
         case 'property_admin':
         case 'org_admin':
         case 'org_super_admin':
+        case 'ops_super_admin':
         case 'master_admin':
         case 'owner':
             return `${basePath}/dashboard`;

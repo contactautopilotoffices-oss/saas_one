@@ -139,7 +139,7 @@ const PropertySelectorDropdown = memo(function PropertySelectorDropdown({
 
     const displayProperties = useMemo(() => {
         if (assignedProperties.length <= 1) return assignedProperties;
-        const allOption = { id: 'all', name: 'All Properties', code: 'ALL' };
+        const allOption: { id: string; name: string; code?: string; image_url?: string } = { id: 'all', name: 'All Properties', code: 'ALL' };
         return [allOption, ...assignedProperties];
     }, [assignedProperties]);
 
@@ -164,10 +164,14 @@ const PropertySelectorDropdown = memo(function PropertySelectorDropdown({
                         : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200'
                 } ${isSingleProperty ? 'cursor-default' : 'cursor-pointer'}`}
             >
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 ${
+                <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden ${
                     variant === 'dark' ? 'bg-white/20 text-white' : 'bg-primary/10 text-primary'
                 }`}>
-                    <Building2 className="w-3.5 h-3.5" />
+                    {currentProperty?.image_url ? (
+                        <img src={currentProperty.image_url} alt="" className="w-full h-full object-cover rounded-full" />
+                    ) : (
+                        <Building2 className="w-3.5 h-3.5" />
+                    )}
                 </div>
                 <span className="max-w-[120px] sm:max-w-[160px] md:max-w-[200px] truncate leading-tight font-black">
                     {currentProperty?.name || 'Select Property'}
@@ -242,10 +246,14 @@ const PropertySelectorDropdown = memo(function PropertySelectorDropdown({
                                             }`}
                                         >
                                             <div className="flex items-center gap-2.5 min-w-0">
-                                                <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 transition-colors ${
+                                                <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden transition-colors ${
                                                     isSelected ? 'bg-primary text-white' : 'bg-slate-100 text-slate-500 group-hover:bg-slate-200'
                                                 }`}>
-                                                    <Building2 className="w-4 h-4" />
+                                                    {p.image_url ? (
+                                                        <img src={p.image_url} alt="" className="w-full h-full object-cover rounded-full" />
+                                                    ) : (
+                                                        <Building2 className="w-4 h-4" />
+                                                    )}
                                                 </div>
                                                 <div className="min-w-0">
                                                     <div className={`text-xs font-bold truncate ${isSelected ? 'text-primary' : 'text-slate-800'}`}>
@@ -340,7 +348,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
             if (data && data.length > 0) {
                 setOrgProperties(data);
                 if (!activePropId) {
-                    setActivePropId(data[0].id);
+                    setActivePropId(isElevatedRole ? 'all' : data[0].id);
                 }
             }
         };
@@ -362,9 +370,9 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
 
     useEffect(() => {
         if (!activePropId && assignedProperties.length > 0) {
-            setActivePropId(assignedProperties[0].id);
+            setActivePropId(isElevatedRole ? 'all' : assignedProperties[0].id);
         }
-    }, [activePropId, assignedProperties]);
+    }, [activePropId, assignedProperties, isElevatedRole]);
 
     const [showPropertyDropdown, setShowPropertyDropdown] = useState(false);
     const [showClientQRModal, setShowClientQRModal] = useState(false);
@@ -938,10 +946,25 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                                 assignedProperties={assignedProperties}
                                 onSelectProperty={(id) => {
                                     setActivePropId(id);
-                                    if (propertyId && window.location.pathname.includes(propertyId)) {
-                                        router.push(window.location.pathname.replace(propertyId, id));
+                                    if (id === 'all') {
+                                        setProperty({
+                                            id: 'all',
+                                            name: 'All Properties',
+                                            code: 'ALL',
+                                            address: 'All Organization Properties',
+                                            organization_id: orgProperties[0]?.organization_id || membership?.org_id || ''
+                                        });
                                     } else {
-                                        router.push(`/property/${id}/dashboard?tab=${openTab}`);
+                                        const found = orgProperties.find(p => p.id === id) || (membership?.properties || []).find(p => p.id === id);
+                                        if (found) setProperty(found as any);
+                                    }
+                                    const url = new URL(window.location.href);
+                                    if (url.pathname.includes('/property/')) {
+                                        const newPath = url.pathname.replace(/\/property\/[^\/]+/, `/property/${id}`);
+                                        window.history.pushState({}, '', newPath + url.search);
+                                    } else {
+                                        url.searchParams.set('propertyId', id);
+                                        window.history.pushState({}, '', url.toString());
                                     }
                                 }}
                                 variant="light"
@@ -996,10 +1019,25 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                             assignedProperties={assignedProperties}
                             onPropertySwitch={(id) => {
                                 setActivePropId(id);
-                                if (propertyId && window.location.pathname.includes(propertyId)) {
-                                    router.push(window.location.pathname.replace(propertyId, id));
+                                if (id === 'all') {
+                                    setProperty({
+                                        id: 'all',
+                                        name: 'All Properties',
+                                        code: 'ALL',
+                                        address: 'All Organization Properties',
+                                        organization_id: orgProperties[0]?.organization_id || membership?.org_id || ''
+                                    });
                                 } else {
-                                    router.push(`/property/${id}/dashboard?tab=${openTab}`);
+                                    const found = orgProperties.find(p => p.id === id) || (membership?.properties || []).find(p => p.id === id);
+                                    if (found) setProperty(found as any);
+                                }
+                                const url = new URL(window.location.href);
+                                if (url.pathname.includes('/property/')) {
+                                    const newPath = url.pathname.replace(/\/property\/[^\/]+/, `/property/${id}`);
+                                    window.history.pushState({}, '', newPath + url.search);
+                                } else {
+                                    url.searchParams.set('propertyId', id);
+                                    window.history.pushState({}, '', url.toString());
                                 }
                             }}
                         />}

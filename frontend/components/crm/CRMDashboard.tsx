@@ -36,6 +36,18 @@ interface DashboardStats {
     todays_followups?: FollowupLead[];
     latest_leads?: LatestLead[];
     stale_leads?: StaleLead[];
+    source_category_breakdown?: {
+        total: number;
+        linkedin: number;
+        meta: number;
+        abm: number;
+        other: number;
+        andheri_total: number;
+        andheri_linkedin: number;
+        andheri_meta: number;
+        andheri_abm: number;
+        andheri_other: number;
+    };
 }
 
 interface StaleLead {
@@ -389,6 +401,109 @@ export default function CRMDashboard() {
                         sub={statPeriod === 'all' ? 'All time' : `Due this ${statPeriod}`}
                         href={`/${orgId}/crm/followups`}
                     />
+                </div>
+            </div>
+
+            {/* Lead Source Analytics & Categorization Card */}
+            <div className="bg-surface rounded-2xl border border-border p-5 space-y-4 shadow-sm">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-border">
+                    <div>
+                        <div className="flex items-center gap-2">
+                            <BarChart3 className="w-4 h-4 text-primary" />
+                            <h2 className="text-sm font-black text-text-primary">Lead Source Categorization & Analytics</h2>
+                        </div>
+                        <p className="text-[11px] text-text-tertiary mt-0.5">Analyze lead distribution by channel (LinkedIn, Meta, ABM, Other) and places</p>
+                    </div>
+                    <Link href={`/${orgId}/crm/leads`} className="text-xs font-bold text-primary hover:underline flex items-center gap-1 self-start sm:self-auto">
+                        Open Leads Table <ArrowRight className="w-3 h-3" />
+                    </Link>
+                </div>
+
+                {/* Source Category Selector Tiles */}
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                    {/* Total Leads */}
+                    <button
+                        onClick={() => router.push(`/${orgId}/crm/leads`)}
+                        className="p-3 bg-surface-elevated hover:border-primary/50 border border-border rounded-xl text-left transition-all group"
+                    >
+                        <div className="text-[10px] font-black uppercase tracking-wider text-text-tertiary group-hover:text-primary transition-colors">Total Leads</div>
+                        <div className="text-xl font-black text-text-primary mt-1">{s.source_category_breakdown?.total ?? s.total_leads}</div>
+                        <div className="text-[10px] text-text-tertiary font-bold mt-0.5">100% of pipeline</div>
+                    </button>
+
+                    {/* LinkedIn */}
+                    <button
+                        onClick={() => router.push(`/${orgId}/crm/leads?lead_source=LinkedIn`)}
+                        className="p-3 bg-blue-50/50 dark:bg-blue-950/20 hover:border-blue-500/50 border border-blue-200/50 dark:border-blue-800/30 rounded-xl text-left transition-all group"
+                    >
+                        <div className="text-[10px] font-black uppercase tracking-wider text-blue-600 dark:text-blue-400 flex items-center gap-1">
+                            <span>LinkedIn</span>
+                        </div>
+                        <div className="text-xl font-black text-blue-950 dark:text-blue-100 mt-1">{s.source_category_breakdown?.linkedin ?? 0}</div>
+                        <div className="text-[10px] text-blue-600/70 dark:text-blue-400/70 font-bold mt-0.5">
+                            {s.total_leads > 0 ? Math.round(((s.source_category_breakdown?.linkedin ?? 0) / s.total_leads) * 100) : 0}% share
+                        </div>
+                    </button>
+
+                    {/* Meta Lead Ads */}
+                    <button
+                        onClick={() => router.push(`/${orgId}/crm/leads?lead_source=Meta%20Lead%20Ads`)}
+                        className="p-3 bg-indigo-50/50 dark:bg-indigo-950/20 hover:border-indigo-500/50 border border-indigo-200/50 dark:border-indigo-800/30 rounded-xl text-left transition-all group"
+                    >
+                        <div className="text-[10px] font-black uppercase tracking-wider text-indigo-600 dark:text-indigo-400">Meta Lead Ads</div>
+                        <div className="text-xl font-black text-indigo-950 dark:text-indigo-100 mt-1">{s.source_category_breakdown?.meta ?? 0}</div>
+                        <div className="text-[10px] text-indigo-600/70 dark:text-indigo-400/70 font-bold mt-0.5">
+                            {s.total_leads > 0 ? Math.round(((s.source_category_breakdown?.meta ?? 0) / s.total_leads) * 100) : 0}% share
+                        </div>
+                    </button>
+
+                    {/* ABM */}
+                    <button
+                        onClick={() => router.push(`/${orgId}/crm/leads?lead_source=ABM`)}
+                        className="p-3 bg-emerald-50/50 dark:bg-emerald-950/20 hover:border-emerald-500/50 border border-emerald-200/50 dark:border-emerald-800/30 rounded-xl text-left transition-all group"
+                    >
+                        <div className="text-[10px] font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-400">ABM</div>
+                        <div className="text-xl font-black text-emerald-950 dark:text-emerald-100 mt-1">{s.source_category_breakdown?.abm ?? 0}</div>
+                        <div className="text-[10px] text-emerald-600/70 dark:text-emerald-400/70 font-bold mt-0.5">
+                            {s.total_leads > 0 ? Math.round(((s.source_category_breakdown?.abm ?? 0) / s.total_leads) * 100) : 0}% share
+                        </div>
+                    </button>
+
+                    {/* Other */}
+                    <button
+                        onClick={() => router.push(`/${orgId}/crm/leads?lead_source=Other`)}
+                        className="p-3 bg-slate-50 dark:bg-slate-900/40 hover:border-slate-400 border border-slate-200 dark:border-slate-800 rounded-xl text-left transition-all group"
+                    >
+                        <div className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">Other</div>
+                        <div className="text-xl font-black text-slate-900 dark:text-slate-100 mt-1">{s.source_category_breakdown?.other ?? 0}</div>
+                        <div className="text-[10px] text-slate-500 dark:text-slate-400 font-bold mt-0.5">
+                            {s.total_leads > 0 ? Math.round(((s.source_category_breakdown?.other ?? 0) / s.total_leads) * 100) : 0}% share
+                        </div>
+                    </button>
+                </div>
+
+                {/* Andheri Places Breakdown Row */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 bg-muted/60 rounded-xl border border-border/80">
+                    <div className="flex items-center gap-2">
+                        <MapPin className="w-4 h-4 text-rose-500 shrink-0" />
+                        <span className="text-xs font-bold text-text-primary">
+                            Andheri Places: <span className="font-black text-primary">{s.source_category_breakdown?.andheri_total ?? 0} Leads</span>
+                        </span>
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap text-xs">
+                        <span className="px-2.5 py-1 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-bold rounded-lg">
+                            LinkedIn: {s.source_category_breakdown?.andheri_linkedin ?? 0}
+                        </span>
+                        <span className="px-2.5 py-1 bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 font-bold rounded-lg">
+                            Meta: {s.source_category_breakdown?.andheri_meta ?? 0}
+                        </span>
+                        <span className="px-2.5 py-1 bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 font-bold rounded-lg">
+                            ABM: {s.source_category_breakdown?.andheri_abm ?? 0}
+                        </span>
+                        <span className="px-2.5 py-1 bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold rounded-lg">
+                            Other: {s.source_category_breakdown?.andheri_other ?? 0}
+                        </span>
+                    </div>
                 </div>
             </div>
 

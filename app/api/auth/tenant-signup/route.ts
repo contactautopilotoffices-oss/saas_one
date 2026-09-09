@@ -102,18 +102,7 @@ export async function POST(request: NextRequest) {
             console.error('[Tenant Signup] Property membership error:', propMemErr);
         }
 
-        // 5. Notify Property Admin and configured omnichannel recipients
-        try {
-            const { NotificationService } = await import('@/backend/services/NotificationService');
-            await NotificationService.afterUserRegisteredPendingApproval({
-                userId,
-                propertyId,
-                organizationId: property.organization_id,
-                requestedRole: 'tenant'
-            });
-        } catch (notifErr) {
-            console.error('[Tenant Signup] Notification error:', notifErr);
-        }
+        // Notification is handled automatically via DB event_outbox trigger (trg_user_management_outbox)
 
         const redirectUrl = `/waiting-approval`;
 

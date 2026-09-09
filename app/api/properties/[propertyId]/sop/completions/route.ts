@@ -340,10 +340,7 @@ export async function POST(
             existingCompletion.completed_by = user.id;
             existingCompletion.is_late = isLate;
 
-            const { NotificationService } = await import('@/backend/services/NotificationService');
-            NotificationService.afterSOPStarted(existingCompletion.template_id, propertyId, property.organization_id).catch(err => {
-                console.error('[SOP Completions POST] afterSOPStarted notification error:', err);
-            });
+            // Notification is handled automatically via DB event_outbox trigger (trg_sop_runs_outbox)
         }
 
         return NextResponse.json({ success: true, completion: existingCompletion });

@@ -233,17 +233,7 @@ export async function POST(request: NextRequest) {
             data: { onboarding_completed: true }
         });
 
-        // 8. Trigger Omnichannel Notifications (WhatsApp, Email, Push) to Admins
-        try {
-            await NotificationService.afterUserRegisteredPendingApproval({
-                userId: authUser.id,
-                propertyId: finalPropId,
-                organizationId: targetOrgId,
-                requestedRole: finalRole
-            });
-        } catch (notifErr) {
-            console.error('[Onboarding Complete] Notification trigger failed:', notifErr);
-        }
+        // Notification is handled automatically via DB event_outbox trigger (trg_user_management_outbox)
 
         return NextResponse.json({
             success: true,

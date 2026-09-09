@@ -16,10 +16,11 @@ import MonthlyRequisitionsTab from './MonthlyRequisitionsTab';
 import SitePricingAdminTab from './SitePricingAdminTab';
 import PropertyBudgetsTab from './PropertyBudgetsTab';
 import PaymentUrgencyTrackerTab from './payment-urgency/PaymentUrgencyTrackerTab';
+import ProcurementFeedbackTab from './ProcurementFeedbackTab';
 import FinanceOverview from '../accounts/FinanceOverview';
 import { useAuth } from '@/frontend/context/AuthContext';
 
-type TabType = 'orders' | 'urgency-tracker' | 'payment-tracker' | 'requisitions' | 'site-budgets' | 'site-pricing' | 'catalog' | 'po-generator' | 'settings';
+type TabType = 'orders' | 'urgency-tracker' | 'payment-tracker' | 'requisitions' | 'monthly-feedback' | 'site-budgets' | 'site-pricing' | 'catalog' | 'po-generator' | 'settings';
 
 function ProcurementModuleSkeleton() {
     return (
@@ -170,6 +171,7 @@ export default function ProcurementModule({
         { id: 'urgency-tracker', label: 'Urgency Tracker (P1-P3)', icon: Layers, show: canViewUrgencyTracker, count: 0 },
         { id: 'payment-tracker', label: 'Payment Tracker', icon: IndianRupee, show: canViewPaymentTracker, count: 0 },
         { id: 'requisitions', label: 'Monthly Requisitions', icon: FileSpreadsheet, show: true, count: 0 },
+        { id: 'monthly-feedback', label: 'Monthly Feedback', icon: FileText, show: true, count: 0 },
         { id: 'site-budgets', label: 'Property Budgets', icon: IndianRupee, show: canManageCatalogAndPricing, count: 0 },
         { id: 'site-pricing', label: 'Site Pricing & Aliases', icon: DollarSign, show: canManageCatalogAndPricing, count: 0 },
         { id: 'catalog', label: 'Manage Items Master', icon: ShoppingCart, show: canManageCatalogAndPricing, count: 0 },
@@ -251,6 +253,15 @@ export default function ProcurementModule({
                         propertyId={propertyId} 
                         userRole={userRole || 'property_admin'}
                         onNavigateToBudgets={() => setActiveTab('site-budgets')}
+                    />
+                )}
+
+                {activeTab === 'monthly-feedback' && (
+                    <ProcurementFeedbackTab 
+                        organizationId={orgId}
+                        properties={properties} 
+                        currentPropertyId={propertyId} 
+                        isPropertyAdmin={!canManageCatalogAndPricing} 
                     />
                 )}
 

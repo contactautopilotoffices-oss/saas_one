@@ -1,13 +1,12 @@
 // Client-side Payment Tracker capabilities + shared types.
 // Mirrors backend/lib/accounts/access.ts (API still enforces server-side).
 
-const ORG_ADMIN = new Set(['org_super_admin', 'org_admin', 'master_admin']);
+const ORG_ADMIN = new Set(['org_super_admin', 'org_admin', 'master_admin', 'ops_super_admin']);
 // property_admin is intentionally excluded — see backend/lib/accounts/access.ts.
 const PROCUREMENT = new Set(['purchase_manager', 'purchase_executive', 'procurement']);
-// ops_super_admin: view-only, same reasoning as backend/lib/accounts/access.ts.
 const VIEW = new Set([...ORG_ADMIN, ...PROCUREMENT, 'accounts', 'ops_super_admin']);
-const ALIGN = new Set([...ORG_ADMIN, ...PROCUREMENT, 'accounts']);
-const COMPLETE = new Set(['accounts', 'org_super_admin', 'master_admin']);
+const ALIGN = new Set([...ORG_ADMIN, ...PROCUREMENT, 'accounts', 'ops_super_admin']);
+const COMPLETE = new Set(['accounts', 'org_super_admin', 'master_admin', 'ops_super_admin']);
 
 export interface AccountsCaps { canSee: boolean; isAdmin: boolean; canAlign: boolean; canComplete: boolean; }
 

@@ -17,6 +17,7 @@ import ProcurementStatusModal from './ProcurementStatusModal';
 import ProcurementComparativeFlow from './ProcurementComparativeFlow';
 import ProcurementCatalogModal from '../procurement/ProcurementCatalogModal';
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
+import ProcurementFeedbackTab from '../procurement/ProcurementFeedbackTab';
 import MonthlyRequisitionsTab from '../procurement/MonthlyRequisitionsTab';
 import SitePricingAdminTab from '../procurement/SitePricingAdminTab';
 import ProcurementVendorTicketsTab from '../procurement/ProcurementVendorTicketsTab';
@@ -58,7 +59,7 @@ interface MaterialRequest {
     };
 }
 
-type Tab = 'overview' | 'urgency-tracker' | 'task-sheet' | 'requests' | 'vendor_tickets' | 'monthly-requisitions' | 'site-pricing' | 'history' | 'manage-items' | 'po-generator' | 'settings' | 'profile';
+type Tab = 'overview' | 'urgency-tracker' | 'task-sheet' | 'requests' | 'vendor_tickets' | 'monthly-requisitions' | 'monthly-feedback' | 'site-pricing' | 'history' | 'manage-items' | 'po-generator' | 'settings' | 'profile';
 
 export default function ProcurementDashboard() {
     const supabase = createClient();
@@ -73,7 +74,7 @@ export default function ProcurementDashboard() {
 
     useEffect(() => {
         const tabParam = searchParams?.get('tab') as Tab | null;
-        if (tabParam && ['overview', 'urgency-tracker', 'task-sheet', 'requests', 'vendor_tickets', 'monthly-requisitions', 'site-pricing', 'history', 'manage-items', 'po-generator', 'settings', 'profile'].includes(tabParam)) {
+        if (tabParam && ['overview', 'urgency-tracker', 'task-sheet', 'requests', 'vendor_tickets', 'monthly-requisitions', 'monthly-feedback', 'site-pricing', 'history', 'manage-items', 'po-generator', 'settings', 'profile'].includes(tabParam)) {
             setActiveTab(tabParam);
         }
     }, [searchParams]);
@@ -588,6 +589,11 @@ export default function ProcurementDashboard() {
                                         count: sidebarCounts.monthlyRequisitions
                                     },
                                     { 
+                                        id: 'monthly-feedback', 
+                                        icon: MessageSquarePlus, 
+                                        label: 'Monthly Feedback Reports'
+                                    },
+                                    { 
                                         id: 'site-pricing', 
                                         icon: DollarSign, 
                                         label: 'Site Pricing & Aliases',
@@ -813,6 +819,13 @@ export default function ProcurementDashboard() {
                                 user={user}
                                 organizationId={user?.user_metadata?.organization_id}
                                 userRole={user?.user_metadata?.role || 'procurement_user'}
+                                onNavigateToFeedback={() => setActiveTab('monthly-feedback')}
+                            />
+                        )}
+                        {activeTab === 'monthly-feedback' && (
+                            <ProcurementFeedbackTab
+                                organizationId={user?.user_metadata?.organization_id}
+                                properties={allProperties}
                             />
                         )}
                         {activeTab === 'site-pricing' && (

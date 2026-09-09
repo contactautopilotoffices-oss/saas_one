@@ -112,7 +112,7 @@ export default function AITicketsDashboardView({ propertyId }: AITicketsDashboar
   // Property-scoped tickets base list
   const propertyScopedTickets = useMemo(() => {
     const isOrgAdmin = membership?.all_org_memberships?.some(m =>
-      ['owner', 'org_super_admin', 'org_admin', 'master_admin'].includes(m.role?.toLowerCase())
+      ['owner', 'org_super_admin', 'ops_super_admin', 'org_admin', 'master_admin'].includes(m.role?.toLowerCase())
     ) || membership?.is_master_admin;
 
     if (isOrgAdmin) {

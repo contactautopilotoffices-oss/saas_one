@@ -48,6 +48,7 @@ export const DEFAULT_VOICE_TEMPLATES: Record<string, string> = {
     visitor_approval_requested: "Hi {{user_name}}, this is Pratiksha from the Operations team. A visitor named {{visitor_name}} from {{coming_from}} has checked in at {{property_name}} to meet you. Please check your app or WhatsApp to approve gate entry.",
     visitor_approved: "Hi {{user_name}}, this is Pratiksha from Operations. Gate entry for visitor {{visitor_name}} to meet {{whom_to_meet}} at {{property_name}} has been approved.",
     visitor_rejected: "Hi {{user_name}}, this is Pratiksha from Operations. Gate entry for visitor {{visitor_name}} to meet {{whom_to_meet}} at {{property_name}} was rejected.",
+    monthly_requisition_feedback_submitted: "Hi {{user_name}}, this is Pratiksha from the Operations team. Monthly requisition feedback for {{property_name}} for {{month}} has been submitted by {{submitter_name}}. Please review the report in your app.",
     test_call: "Hi {{user_name}}, this is Pratiksha from the Operations team. This is a quick test call to confirm that your phone notifications and voice alerts are working properly."
 };
 

@@ -226,6 +226,43 @@ export async function GET(request: NextRequest) {
                 next_followup_date: l.next_followup_date || null,
             }));
 
+        // Fetch lead sources list for category mapping
+        const { data: sourcesList } = await supabaseAdmin.from('crm_lead_sources').select('id, name');
+        const sourceMap = new Map((sourcesList || []).map((s: any) => [s.id, s.name]));
+
+        // Calculate source categories breakdown (LinkedIn, Meta, ABM, Other & Andheri places)
+        let catLinkedin = 0, catMeta = 0, catAbm = 0, catOther = 0;
+        let andheriTotal = 0, andheriLinkedin = 0, andheriMeta = 0, andheriAbm = 0, andheriOther = 0;
+        const sourceWise: Record<string, number> = {};
+
+        for (const l of all) {
+            const srcName = l.source_info?.name || sourceMap.get(l.lead_source) || (l.meta_lead_id ? 'Meta Lead Ads' : l.linkedin_lead_id ? 'LinkedIn' : 'Other');
+            sourceWise[srcName] = (sourceWise[srcName] || 0) + 1;
+
+            let cat: 'linkedin' | 'meta' | 'abm' | 'other' = 'other';
+            if (srcName === 'LinkedIn' || l.linkedin_lead_id) {
+                cat = 'linkedin';
+                catLinkedin++;
+            } else if (srcName.toLowerCase().includes('meta') || l.meta_lead_id) {
+                cat = 'meta';
+                catMeta++;
+            } else if (srcName === 'ABM') {
+                cat = 'abm';
+                catAbm++;
+            } else {
+                catOther++;
+            }
+
+            const loc = (l.location || l.city || '').toLowerCase();
+            if (loc.includes('andheri')) {
+                andheriTotal++;
+                if (cat === 'linkedin') andheriLinkedin++;
+                else if (cat === 'meta') andheriMeta++;
+                else if (cat === 'abm') andheriAbm++;
+                else andheriOther++;
+            }
+        }
+
         return NextResponse.json({
             ...counts,
             ...computePeriodCounts(all),
@@ -238,6 +275,19 @@ export async function GET(request: NextRequest) {
             pipeline_value: 0,
             target_achievement_percent: 0,
             revenue_closed: 0,
+            lead_source_analytics: Object.entries(sourceWise).map(([name, count]) => ({ source_name: name, count })),
+            source_category_breakdown: {
+                total: all.length,
+                linkedin: catLinkedin,
+                meta: catMeta,
+                abm: catAbm,
+                other: catOther,
+                andheri_total: andheriTotal,
+                andheri_linkedin: andheriLinkedin,
+                andheri_meta: andheriMeta,
+                andheri_abm: andheriAbm,
+                andheri_other: andheriOther,
+            },
         });
     }
 
@@ -343,6 +393,34 @@ export async function GET(request: NextRequest) {
             count: statusCountMap[s.id] || 0,
         }));
 
+    let catLinkedin = 0, catMeta = 0, catAbm = 0, catOther = 0;
+    let andheriTotal = 0, andheriLinkedin = 0, andheriMeta = 0, andheriAbm = 0, andheriOther = 0;
+    for (const l of leads) {
+        const srcName = l.source_info?.name || (l.meta_lead_id ? 'Meta Lead Ads' : l.linkedin_lead_id ? 'LinkedIn' : 'Other');
+        let cat: 'linkedin' | 'meta' | 'abm' | 'other' = 'other';
+        if (srcName === 'LinkedIn' || l.linkedin_lead_id) {
+            cat = 'linkedin';
+            catLinkedin++;
+        } else if (srcName.toLowerCase().includes('meta') || l.meta_lead_id) {
+            cat = 'meta';
+            catMeta++;
+        } else if (srcName === 'ABM') {
+            cat = 'abm';
+            catAbm++;
+        } else {
+            catOther++;
+        }
+
+        const loc = (l.location || l.city || '').toLowerCase();
+        if (loc.includes('andheri')) {
+            andheriTotal++;
+            if (cat === 'linkedin') andheriLinkedin++;
+            else if (cat === 'meta') andheriMeta++;
+            else if (cat === 'abm') andheriAbm++;
+            else andheriOther++;
+        }
+    }
+
     return NextResponse.json({
         ...counts,
         ...computePeriodCounts(leads),
@@ -350,6 +428,18 @@ export async function GET(request: NextRequest) {
         status_breakdown: statusBreakdown,
         property_wise_leads: Object.entries(propertyWise).map(([name, count]) => ({ property_name: name, count })),
         lead_source_analytics: Object.entries(sourceWise).map(([name, count]) => ({ source_name: name, count })),
+        source_category_breakdown: {
+            total: leads.length,
+            linkedin: catLinkedin,
+            meta: catMeta,
+            abm: catAbm,
+            other: catOther,
+            andheri_total: andheriTotal,
+            andheri_linkedin: andheriLinkedin,
+            andheri_meta: andheriMeta,
+            andheri_abm: andheriAbm,
+            andheri_other: andheriOther,
+        },
         territory_performance: Object.entries(cityWise).map(([city, count]) => ({ city, leads: count })),
         campaign_performance: Object.entries(campaignWise).map(([campaign, count]) => ({ campaign, leads: count })),
         user_performance: Object.entries(perUser).map(([uid, v]) => ({

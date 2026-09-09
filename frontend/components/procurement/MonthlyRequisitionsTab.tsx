@@ -14,6 +14,7 @@ import SiteRequisitionSheet from './SiteRequisitionSheet';
 import ApproverRequisitionModal from './ApproverRequisitionModal';
 import PropertyBudgetManagerModal from './PropertyBudgetManagerModal';
 import BulkApproverUploadModal from './BulkApproverUploadModal';
+import MonthlyFeedbackFormModal from './MonthlyFeedbackFormModal';
 
 interface Property {
     id: string;
@@ -59,6 +60,7 @@ interface MonthlyRequisitionsTabProps {
     propertyId?: string;
     userRole?: string;
     onNavigateToBudgets?: () => void;
+    onNavigateToFeedback?: () => void;
 }
 
 const MONTH_NAMES = [
@@ -66,7 +68,7 @@ const MONTH_NAMES = [
     'July', 'August', 'September', 'October', 'November', 'December'
 ];
 
-export default function MonthlyRequisitionsTab({ user, organizationId, propertyId, userRole, onNavigateToBudgets }: MonthlyRequisitionsTabProps) {
+export default function MonthlyRequisitionsTab({ user, organizationId, propertyId, userRole, onNavigateToBudgets, onNavigateToFeedback }: MonthlyRequisitionsTabProps) {
     const supabase = createClient();
 
     const userRoleLower = (userRole || user?.user_metadata?.role || '').toLowerCase();
@@ -80,10 +82,12 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
     const isProcurementRole =
         userRoleLower.includes('procurement') ||
         userRoleLower === 'org_super_admin' ||
+        userRoleLower === 'ops_super_admin' ||
         userRoleLower === 'master_admin';
 
     const isSuperAdmin =
         userRoleLower === 'org_super_admin' ||
+        userRoleLower === 'ops_super_admin' ||
         userRoleLower === 'master_admin';
 
     const canCreateRequisition = isPropertyAdmin || isSuperAdmin || isProcurementRole;
@@ -99,6 +103,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
     const [vendorQuoteModalReq, setVendorQuoteModalReq] = useState<MonthlyRequisition | null>(null);
     const [issuePoModalReq, setIssuePoModalReq] = useState<MonthlyRequisition | null>(null);
     const [showBudgetManagerModal, setShowBudgetManagerModal] = useState<boolean>(false);
+    const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState<boolean>(false);
 
     // Vendor Quote Modal Form State
     const [vendorName, setVendorName] = useState<string>('');
@@ -125,6 +130,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
     const [searchQuery, setSearchQuery] = useState<string>('');
     const [isExportingAll, setIsExportingAll] = useState<boolean>(false);
     const [showBulkApprovalModal, setShowBulkApprovalModal] = useState<boolean>(false);
+    const [isDragOver, setIsDragOver] = useState<boolean>(false);
 
     const handleDownloadAllPropertiesExcel = () => {
         const effectiveOrgId = organizationId || user?.user_metadata?.organization_id || properties[0]?.id;
@@ -465,8 +471,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                         </p>
                     </div>
                 </div>
-
-                <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                <div className="flex flex-wrap items-center gap-2">
                     <button
                         onClick={fetchRequisitions}
                         className="h-9 w-9 inline-flex items-center justify-center rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors cursor-pointer shrink-0"
@@ -479,25 +484,25 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                         <>
                             <button
                                 onClick={() => setShowBulkApprovalModal(true)}
-                                className="h-9 px-3.5 inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-sky-600 to-blue-700 hover:from-sky-700 hover:to-blue-800 text-white font-bold text-xs whitespace-nowrap transition-all shadow-xs cursor-pointer shrink-0"
+                                className="h-9 px-3 inline-flex items-center gap-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200/80 dark:border-slate-700 hover:bg-slate-200 font-bold text-xs whitespace-nowrap transition-all cursor-pointer shrink-0"
                                 title="Upload vendor quote and assign approver for multiple properties in 1 click"
                             >
-                                <Upload className="w-3.5 h-3.5 text-white shrink-0" />
-                                <span>Upload Quote & Approver (Multi-Site)</span>
+                                <Upload className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+                                <span>Upload Quote (Multi-Site)</span>
                             </button>
 
                             <button
                                 onClick={handleDownloadAllPropertiesExcel}
                                 disabled={isExportingAll}
-                                className="h-9 px-3.5 inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs whitespace-nowrap transition-all shadow-xs cursor-pointer disabled:opacity-60 shrink-0"
-                                title="Download 1 consolidated Excel file containing all properties with a separate page for each site"
+                                className="h-9 px-3 inline-flex items-center gap-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200/80 dark:border-slate-700 hover:bg-slate-200 font-bold text-xs whitespace-nowrap transition-all cursor-pointer disabled:opacity-60 shrink-0"
+                                title="Download 1 consolidated Excel file containing all properties"
                             >
                                 {isExportingAll ? (
-                                    <Loader2 className="w-3.5 h-3.5 animate-spin text-white shrink-0" />
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-600 shrink-0" />
                                 ) : (
-                                    <Download className="w-3.5 h-3.5 text-white shrink-0" />
+                                    <Download className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                                 )}
-                                <span>Download All Sites Excel</span>
+                                <span>Export Master (.xlsx)</span>
                             </button>
 
                             <button
@@ -511,11 +516,11 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                         window.location.href = url.pathname + '?' + url.searchParams.toString();
                                     }
                                 }}
-                                className="h-9 px-3.5 inline-flex items-center gap-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 text-emerald-800 dark:text-emerald-300 border border-emerald-200/80 dark:border-emerald-800/80 font-bold text-xs whitespace-nowrap transition-all cursor-pointer shadow-xs shrink-0"
+                                className="h-9 px-3 inline-flex items-center gap-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200/80 dark:border-slate-700 hover:bg-slate-200 font-bold text-xs whitespace-nowrap transition-all cursor-pointer shrink-0"
                                 title="Configure monthly requisition budgets per site/floor"
                             >
-                                <IndianRupee className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                                <span>Manage Budgets</span>
+                                <IndianRupee className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                                <span>Budgets</span>
                             </button>
 
                             <button
@@ -524,100 +529,161 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                     url.searchParams.set('tab', 'site-pricing');
                                     window.location.href = url.pathname + '?' + url.searchParams.toString();
                                 }}
-                                className="h-9 px-3.5 inline-flex items-center gap-1.5 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-600 font-bold text-xs whitespace-nowrap transition-all cursor-pointer shrink-0"
+                                className="h-9 px-3 inline-flex items-center gap-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200/80 dark:border-slate-700 hover:bg-slate-200 font-bold text-xs whitespace-nowrap transition-all cursor-pointer shrink-0"
                                 title="Configure contracted site-specific rates"
                             >
-                                <DollarSign className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                <DollarSign className="w-3.5 h-3.5 text-blue-600 shrink-0" />
                                 <span>Site Prices</span>
                             </button>
                         </>
                     )}
 
+                    <button
+                        onClick={() => isPropertyAdmin ? setIsFeedbackModalOpen(true) : onNavigateToFeedback?.()}
+                        className="h-9 px-3 inline-flex items-center gap-1.5 rounded-xl bg-amber-500/10 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-900/40 hover:bg-amber-500/20 font-bold text-xs whitespace-nowrap transition-all cursor-pointer shrink-0"
+                        title={isPropertyAdmin ? "Submit monthly requisition feedback" : "View monthly feedback reports"}
+                    >
+                        <FileText className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                        <span>{isPropertyAdmin ? "Monthly Feedback" : "Feedback Reports"}</span>
+                    </button>
+
                     {canCreateRequisition && (
                         <button
                             onClick={() => setViewMode('create_sheet')}
-                            className="h-9 px-3.5 inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs whitespace-nowrap transition-all shadow-xs cursor-pointer shrink-0"
+                            className="h-9 px-4 inline-flex items-center gap-2 rounded-xl bg-primary hover:bg-primary/90 text-white font-black text-xs whitespace-nowrap transition-all shadow-md shadow-primary/20 hover:scale-[1.02] cursor-pointer shrink-0"
                         >
-                            <Plus className="w-3.5 h-3.5 shrink-0" />
-                            <span>+ Create Sheet</span>
+                            <Plus className="w-4 h-4 shrink-0" />
+                            <span>+ Create Requisition</span>
                         </button>
                     )}
                 </div>
             </div>
 
-            {/* Filter Bar */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-                <div className="relative">
-                    <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
-                    <input
-                        type="text"
-                        placeholder="Search property, user..."
-                        value={searchQuery}
-                        onChange={e => setSearchQuery(e.target.value)}
-                        className="w-full pl-9 pr-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs sm:text-sm text-slate-800 dark:text-slate-200 placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 font-medium"
-                    />
-                </div>
-
-                {(!isSuperAdmin && !isProcurementRole && properties.length <= 1) ? (
-                    <div className="flex items-center gap-2 py-2 px-3.5 bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-700 rounded-xl text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-200 shadow-xs">
-                        <Building2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                        <span className="truncate">{properties.find(p => p.id === (propertyId || selectedPropertyFilter))?.name || properties[0]?.name || 'Loading Property...'}</span>
-                    </div>
-                ) : (
-                    <select
-                        value={selectedPropertyFilter}
-                        onChange={e => setSelectedPropertyFilter(e.target.value)}
-                        className="py-2 px-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs sm:text-sm text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 font-medium"
-                    >
-                        {(isSuperAdmin || isProcurementRole) && (
-                            <option value="all">All Properties</option>
-                        )}
-                        {(!isSuperAdmin && !isProcurementRole && properties.length > 1) && (
-                            <option value="all">All Assigned Properties</option>
-                        )}
-                        {properties.map(p => (
-                            <option key={p.id} value={p.id}>{p.name}</option>
-                        ))}
-                    </select>
-                )}
-
-                <select
-                    value={selectedMonthFilter}
-                    onChange={e => setSelectedMonthFilter(e.target.value)}
-                    className="py-2 px-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs sm:text-sm text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 font-medium"
-                >
-                    <option value="all">All Months</option>
-                    {MONTH_NAMES.map((month, idx) => (
-                        <option key={idx + 1} value={idx + 1}>{month}</option>
-                    ))}
-                </select>
-
-                <select
-                    value={selectedYearFilter}
-                    onChange={e => setSelectedYearFilter(e.target.value)}
-                    className="py-2 px-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs sm:text-sm text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 font-medium"
-                >
-                    <option value="all">All Years</option>
-                    <option value="2025">2025</option>
-                    <option value="2026">2026</option>
-                    <option value="2027">2027</option>
-                </select>
-
-                <select
-                    value={selectedStatusFilter}
-                    onChange={e => setSelectedStatusFilter(e.target.value)}
-                    className="py-2 px-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs sm:text-sm text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 font-medium"
-                >
-                    <option value="all">All Statuses</option>
-                    <option value="submitted">Submitted (Site)</option>
-                    <option value="pending_approval">Pending Approval</option>
-                    <option value="approved">Approved</option>
-                    <option value="rejected">Rejected</option>
-                    <option value="ordered">PO Issued / Ordered</option>
-                </select>
+            {/* Segmented Status Tabs Bar */}
+            <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-900 p-1 rounded-xl overflow-x-auto scrollbar-hide text-xs font-semibold">
+                {[
+                    { id: 'all', label: 'All Requisitions', count: requisitions.length },
+                    { id: 'submitted', label: 'Submitted (Site)', count: requisitions.filter(r => r.status === 'submitted' || r.status === 'uploaded').length },
+                    { id: 'pending_approval', label: 'Pending Approval', count: requisitions.filter(r => r.status === 'pending_approval' || r.status === 'acknowledged').length },
+                    { id: 'approved', label: 'Approved', count: requisitions.filter(r => r.status === 'approved').length },
+                    { id: 'ordered', label: 'PO Issued / Ordered', count: requisitions.filter(r => r.status === 'ordered').length },
+                ].map(st => {
+                    const isActive = selectedStatusFilter === st.id;
+                    return (
+                        <button
+                            key={st.id}
+                            type="button"
+                            onClick={() => setSelectedStatusFilter(st.id)}
+                            className={`px-3 py-1.5 rounded-lg whitespace-nowrap transition-all cursor-pointer flex items-center gap-1.5 ${
+                                isActive
+                                    ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-bold shadow-2xs'
+                                    : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
+                            }`}
+                        >
+                            <span>{st.label}</span>
+                            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                                isActive ? 'bg-primary/10 text-primary' : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-400'
+                            }`}>
+                                {st.count}
+                            </span>
+                        </button>
+                    );
+                })}
             </div>
 
-            {/* Requisitions List Table */}
+            {/* Filter Bar with Expanded Search Input */}
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-white dark:bg-slate-800 p-3 rounded-2xl border border-slate-200/80 dark:border-slate-700 shadow-2xs">
+                <div className="flex flex-wrap items-center gap-3 flex-1">
+                    {/* Search Input - Expanded Width */}
+                    <div className="relative w-full sm:w-72 lg:w-80">
+                        <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                            type="text"
+                            placeholder="Search property, user..."
+                            value={searchQuery}
+                            onChange={e => setSearchQuery(e.target.value)}
+                            className="w-full pl-9 pr-3 py-2 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-800 dark:text-slate-200 placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-primary/20 font-medium"
+                        />
+                        {searchQuery && (
+                            <button
+                                type="button"
+                                onClick={() => setSearchQuery('')}
+                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs"
+                            >
+                                ✕
+                            </button>
+                        )}
+                    </div>
+
+                    {/* Property Filter */}
+                    {(!isSuperAdmin && !isProcurementRole && properties.length <= 1) ? (
+                        <div className="flex items-center gap-2 py-2 px-3.5 bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-800 dark:text-slate-200 shadow-2xs">
+                            <Building2 className="w-3.5 h-3.5 text-primary shrink-0" />
+                            <span className="truncate">{properties.find(p => p.id === (propertyId || selectedPropertyFilter))?.name || properties[0]?.name || 'Loading Property...'}</span>
+                        </div>
+                    ) : (
+                        <select
+                            value={selectedPropertyFilter}
+                            onChange={e => setSelectedPropertyFilter(e.target.value)}
+                            className="py-2 px-3 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-primary/20 font-medium cursor-pointer"
+                        >
+                            {(isSuperAdmin || isProcurementRole) && (
+                                <option value="all">All Properties</option>
+                            )}
+                            {(!isSuperAdmin && !isProcurementRole && properties.length > 1) && (
+                                <option value="all">All Assigned Properties</option>
+                            )}
+                            {properties.map(p => (
+                                <option key={p.id} value={p.id}>{p.name}</option>
+                            ))}
+                        </select>
+                    )}
+
+                    {/* Month Filter */}
+                    <select
+                        value={selectedMonthFilter}
+                        onChange={e => setSelectedMonthFilter(e.target.value)}
+                        className="py-2 px-3 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-primary/20 font-medium cursor-pointer"
+                    >
+                        <option value="all">All Months</option>
+                        {MONTH_NAMES.map((month, idx) => (
+                            <option key={idx + 1} value={idx + 1}>{month}</option>
+                        ))}
+                    </select>
+
+                    {/* Year Filter */}
+                    <select
+                        value={selectedYearFilter}
+                        onChange={e => setSelectedYearFilter(e.target.value)}
+                        className="py-2 px-3 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-primary/20 font-medium cursor-pointer"
+                    >
+                        <option value="all">All Years</option>
+                        <option value="2025">2025</option>
+                        <option value="2026">2026</option>
+                        <option value="2027">2027</option>
+                    </select>
+
+                    {/* Active Filter Clear Tag */}
+                    {(searchQuery || selectedPropertyFilter !== 'all' || selectedMonthFilter !== 'all' || selectedYearFilter !== 'all' || selectedStatusFilter !== 'all') && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setSearchQuery('');
+                                setSelectedPropertyFilter('all');
+                                setSelectedMonthFilter('all');
+                                setSelectedYearFilter('all');
+                                setSelectedStatusFilter('all');
+                            }}
+                            className="px-2.5 py-1.5 rounded-lg text-xs font-bold text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 hover:bg-rose-100 transition-colors flex items-center gap-1 cursor-pointer"
+                        >
+                            <span>Clear Filters</span>
+                            <X className="w-3 h-3" />
+                        </button>
+                    )}
+                </div>
+            </div>
+
+            {/* Requisitions List Table & Enhanced Empty State with Drag-and-Drop Dropzone */}
             <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700 shadow-xs overflow-hidden">
                 {isLoading ? (
                     <div className="p-4 space-y-3 animate-pulse">
@@ -637,22 +703,75 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                         ))}
                     </div>
                 ) : filteredRequisitions.length === 0 ? (
-                    <div className="py-16 text-center text-slate-500 dark:text-slate-400">
-                        <FileSpreadsheet className="w-12 h-12 mx-auto mb-3 text-slate-300 dark:text-slate-600" />
-                        <h3 className="text-base font-semibold text-slate-800 dark:text-slate-200 mb-1">No Requisitions Found</h3>
-                        <p className="text-xs md:text-sm">Click "+ Create Requisition Sheet" to create your first monthly requisition.</p>
-                        {(isProcurementRole || isSuperAdmin) && (
-                            <div className="mt-4 flex items-center justify-center gap-3">
+                    <div
+                        onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+                        onDragLeave={() => setIsDragOver(false)}
+                        onDrop={(e) => {
+                            e.preventDefault();
+                            setIsDragOver(false);
+                            if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                                setShowBulkApprovalModal(true);
+                            }
+                        }}
+                        className={`p-8 md:p-12 text-center border-2 border-dashed transition-all ${
+                            isDragOver
+                                ? 'border-primary bg-primary/5 dark:bg-primary/10'
+                                : 'border-slate-200 dark:border-slate-700/80 bg-slate-50/50 dark:bg-slate-900/30'
+                        }`}
+                    >
+                        <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-primary/10 border border-primary/20 text-primary flex items-center justify-center shadow-xs">
+                            <FileSpreadsheet className="w-7 h-7" />
+                        </div>
+
+                        <h3 className="text-base font-bold text-slate-900 dark:text-white mb-1">
+                            No Monthly Requisitions Found
+                        </h3>
+                        <p className="text-xs md:text-sm text-slate-500 dark:text-slate-400 max-w-md mx-auto mb-6">
+                            Create a monthly requisition sheet for your property or drag & drop an existing Excel spreadsheet/vendor quote.
+                        </p>
+
+                        {/* Workflow Steps Guidance */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 max-w-xl mx-auto mb-6 text-left">
+                            <div className="p-3 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                                <div className="text-[10px] font-black uppercase text-primary mb-0.5">Step 1</div>
+                                <div className="text-xs font-bold text-slate-800 dark:text-slate-200">Build or Upload Sheet</div>
+                                <div className="text-[11px] text-slate-500">Create online or upload Excel template</div>
+                            </div>
+                            <div className="p-3 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                                <div className="text-[10px] font-black uppercase text-sky-600 mb-0.5">Step 2</div>
+                                <div className="text-xs font-bold text-slate-800 dark:text-slate-200">Attach Quotation</div>
+                                <div className="text-[11px] text-slate-500">Add vendor pricing & select approver</div>
+                            </div>
+                            <div className="p-3 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                                <div className="text-[10px] font-black uppercase text-emerald-600 mb-0.5">Step 3</div>
+                                <div className="text-xs font-bold text-slate-800 dark:text-slate-200">Approve & Issue PO</div>
+                                <div className="text-[11px] text-slate-500">Generate PO and track material delivery</div>
+                            </div>
+                        </div>
+
+                        {/* Action Buttons in Empty State */}
+                        <div className="flex flex-wrap items-center justify-center gap-3">
+                            {canCreateRequisition && (
+                                <button
+                                    onClick={() => setViewMode('create_sheet')}
+                                    className="px-5 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-white font-extrabold text-xs shadow-md shadow-primary/20 transition-all flex items-center gap-2 cursor-pointer"
+                                >
+                                    <Plus className="w-4 h-4" />
+                                    <span>+ Create Requisition Sheet</span>
+                                </button>
+                            )}
+
+                            {(isProcurementRole || isSuperAdmin) && (
                                 <button
                                     onClick={handleDownloadAllPropertiesExcel}
                                     disabled={isExportingAll}
-                                    className="h-9 px-4 inline-flex items-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md shadow-emerald-600/20 transition-all cursor-pointer disabled:opacity-60"
+                                    className="px-4 py-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 text-xs font-bold transition-all flex items-center gap-2 cursor-pointer disabled:opacity-60"
                                 >
-                                    {isExportingAll ? <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" /> : <Download className="w-3.5 h-3.5 shrink-0" />}
-                                    <span>Download All Sites Master Sheet (.xlsx)</span>
+                                    {isExportingAll ? <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" /> : <Download className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
+                                    <span>Download Master Sheet (.xlsx)</span>
                                 </button>
-                            </div>
-                        )}
+                            )}
+                        </div>
                     </div>
                 ) : (
                     <div className="overflow-x-auto">
@@ -1150,6 +1269,14 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                 onSuccess={() => {
                     fetchRequisitions();
                 }}
+            />
+            {/* Monthly Requisition Feedback Modal */}
+            <MonthlyFeedbackFormModal
+                isOpen={isFeedbackModalOpen}
+                onClose={() => setIsFeedbackModalOpen(false)}
+                onSuccess={() => fetchRequisitions()}
+                properties={properties}
+                selectedPropertyId={propertyId || (properties.length > 0 ? properties[0].id : undefined)}
             />
         </div>
     );

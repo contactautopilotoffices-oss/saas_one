@@ -93,6 +93,7 @@ export const DEFAULT_WHATSAPP_SERVICE_CONFIG: Record<string, FeatureWhatsAppConf
     requisition_po_issued: { enabled: true, roles: ['property_admin'], user_ids: [], notify_requester: true },
     procurement_vendor_tag: { enabled: true, roles: ['procurement'], user_ids: [] },
     procurement_vendor_aligned: { enabled: true, roles: [], user_ids: [], notify_requester: true },
+    monthly_requisition_feedback_submitted: { enabled: true, roles: ['procurement', 'purchase_manager', 'org_super_admin'], user_ids: [] },
     meeting_rooms: { enabled: true, roles: ['property_admin'], user_ids: [], notify_requester: true },
     meeting_room_booked: { enabled: true, roles: ['property_admin'], user_ids: [], notify_requester: true },
     meeting_room_cancelled: { enabled: true, roles: ['property_admin'], user_ids: [], notify_requester: true },

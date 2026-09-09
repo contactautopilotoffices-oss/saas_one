@@ -194,10 +194,7 @@ export async function PUT(
             }
 
             if (updates.status === 'completed') {
-                const { NotificationService } = await import('@/backend/services/NotificationService');
-                NotificationService.afterSOPCompleted(completionId).catch(err => {
-                    console.error('[SOP Completion PATCH] afterSOPCompleted notification error:', err);
-                });
+                // Notification is handled automatically via DB event_outbox trigger (trg_sop_runs_outbox)
             }
         }
 

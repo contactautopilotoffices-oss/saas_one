@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Search, Filter, Download, Plus, ChevronDown, MoreHorizontal, Phone, Mail, MapPin, Building, User, Users, Calendar, ArrowUpDown, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@/frontend/context/AuthContext';
@@ -280,8 +281,97 @@ export default function LeadsTable({ onLeadSelect, onCreateLead, updatedLead, re
         );
     };
 
+    const searchParams = useSearchParams();
+
+    // Sync lead_source URL query parameter when navigating from dashboard tiles
+    useEffect(() => {
+        const srcParam = searchParams?.get('lead_source');
+        if (srcParam && sources.length > 0) {
+            const norm = srcParam.toLowerCase();
+            let matchedIds: string[] = [];
+            if (norm === 'other') {
+                matchedIds = sources.filter(s => !['linkedin', 'abm'].includes(s.name.toLowerCase()) && !s.name.toLowerCase().includes('meta')).map(s => s.id);
+            } else {
+                matchedIds = sources.filter(s => s.name.toLowerCase() === norm || s.name.toLowerCase().includes(norm) || s.id === srcParam).map(s => s.id);
+            }
+            if (matchedIds.length > 0) {
+                setStagedFilters(prev => ({ ...prev, lead_source: matchedIds }));
+                setAppliedFilters(prev => ({ ...prev, lead_source: matchedIds }));
+            }
+        }
+    }, [searchParams, sources]);
+
     return (
         <div className="space-y-4">
+            {/* Quick Source Category Filter Bar */}
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar text-xs font-bold">
+                <span className="text-text-tertiary uppercase tracking-wider text-[10px] font-black mr-1 shrink-0">Source Category:</span>
+                <button
+                    onClick={() => {
+                        const next = { ...stagedFilters };
+                        delete next.lead_source;
+                        setStagedFilters(next);
+                        setAppliedFilters(next);
+                        setPage(1);
+                    }}
+                    className={`px-3 py-1.5 rounded-xl border transition-all shrink-0 ${!appliedFilters.lead_source?.length ? 'bg-primary text-white border-primary shadow-sm' : 'bg-surface hover:bg-muted text-text-secondary border-border'}`}
+                >
+                    All (Total)
+                </button>
+                <button
+                    onClick={() => {
+                        const src = sources.find(s => s.name.toLowerCase() === 'linkedin');
+                        const ids = src ? [src.id] : [];
+                        const next = { ...stagedFilters, lead_source: ids };
+                        setStagedFilters(next);
+                        setAppliedFilters(next);
+                        setPage(1);
+                    }}
+                    className={`px-3 py-1.5 rounded-xl border transition-all shrink-0 ${appliedFilters.lead_source?.some(id => sources.find(s => s.id === id)?.name.toLowerCase() === 'linkedin') ? 'bg-blue-600 text-white border-blue-600 shadow-sm' : 'bg-blue-50/60 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800/40 hover:bg-blue-100'}`}
+                >
+                    💼 LinkedIn
+                </button>
+                <button
+                    onClick={() => {
+                        const src = sources.find(s => s.name.toLowerCase().includes('meta'));
+                        const ids = src ? [src.id] : [];
+                        const next = { ...stagedFilters, lead_source: ids };
+                        setStagedFilters(next);
+                        setAppliedFilters(next);
+                        setPage(1);
+                    }}
+                    className={`px-3 py-1.5 rounded-xl border transition-all shrink-0 ${appliedFilters.lead_source?.some(id => sources.find(s => s.id === id)?.name.toLowerCase().includes('meta')) ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-indigo-50/60 dark:bg-indigo-950/30 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800/40 hover:bg-indigo-100'}`}
+                >
+                    📣 Meta Lead Ads
+                </button>
+                <button
+                    onClick={() => {
+                        const src = sources.find(s => s.name.toLowerCase() === 'abm');
+                        const ids = src ? [src.id] : [];
+                        const next = { ...stagedFilters, lead_source: ids };
+                        setStagedFilters(next);
+                        setAppliedFilters(next);
+                        setPage(1);
+                    }}
+                    className={`px-3 py-1.5 rounded-xl border transition-all shrink-0 ${appliedFilters.lead_source?.some(id => sources.find(s => s.id === id)?.name.toLowerCase() === 'abm') ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm' : 'bg-emerald-50/60 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800/40 hover:bg-emerald-100'}`}
+                >
+                    🎯 ABM
+                </button>
+                <button
+                    onClick={() => {
+                        const otherSrcs = sources.filter(s => !['linkedin', 'abm'].includes(s.name.toLowerCase()) && !s.name.toLowerCase().includes('meta'));
+                        const ids = otherSrcs.map(s => s.id);
+                        const next = { ...stagedFilters, lead_source: ids };
+                        setStagedFilters(next);
+                        setAppliedFilters(next);
+                        setPage(1);
+                    }}
+                    className={`px-3 py-1.5 rounded-xl border transition-all shrink-0 ${appliedFilters.lead_source?.some(id => !['linkedin', 'abm'].includes(sources.find(s => s.id === id)?.name.toLowerCase() || '') && !sources.find(s => s.id === id)?.name.toLowerCase().includes('meta')) ? 'bg-slate-700 text-white border-slate-700 shadow-sm' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-200'}`}
+                >
+                    📁 Other
+                </button>
+            </div>
+
             {/* Header */}
             <div className="flex items-center justify-between gap-3">
                 {/* Search */}

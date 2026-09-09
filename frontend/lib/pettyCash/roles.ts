@@ -3,12 +3,12 @@
 // (The API still enforces permissions server-side.)
 
 const TENANT_LIKE = new Set(['tenant', 'tenant_user', 'super_tenant', 'vendor']);
-const ORG_ADMIN = new Set(['org_super_admin', 'org_admin', 'master_admin']);
+const ORG_ADMIN = new Set(['org_super_admin', 'org_admin', 'master_admin', 'ops_super_admin']);
 const APPROVER = new Set([
-    'org_super_admin', 'org_admin', 'master_admin',
+    'org_super_admin', 'org_admin', 'master_admin', 'ops_super_admin',
     'property_admin', 'manager_executive', 'soft_service_manager', 'soft_service_supervisor',
 ]);
-const FINANCE = new Set(['accounts', 'org_super_admin', 'master_admin']);
+const FINANCE = new Set(['accounts', 'org_super_admin', 'master_admin', 'ops_super_admin']);
 
 export interface PettyCashCaps {
     canSee: boolean;
