@@ -42,14 +42,17 @@ import {
     Activity,
     AlertTriangle,
     BadgeCheck,
+    BookOpen,
     Bot,
     ChevronDown,
     CircleDot,
     Coins,
     Gauge,
+    IndianRupee,
     KeyRound,
     Loader2,
     PauseCircle,
+    PenLine,
     PlayCircle,
     Plus,
     RefreshCw,
@@ -62,6 +65,9 @@ import {
 import AgentPlanCanvas, { type AgentPlan } from '@/frontend/components/agents/AgentPlanCanvas';
 import AgentDelivery from '@/frontend/components/agents/AgentDelivery';
 import TabBoundary from '@/frontend/components/agents/TabBoundary';
+import AgentCost from '@/frontend/components/agents/AgentCost';
+import AgentPromptEditor from '@/frontend/components/agents/AgentPromptEditor';
+import AgentContext from '@/frontend/components/agents/AgentContext';
 import useAgentDraft from '@/frontend/components/agents/useAgentDraft';
 import AgentIdentityStep, { type AgentIdentity } from '@/frontend/components/agents/AgentIdentityStep';
 import Hint from '@/frontend/components/agents/Hint';
@@ -182,11 +188,20 @@ interface ComposeResponse {
     error?: string;
 }
 
-type DetailTab = 'configure' | 'delivery' | 'activity' | 'uptime' | 'profile' | 'reinforcement' | 'council' | 'credentials';
+type DetailTab = 'configure' | 'prompt' | 'context' | 'delivery' | 'cost' | 'activity' | 'uptime' | 'profile' | 'reinforcement' | 'council' | 'credentials';
 
+/**
+ * ORDER IS THE SEQUENCE SOMEBODY ACTUALLY WORKS IN, not the order the tabs were
+ * written: set it up, tell it the rules, give it the facts, decide who hears
+ * from it, then see what it costs. Everything after that is looking back at
+ * what it did.
+ */
 const TABS: Array<{ key: DetailTab; label: string; Icon: React.ElementType }> = [
     { key: 'configure', label: 'Configure', Icon: Wand2 },
+    { key: 'prompt', label: 'Instructions', Icon: PenLine },
+    { key: 'context', label: 'Examples & facts', Icon: BookOpen },
     { key: 'delivery', label: 'Delivery', Icon: Send },
+    { key: 'cost', label: 'Cost', Icon: IndianRupee },
     { key: 'activity', label: 'Activity', Icon: Activity },
     { key: 'uptime', label: 'Uptime', Icon: Timer },
     { key: 'profile', label: 'Profile', Icon: Gauge },
@@ -856,6 +871,23 @@ export default function AgentConsole({ orgId }: AgentConsoleProps) {
                                             onSaved={() => void load(true)}
                                         />
                                     )}
+                                    {tab === 'prompt' && (
+                                        <AgentPromptEditor
+                                            key={selected.agent_key}
+                                            orgId={orgId}
+                                            agentKey={selected.agent_key}
+                                            onSaved={() => void load(true)}
+                                        />
+                                    )}
+                                    {tab === 'context' && (
+                                        <AgentContext
+                                            key={selected.agent_key}
+                                            orgId={orgId}
+                                            agentKey={selected.agent_key}
+                                            onSaved={() => void load(true)}
+                                        />
+                                    )}
+                                    {tab === 'cost' && <AgentCost orgId={orgId} agentKey={selected.agent_key} />}
                                     {tab === 'activity' && <AgentActivity orgId={orgId} agentKey={selected.agent_key} />}
                                     {tab === 'uptime' && <AgentUptime orgId={orgId} agentKey={selected.agent_key} />}
                                     {tab === 'profile' && <AgentProfile orgId={orgId} agentKey={selected.agent_key} />}
