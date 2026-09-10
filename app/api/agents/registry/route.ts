@@ -778,6 +778,39 @@ async function logCouncil(
 
 /* -------------------------------------------------------------------------- */
 /* upsert                                                                     */
+/**
+ * A SAVE MUST NEVER BE ABLE TO EMPTY A DELIVERY CONFIG.
+ *
+ * `runtime` is written as a whole object, so a form that posts a half-loaded
+ * draft replaces the lot. On 10 Sept that is exactly what happened: Ira's
+ * recipients, mailboxes and site rules all went to null. The 11:00 scan then
+ * ran perfectly — six findings, ten checks, nothing skipped — built its mail
+ * and had nobody to send it to. `sent 0, skipped 2`, and no other sign.
+ *
+ * Losing every recipient is never a thing somebody meant to do in one click.
+ * Clearing one list is: emptying the technical role is a normal edit. So the
+ * rule is narrow — if the stored value HAD recipients or an inbox and the
+ * incoming one has neither, that is a wipe, and it is refused with the reason.
+ * Everything short of that is allowed through untouched.
+ */
+function wipesDeliveryConfig(
+    prev: Record<string, unknown> | null | undefined,
+    next: Record<string, unknown> | null | undefined,
+): string | null {
+    if (!prev || !next) return null;
+    const had = (o: Record<string, unknown>, k: string) => {
+        const v = o[k] as Record<string, unknown> | null | undefined;
+        return Boolean(v && typeof v === 'object' && Object.keys(v).length > 0);
+    };
+    const hadAny = had(prev, 'recipients') || had(prev, 'inbox');
+    const hasAny = had(next, 'recipients') || had(next, 'inbox');
+    if (!hadAny || hasAny) return null;
+    return 'This save would clear every recipient and mailbox at once, which would leave the agent '
+        + 'building its mail and having nobody to send it to. If that is genuinely what you want, clear '
+        + 'the fields one section at a time.';
+}
+
+
 /* -------------------------------------------------------------------------- */
 
 async function upsertAgent(supabase: Db, orgId: string, userId: string, body: Record<string, unknown>) {
@@ -787,13 +820,16 @@ async function upsertAgent(supabase: Db, orgId: string, userId: string, body: Re
 
     const existingRes = await supabase
         .from('oem_agents')
-        .select('id, status, display_name, department, role_description')
+        .select('id, status, display_name, department, role_description, runtime')
         .eq('organization_id', orgId)
         .eq('agent_key', input.agent_key)
         .maybeSingle();
 
     if (existingRes.error && isMissingSchema(existingRes.error)) return NOT_PROVISIONED('oem_agents');
-    const existing = existingRes.data as { id: string; status: string; display_name: string } | null;
+    const existing = existingRes.data as {
+        id: string; status: string; display_name: string;
+        runtime?: Record<string, unknown> | null;
+    } | null;
 
     // Creating still needs a name; updating does not. Checked here rather than in
     // the schema because only here is it known which of the two this is.
@@ -803,6 +839,9 @@ async function upsertAgent(supabase: Db, orgId: string, userId: string, body: Re
             { status: 400 },
         );
     }
+
+    const wipe = wipesDeliveryConfig(existing?.runtime, input.runtime as Record<string, unknown> | null | undefined);
+    if (wipe) return NextResponse.json({ error: wipe, field: 'runtime' }, { status: 409 });
 
     // Only fields the caller actually sent are written. Status is NOT settable
     // here — it moves through set_status so every transition is logged and the

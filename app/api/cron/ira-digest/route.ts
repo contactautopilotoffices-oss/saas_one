@@ -223,6 +223,19 @@ export async function GET(request: NextRequest) {
                 }
 
                 const sent: string[] = [];
+                /**
+                 * Slices that produced a mail nobody could receive.
+                 *
+                 * On 10 Sept the delivery config was wiped, and this run scanned
+                 * 5,511 orders, raised six findings, passed all ten checks and
+                 * reported `sent 0, skipped 2` — a line that reads like a quiet
+                 * morning. It was not a quiet morning: the work was done and
+                 * thrown away, and nothing anywhere said so.
+                 *
+                 * A skip is a decision. Having no recipient is a fault, and the
+                 * two must not share a word.
+                 */
+                const undeliverable: string[] = [];
                 const skipped: string[] = [];
 
                 // A property's city is what makes "SS Plaza" a Bengaluru finding.
@@ -241,7 +254,13 @@ export async function GET(request: NextRequest) {
 
                     for (const slice of slices) {
                         const who = slice.label ? `${b.recipient.key}/${slice.label}` : b.recipient.key;
-                        if (!slice.to.length) { skipped.push(`${who}: no address configured`); continue; }
+                        if (!slice.to.length) {
+                            // Counted separately from an ordinary skip: this one
+                            // means the mail was built and had nowhere to go.
+                            undeliverable.push(who);
+                            skipped.push(`${who}: no address configured`);
+                            continue;
+                        }
 
                         const actorId = b.recipient.canDisposition ? await recipientUserId(orgId, slice.to) : null;
                         const links: FeedbackLinks = actorId
@@ -287,7 +306,12 @@ export async function GET(request: NextRequest) {
                 const unmatched = unmatchedProperties(mem.findings, delivery.siteRules, cityOf);
 
                 return {
-                    outcome: `sent ${sent.length}, skipped ${skipped.length} · ${w.label}`,
+                    outcome: undeliverable.length && !sent.length
+                        ? `NOBODY TO SEND TO — ${bundles.length} bundle(s) built from ${mem.findings.length} finding(s) and not one had a recipient. Check Delivery: ${undeliverable.join(', ')}.`
+                        : `sent ${sent.length}, skipped ${skipped.length}${undeliverable.length ? `, ${undeliverable.length} with no recipient` : ''} · ${w.label}`,
+                    // A run that built mail for nobody did not succeed and did
+                    // not choose to skip. It failed, and it says so where the
+                    // console and the heartbeat both read it.
                     status: (sent.length ? 'succeeded' : 'skipped') as 'succeeded' | 'skipped',
                     grounded: true,
                     result: { sent, skipped, unmatchedSites: unmatched, vetted: stamp ? { by: stamp.reviewer, verdict: stamp.verdict, concerns: stamp.concerns.length } : null, council: { escalated: council.escalated.length, noted: council.noted }, usingEnvFallback: delivery.usingEnvFallback },
