@@ -570,6 +570,42 @@ export interface AgentRespondConfig {
     on?: Array<'need_info' | 'blocked'>;
 }
 
+/**
+ * ONE WORKED input -> output PAIR, injected into the prompt as real turns.
+ *
+ * Few-shot examples are the highest-quality-per-token lever available and this
+ * repo had none. They live in `runtime` rather than their own table because they
+ * are configuration a person edits and the whole blob is read at once — the same
+ * argument as `inbox` and `recipients` above; the full reasoning, and the caps
+ * that make a jsonb column safe here, are in backend/lib/agents/context.ts.
+ *
+ * COST WARNING, and it is the reason for MAX_EXAMPLES: an example is re-sent as
+ * input tokens on EVERY call this agent makes, forever. Four examples is not a
+ * one-off upload, it is a standing monthly bill. The console shows ₹/run before
+ * a save.
+ */
+export interface AgentResponseExample {
+    /** Stable id so the editor can reorder or delete without index bugs. */
+    id: string;
+    /** What arrives — a mail body, a question, a row. */
+    input: string;
+    /** What a good answer to it looks like. This is the shape being taught. */
+    output: string;
+    /** Why this example exists. Operator-facing; never sent to the model. */
+    note?: string;
+}
+
+/**
+ * Facts that are true for this org on every run — site codes, owners, the vendor
+ * shortlist, approval thresholds — pinned once instead of re-derived per run.
+ * Prepended to the prompt as fenced DATA: it can add facts, never relax a rule.
+ */
+export interface AgentBakedContext {
+    facts: string;
+    /** When the operator last checked it. Operator-facing; never sent. */
+    reviewed_at?: string;
+}
+
 export interface AgentRuntimeConfig {
     inbox?: AgentInboxConfig;
     recipients?: AgentRecipientConfig;
@@ -589,6 +625,14 @@ export interface AgentRuntimeConfig {
      * stamped on the digest. Null means nobody reviews the work.
      */
     reports_to?: string | null;
+    /**
+     * Few-shot pairs injected ahead of the live turn. Absent or empty means the
+     * prompt is assembled exactly as it was before this key existed — the
+     * additive-only invariant proved in backend/lib/agents/context.ts.
+     */
+    response_examples?: AgentResponseExample[];
+    /** Pinned org facts prepended to the prompt. Null/absent = nothing added. */
+    baked_context?: AgentBakedContext | null;
 }
 
 /** oem_agents.model_config — the operator-editable inference settings. */

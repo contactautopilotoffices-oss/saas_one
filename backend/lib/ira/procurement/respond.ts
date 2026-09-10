@@ -65,6 +65,7 @@
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { councilChat, councilRunCost } from '@/backend/lib/council/llm';
 import { sendDigest } from '@/backend/lib/ira/dailyDigest';
+import { agentMessages, bakedContext } from '@/backend/lib/agents/context';
 import { poNumbersFromText, replyTag, stripSignature } from './reply';
 import { DISPOSITION_SPECS, type Disposition } from './disposition';
 import { entityUrl, type EntityRef } from './types';
@@ -520,7 +521,10 @@ async function answerQuestion(
 
     let draft: string;
     try {
-        draft = await councilChat([{ role: 'system', content: system }, { role: 'user', content: user }], 'email');
+        // agentMessages ADDS the operator's pinned org facts and worked examples
+        // when there are any, and returns the identical two-message array this
+        // line built by hand when there are none. See context.ts §4.
+        draft = await councilChat(agentMessages(system, user, await bakedContext(orgId, agentKey)), 'email');
     } catch (e) {
         return { sent: false, why: `model call failed: ${e instanceof Error ? e.message : e}` };
     }
@@ -634,7 +638,9 @@ export async function respondToReply(
     let draft: string;
     try {
         const system = systemFor(SYSTEM, await operatorOverlay(orgId, agentKey));
-        draft = await councilChat([{ role: 'system', content: system }, { role: 'user', content: user }], 'email');
+        // Same additive contract as the question branch above: no examples and no
+        // pinned facts means the exact bytes that went out before.
+        draft = await councilChat(agentMessages(system, user, await bakedContext(orgId, agentKey)), 'email');
     } catch (e) {
         return { sent: false, why: `model call failed: ${e instanceof Error ? e.message : e}` };
     }

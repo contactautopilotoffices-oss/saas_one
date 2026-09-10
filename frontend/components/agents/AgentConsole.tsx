@@ -42,14 +42,17 @@ import {
     Activity,
     AlertTriangle,
     BadgeCheck,
+    BookOpen,
     Bot,
     ChevronDown,
     CircleDot,
     Coins,
     Gauge,
+    IndianRupee,
     KeyRound,
     Loader2,
     PauseCircle,
+    PenLine,
     PlayCircle,
     Plus,
     RefreshCw,
@@ -61,6 +64,12 @@ import {
     X, Workflow, Send,PanelLeftClose,PanelLeftOpen, Crown,} from 'lucide-react';
 import AgentPlanCanvas, { type AgentPlan } from '@/frontend/components/agents/AgentPlanCanvas';
 import AgentDelivery from '@/frontend/components/agents/AgentDelivery';
+import TabBoundary from '@/frontend/components/agents/TabBoundary';
+import AgentCost from '@/frontend/components/agents/AgentCost';
+import AgentPromptEditor from '@/frontend/components/agents/AgentPromptEditor';
+import AgentContext from '@/frontend/components/agents/AgentContext';
+import useAgentDraft from '@/frontend/components/agents/useAgentDraft';
+import AgentIdentityStep, { type AgentIdentity } from '@/frontend/components/agents/AgentIdentityStep';
 import Hint from '@/frontend/components/agents/Hint';
 import AgentPreflight from '@/frontend/components/agents/AgentPreflight';
 import AgentFirstRun from '@/frontend/components/agents/AgentFirstRun';
@@ -179,11 +188,20 @@ interface ComposeResponse {
     error?: string;
 }
 
-type DetailTab = 'configure' | 'delivery' | 'activity' | 'uptime' | 'profile' | 'reinforcement' | 'council' | 'credentials';
+type DetailTab = 'configure' | 'prompt' | 'context' | 'delivery' | 'cost' | 'activity' | 'uptime' | 'profile' | 'reinforcement' | 'council' | 'credentials';
 
+/**
+ * ORDER IS THE SEQUENCE SOMEBODY ACTUALLY WORKS IN, not the order the tabs were
+ * written: set it up, tell it the rules, give it the facts, decide who hears
+ * from it, then see what it costs. Everything after that is looking back at
+ * what it did.
+ */
 const TABS: Array<{ key: DetailTab; label: string; Icon: React.ElementType }> = [
     { key: 'configure', label: 'Configure', Icon: Wand2 },
+    { key: 'prompt', label: 'Instructions', Icon: PenLine },
+    { key: 'context', label: 'Examples & facts', Icon: BookOpen },
     { key: 'delivery', label: 'Delivery', Icon: Send },
+    { key: 'cost', label: 'Cost', Icon: IndianRupee },
     { key: 'activity', label: 'Activity', Icon: Activity },
     { key: 'uptime', label: 'Uptime', Icon: Timer },
     { key: 'profile', label: 'Profile', Icon: Gauge },
@@ -416,6 +434,31 @@ export default function AgentConsole({ orgId }: AgentConsoleProps) {
 
     const [statusBusy, setStatusBusy] = useState(false);
     const [statusError, setStatusError] = useState<string | null>(null);
+
+    /**
+     * UNFINISHED WORK, VISIBLE AND RESUMABLE.
+     *
+     * The composer was one-shot: describe an agent, answer its questions, and
+     * lose all of it to a closed tab or a stray click. There was no list of work
+     * in progress and no way back to it, so the only safe way to use it was in
+     * one sitting — which is not how anyone actually works.
+     *
+     * The drafts hook degrades on its own: until 20260910000001_agent_drafts is
+     * applied it reports provisioned:false and this whole strip renders nothing,
+     * so a missing migration costs the feature and not the console.
+     */
+    const draftStore = useAgentDraft(orgId);
+
+    /**
+     * WHO IS BEING HIRED, held until the job is described.
+     *
+     * Creating an agent used to open straight onto "describe the job", so the
+     * composer invented a name and a department from a sentence and the
+     * operator met their new colleague inside a generated proposal. Identity
+     * comes first now; this is where it waits so the composer can be handed it
+     * as fact rather than inferring it.
+     */
+    const [identity, setIdentity] = useState<AgentIdentity | null>(null);
 
     const changeStatus = async (next: AgentLifecycleStatus) => {
         if (!selected || statusBusy) return;
@@ -650,6 +693,43 @@ export default function AgentConsole({ orgId }: AgentConsoleProps) {
                                     />
                                 ))
                             )}
+
+                            {/* Unfinished compositions, newest first. Renders
+                                nothing at all when the table is absent or the
+                                list is empty — an empty heading is worse than
+                                no heading. */}
+                            {(draftStore.drafts?.length ?? 0) > 0 && (
+                                <div className="mt-3 border-t border-border pt-3">
+                                    <p className="mb-2 px-1 text-[10.5px] font-semibold uppercase tracking-wide text-text-tertiary">
+                                        Unfinished — pick up where you left off
+                                    </p>
+                                    <div className="space-y-1.5">
+                                        {(draftStore.drafts ?? []).map((d) => (
+                                            <button
+                                                key={d.id}
+                                                type="button"
+                                                onClick={async () => {
+                                                    const row = await draftStore.resume(d.id);
+                                                    if (!row) return;
+                                                    setCreatingNew(true);
+                                                    if (row.agent_key) setSelectedKey(row.agent_key);
+                                                }}
+                                                className="w-full rounded-xl border border-dashed border-border bg-card px-3 py-2 text-left hover:border-primary/40 hover:bg-card-tint"
+                                            >
+                                                <span className="block truncate text-[12px] font-medium text-foreground">
+                                                    {d.title || 'Untitled draft'}
+                                                </span>
+                                                <span className="mt-0.5 block text-[10.5px] text-text-tertiary">
+                                                    {d.is_new_agent ? 'New agent' : d.agent_key}
+                                                    {d.answered_count > 0 ? ` · ${d.answered_count} answered` : ''}
+                                                    {' · '}
+                                                    {new Date(d.updated_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                                                </span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
                         </div>
                         </>)}
                     </div>
@@ -658,8 +738,18 @@ export default function AgentConsole({ orgId }: AgentConsoleProps) {
                 {/* ---------- detail ---------- */}
                 <section className="min-w-0 flex-1">
                     <div className="rounded-[24px] border border-border bg-card p-4 sm:p-5">
-                        {creatingNew ? (
-                            <NewAgentHeader onCancel={() => setCreatingNew(false)} />
+                        {creatingNew && !identity ? (
+                            <AgentIdentityStep
+                                takenEmails={agents
+                                    .map((a) => String((a.runtime as { inbox?: { from?: string } } | null)?.inbox?.from ?? '').trim())
+                                    .filter(Boolean)}
+                                departments={[...new Set(agents.map((a) => a.department).filter((d): d is string => Boolean(d)))]}
+                                colleagues={agents.map((a) => ({ key: a.agent_key, name: a.display_name }))}
+                                onCancel={() => { setCreatingNew(false); setIdentity(null); }}
+                                onContinue={(v) => setIdentity(v)}
+                            />
+                        ) : creatingNew ? (
+                            <NewAgentHeader onCancel={() => { setCreatingNew(false); setIdentity(null); }} />
                         ) : selected ? (
                             <DetailHeader
                                 agent={selected}
@@ -689,9 +779,16 @@ export default function AgentConsole({ orgId }: AgentConsoleProps) {
                             open={composeOpen || creatingNew || (agents.length === 0 && !registryUnreadable)}
                             onOpenChange={(v) => {
                                 setComposeOpen(v);
-                                if (!v) setCreatingNew(false);
+                                if (!v) { setCreatingNew(false); setIdentity(null); }
                             }}
                             agent={creatingNew ? null : selected}
+                            identity={creatingNew ? identity : null}
+                            draft={draftStore.provisioned === false ? undefined : {
+                                save: draftStore.save,
+                                resumed: draftStore.current,
+                                saving: draftStore.saving,
+                                lastSavedAt: draftStore.lastSavedAt,
+                            }}
                             onApplied={async (key) => {
                                 setCreatingNew(false);
                                 setComposeOpen(false);
@@ -736,7 +833,21 @@ export default function AgentConsole({ orgId }: AgentConsoleProps) {
                                     })}
                                 </nav>
 
+                                {/**
+                                  * EVERY TAB IS WRAPPED, because the Delivery
+                                  * tab went white and there was no way to tell
+                                  * a crash from an empty panel without opening
+                                  * a browser console — which nobody does from a
+                                  * phone. One boundary per tab keeps the blast
+                                  * radius at the panel: a crash in Delivery
+                                  * costs Delivery, and names itself on screen.
+                                  *
+                                  * resetKey clears a stale error when the
+                                  * operator switches agent or tab, so a fixed
+                                  * problem does not keep showing its old face.
+                                  */}
                                 <div className="pt-4">
+                                  <TabBoundary name={tab} resetKey={`${selected.agent_key}:${tab}`}>
                                     {tab === 'configure' && (
                                         <div className="flex flex-col gap-4">
                                             <AgentPreflight orgId={orgId} agentKey={selected.agent_key} />
@@ -760,6 +871,23 @@ export default function AgentConsole({ orgId }: AgentConsoleProps) {
                                             onSaved={() => void load(true)}
                                         />
                                     )}
+                                    {tab === 'prompt' && (
+                                        <AgentPromptEditor
+                                            key={selected.agent_key}
+                                            orgId={orgId}
+                                            agentKey={selected.agent_key}
+                                            onSaved={() => void load(true)}
+                                        />
+                                    )}
+                                    {tab === 'context' && (
+                                        <AgentContext
+                                            key={selected.agent_key}
+                                            orgId={orgId}
+                                            agentKey={selected.agent_key}
+                                            onSaved={() => void load(true)}
+                                        />
+                                    )}
+                                    {tab === 'cost' && <AgentCost orgId={orgId} agentKey={selected.agent_key} />}
                                     {tab === 'activity' && <AgentActivity orgId={orgId} agentKey={selected.agent_key} />}
                                     {tab === 'uptime' && <AgentUptime orgId={orgId} agentKey={selected.agent_key} />}
                                     {tab === 'profile' && <AgentProfile orgId={orgId} agentKey={selected.agent_key} />}
@@ -787,6 +915,7 @@ export default function AgentConsole({ orgId }: AgentConsoleProps) {
                                     {tab === 'credentials' && (
                                         <AgentCredentials orgId={orgId} agentKey={selected.agent_key} />
                                     )}
+                                  </TabBoundary>
                                 </div>
                             </>
                         )}
@@ -1127,15 +1256,60 @@ function ComposeBox({
     onOpenChange,
     agent,
     onApplied,
+    identity,
+    draft,
 }: {
     orgId: string;
     open: boolean;
     onOpenChange: (v: boolean) => void;
     agent: ConsoleAgent | null;
     onApplied: (agentKey: string) => void | Promise<void>;
+    /**
+     * Who is being hired, collected before the job was described.
+     *
+     * Handed to the composer as STATED FACT rather than left for it to invent
+     * from a sentence. A job description written with no idea who holds it
+     * drifts, because there is no subject for it to be about.
+     */
+    identity?: AgentIdentity | null;
+    /**
+     * Where unfinished work goes. Optional on purpose: the composer must run
+     * exactly as it does today when drafts are unavailable, so every use is
+     * guarded rather than assumed.
+     */
+    draft?: {
+        save: (patch: { description?: string; answers?: Record<string, string>; agent_key?: string | null; status?: 'describing' | 'proposed' }) => void;
+        resumed: { description?: string } | null;
+        saving: boolean;
+        lastSavedAt: Date | null;
+    };
 }) {
     const [description, setDescription] = useState('');
     const [busy, setBusy] = useState(false);
+
+    /**
+     * A RESUMED DRAFT SEEDS THE BOX ONCE, never on every render.
+     *
+     * The parent hands a new object each time it re-renders, so depending on
+     * the object itself would overwrite whatever is being typed — the exact bug
+     * AgentDelivery documents at its own re-seed effect. Depend on the text.
+     */
+    const resumedText = draft?.resumed?.description ?? null;
+    useEffect(() => {
+        if (resumedText) setDescription(resumedText);
+    }, [resumedText]);
+
+    /**
+     * Autosave what has been typed. The hook debounces and refuses to write an
+     * unchanged value, so calling it on every keystroke is correct and cheap —
+     * and a sentence half-written at the moment a tab closes survives.
+     * Below 12 characters there is nothing worth keeping.
+     */
+    const saveDraft = draft?.save;
+    useEffect(() => {
+        if (!saveDraft || description.trim().length < 12) return;
+        saveDraft({ description, agent_key: agent?.agent_key ?? null, status: 'describing' });
+    }, [description, saveDraft, agent?.agent_key]);
     const [error, setError] = useState<string | null>(null);
     const [result, setResult] = useState<ComposeResponse | null>(null);
 
@@ -1239,7 +1413,24 @@ function ComposeBox({
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     orgId,
-                    description: description.trim(),
+                    /**
+                     * The identity leads. Everything the operator already told
+                     * us is stated as fact so the composer writes the job for a
+                     * named person in a named department, and does not spend a
+                     * guess on either.
+                     */
+                    description: [
+                        identity ? [
+                            'This agent already has an identity. Treat every line as given, do not invent alternatives:',
+                            `- Name: ${identity.display_name}`,
+                            identity.department ? `- Department: ${identity.department}` : '',
+                            identity.email ? `- Sends mail from: ${identity.email}` : '',
+                            identity.phone ? `- Phone: ${identity.phone}` : '',
+                            identity.reports_to ? `- Reports to: ${identity.reports_to}` : '',
+                            '',
+                        ].filter(Boolean).join('\n') : '',
+                        description.trim(),
+                    ].filter(Boolean).join('\n'),
                     ...(agent ? { agentKey: agent.agent_key } : {}),
                 }),
             });
@@ -1481,7 +1672,29 @@ function ComposeBox({
 
             {plan && (
                 <div className="mt-4">
-                    <AgentPlanCanvas plan={plan} />
+                    <AgentPlanCanvas
+                        plan={plan}
+                        accepting={busy}
+                        onAccept={(answers) => {
+                            /**
+                             * The answers were collected and then thrown away.
+                             * The composer only ever saw the original sentence,
+                             * so the four questions the plan insisted were
+                             * facts it "cannot infer safely" were inferred
+                             * anyway. They are appended as stated facts, under
+                             * a heading, so the model reads them as given
+                             * rather than as more prose to interpret.
+                             */
+                            const stated = plan.slots
+                                .map((sl) => [sl.question, (answers[sl.key] ?? '').split('|').filter(Boolean).join(', ')] as const)
+                                .filter(([, v]) => v.length > 0)
+                                .map(([q, v]) => `- ${q} ${v}`);
+                            if (stated.length) {
+                                setDescription((d) => `${d.trim()}\n\nAnswers already given (treat these as fact):\n${stated.join('\n')}`);
+                            }
+                            void build();
+                        }}
+                    />
                 </div>
             )}
 

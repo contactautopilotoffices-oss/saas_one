@@ -27,9 +27,9 @@ interface Runtime {
 }
 
 const ROLES: Array<{ key: Role; label: string; hint: string }> = [
-    { key: 'ceo', label: 'Decisions', hint: 'Reads status. Gets decisions only, never a to-do list.' },
-    { key: 'procurement', label: 'Actions', hint: 'Works the lines and closes them. Vidya, Sahil, purchase@' },
-    { key: 'technical', label: 'Technical', hint: 'Only gets a line when something is genuinely technical.' },
+    { key: 'ceo', label: 'People who decide', hint: 'Gets the things that need a decision. Never a to-do list.' },
+    { key: 'procurement', label: 'People who fix it', hint: 'Does the work and marks it done. Usually Vidya, Sahil, purchase@' },
+    { key: 'technical', label: 'IT / technical', hint: 'Only hears about it when the problem is with the system or the data.' },
 ];
 
 const split = (s: string) => s.split(/[,\n]/).map((x) => x.trim()).filter(Boolean);
@@ -114,21 +114,21 @@ export default function AgentDelivery({
             {/* ---- mailboxes ------------------------------------------------ */}
             <section className="rounded-[14px] border border-border bg-card p-4">
                 <h4 className="mb-3 flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-wide text-text-tertiary">
-                    <Inbox className="h-3.5 w-3.5" /> Mailboxes
+                    <Inbox className="h-3.5 w-3.5" /> Email addresses
                 </h4>
                 <div className="grid gap-3 md:grid-cols-2">
                     <div>
-                        <label className={label}>Sends from</label>
+                        <label className={label}>Ira sends her email from</label>
                         <input className={field} value={inbox.from ?? ''} placeholder="ira.mehta@worksquare.in"
                             onChange={(e) => setInbox('from', e.target.value)} />
                     </div>
                     <div>
-                        <label className={label}>Reply-To on the mail she sends</label>
+                        <label className={label}>When someone hits Reply, it goes to</label>
                         <input className={field} value={inbox.reply_to ?? ''} placeholder="purchase@worksquare.in"
                             onChange={(e) => setInbox('reply_to', e.target.value)} />
                     </div>
                     <div>
-                        <label className={label}>Mailboxes Ira reads replies in</label>
+                        <label className={label}>Inboxes Ira checks for replies</label>
                         <textarea rows={2} className={`${field} font-mono text-[12px]`}
                             value={join(pollList)}
                             placeholder={'purchase@worksquare.in, support@worksquare.in'}
@@ -137,11 +137,12 @@ export default function AgentDelivery({
                                 inbox: { ...(d.inbox ?? {}), poll_addresses: split(e.target.value), poll_address: undefined },
                             }))} />
                         <p className="mt-1 text-[10.5px] text-text-tertiary">
-                            Comma-separated. All must be under the same Zoho grant. A reply to any of them lands.
+                            Separate them with commas. Ira needs access to each one. A reply sent to any of
+                            these will reach her.
                         </p>
                     </div>
                     <div>
-                        <label className={label}>Look back (hours)</label>
+                        <label className={label}>How far back she looks for replies (hours)</label>
                         <input className={field} type="number" min={1} max={168} value={inbox.lookback_hours ?? 24}
                             onChange={(e) => setDraft((d) => ({ ...d, inbox: { ...(d.inbox ?? {}), lookback_hours: Number(e.target.value) || 24 } }))} />
                     </div>
@@ -162,10 +163,11 @@ export default function AgentDelivery({
             {/* ---- recipients ----------------------------------------------- */}
             <section className="rounded-[14px] border border-border bg-card p-4">
                 <h4 className="mb-1 flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-wide text-text-tertiary">
-                    <Users className="h-3.5 w-3.5" /> Who gets what
+                    <Users className="h-3.5 w-3.5" /> Who gets the email
                 </h4>
                 <p className="mb-3 text-[11.5px] text-text-secondary">
-                    The same finding says different things to each. Someone with nothing to do gets no email at all.
+                    Everyone gets only the part that is theirs to act on. If there is nothing for someone,
+                    they get no email at all.
                 </p>
                 <div className="space-y-3">
                     {ROLES.map((r) => (
@@ -182,15 +184,15 @@ export default function AgentDelivery({
             {/* ---- site overrides ------------------------------------------- */}
             <section className="rounded-[14px] border border-border bg-card p-4">
                 <h4 className="mb-1 flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-wide text-text-tertiary">
-                    <MapPin className="h-3.5 w-3.5" /> Site owners <span className="font-normal normal-case tracking-normal text-text-tertiary">— optional</span>
+                    <MapPin className="h-3.5 w-3.5" /> Send a separate email per city <span className="font-normal normal-case tracking-normal text-text-tertiary">— optional</span>
                 </h4>
                 <p className="mb-3 text-[11.5px] leading-relaxed text-text-secondary">
-                    Splits the scan into <b>one email per city</b>, each headed{' '}
-                    <span className="font-mono text-[11px] text-text-primary">06 SEP PO SCAN — BLR</span> and{' '}
-                    <span className="font-mono text-[11px] text-text-primary">Assigned to Vidya</span>. Every city can
-                    use the same shared mailbox — the header, not the address, is what makes a mail one
-                    person&rsquo;s job. Green properties already route somewhere; amber ones will land in a
-                    single &ldquo;Unassigned&rdquo; mail until you click them onto a city.
+                    Instead of one long email covering everywhere, Ira sends a shorter one per city, with the
+                    city and the owner&rsquo;s name at the top. They can all go to the same shared inbox — it is
+                    the name at the top, not the address, that tells someone the email is theirs.
+                    <br />
+                    Sites in <b>green</b> already belong to a city. Sites in <b>amber</b> do not, so they all
+                    arrive together in one &ldquo;Unassigned&rdquo; email until you add them to a city below.
                 </p>
                 <SiteOwnersBuilder
                     orgId={orgId}
@@ -206,11 +208,11 @@ export default function AgentDelivery({
                     <input type="checkbox" className="mt-0.5" checked={draft.respond?.enabled ?? false}
                         onChange={(e) => setDraft((d) => ({ ...d, respond: { ...(d.respond ?? {}), enabled: e.target.checked } }))} />
                     <span>
-                        <span className="block text-[12.5px] font-semibold">Answer questions in the thread</span>
+                        <span className="block text-[12.5px] font-semibold">Let Ira reply when someone asks her a question</span>
                         <span className="block text-[11.5px] leading-relaxed text-text-secondary">
-                            When someone replies asking for more (&ldquo;which PO?&rdquo;, &ldquo;blocked on what?&rdquo;),
-                            Ira sends the finding&rsquo;s evidence back once, then waits for a human. Off means a
-                            question gets no answer.
+                            If someone replies asking &ldquo;which PO is this?&rdquo; or &ldquo;what is it waiting
+                            on?&rdquo;, Ira sends the details back once and then leaves it to a person. Switched off,
+                            their question gets no reply at all.
                         </span>
                     </span>
                 </label>

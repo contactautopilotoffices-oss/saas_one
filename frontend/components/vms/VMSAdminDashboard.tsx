@@ -36,6 +36,7 @@ type DateFilter = 'today' | 'yesterday' | 'week' | 'month' | 'custom' | 'all';
 
 const VMSAdminDashboard: React.FC<VMSAdminDashboardProps> = ({ propertyId }) => {
     const { user, membership } = useAuth();
+    const propertyName = membership?.properties?.find(p => p.id === propertyId)?.name || '';
     const [visitors, setVisitors] = useState<VisitorLog[]>([]);
     const [stats, setStats] = useState({ total_today: 0, checked_in: 0, checked_out: 0 });
 
@@ -68,7 +69,7 @@ const VMSAdminDashboard: React.FC<VMSAdminDashboardProps> = ({ propertyId }) => 
     const [selectedVisitor, setSelectedVisitor] = useState<VisitorLog | null>(null);
     const [actionLoading, setActionLoading] = useState(false);
     const [showCheckInModal, setShowCheckInModal] = useState(false);
-    const [showClientQRModal, setShowClientQRModal] = useState(false);
+    const [showKioskLinkModal, setShowKioskLinkModal] = useState(false);
 
     // Debounce search query - wait 300ms after user stops typing before searching
     useEffect(() => {
@@ -460,6 +461,15 @@ const VMSAdminDashboard: React.FC<VMSAdminDashboardProps> = ({ propertyId }) => 
                             className="flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 rounded-xl text-sm font-bold hover:bg-slate-200 transition-all"
                         >
                             <FileDown className="w-4 h-4" /> Export
+                        </button>
+
+                        {/* Kiosk Link / QR */}
+                        <button
+                            onClick={() => setShowKioskLinkModal(true)}
+                            className="flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 rounded-xl text-sm font-bold hover:bg-slate-200 transition-all"
+                            title="Get the public visitor check-in link for this property"
+                        >
+                            <QrCode className="w-4 h-4" /> Kiosk Link
                         </button>
 
                         {/* Check-In Visitor Button */}
@@ -859,7 +869,7 @@ const VMSAdminDashboard: React.FC<VMSAdminDashboardProps> = ({ propertyId }) => 
                                 </button>
                             </div>
                             <div className="p-4 flex-1 overflow-y-auto min-h-[550px]">
-                                <VMSKiosk propertyId={propertyId} propertyName="" />
+                                <VMSKiosk propertyId={propertyId} propertyName={propertyName} />
                             </div>
                         </motion.div>
                     </div>
@@ -868,10 +878,11 @@ const VMSAdminDashboard: React.FC<VMSAdminDashboardProps> = ({ propertyId }) => 
 
             {/* Modal: Client QR Generator */}
             <ClientQRGeneratorModal
-                isOpen={showClientQRModal}
-                onClose={() => setShowClientQRModal(false)}
+                isOpen={showKioskLinkModal}
+                onClose={() => setShowKioskLinkModal(false)}
                 propertyId={propertyId}
-                propertyName=""
+                propertyName={propertyName}
+                variant="visitor-kiosk"
             />
         </div>
     );

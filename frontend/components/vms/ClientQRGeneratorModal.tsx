@@ -2,28 +2,73 @@
 
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, QrCode, Copy, Download, Printer, Check, Building2, Sparkles } from 'lucide-react';
+import { X, QrCode, Copy, Download, Printer, Check } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
+
+/**
+ * Two things get a QR code off the back of a property:
+ *  - 'tenant-onboarding' — clients scan to self-register (the original use)
+ *  - 'visitor-kiosk'     — the public lobby check-in screen, /kiosk/<propertyId>
+ * Same copy/download/print plumbing, different destination and wording.
+ */
+export type QRGeneratorVariant = 'tenant-onboarding' | 'visitor-kiosk';
 
 interface ClientQRGeneratorModalProps {
     isOpen: boolean;
     onClose: () => void;
     propertyId: string;
     propertyName: string;
+    variant?: QRGeneratorVariant;
 }
+
+const VARIANTS: Record<QRGeneratorVariant, {
+    path: (propertyId: string) => string;
+    heading: string;
+    blurb: string;
+    posterSubtitle: string;
+    posterFooter: string;
+    captionUnderQR: string;
+    fileLabel: string;
+}> = {
+    'tenant-onboarding': {
+        path: (propertyId) => `/onboard?propertyId=${propertyId}&role=tenant`,
+        heading: 'Client Onboarding QR',
+        blurb: 'Clients scan this QR code to register, get instant tenant access, and land on their workspace dashboard.',
+        posterSubtitle: 'Client & Tenant Self-Onboarding QR',
+        posterFooter: 'Scan with phone camera to register & raise requests',
+        captionUnderQR: 'Scan to Register as Client / Tenant',
+        fileLabel: 'Client_Onboarding_QR',
+    },
+    'visitor-kiosk': {
+        path: (propertyId) => `/kiosk/${propertyId}`,
+        heading: 'Visitor Kiosk Link',
+        blurb: 'Open this link on the lobby tablet to run the check-in kiosk, or print the QR so visitors can check themselves in from their own phone. No login required.',
+        posterSubtitle: 'Visitor Check-In',
+        posterFooter: 'Scan with phone camera to check in',
+        captionUnderQR: 'Scan to Check In as a Visitor',
+        fileLabel: 'Visitor_Kiosk_QR',
+    },
+};
 
 export default function ClientQRGeneratorModal({
     isOpen,
     onClose,
     propertyId,
-    propertyName
+    propertyName,
+    variant = 'tenant-onboarding'
 }: ClientQRGeneratorModalProps) {
     const [copied, setCopied] = useState(false);
 
     if (!isOpen) return null;
 
-    const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'https://fms.autopilotoffices.com';
-    const qrUrl = `${baseUrl}/onboard?propertyId=${propertyId}&role=tenant`;
+    const config = VARIANTS[variant];
+
+    // The modal only ever renders client-side, so window.location.origin is the
+    // real answer; NEXT_PUBLIC_APP_URL is the inlined fallback for safety.
+    const baseUrl = typeof window !== 'undefined'
+        ? window.location.origin
+        : (process.env.NEXT_PUBLIC_APP_URL || '').replace(/\/$/, '');
+    const qrUrl = `${baseUrl}${config.path(propertyId)}`;
 
     const handleCopyLink = () => {
         navigator.clipboard.writeText(qrUrl);
@@ -32,7 +77,7 @@ export default function ClientQRGeneratorModal({
     };
 
     const handleDownloadQR = () => {
-        const svgElement = document.getElementById('tenant-qr-svg');
+        const svgElement = document.getElementById('property-qr-svg');
         if (!svgElement) return;
 
         const svgData = new XMLSerializer().serializeToString(svgElement);
@@ -47,7 +92,7 @@ export default function ClientQRGeneratorModal({
                 // Background fill
                 ctx.fillStyle = '#ffffff';
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
-                
+
                 // Draw QR Code
                 ctx.drawImage(img, 40, 40);
 
@@ -59,12 +104,12 @@ export default function ClientQRGeneratorModal({
 
                 ctx.fillStyle = '#64748b';
                 ctx.font = '12px sans-serif';
-                ctx.fillText('Scan to Register as Client / Tenant', canvas.width / 2, canvas.height - 20);
+                ctx.fillText(config.captionUnderQR, canvas.width / 2, canvas.height - 20);
 
                 const pngUrl = canvas.toDataURL('image/png');
                 const downloadLink = document.createElement('a');
                 downloadLink.href = pngUrl;
-                downloadLink.download = `Client_Onboarding_QR_${(propertyName || 'Property').replace(/\s+/g, '_')}.png`;
+                downloadLink.download = `${config.fileLabel}_${(propertyName || 'Property').replace(/\s+/g, '_')}.png`;
                 document.body.appendChild(downloadLink);
                 downloadLink.click();
                 document.body.removeChild(downloadLink);
@@ -78,14 +123,14 @@ export default function ClientQRGeneratorModal({
         const printWindow = window.open('', '_blank');
         if (!printWindow) return;
 
-        const svgElement = document.getElementById('tenant-qr-svg');
+        const svgElement = document.getElementById('property-qr-svg');
         const svgData = svgElement ? new XMLSerializer().serializeToString(svgElement) : '';
 
         printWindow.document.write(`
             <!DOCTYPE html>
             <html>
                 <head>
-                    <title>Client Onboarding QR Poster - ${propertyName}</title>
+                    <title>${config.posterSubtitle} Poster - ${propertyName}</title>
                     <style>
                         body { font-family: 'Segoe UI', Arial, sans-serif; text-align: center; padding: 40px; color: #0f172a; }
                         .poster { border: 4px solid #0284c7; padding: 40px; border-radius: 24px; max-width: 500px; margin: 0 auto; box-shadow: 0 10px 30px rgba(0,0,0,0.1); }
@@ -98,11 +143,11 @@ export default function ClientQRGeneratorModal({
                 <body>
                     <div class="poster">
                         <div class="title">${propertyName}</div>
-                        <div class="subtitle">Client & Tenant Self-Onboarding QR</div>
+                        <div class="subtitle">${config.posterSubtitle}</div>
                         <div class="qr-box">
                             ${svgData}
                         </div>
-                        <div class="footer">Scan with phone camera to register & raise requests</div>
+                        <div class="footer">${config.posterFooter}</div>
                     </div>
                     <script>
                         window.onload = function() { window.print(); window.close(); }
@@ -129,7 +174,7 @@ export default function ClientQRGeneratorModal({
                                 <QrCode className="w-5 h-5" />
                             </div>
                             <div>
-                                <h3 className="font-bold text-slate-900 dark:text-white text-base">Client Onboarding QR</h3>
+                                <h3 className="font-bold text-slate-900 dark:text-white text-base">{config.heading}</h3>
                                 <p className="text-xs text-slate-500">{propertyName}</p>
                             </div>
                         </div>
@@ -146,7 +191,7 @@ export default function ClientQRGeneratorModal({
                         {/* QR Box */}
                         <div className="bg-slate-50 dark:bg-slate-950 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-inner mb-4 relative group">
                             <QRCodeSVG
-                                id="tenant-qr-svg"
+                                id="property-qr-svg"
                                 value={qrUrl}
                                 size={220}
                                 level="H"
@@ -155,7 +200,7 @@ export default function ClientQRGeneratorModal({
                         </div>
 
                         <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 max-w-xs mb-6">
-                            Clients scan this QR code to register, get instant tenant access, and land on their workspace dashboard.
+                            {config.blurb}
                         </p>
 
                         {/* Link Field */}
