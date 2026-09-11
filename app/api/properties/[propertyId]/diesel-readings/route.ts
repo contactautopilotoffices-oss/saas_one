@@ -83,7 +83,33 @@ export async function POST(
     // Helper function to compute cost for a single reading
     const computeReadingWithCost = async (reading: any) => {
         const readingDate = reading.reading_date || new Date().toISOString().split('T')[0];
-        const consumedLitres = reading.computed_consumed_litres || 0;
+
+        const closingHours = reading.closing_hours !== '' && reading.closing_hours !== null && reading.closing_hours !== undefined
+            ? Number(reading.closing_hours)
+            : null;
+        const openingHours = reading.opening_hours !== '' && reading.opening_hours !== null && reading.opening_hours !== undefined
+            ? Number(reading.opening_hours)
+            : 0;
+
+        const closingKwh = reading.closing_kwh !== '' && reading.closing_kwh !== null && reading.closing_kwh !== undefined
+            ? Number(reading.closing_kwh)
+            : null;
+        const openingKwh = reading.opening_kwh !== '' && reading.opening_kwh !== null && reading.opening_kwh !== undefined
+            ? Number(reading.opening_kwh)
+            : 0;
+
+        const closingDiesel = reading.closing_diesel_level !== '' && reading.closing_diesel_level !== null && reading.closing_diesel_level !== undefined
+            ? Number(reading.closing_diesel_level)
+            : null;
+        const openingDiesel = reading.opening_diesel_level !== '' && reading.opening_diesel_level !== null && reading.opening_diesel_level !== undefined
+            ? Number(reading.opening_diesel_level)
+            : 0;
+
+        const addedLitres = Number(reading.diesel_added_litres) || 0;
+
+        const consumedLitres = reading.computed_consumed_litres !== undefined && reading.computed_consumed_litres !== null
+            ? Number(reading.computed_consumed_litres)
+            : (closingDiesel !== null ? Math.max(0, (openingDiesel + addedLitres) - closingDiesel) : 0);
 
         let tariffRate = 0;
         let tariffId = null;
@@ -103,7 +129,7 @@ export async function POST(
         }
 
         // Compute cost (PRD: Cost = Units × DG Rate)
-        const consumedKwh = (reading.closing_kwh || 0) - (reading.opening_kwh || 0);
+        const consumedKwh = (closingKwh !== null && openingKwh !== null) ? Math.max(0, closingKwh - openingKwh) : 0;
         const units = consumedLitres > 0 ? consumedLitres : (consumedKwh > 0 ? consumedKwh : 0);
         const computedCost = units * tariffRate;
 
@@ -111,20 +137,17 @@ export async function POST(
             property_id: propertyId,
             generator_id: reading.generator_id,
             reading_date: readingDate,
-            opening_hours: reading.opening_hours,
-            closing_hours: reading.closing_hours,
-            // v2: kWh readings
-            opening_kwh: reading.opening_kwh || 0,
-            closing_kwh: reading.closing_kwh || 0,
-            // v2: Diesel level readings (for carry-forward)
-            opening_diesel_level: reading.opening_diesel_level || 0,
-            closing_diesel_level: reading.closing_diesel_level || 0,
-            diesel_added_litres: reading.diesel_added_litres || 0,
+            opening_hours: openingHours,
+            closing_hours: closingHours,
+            opening_kwh: openingKwh,
+            closing_kwh: closingKwh,
+            opening_diesel_level: openingDiesel,
+            closing_diesel_level: closingDiesel,
+            diesel_added_litres: addedLitres,
             computed_consumed_litres: consumedLitres,
             notes: reading.notes || null,
             alert_status: reading.alert_status || 'normal',
             created_by: user.id,
-            // v2 cost fields
             tariff_id: tariffId,
             tariff_rate_used: tariffRate,
             computed_cost: computedCost
@@ -152,6 +175,7 @@ export async function POST(
             console.warn('[DieselReadings] Batch upsert fallback:', error.message);
             // Fallback: Check existing readings per item and update or insert
             const results = [];
+            let lastErr: any = null;
             for (const r of processedReadings) {
                 const { data: existing } = await supabase
                     .from('diesel_readings')
@@ -167,17 +191,30 @@ export async function POST(
                         .eq('id', existing.id)
                         .select()
                         .maybeSingle();
-                    if (!updateErr && updated) results.push(updated);
+                    if (!updateErr && updated) {
+                        results.push(updated);
+                    } else if (updateErr) {
+                        console.error('[DieselReadings] Update error:', updateErr.message);
+                        lastErr = updateErr;
+                    }
                 } else {
                     const { data: inserted, error: insertErr } = await supabase
                         .from('diesel_readings')
                         .insert(r)
                         .select()
                         .maybeSingle();
-                    if (!insertErr && inserted) results.push(inserted);
+                    if (!insertErr && inserted) {
+                        results.push(inserted);
+                    } else if (insertErr) {
+                        console.error('[DieselReadings] Insert error:', insertErr.message);
+                        lastErr = insertErr;
+                    }
                 }
             }
-            console.log('[DieselReadings] Batch fallback completed:', results.length, 'readings processed');
+            console.log('[DieselReadings] Batch fallback completed:', results.length, 'readings processed out of', processedReadings.length);
+            if (results.length === 0 && processedReadings.length > 0) {
+                return NextResponse.json({ error: lastErr?.message || 'Failed to save readings' }, { status: 500 });
+            }
             return NextResponse.json(results, { status: 201 });
         }
 

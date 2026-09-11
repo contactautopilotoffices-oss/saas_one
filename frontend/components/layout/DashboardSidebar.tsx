@@ -2,14 +2,14 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { usePathname, useParams } from 'next/navigation';
+import { usePathname, useParams, useSearchParams } from 'next/navigation';
 import {
     LayoutDashboard, Users, Ticket, Package, Settings, LogOut,
     Menu, X, GitMerge, Calendar, ShoppingCart, UsersRound, BarChart3,
     FileUp, Bot, Building2, Send, CalendarDays, Droplets, Coffee,
     Sparkles, DollarSign, ClipboardList, Target, TrendingUp,
     BellRing, HelpCircle, Megaphone, Radio, BookOpen, Smartphone, MessageSquarePlus,
-    ShieldCheck, Wallet, Zap, Gauge
+    ShieldCheck, Wallet, Zap, Gauge, UserCheck, Plus, UserCircle, FileText
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { CapabilityDomain } from '@/frontend/types/rbac';
@@ -29,7 +29,9 @@ interface DashboardSidebarProps {
 export default function DashboardSidebar({ isMobileOpen, onMobileClose }: DashboardSidebarProps) {
     const pathname = usePathname();
     const params = useParams();
+    const searchParams = useSearchParams();
     const orgId = params.orgId as string;
+    const currentTab = searchParams?.get('tab');
     const { signOut, user, membership } = useAuth();
     const [showSignOutModal, setShowSignOutModal] = React.useState(false);
     const [showFeedbackModal, setShowFeedbackModal] = React.useState(false);
@@ -59,6 +61,25 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
 
         if (isBDRole) return [];
 
+        const isHrRoute = pathname?.includes('/hr-tickets');
+        if (isHrRoute) {
+            if (userRole === 'hr' || userRole === 'hr_head' || userRole === 'director' || isOrgSuperAdmin) {
+                return [
+                    { label: 'Requests & Grievances', href: `/${orgId}/hr-tickets?tab=tickets`, icon: Ticket, domain: 'tickets' as const },
+                    { label: 'Employee Directory', href: `/${orgId}/hr-tickets?tab=directory`, icon: Users, domain: 'tickets' as const },
+                    { label: 'Identity Reconciliation', href: `/${orgId}/hr-tickets?tab=reconciliation`, icon: UserCheck, domain: 'tickets' as const },
+                    { label: 'Admin Config', href: `/${orgId}/hr-tickets?tab=config`, icon: Settings, domain: 'tickets' as const },
+                    { label: 'Analytics', href: `/${orgId}/hr-tickets?tab=analytics`, icon: BarChart3, domain: 'tickets' as const },
+                    { label: 'Main Dashboard', href: `/${orgId}/dashboard`, icon: LayoutDashboard, domain: 'dashboards' as const },
+                ];
+            }
+            return [
+                { label: 'My Requests', href: `/${orgId}/hr-tickets?tab=tickets`, icon: Ticket, domain: 'tickets' as const },
+                { label: 'Raise Request', href: `/${orgId}/hr-tickets?action=create`, icon: Plus, domain: 'tickets' as const },
+                { label: 'Main Dashboard', href: `/${orgId}/dashboard`, icon: LayoutDashboard, domain: 'dashboards' as const },
+            ];
+        }
+
         const items: { label: string; href: string; icon: LucideIcon; domain: CapabilityDomain }[] = [
             { label: 'Overview', href: `/${orgId}/dashboard`, icon: LayoutDashboard, domain: 'dashboards' as const },
             { label: 'Tickets', href: `/${orgId}/dashboard`, icon: Ticket, domain: 'tickets' as const },
@@ -66,6 +87,7 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
             { label: 'Inventory', href: `/${orgId}/procurement-management`, icon: Package, domain: 'procurement' as const },
             { label: 'Procurement', href: `/${orgId}/procurement-management`, icon: ShoppingCart, domain: 'procurement' as const },
             { label: 'Monthly Requisitions', href: `/${orgId}/procurement-management?tab=monthly-requisitions`, icon: FileUp, domain: 'procurement' as const },
+            {label: 'HR & Grievances', href: `/${orgId}/hr-tickets`, icon: ShieldCheck, domain: 'tickets' as const },
             { label: 'Staff', href: `/${orgId}/users`, icon: Users, domain: 'users' as const },
         ];
 
@@ -177,9 +199,9 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
 
             {/* Sidebar */}
             <aside className={`
-                fixed inset-y-0 left-0 z-50 w-72 bg-surface border-r border-border transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:inset-0
+                fixed inset-y-0 left-0 z-40 w-72 h-screen bg-surface border-r border-border transform transition-transform duration-300 ease-in-out lg:translate-x-0
                 ${isMobileOpen ? 'translate-x-0' : '-translate-x-full'}
-                flex flex-col inset-y-0 overflow-hidden
+                flex flex-col overflow-hidden
             `}>
                 {/* Mobile Close Button */}
                 <button
@@ -189,44 +211,197 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
                     <X className="w-5 h-5" />
                 </button>
 
-                <div className="p-6 pb-2">
-                    <div className="flex flex-col items-center gap-2 mb-2">
-                        <img src="/autopilot-logo-new.png" alt="Logo" className="h-10 w-auto object-contain" />
-                        <div className="px-3 py-1 bg-primary/5 rounded-full border border-primary/10">
-                            <p className="text-[10px] text-primary font-black uppercase tracking-[0.2em]">
-                                {showBdChrome ? 'BD Command Center' : isBDRole ? 'CRM Dashboard' : isOrgSuperAdmin ? 'Super Admin Console' : 'Staff Dashboard'}
-                            </p>
-                        </div>
+                <div className="p-6 pb-2 shrink-0">
+                    <div className="flex flex-col items-center gap-1.5 mb-4">
+                        <img src="/autopilot-logo-new.png" alt="Autopilot" className="h-9 w-auto object-contain" />
+                        <p className="text-[10px] font-bold text-slate-400 dark:text-slate-400 uppercase tracking-[0.2em] mt-1">
+                            {(userRole === 'hr' || userRole === 'hr_head') ? 'HR HQ CONSOLE' : isOrgSuperAdmin ? 'SUPER ADMIN CONSOLE' : showBdChrome ? 'BD COMMAND CENTER' : isBDRole ? 'CRM DASHBOARD' : 'STAFF DASHBOARD'}
+                        </p>
                     </div>
+
+                    {!isBDRole && (
+                        <div className="mt-3 space-y-2">
+                            <div className="flex items-center gap-1.5 px-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest font-mono">
+                                    QUICK ACTIONS
+                                </p>
+                            </div>
+                            <div className="grid grid-cols-3 gap-2">
+                                <Link
+                                    href={`/${orgId}/hr-tickets?action=create`}
+                                    className="flex flex-col items-center justify-center py-2.5 px-1 rounded-2xl bg-[#587e85] hover:bg-[#48686e] text-white transition-all text-[9.5px] font-extrabold text-center gap-1 shadow-sm active:scale-95 border border-[#48686e]/40"
+                                >
+                                    <Plus className="w-4 h-4 shrink-0" />
+                                    <span className="tracking-tight uppercase truncate max-w-full px-0.5 leading-none">Grievance</span>
+                                </Link>
+                                {(userRole === 'hr' || userRole === 'hr_head' || isOrgSuperAdmin) ? (
+                                    <>
+                                        <Link
+                                            href={`/${orgId}/hr-tickets?tab=directory&action=add`}
+                                            className="flex flex-col items-center justify-center py-2.5 px-1 rounded-2xl bg-[#f6f2ec] dark:bg-[#aa895f]/20 hover:bg-[#ede5d8] dark:hover:bg-[#aa895f]/30 text-[#8f6d3d] dark:text-[#c4a479] transition-all text-[9.5px] font-extrabold text-center gap-1 border border-[#d8c4a5] dark:border-[#aa895f]/40 active:scale-95 shadow-sm"
+                                        >
+                                            <Users className="w-4 h-4 shrink-0 text-[#aa895f] dark:text-[#c4a479]" />
+                                            <span className="tracking-tight uppercase truncate max-w-full px-0.5 leading-none">Member</span>
+                                        </Link>
+                                        <Link
+                                            href={`/${orgId}/hr-tickets?tab=config`}
+                                            className="flex flex-col items-center justify-center py-2.5 px-1 rounded-2xl bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-all text-[9.5px] font-extrabold text-center gap-1 border border-slate-200 dark:border-slate-700 active:scale-95 shadow-sm"
+                                        >
+                                            <Settings className="w-4 h-4 shrink-0 text-slate-500 dark:text-slate-400" />
+                                            <span className="tracking-tight uppercase truncate max-w-full px-0.5 leading-none">Config</span>
+                                        </Link>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Link
+                                            href={`/${orgId}/hr-tickets?tab=tickets`}
+                                            className="flex flex-col items-center justify-center py-2.5 px-1 rounded-2xl bg-[#f6f2ec] dark:bg-[#aa895f]/20 hover:bg-[#ede5d8] dark:hover:bg-[#aa895f]/30 text-[#8f6d3d] dark:text-[#c4a479] transition-all text-[9.5px] font-extrabold text-center gap-1 border border-[#d8c4a5] dark:border-[#aa895f]/40 active:scale-95 shadow-sm"
+                                        >
+                                            <Ticket className="w-4 h-4 shrink-0 text-[#aa895f] dark:text-[#c4a479]" />
+                                            <span className="tracking-tight uppercase truncate max-w-full px-0.5 leading-none">My Tickets</span>
+                                        </Link>
+                                        <Link
+                                            href={`/${orgId}/settings?tab=profile`}
+                                            className="flex flex-col items-center justify-center py-2.5 px-1 rounded-2xl bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-all text-[9.5px] font-extrabold text-center gap-1 border border-slate-200 dark:border-slate-700 active:scale-95 shadow-sm"
+                                        >
+                                            <UserCircle className="w-4 h-4 shrink-0 text-slate-500 dark:text-slate-400" />
+                                            <span className="tracking-tight uppercase truncate max-w-full px-0.5 leading-none">Profile</span>
+                                        </Link>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    )}
                 </div>
 
                 {/* Navigation */}
-                <nav className="flex-1 px-3 space-y-0.5 overflow-y-auto custom-scrollbar touch-scroll min-h-0">
+                <nav className="flex-1 px-4 space-y-1 overflow-y-auto custom-scrollbar touch-scroll min-h-0 pt-2">
                     {!isBDRole && (
-                        <p className="px-3 text-[10px] font-medium text-text-tertiary tracking-wider mb-1.5 font-body">
-                            Management
-                        </p>
+                        <div className="flex items-center gap-2 px-2 py-1 mb-2">
+                            <span className="w-0.5 h-3.5 bg-[#587e85] rounded-full" />
+                            <p className="text-[10px] font-bold text-slate-400 dark:text-slate-400 tracking-wider font-mono uppercase">
+                                {(userRole === 'hr' || userRole === 'hr_head') ? 'CORE OPERATIONS' : 'CORE OPERATIONS'}
+                            </p>
+                        </div>
                     )}
-                    {NAV_ITEMS.map((item) => (
-                        <CapabilityWrapper key={item.href} domain={item.domain} action="view">
-                            <Link
-                                href={item.href}
-                                onClick={handleLinkClick}
-                                className={`
-                                    flex items-center gap-3 px-3 py-1.5 rounded-[var(--radius-md)] transition-smooth group
-                                    ${pathname === item.href
-                                        ? 'bg-primary text-text-inverse shadow-sm'
-                                        : 'text-text-secondary hover:bg-surface-elevated hover:text-text-primary'
-                                    }
-                                `}
-                            >
-                                <item.icon className={`w-4 h-4 mr-0.5 transition-smooth group-hover:scale-105 shrink-0`} />
-                                <span className="font-body font-medium text-xs md:text-sm">{item.label}</span>
-                            </Link>
-                        </CapabilityWrapper>
-                    ))}
+                    {NAV_ITEMS.map((item) => {
+                        let isActive = false;
+                        if (item.href.includes('?tab=')) {
+                            const itemTab = item.href.split('?tab=')[1];
+                            isActive = pathname.endsWith('/hr-tickets') && currentTab === itemTab;
+                        } else if (item.href.includes('?')) {
+                            const queryPart = item.href.split('?')[1];
+                            isActive = pathname === item.href.split('?')[0] && (searchParams.toString().includes(queryPart));
+                        } else {
+                            isActive = pathname === item.href && (!searchParams.get('tab'));
+                        }
+                        return (
+                            <CapabilityWrapper key={`${item.label}-${item.href}`} domain={item.domain} action="view">
+                                <Link
+                                    href={item.href}
+                                    onClick={handleLinkClick}
+                                    className={`
+                                        flex items-center gap-3.5 px-4 py-2.5 rounded-2xl transition-all font-semibold text-xs sm:text-sm group
+                                        ${isActive
+                                            ? 'bg-[#587e85] text-white shadow-sm font-bold'
+                                            : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
+                                        }
+                                    `}
+                                >
+                                    <item.icon className={`w-4 h-4 shrink-0 transition-transform group-hover:scale-105 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                                    <span className="truncate">{item.label}</span>
+                                </Link>
+                            </CapabilityWrapper>
+                        );
+                    })}
 
-                    {/* Finance moved to the dedicated Accounts workspace (own chrome). */}
+                    {/* SYSTEM & PERSONAL Section */}
+                    {!isBDRole && (
+                        <div className="pt-3 mt-3 border-t border-slate-200/60 dark:border-slate-800 space-y-1">
+                            <div className="flex items-center gap-2 px-2 py-1 mb-2">
+                                <span className="w-0.5 h-3.5 bg-[#587e85] rounded-full" />
+                                <p className="text-[10px] font-bold text-slate-400 dark:text-slate-400 tracking-wider font-mono uppercase">
+                                    SYSTEM & PERSONAL
+                                </p>
+                            </div>
+
+                            <Link
+                                href={`/${orgId}/hr-tickets?tab=tickets`}
+                                onClick={handleLinkClick}
+                                className={`flex items-center gap-3.5 px-4 py-2.5 rounded-2xl transition-all font-semibold text-xs sm:text-sm group ${
+                                    pathname?.includes('/hr-tickets') && (!currentTab || currentTab === 'tickets')
+                                        ? 'bg-[#587e85] text-white shadow-sm font-bold'
+                                        : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
+                                }`}
+                            >
+                                <ShieldCheck className="w-4 h-4 shrink-0 transition-transform group-hover:scale-105" />
+                                <span className="truncate">My Grievances & HR Tickets</span>
+                            </Link>
+
+                            <Link
+                                href={`/${orgId}/hr-tickets?action=create`}
+                                onClick={handleLinkClick}
+                                className="flex items-center gap-3.5 px-4 py-2.5 rounded-2xl transition-all font-semibold text-xs sm:text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900 group"
+                            >
+                                <Plus className="w-4 h-4 shrink-0 transition-transform group-hover:scale-105 text-[#587e85]" />
+                                <span className="truncate">+ Raise Grievance</span>
+                            </Link>
+
+                            {(userRole !== 'hr' && userRole !== 'hr_head' && (isOrgSuperAdmin || userRole === 'property_admin')) && (
+                                <Link
+                                    href={`/${orgId}/dashboard?tab=ai_tickets`}
+                                    onClick={handleLinkClick}
+                                    className={`flex items-center gap-3.5 px-4 py-2.5 rounded-2xl transition-all font-semibold text-xs sm:text-sm group ${
+                                        pathname?.includes('tab=ai_tickets')
+                                            ? 'bg-[#587e85] text-white shadow-sm font-bold'
+                                            : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
+                                    }`}
+                                >
+                                    <Bot className="w-4 h-4 shrink-0 transition-transform group-hover:scale-105" />
+                                    <span className="truncate">AI Automation</span>
+                                </Link>
+                            )}
+
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setShowFeedbackModal(true);
+                                    handleLinkClick();
+                                }}
+                                className="w-full flex items-center gap-3.5 px-4 py-2.5 rounded-2xl transition-all font-semibold text-xs sm:text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900 text-left group"
+                            >
+                                <MessageSquarePlus className="w-4 h-4 shrink-0 transition-transform group-hover:scale-105" />
+                                <span className="truncate">Feedback / Bug</span>
+                            </button>
+
+                            <Link
+                                href={`/${orgId}/settings`}
+                                onClick={handleLinkClick}
+                                className={`flex items-center gap-3.5 px-4 py-2.5 rounded-2xl transition-all font-semibold text-xs sm:text-sm group ${
+                                    pathname?.endsWith('/settings') && (!currentTab || currentTab !== 'profile')
+                                        ? 'bg-[#587e85] text-white shadow-sm font-bold'
+                                        : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
+                                }`}
+                            >
+                                <Settings className="w-4 h-4 shrink-0 transition-transform group-hover:scale-105" />
+                                <span className="truncate">Settings</span>
+                            </Link>
+
+                            <Link
+                                href={`/${orgId}/settings?tab=profile`}
+                                onClick={handleLinkClick}
+                                className={`flex items-center gap-3.5 px-4 py-2.5 rounded-2xl transition-all font-semibold text-xs sm:text-sm group ${
+                                    pathname?.includes('tab=profile')
+                                        ? 'bg-[#587e85] text-white shadow-sm font-bold'
+                                        : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
+                                }`}
+                            >
+                                <UserCircle className="w-4 h-4 shrink-0 transition-transform group-hover:scale-105" />
+                                <span className="truncate">Profile</span>
+                            </Link>
+                        </div>
+                    )}
 
                     {/* BD Super Admin (CEO) — grouped Overview / Tools sections */}
                     {isBdSuperAdmin && isCrmRoute && (
@@ -265,8 +440,8 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
                         </div>
                     )}
 
-                    {/* CRM Section (standard rep/admin) */}
-                    {(!isBdSuperAdmin || !isCrmRoute) && (
+                    {/* CRM Section (only on CRM routes or for BD roles, strictly excluded for HR) */}
+                    {(isCrmRoute || isBDRole) && userRole !== 'hr' && userRole !== 'hr_head' && (
                         <div className={isBDRole ? '' : 'pt-2.5 mt-2.5 border-t border-border'}>
                             <p className="px-3 text-[10px] font-medium text-text-tertiary tracking-wider mb-1.5 font-body">
                                 CRM
@@ -300,84 +475,44 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
                 </nav>
 
                 {/* Bottom Section */}
-                <div className="p-4 space-y-3 border-t border-border flex-shrink-0 bg-surface">
+                <div className="p-4 space-y-2 border-t border-slate-200/60 dark:border-slate-800 shrink-0 bg-surface mt-auto">
                     {/* User Profile */}
-                    {user?.user_metadata?.role !== 'org_super_admin' && !showBdChrome && (
-                        <div className="px-3 py-3 rounded-[var(--radius-lg)] border border-border/5">
+                    {!showBdChrome && (
+                        <div className="px-2 py-1">
                             <div className="flex items-center gap-3">
                                 {user?.user_metadata?.user_photo_url || user?.user_metadata?.avatar_url ? (
                                     <img
                                         src={user.user_metadata.user_photo_url || user.user_metadata.avatar_url}
                                         alt="Profile"
-                                        className="w-10 h-10 rounded-full object-cover border border-border shrink-0"
+                                        className="w-10 h-10 rounded-full object-cover shrink-0 border border-slate-200"
                                     />
                                 ) : (
-                                    <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-display font-bold text-sm shrink-0">
+                                    <div className="w-10 h-10 rounded-full bg-[#587e85] flex items-center justify-center text-white font-bold text-sm shrink-0 shadow-sm">
                                         {getUserInitials(user?.email || 'User')}
                                     </div>
                                 )}
                                 <div className="flex flex-col flex-1 min-w-0">
-                                    <span className="text-xs font-semibold text-text-primary font-body truncate">
+                                    <span className="text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-200 truncate">
                                         {user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'User'}
                                     </span>
-                                    <span className="text-[10px] text-text-tertiary font-body font-medium">
-                                        {user?.user_metadata?.role || 'User'}
+                                    <span className="text-[10px] text-slate-400 font-medium truncate">
+                                        {user?.email || 'user@worksquare.in'}
                                     </span>
                                 </div>
                             </div>
                         </div>
                     )}
 
-                    {/* Action Buttons */}
-                    <div className="space-y-1">
-                        {showBdChrome && (
-                            <Link
-                                href={`/${orgId}/crm/help`}
-                                onClick={handleLinkClick}
-                                className="flex items-center gap-2 px-3 py-2.5 lg:py-2 rounded-[var(--radius-md)] text-text-secondary hover:text-text-primary hover:bg-surface-elevated transition-smooth"
-                            >
-                                <HelpCircle className="w-4 h-4 shrink-0" />
-                                <span className="text-xs font-semibold font-body">Help & Support</span>
-                            </Link>
-                        )}
-                        <div className="flex items-center gap-2">
-                            <button
-                                onClick={() => setShowFeedbackModal(true)}
-                                className="flex-1 flex items-center gap-2 px-3 py-2.5 lg:py-2 rounded-[var(--radius-md)] bg-primary/10 text-primary hover:bg-primary/20 transition-smooth"
-                            >
-                                <MessageSquarePlus className="w-4 h-4 shrink-0" />
-                                <span className="text-xs font-semibold font-body">Feedback / Bug</span>
-                            </button>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <Link
-                                href={(isCrmRoute || isBDRole || userRole === 'bd_admin' || userRole === 'bd_rep' || userRole === 'bd_super_admin') ? `/${orgId}/crm/settings?tab=profile` : `/${orgId}/settings`}
-                                onClick={handleLinkClick}
-                                className="flex-1 flex items-center gap-2 px-3 py-2.5 lg:py-2 rounded-[var(--radius-md)] text-text-secondary hover:text-text-primary hover:bg-surface-elevated transition-smooth"
-                            >
-                                <Settings className="w-4 h-4 shrink-0" />
-                                <span className="text-xs font-semibold font-body">Settings</span>
-                            </Link>
-                            <Link
-                                href="/privacy-policy"
-                                target="_blank"
-                                className="flex items-center justify-center p-2 lg:p-2 rounded-[var(--radius-md)] text-text-tertiary hover:text-text-primary hover:bg-surface-elevated transition-smooth"
-                                title="Privacy Policy"
-                            >
-                                <ShieldCheck className="w-4 h-4 shrink-0" />
-                            </Link>
-                            <ThemeToggle />
-                        </div>
-
+                    <div className="flex items-center justify-between pt-1">
                         <button
                             onClick={() => setShowSignOutModal(true)}
-                            className="w-full flex items-center gap-2 px-3 py-2.5 lg:py-2 rounded-[var(--radius-md)] text-error hover:bg-error/10 transition-smooth"
+                            className="flex items-center gap-2 px-2 py-1 text-slate-500 hover:text-red-600 transition-colors text-xs font-bold"
                         >
                             <LogOut className="w-4 h-4 shrink-0" />
-                            <span className="text-xs font-semibold font-body">Logout</span>
+                            <span>Sign Out</span>
                         </button>
+                        <ThemeToggle />
                     </div>
-
                 </div>
             </aside >
 

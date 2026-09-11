@@ -59,10 +59,28 @@ const ALIAS_MAP: Record<string, string> = {
     visitor_management: 'visitor_approval_requested',
     visitor_approval_requested: 'visitor_approval_requested',
     visitor_approved: 'visitor_approved',
-    visitor_rejected: 'visitor_rejected'
+    visitor_rejected: 'visitor_rejected',
+    hr_grievance_created: 'hr_grievance_created_emp',
+    hr_grievance_assigned: 'hr_grievance_assigned_mgr',
+    hr_grievance_escalated: 'hr_grievance_level_escalated',
+    hr_grievance_sla_warning: 'hr_grievance_sla_warning',
+    hr_grievance_sla_breached: 'hr_grievance_sla_breached',
+    hr_confidential_director_alert: 'hr_confidential_director_alert',
+    hr_grievance_resolved: 'hr_grievance_status_resolved',
+    hr_grievance_comment_added: 'hr_grievance_comment_added'
 };
 
 export const DEFAULT_WHATSAPP_SERVICE_CONFIG: Record<string, FeatureWhatsAppConfig> = {
+    // HR Tickets & Grievances Omnichannel Configs
+    hr_grievance_created_emp: { enabled: true, roles: ['hr', 'hr_head'], user_ids: [], notify_requester: true, notify_assignee: true },
+    hr_grievance_assigned_mgr: { enabled: true, roles: ['hr', 'hr_head', 'reporting_manager'], user_ids: [], notify_assignee: true },
+    hr_grievance_level_escalated: { enabled: true, roles: ['hr_head', 'org_super_admin', 'director'], user_ids: [], notify_assignee: true },
+    hr_grievance_sla_warning: { enabled: true, roles: ['hr', 'reporting_manager'], user_ids: [], notify_assignee: true },
+    hr_grievance_sla_breached: { enabled: true, roles: ['hr_head', 'org_super_admin', 'director'], user_ids: [], notify_assignee: true },
+    hr_confidential_director_alert: { enabled: true, roles: ['director', 'org_super_admin'], user_ids: [] },
+    hr_grievance_status_resolved: { enabled: true, roles: [], user_ids: [], notify_requester: true },
+    hr_grievance_comment_added: { enabled: true, roles: [], user_ids: [], notify_requester: true, notify_assignee: true },
+
     vendor_revenue_recorded: { enabled: true, roles: ['property_admin', 'org_super_admin', 'accounts'], user_ids: [], notify_requester: true },
     vendor_revenue_reminder: { enabled: true, roles: ['property_admin'], user_ids: [], notify_assignee: true, notify_requester: true },
     vendor_revenue_pending_digest: { enabled: true, roles: ['property_admin', 'org_super_admin', 'accounts'], user_ids: [] },

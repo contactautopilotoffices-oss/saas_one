@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
         // migration 20260904000001_app_role_ops_super_admin.
         const ORG_LEVEL_ROLES = [
             'org_super_admin', 'super_tenant', 'ops_super_admin', 'procurement', 'finance', 'accounts',
-            'bd_admin', 'bd_super_admin', 'bd_rep', 'sales', 'sales_executive', 'admin', 'owner'
+            'hr', 'hr_head', 'bd_admin', 'bd_super_admin', 'bd_rep', 'sales', 'sales_executive', 'admin', 'owner'
         ];
         // Property-level roles that belong in property_memberships
         const PROPERTY_LEVEL_ROLES = [

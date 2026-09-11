@@ -33,12 +33,12 @@ BEGIN
         WHERE id = NEW.property_id;
     END IF;
 
-    -- Resolve requester user name if created_by / requested_by exists
-    IF NEW.created_by IS NOT NULL THEN
+    -- Resolve requester user name if uploaded_by exists
+    IF NEW.uploaded_by IS NOT NULL THEN
         SELECT full_name
         INTO v_requested_by_name
         FROM public.users
-        WHERE id = NEW.created_by;
+        WHERE id = NEW.uploaded_by;
     END IF;
 
     -- Assemble payload
@@ -48,14 +48,17 @@ BEGIN
         'property_id', NEW.property_id,
         'property_name', COALESCE(v_property_name, 'Property'),
         'organization_id', COALESCE(v_org_id, NEW.organization_id),
-        'month', NEW.month,
-        'year', NEW.year,
+        'month', NEW.requisition_month,
+        'year', NEW.requisition_year,
+        'requisition_month', NEW.requisition_month,
+        'requisition_year', NEW.requisition_year,
         'status', NEW.status,
         'old_status', OLD.status,
-        'created_by', NEW.created_by,
+        'created_by', NEW.uploaded_by,
+        'uploaded_by', NEW.uploaded_by,
         'requested_by_name', COALESCE(v_requested_by_name, 'Site Admin'),
-        'po_number', NEW.po_number,
-        'total_amount', NEW.total_amount,
+        'file_name', NEW.file_name,
+        'file_url', NEW.file_url,
         'updated_at', NEW.updated_at
     );
 

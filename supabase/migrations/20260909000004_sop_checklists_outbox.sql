@@ -51,11 +51,10 @@ BEGIN
         'completion_id', NEW.id,
         'id', NEW.id,
         'template_id', NEW.template_id,
-        'template_title', COALESCE(v_template_title, NEW.template_title, 'Checklist Inspection'),
+        'template_title', COALESCE(v_template_title, 'Checklist Inspection'),
         'property_id', NEW.property_id,
         'property_name', COALESCE(v_property_name, 'Property'),
         'organization_id', COALESCE(v_org_id, NEW.organization_id),
-        'assigned_to', NEW.assigned_to,
         'completed_by', NEW.completed_by,
         'status', NEW.status,
         'created_at', NEW.created_at

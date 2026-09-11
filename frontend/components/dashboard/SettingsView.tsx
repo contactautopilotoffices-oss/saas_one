@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
     User, Mail, Phone, Camera, Save, Loader2,
     Shield, Building, CheckCircle2, AlertCircle, Home, Store,
-    Bell, Video, ExternalLink, Info, X, MessageSquare
+    Bell, Video, ExternalLink, Info, X, MessageSquare, UserCheck, Hash
 } from 'lucide-react';
 import Image from 'next/image';
 import imageCompression from 'browser-image-compression';
@@ -32,6 +32,7 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
     const [profile, setProfile] = useState<any>(null);
+    const [assignedManager, setAssignedManager] = useState<string | null>(null);
     const [avatarFile, setAvatarFile] = useState<File | null>(null);
     const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -97,14 +98,25 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
 
     const fetchProfile = async () => {
         try {
-            // 1. Fetch User Profile
-            const { data: userData, error: userError } = await supabase
-                .from('users')
-                .select('*')
-                .eq('id', user?.id)
-                .single();
+            // 1. Fetch User Profile & Employee Profile
+            const filter = user?.email
+                ? `user_id.eq.${user?.id},email.eq.${user?.email}`
+                : `user_id.eq.${user?.id}`;
 
-            if (userError) throw userError;
+            const [userRes, empProfileRes] = await Promise.all([
+                supabase.from('users').select('*').eq('id', user?.id).single(),
+                supabase.from('employee_profiles').select('*').or(filter).maybeSingle()
+            ]);
+
+            const userData = userRes.data;
+            const empProfile = empProfileRes.data;
+
+            if (userRes.error) throw userRes.error;
+
+            setProfile({
+                ...userData,
+                employee_code: empProfile?.employee_code || user?.user_metadata?.employee_code || ''
+            });
 
             // 2. Fetch Organization Memberships (only active)
             const { data: orgMembers, error: orgError } = await supabase
@@ -120,7 +132,6 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
                 .eq('user_id', user?.id)
                 .eq('is_active', true);
 
-            setProfile(userData);
             if (userData.user_photo_url) {
                 setAvatarPreview(userData.user_photo_url);
             }
@@ -164,6 +175,21 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
 
             if (vendorData) {
                 setVendorInfo(vendorData);
+            }
+
+            // 5. Fetch assigned reporting manager name & employee code
+            try {
+                const res = await fetch('/api/users/profile');
+                if (res.ok) {
+                    const pData = await res.json();
+                    setAssignedManager(pData.reporting_manager_name || null);
+                    setProfile((prev: any) => ({
+                        ...prev,
+                        employee_code: pData.employee_code || prev?.employee_code || ''
+                    }));
+                }
+            } catch (mErr) {
+                console.warn('Failed to fetch reporting manager:', mErr);
             }
 
         } catch (err) {
@@ -273,13 +299,25 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
                 if (vendorError) throw vendorError;
             }
 
+            // Sync employee_code and profile info to API
+            await fetch('/api/users/profile', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    full_name: profile.full_name,
+                    phone: profile.phone,
+                    employee_code: profile.employee_code
+                })
+            }).catch(err => console.warn('Error syncing profile via API:', err));
+
             // Update Auth Metadata
             const { error: authError } = await supabase.auth.updateUser({
                 data: {
                     full_name: profile.full_name,
                     avatar_url: avatarUrl,
                     user_photo_url: avatarUrl,
-                    phone: profile.phone
+                    phone: profile.phone,
+                    employee_code: profile.employee_code
                 }
             });
 
@@ -455,6 +493,20 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
                                         </div>
                                     </div>
 
+                                    <div className="space-y-2">
+                                        <label className="text-sm font-semibold text-slate-700">Employee Code (ECode)</label>
+                                        <div className="relative">
+                                            <Hash className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-primary" />
+                                            <input
+                                                type="text"
+                                                value={profile?.employee_code || ''}
+                                                onChange={(e) => setProfile({ ...profile, employee_code: e.target.value.toUpperCase() })}
+                                                className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all font-mono font-bold text-primary"
+                                                placeholder="e.g. E101"
+                                            />
+                                        </div>
+                                    </div>
+
                                     {vendorInfo && (
                                         <div className="space-y-2">
                                             <label className="text-sm font-semibold text-slate-700">Shop Name</label>
@@ -482,6 +534,28 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
                                                 className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all font-medium text-slate-900"
                                                 placeholder="+1 (555) 000-0000"
                                             />
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <label className="text-sm font-semibold text-slate-700">Reporting Manager</label>
+                                        <div className="relative">
+                                            <UserCheck className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#587e85]" />
+                                            <input
+                                                type="text"
+                                                value={assignedManager || 'Not Assigned'}
+                                                disabled
+                                                className={`w-full pl-10 pr-32 py-2.5 rounded-xl border border-slate-200 bg-slate-50 font-bold cursor-not-allowed ${
+                                                    assignedManager ? 'text-slate-900' : 'text-slate-400 italic'
+                                                }`}
+                                            />
+                                            <div className={`absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold px-2 py-1 rounded-md border ${
+                                                assignedManager
+                                                    ? 'text-[#587e85] bg-[#587e85]/10 border-[#587e85]/20'
+                                                    : 'text-slate-400 bg-slate-100 border-slate-200'
+                                            }`}>
+                                                {assignedManager ? 'Assigned Manager' : 'Not Assigned'}
+                                            </div>
                                         </div>
                                     </div>
 

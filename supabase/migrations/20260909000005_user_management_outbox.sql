@@ -49,7 +49,7 @@ BEGIN
 
     -- Assemble payload
     v_payload := jsonb_build_object(
-        'membership_id', NEW.id,
+        'membership_id', NEW.user_id,
         'id', NEW.user_id,
         'user_id', NEW.user_id,
         'full_name', COALESCE(v_user_name, 'New User'),
@@ -61,12 +61,12 @@ BEGIN
         'organization_name', COALESCE(v_org_name, 'Organization'),
         'is_active', v_is_active,
         'status', CASE WHEN v_is_active THEN 'approved' ELSE 'pending_approval' END,
-        'created_at', NEW.created_at
+        'created_at', COALESCE(NEW.created_at, NOW())
     );
 
     -- Insert into event_outbox
     INSERT INTO public.event_outbox (event_type, entity_id, payload)
-    VALUES (v_event_type, NEW.id, v_payload);
+    VALUES (v_event_type, NEW.user_id, v_payload);
 
     RETURN NEW;
 END;

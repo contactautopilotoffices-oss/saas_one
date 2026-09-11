@@ -230,6 +230,39 @@ export async function GET(request: NextRequest) {
             }
         });
 
+        // Also fetch pending/unapproved users directly from `users` table who might not have membership rows yet
+        const { data: directPendingUsers } = await adminClient
+            .from('users')
+            .select('*')
+            .is('deleted_at', null)
+            .or(`organization_id.eq.${orgId!},raw_user_meta_data->>organization_id.eq.${orgId!}`)
+            .or('is_approved.eq.false,approval_status.eq.pending,approval_status.eq.pending_approval');
+
+        if (directPendingUsers && directPendingUsers.length > 0) {
+            directPendingUsers.forEach((u: any) => {
+                if (!userMap.has(u.id)) {
+                    const metaRole = u.role || u.raw_user_meta_data?.role || 'staff';
+                    userMap.set(u.id, {
+                        id: u.id,
+                        full_name: u.full_name || u.raw_user_meta_data?.full_name || u.email.split('@')[0],
+                        email: u.email || '',
+                        user_photo_url: u.user_photo_url,
+                        phone: u.phone,
+                        orgRole: metaRole,
+                        organizationId: orgId,
+                        is_active: false,
+                        joined_at: u.created_at,
+                        is_approved: false,
+                        approval_status: u.approval_status || 'pending',
+                        approved_by: u.approved_by || null,
+                        approved_at: u.approved_at || null,
+                        rejection_reason: u.rejection_reason || null,
+                        approverName: null as string | null
+                    });
+                }
+            });
+        }
+
         const users = Array.from(userMap.values()).sort((a, b) => a.full_name.localeCompare(b.full_name));
 
         // Resolve approver names

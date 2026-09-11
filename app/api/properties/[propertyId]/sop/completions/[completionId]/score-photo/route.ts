@@ -31,12 +31,16 @@ export async function POST(
         }
 
         // Verify completion belongs to this property
-        const { data: completion, error: completionError } = await supabaseAdmin
+        let compQuery = supabaseAdmin
             .from('sop_completions')
             .select('id, template_id')
-            .eq('id', completionId)
-            .eq('property_id', propertyId)
-            .maybeSingle();
+            .eq('id', completionId);
+
+        if (propertyId && propertyId !== 'all' && propertyId !== 'undefined' && propertyId !== 'null') {
+            compQuery = compQuery.eq('property_id', propertyId);
+        }
+
+        const { data: completion, error: completionError } = await compQuery.maybeSingle();
 
         if (completionError || !completion) {
             return NextResponse.json({ error: 'Completion not found for this property' }, { status: 404 });

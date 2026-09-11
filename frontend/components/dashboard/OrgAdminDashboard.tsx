@@ -816,9 +816,29 @@ const OrgAdminDashboard = () => {
         fetchSummaries();
     }, [fetchSummaries]);
 
+    const uploadBase64IfNeeded = async (url: string | undefined) => {
+        if (!url || !url.startsWith('data:image/')) return url;
+        try {
+            const formData = new FormData();
+            formData.append('base64', url);
+            const res = await fetch('/api/properties/upload-image', {
+                method: 'POST',
+                body: formData,
+            });
+            const data = await res.json();
+            if (res.ok && data.url) return data.url;
+        } catch (err) {
+            console.error('Failed base64 auto-upload:', err);
+        }
+        return url;
+    };
+
     const handleCreateProperty = async (propData: any) => {
         if (!org) return;
         const { validation_enabled, ...rest } = propData;
+        if (rest.image_url) {
+            rest.image_url = await uploadBase64IfNeeded(rest.image_url);
+        }
         const { data: newProp, error } = await supabase.from('properties').insert({
             ...rest,
             organization_id: org.id
@@ -832,6 +852,7 @@ const OrgAdminDashboard = () => {
                 is_enabled: validation_enabled !== false
             });
 
+            invalidateCache(`org-properties-${org.id}`);
             fetchProperties();
             setShowCreatePropModal(false);
         } else {
@@ -841,12 +862,22 @@ const OrgAdminDashboard = () => {
 
     const handleUpdateProperty = async (id: string, propData: any) => {
         const { validation_enabled, ...rest } = propData;
-        const { error: propError } = await supabase
-            .from('properties')
-            .update(rest)
-            .eq('id', id);
+        if (rest.image_url) {
+            rest.image_url = await uploadBase64IfNeeded(rest.image_url);
+        }
 
-        if (!propError) {
+        try {
+            const res = await fetch(`/api/properties/${id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(rest),
+            });
+            const resData = await res.json();
+
+            if (!res.ok) {
+                throw new Error(resData.error || 'Failed to update property');
+            }
+
             // Also update property_features
             await supabase.from('property_features').upsert({
                 property_id: id,
@@ -854,10 +885,19 @@ const OrgAdminDashboard = () => {
                 is_enabled: validation_enabled !== false
             }, { onConflict: 'property_id,feature_key' });
 
+            // Invalidate cache so old image_url is cleared
+            if (org?.id) {
+                invalidateCache(`org-properties-${org.id}`);
+            }
+
+            // Optimistically update properties in local state
+            setProperties(prev => prev.map(p => p.id === id ? { ...p, ...rest, validation_enabled: validation_enabled !== false } : p));
+
             fetchProperties();
             setEditingProperty(null);
-        } else {
-            alert('Update failed: ' + propError.message);
+        } catch (err: any) {
+            console.error('Property update error:', err);
+            alert('Update failed: ' + (err.message || 'Unknown error'));
         }
     };
 
@@ -3164,15 +3204,35 @@ const PropertyModal = ({ property, onClose, onSave }: any) => {
     const [imageUrl, setImageUrl] = useState(property?.image_url || '');
     const [validationEnabled, setValidationEnabled] = useState<boolean>(property?.validation_enabled !== false);
     const [isDragging, setIsDragging] = useState(false);
+    const [isUploading, setIsUploading] = useState(false);
+
+    const uploadFile = async (file: File) => {
+        setIsUploading(true);
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            const res = await fetch('/api/properties/upload-image', {
+                method: 'POST',
+                body: formData,
+            });
+            const data = await res.json();
+            if (res.ok && data.url) {
+                setImageUrl(data.url);
+            } else {
+                alert('Failed to upload image: ' + (data.error || 'Unknown error'));
+            }
+        } catch (err: any) {
+            console.error('Upload error:', err);
+            alert('Image upload error: ' + err.message);
+        } finally {
+            setIsUploading(false);
+        }
+    };
 
     const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (file) {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                setImageUrl(reader.result as string);
-            };
-            reader.readAsDataURL(file);
+            uploadFile(file);
         }
     };
 
@@ -3181,11 +3241,7 @@ const PropertyModal = ({ property, onClose, onSave }: any) => {
         setIsDragging(false);
         const file = e.dataTransfer.files?.[0];
         if (file) {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                setImageUrl(reader.result as string);
-            };
-            reader.readAsDataURL(file);
+            uploadFile(file);
         }
     };
 
@@ -3234,10 +3290,16 @@ const PropertyModal = ({ property, onClose, onSave }: any) => {
                             className={`relative h-40 rounded-2xl border-2 border-dashed transition-all duration-300 flex flex-col items-center justify-center overflow-hidden bg-slate-50 ${isDragging ? 'border-emerald-500 bg-emerald-50/50' : 'border-slate-200'
                                 }`}
                         >
-                            {imageUrl ? (
+                            {isUploading ? (
+                                <div className="flex flex-col items-center gap-2">
+                                    <div className="w-8 h-8 border-3 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+                                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-tight">Uploading photo...</p>
+                                </div>
+                            ) : imageUrl ? (
                                 <>
                                     <img src={imageUrl} alt="Preview" className="w-full h-full object-cover" />
                                     <button
+                                        type="button"
                                         onClick={() => setImageUrl('')}
                                         className="absolute top-2 right-2 p-1.5 bg-rose-500 text-white rounded-full shadow-lg hover:bg-rose-600 transition-colors"
                                     >
@@ -3259,7 +3321,8 @@ const PropertyModal = ({ property, onClose, onSave }: any) => {
                                 type="file"
                                 accept="image/*"
                                 onChange={handleImageChange}
-                                className="absolute inset-0 opacity-0 cursor-pointer"
+                                disabled={isUploading}
+                                className="absolute inset-0 opacity-0 cursor-pointer disabled:cursor-not-allowed"
                             />
                         </div>
                     </div>

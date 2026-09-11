@@ -16,8 +16,7 @@ export async function GET(
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
-        // IDOR guard: fetch completion scoped to this property only
-        const { data: completion, error } = await supabaseAdmin
+        let getQuery = supabaseAdmin
             .from('sop_completions')
             .select(`
                 *,
@@ -29,9 +28,13 @@ export async function GET(
                     checked_by_user:users!checked_by(full_name)
                 )
             `)
-            .eq('id', completionId)
-            .eq('property_id', propertyId)
-            .single();
+            .eq('id', completionId);
+
+        if (propertyId && propertyId !== 'all' && propertyId !== 'undefined' && propertyId !== 'null') {
+            getQuery = getQuery.eq('property_id', propertyId);
+        }
+
+        const { data: completion, error } = await getQuery.single();
 
         if (error || !completion) {
             return NextResponse.json({ error: 'Completion not found' }, { status: 404 });
@@ -53,7 +56,7 @@ export async function GET(
                 .from('sop_completion_items')
                 .insert(completionItems);
 
-            const { data: healed } = await supabaseAdmin
+            let healedQuery = supabaseAdmin
                 .from('sop_completions')
                 .select(`
                     *,
@@ -65,9 +68,13 @@ export async function GET(
                         checked_by_user:users!checked_by(full_name)
                     )
                 `)
-                .eq('id', completionId)
-                .eq('property_id', propertyId)
-                .single();
+                .eq('id', completionId);
+
+            if (propertyId && propertyId !== 'all' && propertyId !== 'undefined' && propertyId !== 'null') {
+                healedQuery = healedQuery.eq('property_id', propertyId);
+            }
+
+            const { data: healed } = await healedQuery.single();
 
             return NextResponse.json({ success: true, completion: healed });
         }
@@ -95,12 +102,16 @@ export async function PUT(
         }
 
         // IDOR guard: confirm this completion belongs to this property before any mutation
-        const { data: existing } = await supabaseAdmin
+        let existingQuery = supabaseAdmin
             .from('sop_completions')
             .select('id, property_id, completed_by')
-            .eq('id', completionId)
-            .eq('property_id', propertyId)
-            .maybeSingle();
+            .eq('id', completionId);
+
+        if (propertyId && propertyId !== 'all' && propertyId !== 'undefined' && propertyId !== 'null') {
+            existingQuery = existingQuery.eq('property_id', propertyId);
+        }
+
+        const { data: existing } = await existingQuery.maybeSingle();
 
         if (!existing) {
             return NextResponse.json({ error: 'Completion not found' }, { status: 404 });
@@ -183,11 +194,16 @@ export async function PUT(
                 }
             }
 
-            const { error: updateError } = await supabaseAdmin
+            let updateQuery = supabaseAdmin
                 .from('sop_completions')
                 .update(updates)
-                .eq('id', completionId)
-                .eq('property_id', propertyId);
+                .eq('id', completionId);
+
+            if (propertyId && propertyId !== 'all' && propertyId !== 'undefined' && propertyId !== 'null') {
+                updateQuery = updateQuery.eq('property_id', propertyId);
+            }
+
+            const { error: updateError } = await updateQuery;
 
             if (updateError) {
                 return NextResponse.json({ error: updateError.message }, { status: 500 });

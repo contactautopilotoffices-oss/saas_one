@@ -249,7 +249,7 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
                 console.log('SOPChecklistRunner: Template fetched', templateData?.id);
 
                 // Use resolved propertyId — fall back to template row's property_id if prop not passed
-                const validPropId = (!propertyId || propertyId === 'undefined' || propertyId === 'null') ? null : propertyId;
+                const validPropId = (!propertyId || propertyId === 'undefined' || propertyId === 'null' || propertyId === 'all') ? null : propertyId;
                 const resolvedPropertyId = validPropId || templateData.property_id;
                 if (!resolvedPropertyId) throw new Error('Property ID could not be resolved for this template. Check RLS on sop_templates or properties table.');
 
@@ -392,7 +392,7 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
             // Refresh session before API call to prevent timeout
             await supabase.auth.refreshSession();
 
-            const validPropId = (!propertyId || propertyId === 'undefined' || propertyId === 'null') ? null : propertyId;
+            const validPropId = (!propertyId || propertyId === 'undefined' || propertyId === 'null' || propertyId === 'all') ? null : propertyId;
             const resolvedPropId = validPropId || completion?.property_id || template?.property_id;
             const res = await fetch(`/api/properties/${resolvedPropId}/sop/completions/${completion.id}`, {
                 method: 'PUT',
@@ -509,7 +509,7 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
     // Fire-and-forget AI cleanliness scoring after a photo is saved.
     // The result arrives via the realtime subscription on sop_completion_items.
     const triggerAIScoring = (completionItemId: string) => {
-        const validPropId = (!propertyId || propertyId === 'undefined' || propertyId === 'null') ? null : propertyId;
+        const validPropId = (!propertyId || propertyId === 'undefined' || propertyId === 'null' || propertyId === 'all') ? null : propertyId;
         const resolvedPropId = validPropId || completion?.property_id || template?.property_id;
         if (!resolvedPropId || !completion?.id) return;
 
@@ -546,7 +546,7 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
         const item = completion.items.find((i: any) => i.checklist_item_id === targetItemId);
         if (!item) return;
 
-        const validPropId = (!propertyId || propertyId === 'undefined' || propertyId === 'null') ? null : propertyId;
+        const validPropId = (!propertyId || propertyId === 'undefined' || propertyId === 'null' || propertyId === 'all') ? null : propertyId;
         const resolvedPropId = validPropId || completion?.property_id || template?.property_id;
         const uploadKey = `${item.id}-photo`;
 
@@ -669,7 +669,7 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
         const item = completion.items.find((i: any) => i.checklist_item_id === targetItemId);
         if (!item) return;
 
-        const validPropId = (!propertyId || propertyId === 'undefined' || propertyId === 'null') ? null : propertyId;
+        const validPropId = (!propertyId || propertyId === 'undefined' || propertyId === 'null' || propertyId === 'all') ? null : propertyId;
         const resolvedPropId = validPropId || completion?.property_id || template?.property_id;
         const uploadKey = `${item.id}-video`;
 
@@ -782,7 +782,7 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
         if (!completion || !itemId) return;
         try {
             setIsSaving(true);
-            const validPropId = (!propertyId || propertyId === 'undefined' || propertyId === 'null') ? null : propertyId;
+            const validPropId = (!propertyId || propertyId === 'undefined' || propertyId === 'null' || propertyId === 'all') ? null : propertyId;
             const resolvedPropId = validPropId || completion?.property_id || template?.property_id;
             const item = completion.items.find((i: any) => i.checklist_item_id === itemId);
             if (!item) return;
@@ -853,7 +853,7 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
             // Evidence check logic removed per user request (staff can add if they want)
 
             // Update completion status via API (supabaseAdmin, bypasses RLS)
-            const validPropId = (!propertyId || propertyId === 'undefined' || propertyId === 'null') ? null : propertyId;
+            const validPropId = (!propertyId || propertyId === 'undefined' || propertyId === 'null' || propertyId === 'all') ? null : propertyId;
             const resolvedPropId = validPropId || completion?.property_id || template?.property_id;
             const submitRes = await fetch(`/api/properties/${resolvedPropId}/sop/completions/${completion.id}`, {
                 method: 'PUT',
@@ -862,13 +862,17 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
                     status: 'completed'
                 }),
             });
-            if (!submitRes.ok) throw new Error('Failed to submit checklist');
+            if (!submitRes.ok) {
+                const errData = await submitRes.json().catch(() => ({}));
+                throw new Error(errData.error || 'Failed to submit checklist');
+            }
 
             playTickleSound();
             setToast({ message: 'Checklist submitted successfully!', type: 'success' });
             setTimeout(() => onComplete?.(), 1500);
-        } catch (err) {
-            setToast({ message: 'Error submitting checklist', type: 'error' });
+        } catch (err: any) {
+            console.error('[SOPRunner] Error submitting checklist:', err);
+            setToast({ message: err?.message || 'Error submitting checklist', type: 'error' });
         } finally {
             setIsSaving(false);
         }
@@ -1531,7 +1535,9 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
                         const targetId = targetItem?.id || completionItemId;
                         setAiScoring(prev => ({ ...prev, [completionItemId]: true, [targetId]: true }));
                         try {
-                            const res = await fetch(`/api/properties/${propertyId}/sop/completions/${completion.id}/score-photo`, {
+                            const validPropId = (!propertyId || propertyId === 'undefined' || propertyId === 'null' || propertyId === 'all') ? null : propertyId;
+                            const resolvedPropId = validPropId || completion?.property_id || template?.property_id;
+                            const res = await fetch(`/api/properties/${resolvedPropId}/sop/completions/${completion.id}/score-photo`, {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({ completionItemId: targetId }),

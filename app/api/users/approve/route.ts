@@ -136,13 +136,58 @@ export async function POST(request: NextRequest) {
                 .update(propUpdate)
                 .eq('user_id', userId);
 
-            // Activate org membership if exists
-            await adminClient
-                .from('organization_memberships')
-                .update({ is_active: true })
-                .eq('user_id', userId);
+            // Activate or create org membership
+            if (targetOrgId) {
+                const targetRole = role || targetOrgMemb?.role || 'staff';
+                await adminClient
+                    .from('organization_memberships')
+                    .upsert({
+                        organization_id: targetOrgId,
+                        user_id: userId,
+                        role: targetRole,
+                        is_active: true
+                    }, { onConflict: 'organization_id,user_id' });
+            }
 
-            // Notification is handled automatically via DB event_outbox trigger (trg_user_management_outbox)
+            // Ensure employee_profiles record is linked upon approval for internal roles
+            const { data: approvedUserData } = await adminClient
+                .from('users')
+                .select('*')
+                .eq('id', userId)
+                .single();
+
+            if (approvedUserData) {
+                const appRole = role || targetOrgMemb?.role || approvedUserData.role || approvedUserData.raw_user_meta_data?.role || 'staff';
+                if (['hr', 'hr_head', 'staff', 'property_admin', 'org_super_admin'].includes(appRole)) {
+                    const fullName = approvedUserData.full_name || approvedUserData.raw_user_meta_data?.full_name || approvedUserData.email.split('@')[0];
+                    const nameParts = fullName.split(' ');
+                    const firstName = nameParts[0] || 'Employee';
+                    const lastName = nameParts.slice(1).join(' ') || '';
+                    const ecode = `E${Math.floor(100 + Math.random() * 900)}`;
+
+                    try {
+                        await adminClient
+                            .from('employee_profiles')
+                            .upsert({
+                                organization_id: targetOrgId || approvedUserData.organization_id || null,
+                                user_id: userId,
+                                employee_code: ecode,
+                                first_name: firstName,
+                                last_name: lastName,
+                                full_name: fullName,
+                                email: approvedUserData.email,
+                                contact_number: approvedUserData.phone || null,
+                                department: appRole.includes('hr') ? 'Human Resources' : 'Operations',
+                                designation: appRole === 'hr_head' ? 'HR Head' : (appRole === 'hr' ? 'HR Executive' : 'Executive'),
+                                is_hr_authority: appRole === 'hr' || appRole === 'hr_head',
+                                reconciliation_status: 'linked',
+                                is_active: true
+                            }, { onConflict: 'organization_id,employee_code' });
+                    } catch {
+                        /* ignore duplicate */
+                    }
+                }
+            }
 
             return NextResponse.json({
                 success: true,

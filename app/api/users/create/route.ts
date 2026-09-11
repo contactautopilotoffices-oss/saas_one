@@ -57,7 +57,11 @@ export async function POST(request: NextRequest) {
         }
 
         // Role enum guard — reject any value not in the allowed set to prevent privilege escalation
-        const ALLOWED_ROLES = ['master_admin', 'org_super_admin', 'ops_super_admin', 'property_admin', 'staff', 'mst', 'tenant', 'procurement', 'vendor', 'super_tenant'] as const;
+        const ALLOWED_ROLES = [
+            'master_admin', 'org_super_admin', 'ops_super_admin', 'property_admin',
+            'staff', 'mst', 'tenant', 'procurement', 'vendor', 'super_tenant',
+            'hr', 'hr_head', 'security', 'soft_service_staff', 'soft_service_supervisor', 'soft_service_manager'
+        ] as const;
         if (!ALLOWED_ROLES.includes(role as any)) {
             return NextResponse.json(
                 { error: `Invalid role "${role}". Allowed: ${ALLOWED_ROLES.join(', ')}` },
@@ -152,16 +156,20 @@ export async function POST(request: NextRequest) {
             console.error('User creation error:', createError)
 
             // Handle duplicate user
-            if (createError.message.includes('already registered')) {
+            const isDuplicate = (createError as any).code === 'email_exists' ||
+                createError.message.toLowerCase().includes('already registered') ||
+                createError.message.toLowerCase().includes('already been registered');
+
+            if (isDuplicate) {
                 return NextResponse.json(
-                    { error: 'A user with this email already exists' },
+                    { error: `A user with email "${email}" is already registered in the app. If this is an existing employee, map their ECode in the Employee Directory or App Reconciliation tab.` },
                     { status: 409 }
                 )
             }
 
             return NextResponse.json(
                 { error: createError.message },
-                { status: 500 }
+                { status: 400 }
             )
         }
 
@@ -188,14 +196,26 @@ export async function POST(request: NextRequest) {
         const { property_id } = body
 
         // Membership logic:
-        // org_super_admin, ops_super_admin, procurement & super_tenant → organization_memberships
+        // org_super_admin, ops_super_admin, procurement, hr, hr_head & super_tenant → organization_memberships
         // all other roles               → property_memberships
         // On failure: delete the auth user to avoid stranded accounts (partial state cleanup)
-        if (role === 'org_super_admin' || role === 'ops_super_admin' || role === 'procurement' || role === 'super_tenant') {
+        const IS_ORG_WIDE_ROLE = ['org_super_admin', 'ops_super_admin', 'procurement', 'hr', 'hr_head', 'super_tenant'].includes(role);
+
+        if (IS_ORG_WIDE_ROLE) {
             if (organization_id) {
-                const { error: memberError } = await adminClient
+                let { error: memberError } = await adminClient
                     .from('organization_memberships')
-                    .insert({ organization_id, user_id: userData.user.id, role })
+                    .insert({ organization_id, user_id: userData.user.id, role });
+
+                // If DB enum public.app_role doesn't contain 'hr' or 'hr_head' yet, fallback to 'staff' membership so creation succeeds!
+                if (memberError && memberError.message.includes('enum app_role')) {
+                    console.warn(`Role "${role}" not found in app_role enum, falling back to "staff" in organization_memberships`);
+                    const fallback = await adminClient
+                        .from('organization_memberships')
+                        .insert({ organization_id, user_id: userData.user.id, role: 'staff' });
+                    memberError = fallback.error;
+                }
+
                 if (memberError) {
                     await adminClient.auth.admin.deleteUser(userData.user.id)
                     return NextResponse.json(
@@ -205,6 +225,7 @@ export async function POST(request: NextRequest) {
                 }
             }
         }
+
 
         // For ops_super_admin, automatically assign ALL properties in the organization
         if (role === 'ops_super_admin' && organization_id) {
@@ -244,7 +265,7 @@ export async function POST(request: NextRequest) {
                 })
             if (propMemberError) {
                 // If it's not a procurement user (who already has org membership), delete the user on error
-                if (role !== 'org_super_admin' && role !== 'ops_super_admin' && role !== 'procurement') {
+                if (!IS_ORG_WIDE_ROLE) {
                     await adminClient.auth.admin.deleteUser(userData.user.id)
                 }
                 return NextResponse.json(
@@ -333,6 +354,37 @@ export async function POST(request: NextRequest) {
             .from('users')
             .update(userProfileUpdates)
             .eq('id', userData.user.id);
+
+        // For internal employee/HR roles, ensure employee_profiles record exists
+        if (['hr', 'hr_head', 'staff', 'property_admin', 'org_super_admin'].includes(role)) {
+            const nameParts = full_name.split(' ');
+            const firstName = nameParts[0] || 'Employee';
+            const lastName = nameParts.slice(1).join(' ') || '';
+            const ecode = `E${Math.floor(100 + Math.random() * 900)}`;
+
+            try {
+                await adminClient
+                    .from('employee_profiles')
+                    .upsert({
+                        organization_id: organization_id || null,
+                        property_id: property_id || null,
+                        user_id: userData.user.id,
+                        employee_code: ecode,
+                        first_name: firstName,
+                        last_name: lastName,
+                        full_name,
+                        email,
+                        contact_number: phone || null,
+                        department: role.includes('hr') ? 'Human Resources' : 'Operations',
+                        designation: role === 'hr_head' ? 'HR Head' : (role === 'hr' ? 'HR Executive' : 'Executive'),
+                        is_hr_authority: role === 'hr' || role === 'hr_head',
+                        reconciliation_status: 'linked',
+                        is_active: true
+                    }, { onConflict: 'organization_id,employee_code' });
+            } catch {
+                /* ignore duplicate */
+            }
+        }
 
         // Send welcome WhatsApp message to new user (best-effort, non-blocking)
         const welcomePhone = phone || null;

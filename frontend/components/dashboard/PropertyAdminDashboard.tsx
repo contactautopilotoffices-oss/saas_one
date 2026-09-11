@@ -381,6 +381,38 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
     // Ref to prevent duplicate fetches
     const fetchedPropertyId = useRef<string | null>(null);
 
+    const handlePropertySwitch = useCallback((id: string) => {
+        setActivePropId(id);
+        if (id === 'all') {
+            setProperty({
+                id: 'all',
+                name: 'All Properties',
+                code: 'ALL',
+                address: 'All Organization Properties',
+                organization_id: orgProperties[0]?.organization_id || membership?.org_id || ''
+            });
+        } else {
+            const found = orgProperties.find(p => p.id === id) || (membership?.properties || []).find(p => p.id === id);
+            if (found) {
+                setProperty({
+                    ...found,
+                    address: (found as any).address || ''
+                } as any);
+            }
+        }
+
+        fetchedPropertyId.current = null;
+
+        const currentUrl = new URL(window.location.href);
+        if (currentUrl.pathname.includes('/property/')) {
+            const newPath = currentUrl.pathname.replace(/\/property\/[^\/]+/, `/property/${id}`);
+            router.push(newPath + currentUrl.search);
+        } else {
+            currentUrl.searchParams.set('propertyId', id);
+            router.push(currentUrl.pathname + '?' + currentUrl.searchParams.toString());
+        }
+    }, [orgProperties, membership, router]);
+
     useEffect(() => {
         if (propertyId && fetchedPropertyId.current !== propertyId) {
             fetchedPropertyId.current = propertyId;
@@ -944,29 +976,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                             <PropertySelectorDropdown
                                 currentProperty={property}
                                 assignedProperties={assignedProperties}
-                                onSelectProperty={(id) => {
-                                    setActivePropId(id);
-                                    if (id === 'all') {
-                                        setProperty({
-                                            id: 'all',
-                                            name: 'All Properties',
-                                            code: 'ALL',
-                                            address: 'All Organization Properties',
-                                            organization_id: orgProperties[0]?.organization_id || membership?.org_id || ''
-                                        });
-                                    } else {
-                                        const found = orgProperties.find(p => p.id === id) || (membership?.properties || []).find(p => p.id === id);
-                                        if (found) setProperty(found as any);
-                                    }
-                                    const url = new URL(window.location.href);
-                                    if (url.pathname.includes('/property/')) {
-                                        const newPath = url.pathname.replace(/\/property\/[^\/]+/, `/property/${id}`);
-                                        window.history.pushState({}, '', newPath + url.search);
-                                    } else {
-                                        url.searchParams.set('propertyId', id);
-                                        window.history.pushState({}, '', url.toString());
-                                    }
-                                }}
+                                onSelectProperty={handlePropertySwitch}
                                 variant="light"
                             />
 
@@ -1017,29 +1027,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                             onRefresh={() => setStatsVersion(v => v + 1)}
                             onTabChange={handleTabChange}
                             assignedProperties={assignedProperties}
-                            onPropertySwitch={(id) => {
-                                setActivePropId(id);
-                                if (id === 'all') {
-                                    setProperty({
-                                        id: 'all',
-                                        name: 'All Properties',
-                                        code: 'ALL',
-                                        address: 'All Organization Properties',
-                                        organization_id: orgProperties[0]?.organization_id || membership?.org_id || ''
-                                    });
-                                } else {
-                                    const found = orgProperties.find(p => p.id === id) || (membership?.properties || []).find(p => p.id === id);
-                                    if (found) setProperty(found as any);
-                                }
-                                const url = new URL(window.location.href);
-                                if (url.pathname.includes('/property/')) {
-                                    const newPath = url.pathname.replace(/\/property\/[^\/]+/, `/property/${id}`);
-                                    window.history.pushState({}, '', newPath + url.search);
-                                } else {
-                                    url.searchParams.set('propertyId', id);
-                                    window.history.pushState({}, '', url.toString());
-                                }
-                            }}
+                            onPropertySwitch={handlePropertySwitch}
                         />}
                         {openTab === 'users' && <UserDirectory
                             propertyId={propertyId}

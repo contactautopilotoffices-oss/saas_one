@@ -30,3 +30,34 @@ export async function GET(
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
     }
 }
+
+/**
+ * PATCH /api/properties/[propertyId]
+ * Update property details using service role
+ */
+export async function PATCH(
+    request: NextRequest,
+    { params }: { params: Promise<{ propertyId: string }> }
+) {
+    const { propertyId } = await params;
+
+    try {
+        const body = await request.json();
+        const { data: property, error } = await supabaseAdmin
+            .from('properties')
+            .update(body)
+            .eq('id', propertyId)
+            .select()
+            .single();
+
+        if (error) {
+            console.error('[PropertyAPI] Error updating property:', error.message);
+            return NextResponse.json({ error: error.message }, { status: 500 });
+        }
+
+        return NextResponse.json({ success: true, property });
+    } catch (error: any) {
+        console.error('[PropertyAPI] Internal update error:', error.message);
+        return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
+    }
+}

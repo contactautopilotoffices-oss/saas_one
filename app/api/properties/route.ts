@@ -16,6 +16,7 @@ export async function POST(request: NextRequest) {
             address,
             city,
             capacity,
+            image_url,
             is_active = true
         } = body;
 
@@ -60,6 +61,7 @@ export async function POST(request: NextRequest) {
                 address: address || null,
                 city: city || null,
                 capacity: capacity || null,
+                image_url: image_url || null,
                 is_active,
                 status
             })

@@ -2662,6 +2662,102 @@ export class NotificationService {
             console.error('[NotificationService] afterMonthlyFeedbackSubmitted error:', err);
         }
     }
+
+    // ============================================================================
+    // HR Tickets & Grievances Notification Methods
+    // ============================================================================
+    static async afterHrTicketCreated(ticketId: string) {
+        try {
+            const { data: ticket } = await supabaseAdmin
+                .from('hr_tickets')
+                .select('*, raised_by:users!raised_by_user_id(id, full_name, email), assigned_to:users!assigned_to_user_id(id, full_name, email), category:hr_ticket_categories(category_name)')
+                .eq('id', ticketId)
+                .maybeSingle();
+
+            if (!ticket) return;
+
+            const isConfidential = ticket.is_confidential || ticket.is_anonymous;
+            const eventType = isConfidential ? 'HR_CONFIDENTIAL_DIRECTOR_ALERT' : 'HR_TICKET_CREATED';
+
+            // 1. Process WhatsApp Omnichannel Event
+            const { WhatsAppEventProcessor } = await import('./WhatsAppEventProcessor');
+            await WhatsAppEventProcessor.processEvent({
+                event_type: eventType,
+                payload: ticket
+            }).catch(err => console.error('[NotificationService] WhatsApp HR ticket created error:', err));
+
+            // 2. In-App Notification Dispatch
+            const targetUsers = Array.from(new Set([
+                ticket.raised_by_user_id,
+                ticket.assigned_to_user_id
+            ])).filter(Boolean) as string[];
+
+            if (targetUsers.length > 0) {
+                await this.sendToMany(targetUsers, {
+                    organizationId: ticket.organization_id,
+                    type: 'HR_TICKET_CREATED',
+                    title: `HR Ticket #${ticket.ticket_number} Created`,
+                    message: `${ticket.subject} (${ticket.category?.category_name || 'Grievance'})`,
+                    deepLink: `/hr-tickets?tab=tickets&id=${ticket.id}`
+                });
+            }
+        } catch (err) {
+            console.error('[NotificationService] afterHrTicketCreated error:', err);
+        }
+    }
+
+    static async afterHrTicketStatusUpdated(ticketId: string, oldStatus: string, newStatus: string, actorId?: string) {
+        try {
+            const { data: ticket } = await supabaseAdmin
+                .from('hr_tickets')
+                .select('*')
+                .eq('id', ticketId)
+                .maybeSingle();
+
+            if (!ticket) return;
+
+            const { WhatsAppEventProcessor } = await import('./WhatsAppEventProcessor');
+            if (newStatus === 'resolved' || newStatus === 'closed') {
+                await WhatsAppEventProcessor.processEvent({
+                    event_type: 'HR_TICKET_RESOLVED',
+                    payload: ticket
+                }).catch(err => console.error('[NotificationService] WhatsApp HR ticket resolved error:', err));
+            }
+
+            if (ticket.raised_by_user_id) {
+                await this.send({
+                    userId: ticket.raised_by_user_id,
+                    organizationId: ticket.organization_id,
+                    type: 'HR_TICKET_STATUS_UPDATED',
+                    title: `HR Ticket #${ticket.ticket_number} Status Updated`,
+                    message: `Status changed to ${newStatus.toUpperCase().replace('_', ' ')}.`,
+                    deepLink: `/hr-tickets?tab=tickets&id=${ticket.id}`
+                });
+            }
+        } catch (err) {
+            console.error('[NotificationService] afterHrTicketStatusUpdated error:', err);
+        }
+    }
+
+    static async afterHrTicketCommentAdded(ticketId: string, commentId: string) {
+        try {
+            const { data: comment } = await supabaseAdmin
+                .from('hr_ticket_discussions')
+                .select('*')
+                .eq('id', commentId)
+                .maybeSingle();
+
+            if (!comment) return;
+
+            const { WhatsAppEventProcessor } = await import('./WhatsAppEventProcessor');
+            await WhatsAppEventProcessor.processEvent({
+                event_type: 'HR_TICKET_COMMENT_ADDED',
+                payload: comment
+            }).catch(err => console.error('[NotificationService] WhatsApp HR ticket comment error:', err));
+        } catch (err) {
+            console.error('[NotificationService] afterHrTicketCommentAdded error:', err);
+        }
+    }
 }
 
 

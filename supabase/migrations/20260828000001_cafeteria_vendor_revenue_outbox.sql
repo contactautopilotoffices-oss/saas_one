@@ -79,8 +79,8 @@ BEGIN
         'revenue_amount', NEW.revenue_amount,
         'commission_rate', v_commission_rate,
         'commission_due', v_commission_due,
-        'revenue_date', COALESCE(NEW.revenue_date, NEW.entry_date, CURRENT_DATE),
-        'entry_date', COALESCE(NEW.entry_date, NEW.revenue_date, CURRENT_DATE),
+        'revenue_date', COALESCE(NEW.revenue_date, CURRENT_DATE),
+        'entry_date', COALESCE(NEW.revenue_date, CURRENT_DATE),
         'created_at', NEW.created_at
     );
 

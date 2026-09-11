@@ -199,6 +199,8 @@ const InviteLinkGenerator: React.FC<Props> = ({ organizations }) => {
                         >
                             <option value="tenant">Client</option>
                             <option value="staff">Staff</option>
+                            <option value="hr">HR Executive</option>
+                            <option value="hr_head">HR Head</option>
                             <option value="property_admin">Property Admin</option>
                         </select>
                     </div>

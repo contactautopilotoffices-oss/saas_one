@@ -77,7 +77,7 @@ const AddMemberModal = ({ isOpen, onClose, orgId, orgName, properties, fixedProp
                     full_name: fullName,
                     organization_id: orgId,
                     role,
-                    property_id: (role === 'org_super_admin' || role === 'ops_super_admin' || role === 'super_tenant') ? null : selectedPropertyId,
+                    property_id: (['org_super_admin', 'ops_super_admin', 'super_tenant', 'procurement', 'hr', 'hr_head'].includes(role)) ? null : selectedPropertyId,
                     specialization: role === 'staff' ? specialization : undefined,
                     skills: (role === 'staff' || role === 'mst' || role === 'soft_service_staff' || role === 'soft_service_supervisor' || role === 'soft_service_manager') ? selectedSkills : undefined
                 }),
@@ -256,6 +256,11 @@ const AddMemberModal = ({ isOpen, onClose, orgId, orgName, properties, fixedProp
                                             <option value="procurement">Procurement</option>
                                         </optgroup>
 
+                                        <optgroup label="Human Resources">
+                                            <option value="hr">HR Executive</option>
+                                            <option value="hr_head">HR Head</option>
+                                        </optgroup>
+
                                         <optgroup label="Other">
                                             <option value="security">Security</option>
                                             <option value="tenant">Client</option>
@@ -266,7 +271,7 @@ const AddMemberModal = ({ isOpen, onClose, orgId, orgName, properties, fixedProp
                                 </div>
                             </div>
 
-                            {role !== 'org_super_admin' && role !== 'ops_super_admin' && role !== 'super_tenant' && (
+                            {!['org_super_admin', 'ops_super_admin', 'super_tenant', 'procurement', 'hr', 'hr_head'].includes(role) && (
                                 <div className="space-y-2">
                                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Target Property</label>
                                     <div className="relative">
@@ -274,7 +279,7 @@ const AddMemberModal = ({ isOpen, onClose, orgId, orgName, properties, fixedProp
                                         <select
                                             value={selectedPropertyId}
                                             onChange={(e) => setSelectedPropertyId(e.target.value)}
-                                            required={role !== 'org_super_admin' && role !== 'ops_super_admin' && role !== 'super_tenant'}
+                                            required={!['org_super_admin', 'ops_super_admin', 'super_tenant', 'procurement', 'hr', 'hr_head'].includes(role)}
                                             disabled={!!fixedPropertyId}
                                             className="w-full pl-11 pr-4 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold text-slate-900 focus:ring-2 focus:ring-slate-100 outline-none appearance-none disabled:opacity-75 disabled:cursor-not-allowed"
                                         >

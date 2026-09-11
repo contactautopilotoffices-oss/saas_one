@@ -18,6 +18,7 @@ interface Property {
     floors?: number;
     status: string;
     type?: string;
+    image_url?: string;
     approver?: string | null;
 }
 
@@ -84,8 +85,12 @@ const PropertyManagement = ({ orgId, properties, onRefresh }: PropertyManagement
                     >
                         <div className="flex justify-between items-start mb-6">
                             <div className="flex items-center gap-4">
-                                <div className="w-12 h-12 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-blue-500 group-hover:scale-110 transition-transform">
-                                    <Building2 className="w-6 h-6" />
+                                <div className="w-12 h-12 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-blue-500 group-hover:scale-110 transition-transform overflow-hidden shrink-0">
+                                    {prop.image_url ? (
+                                        <img src={prop.image_url} alt={prop.name} className="w-full h-full object-cover rounded-2xl" />
+                                    ) : (
+                                        <Building2 className="w-6 h-6" />
+                                    )}
                                 </div>
                                 <div className="space-y-0.5">
                                     <h3 className="text-lg font-bold text-white flex items-center gap-2">
@@ -291,20 +296,57 @@ const EditPropertyModal = ({ property, onClose, onUpdated }: {
 }) => {
     const [name, setName] = useState(property.name);
     const [status, setStatus] = useState(property.status);
+    const [imageUrl, setImageUrl] = useState(property.image_url || '');
     const [isUpdating, setIsUpdating] = useState(false);
+    const [isUploading, setIsUploading] = useState(false);
     const supabase = createClient();
+
+    const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        setIsUploading(true);
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            const res = await fetch('/api/properties/upload-image', {
+                method: 'POST',
+                body: formData,
+            });
+            const data = await res.json();
+            if (res.ok && data.url) {
+                setImageUrl(data.url);
+            } else {
+                alert('Failed to upload image: ' + (data.error || 'Unknown error'));
+            }
+        } catch (err: any) {
+            console.error('Image upload error:', err);
+            alert('Upload error: ' + err.message);
+        } finally {
+            setIsUploading(false);
+        }
+    };
 
     const handleUpdate = async () => {
         setIsUpdating(true);
-        const { error } = await supabase
-            .from('properties')
-            .update({ name, status })
-            .eq('id', property.id);
-
-        setIsUpdating(false);
-        if (!error) {
-            onUpdated();
-            onClose();
+        try {
+            const res = await fetch(`/api/properties/${property.id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, status, image_url: imageUrl || null }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                onUpdated();
+                onClose();
+            } else {
+                alert('Failed to update property: ' + (data.error || 'Unknown error'));
+            }
+        } catch (err: any) {
+            console.error('Update error:', err);
+            alert('Failed to update property: ' + err.message);
+        } finally {
+            setIsUpdating(false);
         }
     };
 
@@ -333,9 +375,50 @@ const EditPropertyModal = ({ property, onClose, onUpdated }: {
                             <option value="maintenance">Maintenance</option>
                         </select>
                     </div>
+
+                    <div className="space-y-2">
+                        <label className="text-xs font-black text-zinc-500 uppercase tracking-widest">Property Photo</label>
+                        <div className="relative h-36 rounded-2xl border border-zinc-800 flex flex-col items-center justify-center overflow-hidden bg-zinc-950">
+                            {isUploading ? (
+                                <div className="flex flex-col items-center gap-2">
+                                    <div className="w-8 h-8 border-3 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                                    <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-tight">Uploading photo...</p>
+                                </div>
+                            ) : imageUrl ? (
+                                <>
+                                    <img src={imageUrl} alt="Preview" className="w-full h-full object-cover" />
+                                    <button
+                                        type="button"
+                                        onClick={() => setImageUrl('')}
+                                        className="absolute top-2 right-2 p-1.5 bg-rose-500 text-white rounded-full shadow-lg hover:bg-rose-600 transition-colors"
+                                    >
+                                        <X className="w-3 h-3" />
+                                    </button>
+                                </>
+                            ) : (
+                                <div className="flex flex-col items-center gap-2 pointer-events-none">
+                                    <div className="w-10 h-10 bg-zinc-900 rounded-xl flex items-center justify-center text-zinc-400">
+                                        <Building2 className="w-5 h-5" />
+                                    </div>
+                                    <div className="text-center">
+                                        <p className="text-[10px] font-bold text-zinc-300 uppercase tracking-tight">Upload Property Photo</p>
+                                        <p className="text-[9px] text-zinc-500 font-medium">PNG, JPG, WebP up to 10MB</p>
+                                    </div>
+                                </div>
+                            )}
+                            <input
+                                type="file"
+                                accept="image/*"
+                                onChange={handleImageUpload}
+                                disabled={isUploading}
+                                className="absolute inset-0 opacity-0 cursor-pointer disabled:cursor-not-allowed"
+                            />
+                        </div>
+                    </div>
+
                     <div className="flex gap-4 pt-4">
                         <button onClick={onClose} className="flex-1 py-3 border border-zinc-800 rounded-xl text-zinc-500 font-bold hover:bg-zinc-800 transition-all">Cancel</button>
-                        <button onClick={handleUpdate} disabled={isUpdating} className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-900/20">
+                        <button onClick={handleUpdate} disabled={isUpdating || isUploading} className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-900/20 disabled:opacity-50">
                             {isUpdating ? 'Saving...' : 'Save Changes'}
                         </button>
                     </div>

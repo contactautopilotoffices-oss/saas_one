@@ -632,20 +632,23 @@ export default function DieselSpreadsheetLogger({
                     const hasClosingKwh = r.closing_kwh !== '' && r.closing_kwh !== null && r.closing_kwh !== undefined;
                     const hasClosingDiesel = r.closing_diesel_level !== '' && r.closing_diesel_level !== null && r.closing_diesel_level !== undefined;
                     const hasAdded = Number(r.diesel_added_litres) > 0;
+                    const hasOpeningHours = r.opening_hours !== '' && r.opening_hours !== null && r.opening_hours !== undefined;
+                    const hasOpeningKwh = r.opening_kwh !== '' && r.opening_kwh !== null && r.opening_kwh !== undefined;
+                    const hasOpeningDiesel = r.opening_diesel_level !== '' && r.opening_diesel_level !== null && r.opening_diesel_level !== undefined;
 
-                    if (hasClosingHours || hasClosingKwh || hasClosingDiesel || hasAdded) {
+                    if (hasClosingHours || hasClosingKwh || hasClosingDiesel || hasAdded || hasOpeningHours || hasOpeningKwh || hasOpeningDiesel) {
                         const openingDiesel = Number(r.opening_diesel_level) || 0;
                         const added = Number(r.diesel_added_litres) || 0;
-                        const closingDiesel = hasClosingDiesel ? Number(r.closing_diesel_level) : openingDiesel;
-                        const consumedLitres = Math.max(0, (openingDiesel + added) - closingDiesel);
+                        const closingDiesel = hasClosingDiesel ? Number(r.closing_diesel_level) : null;
+                        const consumedLitres = closingDiesel !== null ? Math.max(0, (openingDiesel + added) - closingDiesel) : null;
 
                         readingsToSave.push({
                             generator_id: genId,
                             reading_date: dateStr,
-                            opening_hours: Number(r.opening_hours) || 0,
-                            closing_hours: r.closing_hours !== '' ? Number(r.closing_hours) : null,
-                            opening_kwh: Number(r.opening_kwh) || 0,
-                            closing_kwh: r.closing_kwh !== '' ? Number(r.closing_kwh) : null,
+                            opening_hours: r.opening_hours !== '' && r.opening_hours !== null ? Number(r.opening_hours) : 0,
+                            closing_hours: r.closing_hours !== '' && r.closing_hours !== null ? Number(r.closing_hours) : null,
+                            opening_kwh: r.opening_kwh !== '' && r.opening_kwh !== null ? Number(r.opening_kwh) : 0,
+                            closing_kwh: r.closing_kwh !== '' && r.closing_kwh !== null ? Number(r.closing_kwh) : null,
                             opening_diesel_level: openingDiesel,
                             closing_diesel_level: closingDiesel,
                             diesel_added_litres: added,

@@ -159,6 +159,8 @@ const UserManagement = ({ orgId }: { orgId: string }) => {
                                             className="bg-transparent text-xs font-black text-white uppercase tracking-widest border-none focus:ring-0 cursor-pointer hover:text-blue-400 transition-colors"
                                         >
                                             <option value="org_super_admin">Super Admin</option>
+                                            <option value="hr_head">HR Head</option>
+                                            <option value="hr">HR Executive</option>
                                             <option value="property_admin">Property Admin</option>
                                             <option value="staff">Staff</option>
                                             <option value="tenant">Client</option>

@@ -441,7 +441,7 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
             }
 
             // For cross-level changes (property ↔ org), refetch all users
-            const ORG_LEVEL_ROLES = ['org_super_admin', 'ops_super_admin'];
+            const ORG_LEVEL_ROLES = ['org_super_admin', 'ops_super_admin', 'procurement', 'hr', 'hr_head'];
             const wasPropertyLevel = !!user?.propertyRole && !user?.orgRole;
             const wasOrgLevel = !!user?.orgRole;
             const isNowOrgLevel = ORG_LEVEL_ROLES.includes(newRole);
@@ -515,6 +515,8 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
         : [
             'org_super_admin',
             'ops_super_admin',
+            'hr_head',
+            'hr',
             'property_admin',
             'tenant',
             'super_tenant',
@@ -532,9 +534,12 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
 
     const formatRole = (role: string) => {
         if (!role) return 'Member';
+        if (role === 'hr') return 'HR Executive';
+        if (role === 'hr_head') return 'HR Head';
         if (role === 'tenant') return 'Client / Tenant';
         if (role === 'super_tenant') return 'Super Client (Multi-Property)';
         if (role === 'org_super_admin') return 'Org Super Admin';
+        if (role === 'ops_super_admin') return 'Ops Super Admin';
         if (role === 'property_admin') return 'Property Admin';
         if (role === 'mst') return 'MST (Technician)';
         if (role === 'soft_service_manager') return 'Soft Service Manager';
