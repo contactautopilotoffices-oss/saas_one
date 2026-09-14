@@ -15,7 +15,7 @@
  * strip <style> blocks and ignore modern CSS; this renders the same in both.
  */
 
-import { entityUrl, type EntityRef, type Priority } from './types';
+import { entityUrl, type EntityRef, type Priority, type RaisedPo } from './types';
 import type { ScanCoverage } from './checks';
 import { DISPOSITION_SPECS, statusLine, type Disposition, type DispositionStatus } from './disposition';
 import type { RecipientBundle, RoutedFinding } from './router';
@@ -447,6 +447,60 @@ export interface VettingStamp {
  *              never be read as a clean bill of health.
  *   failed   — broke. Said out loud rather than swallowed.
  */
+/**
+ * EVERY ORDER RAISED IN THE WINDOW — the purchase team's record of yesterday.
+ *
+ * The mail used to list only problems. On 12 Sept four orders were raised,
+ * none tripped a check, and the mail had nothing to say about any of them. A
+ * team that placed four orders should see four orders: the flagged ones point
+ * down to the item that explains them, and the rest are recorded as checked.
+ *
+ * "No issue found" is the exact claim and no more. The checks do not judge
+ * price, so this never says an order is good.
+ *
+ * Null renders nothing, so callers that do not pass it are unchanged. An EMPTY
+ * list is different: it renders a line saying no orders were raised, because
+ * on a weekend that sentence is the news.
+ */
+function raisedBlock(raised: ReadonlyArray<RaisedPo> | null, findings: ReadonlyArray<RoutedFinding>, orgId: string): string {
+    if (raised === null) return '';
+
+    const flaggedIds = new Set<string>();
+    for (const f of findings) for (const r of f.refs ?? []) if (r.kind === 'po' && r.id) flaggedIds.add(r.id);
+
+    const total = raised.reduce((sum, p) => sum + p.amount, 0);
+    const flagged = raised.filter((p) => p.ref.id && flaggedIds.has(p.ref.id)).length;
+
+    const rows = raised.map((p) => {
+        const isFlagged = Boolean(p.ref.id && flaggedIds.has(p.ref.id));
+        const where = [p.vendor, p.property].filter(Boolean).map((x) => esc(String(x))).join(' &middot; ');
+        return `
+        <tr>
+          <td style="padding:9px 10px 9px 0;vertical-align:top;border-top:1px solid ${LINE}">${refChip(p.ref, orgId)}</td>
+          <td style="padding:9px 10px 9px 0;vertical-align:top;border-top:1px solid ${LINE};font-size:12.5px;line-height:1.5;color:${BODY}">${where || '&mdash;'}${p.status ? `<div style="font-size:11px;color:${MUTED}">${esc(p.status.replace(/_/g, ' '))}</div>` : ''}</td>
+          <td style="padding:9px 10px 9px 0;vertical-align:top;border-top:1px solid ${LINE};font-size:12.5px;font-weight:700;color:${BRAND};white-space:nowrap;text-align:right">${inr(p.amount)}</td>
+          <td style="padding:9px 0;vertical-align:top;border-top:1px solid ${LINE};font-size:12px;white-space:nowrap">
+            <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${isFlagged ? TONE.action.dot : TONE.closed.dot};margin-right:5px"></span><span style="color:${isFlagged ? TONE.action.fg : TONE.closed.fg};font-weight:600">${isFlagged ? 'Flagged below' : 'No issue found'}</span>
+          </td>
+        </tr>`;
+    }).join('');
+
+    const heading = raised.length === 0
+        ? 'No purchase orders were raised in this window.'
+        : `${raised.length} order${raised.length === 1 ? '' : 's'} raised &middot; ${inr(total)} &middot; ${flagged === 0 ? 'none flagged' : `${flagged} flagged`}`;
+
+    return `
+      <tr><td style="padding:0 0 16px">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${EDGE};border-radius:5px;background:${CARD}">
+          <tr><td style="padding:14px 16px">
+            <div style="font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:${MUTED};font-weight:700">Raised in this window</div>
+            <div style="font-size:13px;color:${BRAND};font-weight:600;line-height:1.5;margin:5px 0 ${raised.length ? '6' : '0'}px">${heading}</div>
+            ${raised.length ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table>` : ''}
+          </td></tr>
+        </table>
+      </td></tr>`;
+}
+
 function coverageBlock(coverage: ScanCoverage | null): string {
     if (!coverage?.checks.length) return '';
     const row = (label: string, text: string, dot: string) => `
@@ -505,6 +559,11 @@ export function renderRecipientEmail(
      * that does not have it is unchanged.
      */
     coverage: ScanCoverage | null = null,
+    /**
+     * Every order raised in the window. Null renders nothing (callers that do
+     * not pass it are unchanged); an empty list says none were raised.
+     */
+    raised: ReadonlyArray<RaisedPo> | null = null,
 ): RenderedEmail {
     const { counts, recipient, findings } = bundle;
 
@@ -535,8 +594,13 @@ export function renderRecipientEmail(
     const topMoney = top?.amount ? ` · ${inr(top.amount)}` : '';
     const others = open - 1;
 
+    const quietLine = raised === null
+        ? 'everything answered, nothing new'
+        : raised.length === 0
+            ? 'no orders raised, nothing to flag'
+            : `${raised.length} order${raised.length === 1 ? '' : 's'} raised, none flagged`;
     const subject = open === 0
-        ? `PO scan · ${dayLabel}${where} — everything answered, nothing new`
+        ? `PO scan · ${dayLabel}${where} — ${quietLine}`
         : open === 1 && top
             ? `PO scan · ${dayLabel}${where} — ${top.title}${topMoney}`
             : `PO scan · ${dayLabel}${where} — ${top ? `${top.title}${others > 0 ? `, and ${others} more` : ''}` : `${open} to check`}${counts.exposure ? ` · ${inrShort(counts.exposure)}` : ''}`;
@@ -567,7 +631,7 @@ export function renderRecipientEmail(
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${EDGE};border-radius:5px;background:${CARD};overflow:hidden">
           <tr><td style="padding:18px 16px">
             <div style="font-size:24px;font-weight:800;color:${BRAND};letter-spacing:-0.02em;line-height:1.25">${
-                open === 0 ? 'Nothing new today.'
+                open === 0 ? 'Nothing needs a look today.'
                 : open === 1 ? 'One thing needs a look.'
                 : `${open} things need a look.`
             }</div>
@@ -610,6 +674,7 @@ export function renderRecipientEmail(
         </td></tr>
         ${summary}
         ${linkNotice}
+        ${raisedBlock(raised, findings, orgId)}
         ${findings.map((f, i) => findingBlock(f, orgId, i + 1, recipient.canDisposition, feedbackLinks[f.key], statuses[f.key], replyTo ?? undefined, replySubjects[f.key], findings.length > 1, vetting)).join('')}
         ${coverageBlock(coverage)}
         ${recipient.canDisposition ? replyFooter(replyTo, findings.length > 1) : ''}

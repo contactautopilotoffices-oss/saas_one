@@ -28,6 +28,23 @@ export type EntityKind = 'po' | 'property' | 'vendor' | 'invoice' | 'ticket' | '
  * `label` is what a human reads. A ref with no `id` renders as plain text —
  * never as a link — because a link we cannot verify is worse than no link.
  */
+/**
+ * One purchase order raised inside the scan window, as the mail lists it.
+ *
+ * Every order raised that day is shown, flagged or not. A mail that only lists
+ * problems gives the purchase team no record of the orders they placed that
+ * were fine, and on a day with no problems it says nothing at all.
+ */
+export interface RaisedPo {
+    ref: EntityRef;
+    vendor: string | null;
+    property: string | null;
+    amount: number;
+    status: string | null;
+    /** Zoho's created_time, falling back to po_date. */
+    raisedAt: string;
+}
+
 export interface EntityRef {
     kind: EntityKind;
     /** Human-facing identifier, e.g. 'PO-26/27-0323'. Always shown. */

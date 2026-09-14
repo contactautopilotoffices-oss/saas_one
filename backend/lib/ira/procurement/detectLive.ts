@@ -24,10 +24,10 @@
  */
 
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
-import { zohoBooksPoUrl, type Finding, type EntityRef } from './types';
+import { zohoBooksPoUrl, type Finding, type EntityRef, type RaisedPo } from './types';
 import { type CadenceWindow } from './cadence';
 import { runChecks, type ScanCoverage } from './checks';
-import type { CheckContext, PoLine, PoRow } from './checks/contract';
+import { raisedAt, type CheckContext, type PoLine, type PoRow } from './checks/contract';
 
 const DEAD_STATUSES = new Set(['cancelled', 'rejected', 'draft']);
 
@@ -36,6 +36,11 @@ export { looksLikeInvoiceRef, normaliseVendor } from './checks/duplicateInvoiceR
 
 export interface LiveScanResult {
     findings: Finding[];
+    /**
+     * Every order raised inside the window, oldest first. Empty when the scan
+     * had no window (a full-corpus sweep) or nothing was raised in it.
+     */
+    raised: RaisedPo[];
     /** What the scan looked at, and what each check did with it. */
     coverage: ScanCoverage;
     /** Headline counts, kept flat because the run log renders them as a row. */
@@ -137,8 +142,28 @@ export async function scanPurchaseOrders(
 
     const { findings, coverage } = await runChecks(ctx);
 
+    // Dated by when the business raised the order (raisedAt), never by when we
+    // stored it — the same rule the checks use, for the same reason.
+    const raised: RaisedPo[] = window
+        ? pos
+              .map((r) => ({ r, at: raisedAt(r) }))
+              .filter(({ at }) => at !== null && Date.parse(at) >= window.from.getTime() && Date.parse(at) < window.to.getTime())
+              .sort((a, b) => Date.parse(a.at as string) - Date.parse(b.at as string))
+              .map(({ r, at }) => ({
+                  ref: poRef(r),
+                  vendor: r.vendor_name ?? null,
+                  property: (r.property_id ? propName.get(String(r.property_id)) : null)
+                      || r.project_name
+                      || (r.raw?.cf_site ? String(r.raw.cf_site).trim() : null),
+                  amount: Number(r.po_amount ?? 0) || 0,
+                  status: r.status ?? null,
+                  raisedAt: at as string,
+              }))
+        : [];
+
     return {
         findings,
+        raised,
         coverage,
         stats: {
             totalPos: pos.length,

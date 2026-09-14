@@ -28,7 +28,7 @@ import { scanPurchaseOrders } from '@/backend/lib/ira/procurement/detectLive';
 import { SINGLETON_CHECK_IDS } from '@/backend/lib/ira/procurement/checks';
 import { windowFor, type Cadence } from '@/backend/lib/ira/procurement/cadence';
 import { applyPriorDispositions, rememberFindings, loadDispositionStatuses, resolveVanishedFindings } from '@/backend/lib/ira/procurement/memory';
-import { routeFindings } from '@/backend/lib/ira/procurement/router';
+import { routeFindings, RECIPIENTS, countsFor, type RecipientBundle } from '@/backend/lib/ira/procurement/router';
 import { renderRecipientEmail, type FeedbackLinks } from '@/backend/lib/ira/procurement/render';
 import { mintFeedbackLinks } from '@/backend/lib/ira/procurement/feedbackLinks';
 import { replyTag, taggedSubject } from '@/backend/lib/ira/procurement/reply';
@@ -153,7 +153,7 @@ export async function GET(request: NextRequest) {
                  * reports what happened in the last 24 hours and nothing else.
                  */
                 const s = await step(`Scanning ${w.label}`, 'fetch');
-                const { findings: raw, stats, coverage } = await scanPurchaseOrders(orgId, w.to, w);
+                const { findings: raw, raised, stats, coverage } = await scanPurchaseOrders(orgId, w.to, w);
                 await s.ok({ detail: { ...stats, window: w.label } });
 
                 /**
@@ -196,10 +196,38 @@ export async function GET(request: NextRequest) {
                     await v.ok({ detail: { resolved: vanished.resolved } });
                 }
                 const statuses = await loadDispositionStatuses(orgId, AGENT_KEY, mem.findings.map((f) => f.key));
-                const bundles = routeFindings(mem.findings);
+                /**
+                 * A MAIL GOES OUT EVERY DAY. THERE IS NO "NOTHING TO SEND".
+                 *
+                 * This used to return early when no finding survived, and log
+                 * "Nothing to send". On 12, 13 and 14 Sept that is exactly what
+                 * happened: the scan ran, a memory bug discarded its findings,
+                 * and the only trace was a line in a run log nobody reads. Three
+                 * days of silence looked the same as three quiet days.
+                 *
+                 * A quiet day is still a report. It lists the orders raised (or
+                 * says none were), what was checked, and that nothing needs a
+                 * look — through the SAME template, so the structure the team
+                 * knows never changes shape because the day was quiet. If the
+                 * mail stops arriving, that absence now means something broke.
+                 *
+                 * On a quiet day there are no findings to split by site, so each
+                 * role gets one mail to its own addresses.
+                 */
+                const routed = routeFindings(mem.findings);
+                const quietDay = routed.length === 0;
+                const bundles: RecipientBundle[] = quietDay
+                    ? (['ceo', 'procurement'] as RecipientKey[])
+                          .filter((k) => (delivery.to[k] ?? []).length > 0)
+                          .map((k) => ({ recipient: RECIPIENTS[k], findings: [], counts: countsFor([]) }))
+                    : routed;
 
                 if (!bundles.length) {
-                    return { outcome: `Nothing to send for ${w.label}.`, status: 'skipped' as const, grounded: true };
+                    return {
+                        outcome: `NOBODY TO SEND TO — quiet day for ${w.label} and neither the CEO nor procurement has an address. Check Delivery.`,
+                        status: 'skipped' as const,
+                        grounded: true,
+                    };
                 }
 
                 // The reviewer reads BEFORE the mail goes out. A failed or absent
@@ -250,7 +278,9 @@ export async function GET(request: NextRequest) {
                     // One email per site owner, all to the same shared mailbox.
                     // With no site rules configured this yields a single slice and
                     // the mail is byte-identical to what it was before.
-                    const slices = splitBySite(b, delivery.siteRules, roleTo, cityOf);
+                    const slices = quietDay
+                        ? [{ rule: null, label: '', ownerNames: [], to: [...roleTo], bundle: b }]
+                        : splitBySite(b, delivery.siteRules, roleTo, cityOf);
 
                     for (const slice of slices) {
                         const who = slice.label ? `${b.recipient.key}/${slice.label}` : b.recipient.key;
@@ -279,6 +309,8 @@ export async function GET(request: NextRequest) {
                             // What else was asked of the data, and what was not
                             // asked at all. A quiet mail has to say which.
                             coverage,
+                            // Every order raised in the window, flagged or not.
+                            raised,
                         );
 
                         const st = await step(`Emailing ${who} (${slice.to.length})`, 'notify',
@@ -308,10 +340,12 @@ export async function GET(request: NextRequest) {
                 return {
                     outcome: undeliverable.length && !sent.length
                         ? `NOBODY TO SEND TO — ${bundles.length} bundle(s) built from ${mem.findings.length} finding(s) and not one had a recipient. Check Delivery: ${undeliverable.join(', ')}.`
-                        : `sent ${sent.length}, skipped ${skipped.length}${undeliverable.length ? `, ${undeliverable.length} with no recipient` : ''} · ${w.label}`,
-                    // A run that built mail for nobody did not succeed and did
-                    // not choose to skip. It failed, and it says so where the
-                    // console and the heartbeat both read it.
+                        : `sent ${sent.length}, skipped ${skipped.length}${undeliverable.length ? `, ${undeliverable.length} with no recipient` : ''}${quietDay ? ` · quiet day, ${raised.length} order(s) raised` : ''} · ${w.label}`,
+                    // A run that built mail for nobody is a fault, and the
+                    // outcome line above says so in capitals. The status stays
+                    // 'skipped' only because withAgentRun lets a body report
+                    // succeeded|skipped; 'failed' is reserved for a throw, and
+                    // throwing here would abort every other org in this loop.
                     status: (sent.length ? 'succeeded' : 'skipped') as 'succeeded' | 'skipped',
                     grounded: true,
                     result: { sent, skipped, unmatchedSites: unmatched, vetted: stamp ? { by: stamp.reviewer, verdict: stamp.verdict, concerns: stamp.concerns.length } : null, council: { escalated: council.escalated.length, noted: council.noted }, usingEnvFallback: delivery.usingEnvFallback },
