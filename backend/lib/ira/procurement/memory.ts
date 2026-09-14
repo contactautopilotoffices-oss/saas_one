@@ -39,6 +39,8 @@ export interface PriorDisposition {
     disposition_note: string | null;
     dispositioned_at: string | null;
     dispositioned_by_name: string | null;
+    /** NULL = the agent closed this itself. Every human decision carries a user id. */
+    dispositioned_by: string | null;
     reopened_count: number;
 }
 
@@ -70,7 +72,7 @@ export async function applyPriorDispositions(
 
     const { data, error } = await supabaseAdmin
         .from('oem_agent_findings')
-        .select('finding_key, disposition, disposition_note, dispositioned_at, reopened_count')
+        .select('finding_key, disposition, disposition_note, dispositioned_at, dispositioned_by, reopened_count')
         .eq('organization_id', orgId)
         .eq('agent_key', agentKey)
         .in('finding_key', keys);
@@ -84,9 +86,36 @@ export async function applyPriorDispositions(
     const suppressed: string[] = [];
     const reopened: string[] = [];
 
+    /** Closed by the agent, not a person, and detected again — reopened quietly. */
+    const agentClosedBack: string[] = [];
+
     for (const finding of findings) {
         const p = prior.get(finding.key);
         if (!p?.disposition || !closesLine(p.disposition)) {
+            out.push(finding);
+            continue;
+        }
+
+        /**
+         * AN AUTO-CLOSE IS NOT A VERDICT.
+         *
+         * resolveVanishedFindings closes a structural finding the moment one
+         * scan fails to see it. Until 14 Sept it wrote that as `not_an_issue`
+         * — the exact value a PERSON writes to say "this whole class is wrong,
+         * never raise it again" — and this branch obeyed it. So one blind scan
+         * on 7 Sept (the window bug, stale feed) silenced three standing
+         * findings for good: the approval-trail gap, the vendor-name
+         * duplicates, and — worst — the stale-feed alarm itself. Nobody ever
+         * chose any of that. Ira then sent nothing on 12, 13 and 14 Sept.
+         *
+         * The discriminator is exact in the data: every human disposition
+         * carries dispositioned_by; every auto-close has NULL. A finding the
+         * agent closed and now sees again is simply true again. It goes out
+         * as itself — not suppressed, and not dressed up as "REOPENED — the
+         * fix did not hold", because nobody claimed a fix.
+         */
+        if (!p.dispositioned_by) {
+            agentClosedBack.push(finding.key);
             out.push(finding);
             continue;
         }
@@ -111,6 +140,19 @@ export async function applyPriorDispositions(
         });
     }
 
+    // Clear the agent's own closure so the row is open again: the mail must
+    // not print it with a "done" badge, and a later scan that stops seeing it
+    // must be able to close it again (that update only touches open rows).
+    if (agentClosedBack.length) {
+        await supabaseAdmin
+            .from('oem_agent_findings')
+            .update({ disposition: null, disposition_note: null, dispositioned_at: null })
+            .eq('organization_id', orgId)
+            .eq('agent_key', agentKey)
+            .in('finding_key', agentClosedBack)
+            .is('dispositioned_by', null);
+    }
+
     return { findings: out, suppressed, reopened, degraded: false };
 }
 
@@ -133,8 +175,12 @@ export async function applyPriorDispositions(
  * raised on 5 September, the sync was run an hour later, and the finding was
  * still being repeated as fact two days on. I quoted it to the operator myself.
  *
- * So: an open finding that this scan did NOT re-detect is closed as
- * `not_an_issue` with a note saying the scan stopped seeing it and when. It is
+ * So: an open finding that this scan did NOT re-detect is closed as `done`
+ * with a note saying the scan stopped seeing it and when. NOT `not_an_issue`:
+ * that is a person's verdict that a class of finding is wrong, and writing it
+ * here silenced three standing findings for a week (see applyPriorDispositions).
+ * The NULL dispositioned_by is what marks this as the agent's closure, and a
+ * finding closed this way comes back the moment a scan sees it again. It is
  * marked as resolved by the agent, not by a person, so nobody gets credit for
  * work they did not report.
  *
@@ -155,7 +201,7 @@ export async function resolveVanishedFindings(
     const { data, error } = await supabaseAdmin
         .from('oem_agent_findings')
         .update({
-            disposition: 'not_an_issue',
+            disposition: 'done',
             disposition_note: `Closed automatically: the scan on ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' })} no longer detects this. Nobody reported it fixed — the condition simply stopped being true.`,
             dispositioned_at: new Date().toISOString(),
             // dispositioned_by stays NULL: the agent closed this, not a person.
