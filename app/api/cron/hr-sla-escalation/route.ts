@@ -68,6 +68,31 @@ export async function GET() {
                 if (directors?.user_id) nextAssigneeId = directors.user_id;
             }
 
+            // Fallback: If specific authority flag wasn't found and nextAssigneeId is still the breached manager, reassign to any HR / Director authority or Org Super Admin
+            if (nextAssigneeId === ticket.assigned_to_user_id) {
+                const { data: fallbackAuth } = await supabaseAdmin
+                    .from('employee_profiles')
+                    .select('user_id')
+                    .or('is_director_authority.eq.true,is_hr_authority.eq.true,is_hr_manager_authority.eq.true')
+                    .neq('user_id', ticket.assigned_to_user_id || '00000000-0000-0000-0000-000000000000')
+                    .not('user_id', 'is', null)
+                    .limit(1);
+
+                if (fallbackAuth?.[0]?.user_id) {
+                    nextAssigneeId = fallbackAuth[0].user_id;
+                } else {
+                    // Fallback to Org Super Admin membership
+                    const { data: orgAdminMem } = await supabaseAdmin
+                        .from('organization_memberships')
+                        .select('user_id')
+                        .or('role.eq.org_super_admin,role.eq.ops_super_admin')
+                        .limit(1);
+                    if (orgAdminMem?.[0]?.user_id) {
+                        nextAssigneeId = orgAdminMem[0].user_id;
+                    }
+                }
+            }
+
             // Extend SLA for next level (+4 days default window)
             const newSla = new Date();
             newSla.setDate(newSla.getDate() + 4);

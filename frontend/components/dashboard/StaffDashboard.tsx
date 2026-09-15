@@ -1,4 +1,5 @@
 'use client';
+import HRTicketsContent from '@/frontend/components/hr/HRTicketsContent';
 
 import React, { useState, useEffect } from 'react';
 import {
@@ -6,7 +7,7 @@ import {
     LogOut, Settings, Search, UserCircle, Coffee, Fuel, UsersRound,
     ClipboardList, FolderKanban, Moon, Sun, ChevronRight, RefreshCw, Cog, X,
     AlertOctagon, BarChart3, FileText, Camera, Menu, Pencil, Loader2, Zap, Activity, Filter, Calendar, Package, Scan, Droplets,
-  MessageSquarePlus
+  MessageSquarePlus, ShieldCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
@@ -40,7 +41,7 @@ import GuestExperienceDashboard from '@/frontend/components/guest-experience/Gue
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
 
 // Types
-type Tab = 'dashboard' | 'requests' | 'guest_experience' | 'create_request' | 'visitors' | 'rooms' | 'diesel' | 'electricity' | 'stock' | 'checklist' | 'settings' | 'profile' | 'flow-map' | 'water';
+type Tab = 'dashboard' | 'requests' | 'guest_experience' | 'create_request' | 'visitors' | 'rooms' | 'diesel' | 'electricity' | 'stock' | 'checklist' | 'settings' | 'profile' | 'flow-map' | 'water' | 'grievance';
 
 interface Property {
     id: string;
@@ -613,6 +614,26 @@ const StaffDashboard = () => {
                     <div className="mb-4">
                         <div className="space-y-0.5">
                             <button
+                                onClick={() => {
+                                    handleTabChange('grievance');
+                                    setSidebarOpen(false);
+                                }}
+                                className="w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg transition-all text-sm font-bold text-text-secondary hover:bg-muted hover:text-text-primary group"
+                            >
+                                <ShieldCheck className="w-4 h-4 text-primary" />
+                                <span className="flex-1 text-left">My Grievances</span>
+                            </button>
+                            <button
+                                onClick={() => {
+                                    handleTabChange('grievance');
+                                    setSidebarOpen(false);
+                                }}
+                                className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg transition-all text-xs font-bold text-primary bg-primary/10 hover:bg-primary/20 group"
+                            >
+                                <Plus className="w-3.5 h-3.5" />
+                                <span>+ Raise Grievance</span>
+                            </button>
+                            <button
                                 onClick={() => { setShowFeedbackModal(true); setSidebarOpen(false); }}
                                 className="w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg transition-all text-sm font-bold text-text-secondary hover:bg-muted hover:text-text-primary group"
                             >
@@ -787,6 +808,9 @@ const StaffDashboard = () => {
                             )}
                             {activeTab === 'checklist' && property && (
                                 <SOPDashboard propertyId={property.id} />
+                            )}
+                            {activeTab === 'grievance' && (
+                                <HRTicketsContent orgId={property?.organization_id || 'org'} />
                             )}
                             {activeTab === 'settings' && <SettingsView />}
                             {activeTab === 'profile' && (

@@ -1,4 +1,5 @@
 'use client';
+import HRTicketsContent from '@/frontend/components/hr/HRTicketsContent';
 
 import React, { useState, useEffect } from 'react';
 import {
@@ -6,7 +7,7 @@ import {
     LogOut, Settings, Search, UserCircle, Coffee, Fuel, UsersRound,
     ClipboardList, FolderKanban, Moon, Sun, ChevronRight, Cog, X,
     AlertOctagon, BarChart3, FileText, Wrench, Camera, Menu, Pencil, Loader2, Filter, Activity, Zap, Calendar, ClipboardCheck, ScanLine, Tag, Droplets,
-  MessageSquarePlus
+  MessageSquarePlus, ShieldCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
@@ -39,7 +40,7 @@ import GuestExperienceDashboard from '@/frontend/components/guest-experience/Gue
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
 
 // Types
-type Tab = 'dashboard' | 'requests' | 'guest_experience' | 'create_request' | 'visitors' | 'diesel' | 'electricity' | 'settings' | 'profile' | 'flow-map' | 'checklist' | 'water';
+type Tab = 'dashboard' | 'requests' | 'guest_experience' | 'create_request' | 'visitors' | 'diesel' | 'electricity' | 'settings' | 'profile' | 'flow-map' | 'checklist' | 'water' | 'grievance';
 
 interface Property {
     id: string;
@@ -778,6 +779,26 @@ const MstDashboard = () => {
                             System & Personal
                         </p>
                         <div className="space-y-0.5">
+                                                        <button
+                                onClick={() => {
+                                    handleTabChange('grievance');
+                                    setSidebarOpen(false);
+                                }}
+                                className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg transition-all text-sm font-bold ${activeTab === 'grievance' ? 'bg-primary text-text-inverse shadow-sm' : 'text-text-secondary hover:bg-muted hover:text-text-primary'}`}
+                            >
+                                <ShieldCheck className="w-4 h-4 text-primary" />
+                                <span className="flex-1 text-left">My Grievances</span>
+                            </button>
+                            <button
+                                onClick={() => {
+                                    handleTabChange('grievance');
+                                    setSidebarOpen(false);
+                                }}
+                                className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg transition-all text-xs font-bold text-primary bg-primary/10 hover:bg-primary/20 group"
+                            >
+                                <Plus className="w-3.5 h-3.5" />
+                                <span>+ Raise Grievance</span>
+                            </button>
                             <button
                                 onClick={() => { setShowFeedbackModal(true); setSidebarOpen(false); }}
                                 className="w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg transition-all text-sm font-bold text-text-secondary hover:bg-muted hover:text-text-primary group"
@@ -932,6 +953,9 @@ const MstDashboard = () => {
                             {activeTab === 'electricity' && property && <ElectricityStaffDashboard propertyId={property.id} isDark={isDarkMode} />}
                             {activeTab === 'water' && propertyId && <WaterDashboard propertyId={propertyId} />}
                             {activeTab === 'checklist' && property && <SOPDashboard propertyId={property.id} />}
+                            {activeTab === 'grievance' && (
+                                <HRTicketsContent orgId={property?.organization_id || 'org'} />
+                            )}
                             {activeTab === 'settings' && <SettingsView />}
                             {activeTab === 'profile' && (
                                 <div className="flex justify-center items-start py-8">

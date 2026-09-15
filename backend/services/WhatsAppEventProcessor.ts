@@ -1965,23 +1965,32 @@ export const WhatsAppEventProcessor = {
             contextualUserIds: { requesterId: ticket?.raised_by_user_id || payload.raised_by_user_id }
         });
 
-        // 2. Notify Assigned Manager / L1 Owner
-        if (ticket?.assigned_to_user_id || payload.assigned_to_user_id) {
-            await this.dispatch({
-                featureKey: 'hr_grievance_assigned_mgr',
-                templateEventKey: 'hr_grievance_assigned_mgr',
-                organizationId: orgId,
-                entityId: ticketId,
-                paramValues: {
-                    user_name: assignedName,
-                    ticket_number: ticketNo,
-                    raised_by: empName,
-                    subject: ticket?.subject || payload.subject || 'Grievance',
-                    sla_due_date: formatWhatsAppDateTime(ticket?.sla_due_at || payload.sla_due_at)
-                },
-                summaryMessage: `New HR Ticket #${ticketNo} assigned to ${assignedName}`,
-                contextualUserIds: { assigneeId: ticket?.assigned_to_user_id || payload.assigned_to_user_id }
-            });
+        // 3. Trigger-Driven Email Dispatch (Resend / SMTP)
+        const { EmailService } = await import('./EmailService');
+        const emailSubject = `[HR Ticket #${ticketNo}] ${ticket?.subject || payload.subject || 'Grievance'}`;
+        const emailBody = `
+            <h3>HR Ticket Details</h3>
+            <p><strong>Ticket Number:</strong> ${ticketNo}</p>
+            <p><strong>Category:</strong> ${categoryName}</p>
+            <p><strong>Raised By:</strong> ${empName}</p>
+            <p><strong>Assigned Owner:</strong> ${assignedName}</p>
+            <p><strong>Subject:</strong> ${ticket?.subject || payload.subject || 'Grievance'}</p>
+        `;
+
+        if (ticket?.raised_by?.email) {
+            EmailService.sendEmail({
+                to: ticket.raised_by.email,
+                subject: emailSubject,
+                html: `<h2>Your HR Ticket #${ticketNo} Has Been Created</h2>${emailBody}`
+            }).catch(err => console.error('[WhatsAppEventProcessor] Trigger-driven employee email error:', err));
+        }
+
+        if (ticket?.assigned_to?.email && ticket.assigned_to.email !== ticket.raised_by?.email) {
+            EmailService.sendEmail({
+                to: ticket.assigned_to.email,
+                subject: `[Assigned] ${emailSubject}`,
+                html: `<h2>HR Ticket #${ticketNo} Assigned to You</h2>${emailBody}`
+            }).catch(err => console.error('[WhatsAppEventProcessor] Trigger-driven manager email error:', err));
         }
     },
 
@@ -2150,6 +2159,19 @@ export const WhatsAppEventProcessor = {
             summaryMessage: `HR Ticket #${ticketNo} resolved`,
             contextualUserIds: { requesterId: ticket?.raised_by_user_id || payload.raised_by_user_id }
         });
+
+        // Trigger-Driven Resolution Email (Resend / SMTP)
+        if (ticket?.raised_by?.email) {
+            const { EmailService } = await import('./EmailService');
+            EmailService.sendEmail({
+                to: ticket.raised_by.email,
+                subject: `[Resolved] [HR Ticket #${ticketNo}] ${ticket?.subject || payload.subject || 'Grievance'}`,
+                html: `<h2>Your HR Ticket #${ticketNo} Has Been Resolved</h2>
+                       <p><strong>Subject:</strong> ${ticket?.subject || payload.subject}</p>
+                       <p><strong>Resolved By:</strong> ${resolverName}</p>
+                       <p><strong>Resolution Note:</strong> ${ticket?.resolution_note || payload.resolution_note || 'Resolved'}</p>`
+            }).catch(err => console.error('[WhatsAppEventProcessor] Trigger-driven resolution email error:', err));
+        }
     },
 
     async handleHrTicketCommentAdded(payload: any): Promise<void> {

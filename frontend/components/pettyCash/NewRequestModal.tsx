@@ -40,6 +40,10 @@ export default function NewRequestModal({ open, properties, onClose, onCreated }
     const [vendorName, setVendorName] = useState('');
     const [recipientName, setRecipientName] = useState('');
     const [recipientPhone, setRecipientPhone] = useState('');
+    const [assignedApproverId, setAssignedApproverId] = useState('');
+    const [approvers, setApprovers] = useState<{ id: string; name: string; email?: string; role?: string }[]>([]);
+    const [approverSearch, setApproverSearch] = useState('');
+    const [loadingApprovers, setLoadingApprovers] = useState(false);
     const [docs, setDocs] = useState<PendingDoc[]>([]);
     const [uploading, setUploading] = useState(false);
     const [saving, setSaving] = useState(false);
@@ -53,9 +57,21 @@ export default function NewRequestModal({ open, properties, onClose, onCreated }
         setPropertyId(properties.length === 1 ? properties[0].id : '');
         setRequestType('advance'); setDepartment(''); setCategory(''); setAmount('');
         setPurpose(''); setPaymentMode('Cash'); setExpectedDate(''); setVendorName('');
-        setRecipientName(''); setRecipientPhone('');
+        setRecipientName(''); setRecipientPhone(''); setAssignedApproverId(''); setApproverSearch('');
         setDocs([]); setError(null); setOpenAdvances(null);
     }, [open, properties]);
+
+    useEffect(() => {
+        if (!propertyId) { setApprovers([]); return; }
+        let cancel = false;
+        setLoadingApprovers(true);
+        fetch(`/api/properties/${propertyId}/approvers?q=${encodeURIComponent(approverSearch)}`)
+            .then(res => res.json())
+            .then(data => { if (!cancel) setApprovers(data.approvers || []); })
+            .catch(() => {})
+            .finally(() => { if (!cancel) setLoadingApprovers(false); });
+        return () => { cancel = true; };
+    }, [propertyId, approverSearch]);
 
     const handleUpload = async (files: FileList | null) => {
         if (!files?.length) return;
@@ -83,6 +99,7 @@ export default function NewRequestModal({ open, properties, onClose, onCreated }
                     amount_requested: Number(amount), purpose: purpose.trim(), payment_mode: paymentMode,
                     expected_date: expectedDate || null, vendor_name: vendorName || null, documents: docs,
                     recipient_name: recipientName || null, recipient_phone: recipientPhone || null,
+                    assigned_approver_id: assignedApproverId || null,
                     ...(acknowledgeOpenAdvances ? { acknowledge_open_advances: true } : {}),
                 }),
             });
@@ -186,6 +203,33 @@ export default function NewRequestModal({ open, properties, onClose, onCreated }
                             <label className={label}>Their phone</label>
                             <input value={recipientPhone} onChange={e => setRecipientPhone(e.target.value)}
                                 placeholder="10-digit mobile" inputMode="tel" className={field} />
+                        </div>
+                    </div>
+
+                    {/* Designated Approver selection */}
+                    <div>
+                        <label className={label}>Designated Approver (Optional)</label>
+                        <div className="space-y-1.5">
+                            <input
+                                type="text"
+                                value={approverSearch}
+                                onChange={e => setApproverSearch(e.target.value)}
+                                placeholder="Search approver by name or email..."
+                                className={field}
+                            />
+                            <select
+                                value={assignedApproverId}
+                                onChange={e => setAssignedApproverId(e.target.value)}
+                                className={field}
+                            >
+                                <option value="">Any Eligible Approver (Default)</option>
+                                {approvers.map(a => (
+                                    <option key={a.id} value={a.id}>
+                                        {a.name} {a.email ? `(${a.email})` : ''} {a.role ? `• ${a.role}` : ''}
+                                    </option>
+                                ))}
+                            </select>
+                            {loadingApprovers && <p className="text-[10px] text-text-tertiary">Searching approvers…</p>}
                         </div>
                     </div>
 

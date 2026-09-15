@@ -34,6 +34,66 @@ export async function GET(
             ticket.employee_snapshot = { name: 'Anonymous Employee', department: 'Confidential', location: 'Hidden' };
         }
 
+        // Resolve names for each escalation level authority
+        let l1Name = ticket.assigned_to?.full_name || ticket.assigned_to?.email || 'L1 Manager';
+        let l2Name = 'HR Ops';
+        let l3Name = 'HR Head';
+        let l4Name = 'Director';
+
+        try {
+            if (ticket.raised_by_user_id) {
+                const { data: emp } = await supabaseAdmin
+                    .from('employee_profiles')
+                    .select('reporting_manager_id, reporting_manager:users!reporting_manager_id(full_name, email)')
+                    .eq('user_id', ticket.raised_by_user_id)
+                    .maybeSingle();
+                if (emp?.reporting_manager) {
+                    l1Name = (emp.reporting_manager as any).full_name || (emp.reporting_manager as any).email || l1Name;
+                }
+            }
+
+            const { data: hrMgr } = await supabaseAdmin
+                .from('employee_profiles')
+                .select('user:users!user_id(full_name, email)')
+                .eq('is_hr_manager_authority', true)
+                .maybeSingle();
+            if (hrMgr?.user) {
+                l2Name = (hrMgr.user as any).full_name || (hrMgr.user as any).email || 'HR Ops';
+            }
+
+            const { data: hrHead } = await supabaseAdmin
+                .from('employee_profiles')
+                .select('user:users!user_id(full_name, email)')
+                .eq('is_hr_authority', true)
+                .maybeSingle();
+            if (hrHead?.user) {
+                l3Name = (hrHead.user as any).full_name || (hrHead.user as any).email || 'HR Head';
+            }
+
+            const { data: dir } = await supabaseAdmin
+                .from('employee_profiles')
+                .select('user:users!user_id(full_name, email)')
+                .eq('is_director_authority', true)
+                .maybeSingle();
+            if (dir?.user) {
+                l4Name = (dir.user as any).full_name || (dir.user as any).email || 'Director';
+            }
+        } catch (e) {
+            console.error('Error resolving level owners:', e);
+        }
+
+        if (ticket.current_level === 1 && ticket.assigned_to) l1Name = ticket.assigned_to.full_name || ticket.assigned_to.email || l1Name;
+        if (ticket.current_level === 2 && ticket.assigned_to) l2Name = ticket.assigned_to.full_name || ticket.assigned_to.email || l2Name;
+        if (ticket.current_level === 3 && ticket.assigned_to) l3Name = ticket.assigned_to.full_name || ticket.assigned_to.email || l3Name;
+        if (ticket.current_level === 4 && ticket.assigned_to) l4Name = ticket.assigned_to.full_name || ticket.assigned_to.email || l4Name;
+
+        ticket.level_owners = {
+            l1: l1Name,
+            l2: l2Name,
+            l3: l3Name,
+            l4: l4Name
+        };
+
         return NextResponse.json({ success: true, data: ticket });
     } catch (err: any) {
         return NextResponse.json({ success: false, error: err.message }, { status: 500 });
@@ -47,7 +107,7 @@ export async function PATCH(
     try {
         const { id } = await params;
         const body = await request.json();
-        const { status, assigned_to_user_id, current_level, actor_user_id, priority, escalate } = body;
+        const { status, assigned_to_user_id, current_level, actor_user_id, priority, escalate, resolution_note, resolved_by_user_id } = body;
 
         const { data: existing, error: fetchErr } = await supabaseAdmin
             .from('hr_tickets')
@@ -63,8 +123,14 @@ export async function PATCH(
         if (status) updates.status = status;
         if (priority) updates.priority = priority;
         if (assigned_to_user_id) updates.assigned_to_user_id = assigned_to_user_id;
+        if (resolution_note !== undefined) updates.resolution_note = resolution_note;
 
-        if (status === 'resolved') updates.resolved_at = new Date().toISOString();
+        if (status === 'resolved') {
+            updates.resolved_at = new Date().toISOString();
+            if (resolved_by_user_id || actor_user_id) {
+                updates.resolved_by_user_id = resolved_by_user_id || actor_user_id;
+            }
+        }
         if (status === 'closed') updates.closed_at = new Date().toISOString();
         if (status === 'reopened') updates.reopened_count = (existing.reopened_count || 0) + 1;
 

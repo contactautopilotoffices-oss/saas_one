@@ -7,6 +7,7 @@ const SELECT = `
     *,
     requester:users!petty_cash_requests_requester_id_fkey(id, full_name, email),
     approver:users!petty_cash_requests_approver_id_fkey(id, full_name),
+    assigned_approver:users!petty_cash_requests_assigned_approver_id_fkey(id, full_name, email),
     payer:users!petty_cash_requests_paid_by_fkey(id, full_name),
     property:properties(id, name, code)
 `;
@@ -40,9 +41,14 @@ export async function GET(request: NextRequest) {
     if (tab === 'mine') {
         query = query.eq('requester_id', access.user.id);
     } else if (tab === 'approvals') {
-        if (!access.canApprove) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
         query = query.eq('status', 'submitted');
-        if (!access.isAdmin) query = query.in('property_id', access.propertyIds.length ? access.propertyIds : ['00000000-0000-0000-0000-000000000000']);
+        if (!access.isAdmin) {
+            const scopeFilters = [`assigned_approver_id.eq.${access.user.id}`];
+            if (access.canApprove && access.propertyIds.length) {
+                scopeFilters.push(`property_id.in.(${access.propertyIds.join(',')})`);
+            }
+            query = query.or(scopeFilters.join(','));
+        }
     } else if (tab === 'disbursements') {
         if (!access.canDisburse) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
         query = query.in('status', ['approved', 'settlement_submitted']);
@@ -149,6 +155,7 @@ export async function POST(request: NextRequest) {
             // Who physically takes the cash — often not the person filing the request.
             recipient_name: body.recipient_name?.trim() || null,
             recipient_phone: body.recipient_phone?.trim() || null,
+            assigned_approver_id: body.assigned_approver_id || null,
             status: asDraft ? 'draft' : 'submitted',
             remarks: body.remarks ?? null,
         })

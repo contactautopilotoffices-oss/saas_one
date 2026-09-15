@@ -1,12 +1,14 @@
 'use client';
 
+import HRTicketsContent from '@/frontend/components/hr/HRTicketsContent';
 import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from 'react';
 import {
     LayoutDashboard, Users, Ticket, Settings, UserCircle, UsersRound,
     Search, Plus, Filter, LogOut, ChevronRight, MapPin, Building2,
     Calendar, CheckCircle2, AlertCircle, Clock, Coffee, IndianRupee, FileDown, Fuel, Store, Activity, Upload, FileBarChart, Menu, X, Zap, RefreshCw,
-    Package, ClipboardCheck, Scan, ChevronDown, ChevronUp, Check, GitBranch, CalendarDays, ShoppingCart, Droplets, TrendingUp, QrCode, Smartphone, MessageSquarePlus, Bot
+    Package, ClipboardCheck, Scan, ChevronDown, ChevronUp, Check, GitBranch, CalendarDays, ShoppingCart, Droplets, TrendingUp, QrCode, Smartphone, MessageSquarePlus, Bot, ShieldCheck
 } from 'lucide-react';
+
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
 import { useAuth } from '@/frontend/context/AuthContext';
@@ -51,7 +53,7 @@ import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
 import AITicketsDashboard from '@/frontend/components/ai-tickets/AITicketsDashboard';
 
 // Types
-type Tab = 'overview' | 'requests' | 'guest_experience' | 'reports' | 'users' | 'visitors' | 'rooms' | 'diesel' | 'diesel_analytics' | 'electricity' | 'electricity_analytics' | 'cafeteria' | 'settings' | 'profile' | 'units' | 'vendor_revenue' | 'stock' | 'checklist' | 'escalation' | 'ppm' | 'procurement' | 'roster' | 'water' | 'water_analytics' | 'ai_tickets';
+type Tab = 'overview' | 'requests' | 'guest_experience' | 'reports' | 'users' | 'visitors' | 'rooms' | 'diesel' | 'diesel_analytics' | 'electricity' | 'electricity_analytics' | 'cafeteria' | 'settings' | 'profile' | 'units' | 'vendor_revenue' | 'stock' | 'checklist' | 'escalation' | 'ppm' | 'procurement' | 'roster' | 'water' | 'water_analytics' | 'ai_tickets' | 'grievance';
 
 interface Property {
     id: string;
@@ -434,7 +436,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
     // Restore tab from URL
     useEffect(() => {
         const tab = searchParams.get('tab');
-        if (tab && ['overview', 'requests', 'reports', 'users', 'visitors', 'rooms', 'diesel', 'diesel_analytics', 'electricity', 'electricity_analytics', 'cafeteria', 'settings', 'profile', 'units', 'vendor_revenue', 'stock', 'checklist', 'roster', 'water', 'water_analytics', 'facility_qr', 'ai_tickets'].includes(tab)) {
+        if (tab && ['overview', 'requests', 'reports', 'users', 'visitors', 'rooms', 'diesel', 'diesel_analytics', 'electricity', 'electricity_analytics', 'cafeteria', 'settings', 'profile', 'units', 'vendor_revenue', 'stock', 'checklist', 'roster', 'water', 'water_analytics', 'facility_qr', 'ai_tickets', 'grievance'].includes(tab)) {
             setActiveTab(tab as Tab);
         }
         const filter = searchParams.get('filter');
@@ -883,6 +885,23 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                                 AI Automation
                             </button>
                             <button
+                                onClick={() => handleTabChange('grievance')}
+                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${openTab === 'grievance'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-primary/10 hover:text-primary'
+                                    } group`}
+                            >
+                                <ShieldCheck className="w-4 h-4 group-hover:scale-110 transition-transform text-primary" />
+                                <span className="flex-1 text-left">Grievances & Tickets</span>
+                            </button>
+                            <button
+                                onClick={() => handleTabChange('grievance')}
+                                className="w-full flex items-center gap-3 px-4 py-2 rounded-xl transition-all duration-200 text-xs font-bold text-primary bg-primary/10 hover:bg-primary/20 group"
+                            >
+                                <Plus className="w-3.5 h-3.5" />
+                                <span>+ Raise Grievance</span>
+                            </button>
+                            <button
                                 onClick={() => setShowFeedbackModal(true)}
                                 className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm text-text-secondary hover:bg-primary/10 hover:text-primary group"
                             >
@@ -1058,6 +1077,9 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                                 propertyId={property.id}
                                 organizationId={property.organization_id}
                             />
+                        )}
+                        {openTab === 'grievance' && (
+                            <HRTicketsContent orgId={property?.organization_id || membership?.org_id || 'org'} />
                         )}
                         {openTab === 'visitors' && property && (
                             <VMSAdminDashboard propertyId={property.id} />

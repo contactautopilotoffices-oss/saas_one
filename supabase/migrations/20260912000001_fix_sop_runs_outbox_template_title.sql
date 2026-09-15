@@ -1,6 +1,5 @@
--- Migration: Add event_outbox trigger for SOP runs & checklist execution
--- Automatically generates event_outbox records when SOP checklists start or complete.
--- Enables multi-channel dispatch (Email, Push, WhatsApp, Voice) from Mobile App, Web UI, or SQL.
+-- Migration: Fix fn_sop_runs_outbox trigger function column reference
+-- Fixes PostgreSQL runtime error ("column 'name' does not exist") when completing SOP checklists
 
 CREATE OR REPLACE FUNCTION public.fn_sop_runs_outbox()
 RETURNS TRIGGER AS $$
@@ -37,7 +36,7 @@ BEGIN
         WHERE id = NEW.property_id;
     END IF;
 
-    -- Resolve template title if template_id exists
+    -- Resolve template title if template_id exists (sop_templates has title, NOT name)
     IF NEW.template_id IS NOT NULL THEN
         SELECT title
         INTO v_template_title
@@ -68,11 +67,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Drop trigger if exists
 DROP TRIGGER IF EXISTS trg_sop_runs_outbox ON public.sop_completions;
-
--- Create After Insert or Update trigger on sop_completions
 CREATE TRIGGER trg_sop_runs_outbox
     AFTER INSERT OR UPDATE OF status ON public.sop_completions
-    FOR EACH ROW
-    EXECUTE FUNCTION public.fn_sop_runs_outbox();
+    FOR EACH ROW EXECUTE FUNCTION public.fn_sop_runs_outbox();

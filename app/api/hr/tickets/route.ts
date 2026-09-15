@@ -36,9 +36,12 @@ export async function GET(request: Request) {
         }
 
         // Granular Role Scoping
-        if (role === 'hr' || role === 'hr_head' || role === 'org_super_admin') {
+        if (['hr', 'hr_head', 'org_super_admin'].includes(role)) {
             query = query.eq('is_confidential', false);
-        } else if (role === 'manager' && userId) {
+        } else if (role === 'director') {
+            query = query.or('is_confidential.eq.true,is_anonymous.eq.true,current_level.eq.4');
+        } else if (userId) {
+            // Dynamically check if user is a reporting manager for any employees
             const { data: reportees } = await supabaseAdmin
                 .from('employee_profiles')
                 .select('user_id')
@@ -48,11 +51,14 @@ export async function GET(request: Request) {
             const reporteeUserIds = (reportees || []).map(r => r.user_id).filter(Boolean);
             const allowedUserIds = Array.from(new Set([userId, ...reporteeUserIds]));
 
-            query = query.or(`assigned_to_user_id.eq.${userId},raised_by_user_id.in.(${allowedUserIds.join(',')})`);
-        } else if (role === 'director') {
-            query = query.or('is_confidential.eq.true,is_anonymous.eq.true,current_level.eq.4');
-        } else if (userId) {
-            query = query.or(`raised_by_user_id.eq.${userId},assigned_to_user_id.eq.${userId}`);
+            if (reporteeUserIds.length > 0) {
+                // Reporting Manager: View tickets assigned to them OR raised by any of their reportees (even after escalation)
+                query = query.eq('is_confidential', false)
+                    .or(`assigned_to_user_id.eq.${userId},raised_by_user_id.in.(${allowedUserIds.join(',')})`);
+            } else {
+                // Individual staff/employee: View tickets raised by or assigned to them
+                query = query.or(`raised_by_user_id.eq.${userId},assigned_to_user_id.eq.${userId}`);
+            }
         }
 
         if (type) query = query.eq('ticket_type', type);
@@ -174,21 +180,25 @@ export async function POST(request: Request) {
         } else {
             firstLevelOwnerId = empProfile?.reporting_manager_id || empProfile?.alternate_manager_id;
 
-            if (firstLevelOwnerId && firstLevelOwnerId === raised_by_user_id) {
+            if (!firstLevelOwnerId || firstLevelOwnerId === raised_by_user_id) {
                 const { data: hrStaff } = await supabaseAdmin
                     .from('employee_profiles')
                     .select('user_id')
-                    .eq('is_hr_authority', true)
+                    .or('is_hr_authority.eq.true,is_hr_manager_authority.eq.true')
                     .not('user_id', 'is', null)
                     .limit(1);
-                firstLevelOwnerId = hrStaff?.[0]?.user_id || null;
+                firstLevelOwnerId = hrStaff?.[0]?.user_id || category.default_hr_owner_id || null;
             }
         }
 
+        // Final safety fallback: If still null, assign to category default owner or any HR authority
+        if (!firstLevelOwnerId && category.default_hr_owner_id) {
+            firstLevelOwnerId = category.default_hr_owner_id;
+        }
+
         // 5. Calculate SLA target date
-        const slaDays = category.l1_sla_days || 3;
-        const slaDueAt = new Date();
-        slaDueAt.setDate(slaDueAt.getDate() + slaDays);
+        const slaDays = Number(category.l1_sla_days) || 3;
+        const slaDueAt = new Date(Date.now() + slaDays * 24 * 60 * 60 * 1000);
 
         // 6. Employee Snapshot
         const snapshot = empProfile ? {

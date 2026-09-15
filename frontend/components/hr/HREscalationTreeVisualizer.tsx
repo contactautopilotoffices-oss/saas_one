@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState } from 'react';
-import { ShieldCheck, HelpCircle, Lock, EyeOff, Clock, ArrowDown, User, Shield, AlertTriangle, Building2, CheckCircle2, ChevronRight, Info, Layers, Sparkles } from 'lucide-react';
+import { ShieldCheck, HelpCircle, Lock, EyeOff, Clock, ArrowDown, User, Shield, AlertTriangle, Building2, CheckCircle2, ChevronRight, Info, Layers, Sparkles, X, Check } from 'lucide-react';
+import { SearchableEmployeeSelector, formatSlaDisplay } from '@/frontend/components/hr/HRAdminConfigPanel';
 
 interface EscalationLevel {
     level: number;
@@ -31,7 +32,7 @@ const escalationFlows: ClassificationFlow[] = [
     {
         id: 'grievance',
         title: 'Employee Grievance',
-        subtitle: 'Routed to Reporting Manager (L1) -> HR Dept (L2) -> HR Head (L3) -> Director (L4)',
+        subtitle: 'Routed to Reporting Manager / HOD (L1) -> HR Department (L2) -> HR Head (L3) -> Director (L4)',
         icon: <ShieldCheck className="w-5 h-5 text-amber-500" />,
         color: 'amber',
         levels: [
@@ -40,10 +41,10 @@ const escalationFlows: ClassificationFlow[] = [
                 title: 'Level 1: Initial Ownership',
                 ownerRole: 'Reporting Manager / HOD',
                 ownerType: 'reporting_manager',
-                slaText: '0 - 3 Days',
+                slaText: '3 Working Days',
                 slaHours: '72 Hours',
                 description: 'Direct reporting manager conducts initial investigation, talks to employee, and attempts internal resolution.',
-                escalationTrigger: 'If unresolved or no response after 3 Days (72h)',
+                escalationTrigger: 'If unresolved or no response after 3 Working Days',
                 badgeColor: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300',
                 borderColor: 'border-emerald-300 dark:border-emerald-800',
                 bgColor: 'bg-emerald-50/40 dark:bg-emerald-950/20',
@@ -51,13 +52,13 @@ const escalationFlows: ClassificationFlow[] = [
             },
             {
                 level: 2,
-                title: 'Level 2: HR Escalation',
-                ownerRole: 'HR Manager / HR Operations Lead',
+                title: 'Level 2: HR Department Escalation',
+                ownerRole: 'HR Department',
                 ownerType: 'hr',
-                slaText: 'Day 3 - Day 7',
+                slaText: '7 Working Days',
                 slaHours: '96 Hours',
-                description: 'HR Admin steps in to mediate between employee and department, reviews policy guidelines and formal grievances.',
-                escalationTrigger: 'If unresolved or pending after 7 Days total',
+                description: 'HR Department steps in to mediate between employee and department, reviews policy guidelines and formal grievances.',
+                escalationTrigger: 'If unresolved or pending after 7 Working Days total',
                 badgeColor: 'bg-blue-100 text-blue-800 dark:bg-blue-950/80 dark:text-blue-300',
                 borderColor: 'border-blue-300 dark:border-blue-800',
                 bgColor: 'bg-blue-50/40 dark:bg-blue-950/20',
@@ -65,13 +66,13 @@ const escalationFlows: ClassificationFlow[] = [
             },
             {
                 level: 3,
-                title: 'Level 3: Executive HR Leadership',
-                ownerRole: 'HR Head / Director of HR',
+                title: 'Level 3: HR Head Review',
+                ownerRole: 'HR Head',
                 ownerType: 'hr_head',
-                slaText: 'Day 7 - Day 10',
+                slaText: '10 Working Days',
                 slaHours: '72 Hours',
-                description: 'HR Leadership takes over high-level mediation, formal committee review, and binding policy decisions.',
-                escalationTrigger: 'If unresolved after 10 Days total',
+                description: 'HR Head takes over high-level mediation, formal committee review, and binding policy decisions.',
+                escalationTrigger: 'If unresolved after 10 Working Days total',
                 badgeColor: 'bg-purple-100 text-purple-800 dark:bg-purple-950/80 dark:text-purple-300',
                 borderColor: 'border-purple-300 dark:border-purple-800',
                 bgColor: 'bg-purple-50/40 dark:bg-purple-950/20',
@@ -79,12 +80,12 @@ const escalationFlows: ClassificationFlow[] = [
             },
             {
                 level: 4,
-                title: 'Level 4: Final Governance Board',
-                ownerRole: 'Director / Executive Management',
+                title: 'Level 4: Final Internal Escalation',
+                ownerRole: 'Director',
                 ownerType: 'director',
-                slaText: 'Day 10+',
+                slaText: '12 Working Days',
                 slaHours: 'Final SLA',
-                description: 'Escalated to top company leadership for final review, compliance audit, or legal / policy exception approval.',
+                description: 'Escalated to Director for final internal resolution, compliance audit, or policy exception approval.',
                 escalationTrigger: 'SLA Breach Flagged on Organization MIS Dashboard',
                 badgeColor: 'bg-red-100 text-red-800 dark:bg-red-950/80 dark:text-red-300',
                 borderColor: 'border-red-300 dark:border-red-800',
@@ -95,20 +96,20 @@ const escalationFlows: ClassificationFlow[] = [
     },
     {
         id: 'hr_query',
-        title: 'HR Query (Payroll, Leave, PF)',
+        title: 'HR-Related Queries',
         subtitle: 'Direct routing to HR Department Helpdesk for quick operational response',
         icon: <HelpCircle className="w-5 h-5 text-blue-500" />,
         color: 'blue',
         levels: [
             {
                 level: 1,
-                title: 'Level 1: HR Helpdesk Specialist',
-                ownerRole: 'HR Operations Lead',
+                title: 'Level 1: HR Executive / HR Owner',
+                ownerRole: 'HR Executive / Concerned HR Owner',
                 ownerType: 'hr',
                 slaText: '0 - 2 Days',
                 slaHours: '48 Hours',
-                description: 'Assigned HR representative reviews query (Payroll, PF/ESIC, Leave correction) and responds directly to employee.',
-                escalationTrigger: 'If query unaddressed after 48 Hours',
+                description: 'Assigned HR representative reviews query (Payroll, Leave, PF/ESIC, Reimbursements) and responds directly to employee.',
+                escalationTrigger: 'If query unaddressed after SLA expiry',
                 badgeColor: 'bg-blue-100 text-blue-800 dark:bg-blue-950/80 dark:text-blue-300',
                 borderColor: 'border-blue-300 dark:border-blue-800',
                 bgColor: 'bg-blue-50/40 dark:bg-blue-950/20',
@@ -116,13 +117,13 @@ const escalationFlows: ClassificationFlow[] = [
             },
             {
                 level: 2,
-                title: 'Level 2: Payroll & Ops Manager',
-                ownerRole: 'HR Manager / Payroll Specialist',
+                title: 'Level 2: HR Manager Escalation',
+                ownerRole: 'HR Manager',
                 ownerType: 'hr_head',
                 slaText: 'Day 2 - Day 5',
                 slaHours: '72 Hours',
-                description: 'Escalated to senior HR manager for salary calculation verification, tax adjustment, or policy clarification.',
-                escalationTrigger: 'If query remains unresolved after 5 Days total',
+                description: 'Escalated to HR Manager for salary calculation verification, tax adjustment, or policy clarification.',
+                escalationTrigger: 'If query remains unresolved',
                 badgeColor: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950/80 dark:text-indigo-300',
                 borderColor: 'border-indigo-300 dark:border-indigo-800',
                 bgColor: 'bg-indigo-50/40 dark:bg-indigo-950/20',
@@ -131,34 +132,48 @@ const escalationFlows: ClassificationFlow[] = [
             {
                 level: 3,
                 title: 'Level 3: HR Head Review',
-                ownerRole: 'Director of HR',
-                ownerType: 'director',
-                slaText: 'Day 5+',
-                slaHours: 'Final SLA',
-                description: 'Final review by Head of HR to resolve complex payroll disputes or policy exceptions.',
-                escalationTrigger: 'SLA Breach Flagged',
+                ownerRole: 'HR Head',
+                ownerType: 'hr_head',
+                slaText: 'Day 5 - Day 7',
+                slaHours: '48 Hours',
+                description: 'Escalated to HR Head to resolve complex payroll disputes or policy exceptions.',
+                escalationTrigger: 'If unresolved by HR Manager',
                 badgeColor: 'bg-purple-100 text-purple-800 dark:bg-purple-950/80 dark:text-purple-300',
                 borderColor: 'border-purple-300 dark:border-purple-800',
                 bgColor: 'bg-purple-50/40 dark:bg-purple-950/20',
-                icon: <AlertTriangle className="w-5 h-5 text-purple-600 dark:text-purple-400" />
+                icon: <Shield className="w-5 h-5 text-purple-600 dark:text-purple-400" />
+            },
+            {
+                level: 4,
+                title: 'Level 4: Management Review',
+                ownerRole: 'Management, wherever required',
+                ownerType: 'director',
+                slaText: 'Day 7+',
+                slaHours: 'Final SLA',
+                description: 'Final review by Management for company-wide policy exceptions or executive decisions.',
+                escalationTrigger: 'SLA Breach Flagged',
+                badgeColor: 'bg-red-100 text-red-800 dark:bg-red-950/80 dark:text-red-300',
+                borderColor: 'border-red-300 dark:border-red-800',
+                bgColor: 'bg-red-50/40 dark:bg-red-950/20',
+                icon: <AlertTriangle className="w-5 h-5 text-red-600 dark:text-red-400" />
             }
         ]
     },
     {
         id: 'confidential_feedback',
-        title: 'Confidential Feedback',
-        subtitle: 'Bypasses line manager completely — Direct high-level escalation to Director & HR Head',
+        title: 'Confidential / Anonymous Feedback',
+        subtitle: 'Bypasses line manager completely — Direct high-level escalation to Director',
         icon: <Lock className="w-5 h-5 text-purple-500" />,
         color: 'purple',
         levels: [
             {
                 level: 1,
-                title: 'Level 1: Executive Privacy Channel',
-                ownerRole: 'Director / HR Head ONLY',
+                title: 'Level 1: Director Review',
+                ownerRole: 'Director',
                 ownerType: 'director',
                 slaText: '0 - 2 Days',
                 slaHours: '48 Hours',
-                description: 'Bypasses reporting manager for employee privacy. Only designated Director and HR Head can view issue contents.',
+                description: 'Bypasses reporting manager completely for employee privacy. Directly visible to authorized Director(s).',
                 escalationTrigger: 'If unaddressed after 48 Hours',
                 badgeColor: 'bg-purple-100 text-purple-800 dark:bg-purple-950/80 dark:text-purple-300',
                 borderColor: 'border-purple-300 dark:border-purple-800',
@@ -184,18 +199,18 @@ const escalationFlows: ClassificationFlow[] = [
     {
         id: 'anonymous_feedback',
         title: 'Anonymous Feedback',
-        subtitle: 'Identity-masked submission — Ethics Committee & HR Ombudsperson review',
+        subtitle: 'Identity-masked submission — Routed directly to Director',
         icon: <EyeOff className="w-5 h-5 text-slate-500" />,
         color: 'slate',
         levels: [
             {
                 level: 1,
                 title: 'Level 1: Anonymous Ethics Channel',
-                ownerRole: 'Ethics Lead / HR Ombudsperson',
-                ownerType: 'hr_head',
+                ownerRole: 'Director',
+                ownerType: 'director',
                 slaText: '0 - 3 Days',
                 slaHours: '72 Hours',
-                description: 'Employee identity is cryptographically masked. Assigned Ombudsperson reviews feedback without sender identity.',
+                description: 'Employee identity is cryptographically masked. Routed directly to Director without sender identity.',
                 escalationTrigger: 'If unaddressed after 72 Hours',
                 badgeColor: 'bg-slate-200 text-slate-800 dark:bg-slate-800 dark:text-slate-200',
                 borderColor: 'border-slate-300 dark:border-slate-700',
@@ -204,12 +219,12 @@ const escalationFlows: ClassificationFlow[] = [
             },
             {
                 level: 2,
-                title: 'Level 2: HR Head Audit',
-                ownerRole: 'Director of HR',
+                title: 'Level 2: Executive Board Audit',
+                ownerRole: 'Managing Director / Executive Board',
                 ownerType: 'director',
                 slaText: 'Day 3+',
                 slaHours: 'Final SLA',
-                description: 'Escalated to HR Head to ensure company culture feedback is reviewed and actioned.',
+                description: 'Escalated to Managing Director to ensure company culture feedback is reviewed and actioned.',
                 escalationTrigger: 'SLA Breach Flagged',
                 badgeColor: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950/80 dark:text-indigo-300',
                 borderColor: 'border-indigo-300 dark:border-indigo-800',
@@ -226,6 +241,20 @@ interface HREscalationTreeVisualizerProps {
     designatedDirectors?: any[];
     designatedHrHead?: any;
     designatedDirector?: any;
+    employeesList?: any[];
+    selectedDirectorIds?: string[];
+    onAddDirector?: (id: string) => void;
+    onRemoveDirector?: (id: string) => void;
+    selectedHrHeadIds?: string[];
+    onAddHrHead?: (id: string) => void;
+    onRemoveHrHead?: (id: string) => void;
+    selectedHrManagerIds?: string[];
+    onAddHrManager?: (id: string) => void;
+    onRemoveHrManager?: (id: string) => void;
+    onSaveAuthorities?: () => Promise<void>;
+    savingAuthorities?: boolean;
+    authoritySaveMsg?: string;
+    authorityErrorMsg?: string;
 }
 
 export default function HREscalationTreeVisualizer({
@@ -233,7 +262,21 @@ export default function HREscalationTreeVisualizer({
     designatedHrHeads: initialHrHeads,
     designatedDirectors: initialDirectors,
     designatedHrHead: initialHrHead,
-    designatedDirector: initialDirector
+    designatedDirector: initialDirector,
+    employeesList = [],
+    selectedDirectorIds = [],
+    onAddDirector,
+    onRemoveDirector,
+    selectedHrHeadIds = [],
+    onAddHrHead,
+    onRemoveHrHead,
+    selectedHrManagerIds = [],
+    onAddHrManager,
+    onRemoveHrManager,
+    onSaveAuthorities,
+    savingAuthorities = false,
+    authoritySaveMsg,
+    authorityErrorMsg
 }: HREscalationTreeVisualizerProps = {}) {
     const [selectedFlowId, setSelectedFlowId] = useState<string>('grievance');
     const [hrManagers, setHrManagers] = React.useState<any[]>(initialHrManagers || []);
@@ -374,58 +417,169 @@ export default function HREscalationTreeVisualizer({
                                                 {lvl.ownerRole}
                                             </div>
                                             {lvl.ownerType === 'hr' && (
-                                                <div className="flex flex-wrap gap-1.5 my-1">
-                                                    {hrManagers.length > 0 ? (
-                                                        hrManagers.map((mgr) => (
-                                                            <div key={mgr.id || mgr.employee_code} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-100 dark:bg-blue-950/80 border border-blue-300 dark:border-blue-800 rounded-lg text-xs font-bold text-blue-900 dark:text-blue-200">
+                                                <div className="space-y-2 my-1">
+                                                    <div className="flex flex-wrap gap-1.5">
+                                                        {hrManagers.length > 0 ? (
+                                                            hrManagers.map((mgr) => (
+                                                                <div key={mgr.id || mgr.employee_code} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-100 dark:bg-blue-950/80 border border-blue-300 dark:border-blue-800 rounded-lg text-xs font-bold text-blue-900 dark:text-blue-200">
+                                                                    <User className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
+                                                                    <span>
+                                                                        Assigned: {mgr.full_name || `${mgr.first_name} ${mgr.last_name}`} ({mgr.employee_code || ''})
+                                                                    </span>
+                                                                    {onRemoveHrManager && (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => onRemoveHrManager(mgr.id)}
+                                                                            className="p-0.5 hover:bg-blue-200 dark:hover:bg-blue-900 rounded-full text-blue-500 hover:text-blue-800 dark:hover:text-blue-200 transition-colors ml-1"
+                                                                            title="Remove Assigned HR Manager"
+                                                                        >
+                                                                            <X className="w-3.5 h-3.5" />
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                            ))
+                                                        ) : (
+                                                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-100 dark:bg-blue-950/80 border border-blue-300 dark:border-blue-800 rounded-lg text-xs font-bold text-blue-900 dark:text-blue-200">
                                                                 <User className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
-                                                                <span>
-                                                                    Assigned: {mgr.full_name || `${mgr.first_name} ${mgr.last_name}`} ({mgr.employee_code || ''})
-                                                                </span>
+                                                                <span>Assigned: HR Department / Operations Lead</span>
                                                             </div>
-                                                        ))
-                                                    ) : (
-                                                        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-100 dark:bg-blue-950/80 border border-blue-300 dark:border-blue-800 rounded-lg text-xs font-bold text-blue-900 dark:text-blue-200">
-                                                            <User className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
-                                                            <span>Assigned: HR Manager / Operations Lead</span>
+                                                        )}
+                                                    </div>
+
+                                                    {onAddHrManager && employeesList && employeesList.length > 0 && (
+                                                        <div className="pt-1 max-w-md space-y-2">
+                                                            <SearchableEmployeeSelector
+                                                                placeholder="+ Assign HR Manager / HR Dept Member"
+                                                                employees={employeesList}
+                                                                selectedIds={selectedHrManagerIds.length > 0 ? selectedHrManagerIds : hrManagers.map(m => m.id)}
+                                                                onSelect={onAddHrManager}
+                                                                accentColor="blue"
+                                                            />
+                                                            {onSaveAuthorities && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => onSaveAuthorities()}
+                                                                    disabled={savingAuthorities}
+                                                                    className="px-3 py-1.5 bg-[#587e85] hover:bg-[#48686e] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-colors disabled:opacity-50"
+                                                                >
+                                                                    <Check className="w-3.5 h-3.5" />
+                                                                    {savingAuthorities ? 'Saving...' : 'Save HR Department Authority'}
+                                                                </button>
+                                                            )}
                                                         </div>
                                                     )}
                                                 </div>
                                             )}
                                             {lvl.ownerType === 'hr_head' && (
-                                                <div className="flex flex-wrap gap-1.5 my-1">
-                                                    {hrHeads.length > 0 ? (
-                                                        hrHeads.map((head) => (
-                                                            <div key={head.id || head.employee_code} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-purple-100 dark:bg-purple-950/80 border border-purple-300 dark:border-purple-800 rounded-lg text-xs font-bold text-purple-900 dark:text-purple-200">
+                                                <div className="space-y-2 my-1">
+                                                    <div className="flex flex-wrap gap-1.5">
+                                                        {hrHeads.length > 0 ? (
+                                                            hrHeads.map((head) => (
+                                                                <div key={head.id || head.employee_code} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-purple-100 dark:bg-purple-950/80 border border-purple-300 dark:border-purple-800 rounded-lg text-xs font-bold text-purple-900 dark:text-purple-200">
+                                                                    <User className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
+                                                                    <span>
+                                                                        Assigned: {head.full_name || `${head.first_name} ${head.last_name}`} ({head.employee_code || ''})
+                                                                    </span>
+                                                                    {onRemoveHrHead && (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => onRemoveHrHead(head.id)}
+                                                                            className="p-0.5 hover:bg-purple-200 dark:hover:bg-purple-900 rounded-full text-purple-500 hover:text-purple-800 dark:hover:text-purple-200 transition-colors ml-1"
+                                                                            title="Remove HR Head"
+                                                                        >
+                                                                            <X className="w-3.5 h-3.5" />
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                            ))
+                                                        ) : (
+                                                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-purple-100 dark:bg-purple-950/80 border border-purple-300 dark:border-purple-800 rounded-lg text-xs font-bold text-purple-900 dark:text-purple-200">
                                                                 <User className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
-                                                                <span>
-                                                                    Assigned: {head.full_name || `${head.first_name} ${head.last_name}`} ({head.employee_code || ''})
-                                                                </span>
+                                                                <span>Assigned: HR Head / Leadership (Not selected)</span>
                                                             </div>
-                                                        ))
-                                                    ) : (
-                                                        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-purple-100 dark:bg-purple-950/80 border border-purple-300 dark:border-purple-800 rounded-lg text-xs font-bold text-purple-900 dark:text-purple-200">
-                                                            <User className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
-                                                            <span>Assigned: HR Head / Leadership (Not selected)</span>
+                                                        )}
+                                                    </div>
+
+                                                    {onAddHrHead && employeesList && employeesList.length > 0 && (
+                                                        <div className="pt-1 max-w-md space-y-2">
+                                                            <SearchableEmployeeSelector
+                                                                placeholder="+ Assign HR Head"
+                                                                employees={employeesList}
+                                                                selectedIds={selectedHrHeadIds.length > 0 ? selectedHrHeadIds : hrHeads.map(h => h.id)}
+                                                                onSelect={onAddHrHead}
+                                                                accentColor="purple"
+                                                            />
+                                                            {onSaveAuthorities && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => onSaveAuthorities()}
+                                                                    disabled={savingAuthorities}
+                                                                    className="px-3 py-1.5 bg-[#587e85] hover:bg-[#48686e] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-colors disabled:opacity-50"
+                                                                >
+                                                                    <Check className="w-3.5 h-3.5" />
+                                                                    {savingAuthorities ? 'Saving...' : 'Save HR Head Authority'}
+                                                                </button>
+                                                            )}
                                                         </div>
                                                     )}
                                                 </div>
                                             )}
-                                            {lvl.ownerType === 'director' && (
-                                                <div className="flex flex-wrap gap-1.5 my-1">
-                                                    {directors.length > 0 ? (
-                                                        directors.map((dir) => (
-                                                            <div key={dir.id || dir.employee_code} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-red-100 dark:bg-red-950/80 border border-red-300 dark:border-red-800 rounded-lg text-xs font-bold text-red-900 dark:text-red-200">
+                                            {(lvl.ownerType === 'director' || lvl.ownerType === 'super_admin') && (
+                                                <div className="space-y-2 my-1">
+                                                    <div className="flex flex-wrap gap-1.5">
+                                                        {directors.length > 0 ? (
+                                                            directors.map((dir) => (
+                                                                <div key={dir.id || dir.employee_code} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-red-100 dark:bg-red-950/80 border border-red-300 dark:border-red-800 rounded-lg text-xs font-bold text-red-900 dark:text-red-200">
+                                                                    <User className="w-3.5 h-3.5 text-red-600 dark:text-red-400 shrink-0" />
+                                                                    <span>
+                                                                        Assigned: {dir.full_name || `${dir.first_name} ${dir.last_name}`} ({dir.employee_code || ''})
+                                                                    </span>
+                                                                    {onRemoveDirector && (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => onRemoveDirector(dir.id)}
+                                                                            className="p-0.5 hover:bg-red-200 dark:hover:bg-red-900 rounded-full text-red-500 hover:text-red-800 dark:hover:text-red-200 transition-colors ml-1"
+                                                                            title="Remove Assigned Director"
+                                                                        >
+                                                                            <X className="w-3.5 h-3.5" />
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                            ))
+                                                        ) : (
+                                                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-red-100 dark:bg-red-950/80 border border-red-300 dark:border-red-800 rounded-lg text-xs font-bold text-red-900 dark:text-red-200">
                                                                 <User className="w-3.5 h-3.5 text-red-600 dark:text-red-400 shrink-0" />
-                                                                <span>
-                                                                    Assigned: {dir.full_name || `${dir.first_name} ${dir.last_name}`} ({dir.employee_code || ''})
-                                                                </span>
+                                                                <span>Assigned: Executive Management / Board (Not selected)</span>
                                                             </div>
-                                                        ))
-                                                    ) : (
-                                                        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-red-100 dark:bg-red-950/80 border border-red-300 dark:border-red-800 rounded-lg text-xs font-bold text-red-900 dark:text-red-200">
-                                                            <User className="w-3.5 h-3.5 text-red-600 dark:text-red-400 shrink-0" />
-                                                            <span>Assigned: Executive Management (Not selected)</span>
+                                                        )}
+                                                    </div>
+
+                                                    {/* Interactive Combobox for assigning Directors / Board / Confidential Feedback Users */}
+                                                    {onAddDirector && employeesList && employeesList.length > 0 && (
+                                                        <div className="pt-1 max-w-md space-y-2">
+                                                            <SearchableEmployeeSelector
+                                                                placeholder={
+                                                                    selectedFlowId === 'confidential_feedback'
+                                                                        ? (lvl.level === 2 ? "+ Assign Board Member / Managing Director" : "+ Assign Director / Recipient for Confidential Feedback")
+                                                                        : "+ Assign Director / Board Member"
+                                                                }
+                                                                employees={employeesList}
+                                                                selectedIds={selectedDirectorIds.length > 0 ? selectedDirectorIds : directors.map(d => d.id)}
+                                                                onSelect={onAddDirector}
+                                                                accentColor={selectedFlowId === 'confidential_feedback' ? 'purple' : 'red'}
+                                                            />
+
+                                                            {onSaveAuthorities && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => onSaveAuthorities()}
+                                                                    disabled={savingAuthorities}
+                                                                    className="px-3 py-1.5 bg-[#587e85] hover:bg-[#48686e] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-colors disabled:opacity-50"
+                                                                >
+                                                                    <Check className="w-3.5 h-3.5" />
+                                                                    {savingAuthorities ? 'Saving...' : selectedFlowId === 'confidential_feedback' ? 'Save Confidential Recipient' : 'Save Designated Authority'}
+                                                                </button>
+                                                            )}
                                                         </div>
                                                     )}
                                                 </div>

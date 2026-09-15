@@ -57,7 +57,8 @@ const forbidden = (): TransitionPlan => ({ ok: false, error: 'Forbidden', status
 export function planPettyCashTransition({ req, actor, action, body, now }: TransitionInput): TransitionPlan {
     const stamp = now || new Date().toISOString();
     const isOwner = req.requester_id === actor.id;
-    const isApproverOfProperty = actor.canApprove && (actor.isAdmin || actor.propertyIds.includes(req.property_id));
+    const isAssignedApprover = req.assigned_approver_id === actor.id;
+    const isApproverOfProperty = (actor.canApprove && (actor.isAdmin || actor.propertyIds.includes(req.property_id))) || isAssignedApprover;
     const remark = (body.remark ?? body.remarks ?? '').toString().trim() || null;
 
     const base: Record<string, unknown> = { updated_at: stamp };

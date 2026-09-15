@@ -76,7 +76,8 @@ export default function RequestDetailDrawer({ request, caps, onClose, onChanged 
 
     const s = request.status;
     const isOwner = request.requester_id === user?.id;
-    const isApprover = caps.canApprove && (caps.isAdmin || caps.properties.some(p => p.id === request.property_id));
+    const isAssignedApprover = request.assigned_approver_id === user?.id;
+    const isApprover = (caps.canApprove && (caps.isAdmin || caps.properties.some(p => p.id === request.property_id))) || isAssignedApprover;
 
     const actions: ActionKey[] = [];
     if (s === 'submitted' && isApprover) actions.push('approve', 'send_back', 'reject');
@@ -165,6 +166,7 @@ export default function RequestDetailDrawer({ request, caps, onClose, onChanged 
                     {/* Details */}
                     <div className="bg-surface-elevated rounded-xl p-4">
                         <Row k="Requester" v={request.requester?.full_name || '—'} />
+                        {request.assigned_approver && <Row k="Designated Approver" v={request.assigned_approver.full_name || request.assigned_approver.email || '—'} />}
                         <Row k="Cash handed to" v={
                             request.recipient_name
                                 ? <span>{request.recipient_name}{request.recipient_phone ? <span className="text-text-tertiary"> · {request.recipient_phone}</span> : null}</span>
@@ -241,23 +243,50 @@ export default function RequestDetailDrawer({ request, caps, onClose, onChanged 
                                             {d.amount != null && <span className="tabular-nums font-bold text-text-primary">{inr(d.amount)}</span>}
                                             <span className="text-[10px] uppercase text-text-tertiary">{d.stage}</span>
                                         </div>
-                                        {(d.vendor || d.bill_date || d.review_status === 'rejected') && (
-                                            <p className="text-[11px] text-text-tertiary mt-0.5 pl-6">
+                                        {(d.vendor || d.bill_date || d.review_status) && (
+                                            <p className="text-[11px] text-text-tertiary mt-0.5 pl-6 flex items-center flex-wrap gap-1">
                                                 {[d.vendor, d.bill_date ? new Date(d.bill_date).toLocaleDateString('en-IN') : null]
                                                     .filter(Boolean).join(' · ')}
-                                                {d.review_status === 'rejected' && <span className="text-red-600 font-semibold"> · Rejected{d.review_remarks ? `: ${d.review_remarks}` : ''}</span>}
-                                                {d.review_status === 'accepted' && <span className="text-emerald-600 font-semibold"> · Accepted</span>}
+                                                {d.review_status === 'rejected' && (
+                                                    <span className="text-red-600 font-bold bg-red-500/10 px-1.5 py-0.5 rounded text-[10px]">
+                                                        Rejected{d.review_remarks ? `: ${d.review_remarks}` : ''}
+                                                    </span>
+                                                )}
+                                                {d.review_status === 'accepted' && (
+                                                    <span className="text-emerald-600 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded text-[10px]">
+                                                        Accepted
+                                                    </span>
+                                                )}
+                                                {d.stage === 'settlement' && (!d.review_status || d.review_status === 'pending') && (
+                                                    <span className="text-amber-600 font-bold bg-amber-500/10 px-1.5 py-0.5 rounded text-[10px]">
+                                                        Pending Review
+                                                    </span>
+                                                )}
                                             </p>
                                         )}
-                                        {caps.canDisburse && d.stage === 'settlement' && d.amount != null && (
-                                            <div className="flex items-center gap-2 mt-1.5 pl-6">
-                                                <button onClick={() => reviewBill(d.id, 'accepted')} disabled={busy || d.review_status === 'accepted'}
-                                                    className="text-[11px] font-bold px-2 py-0.5 rounded-md border border-emerald-500/40 text-emerald-700 hover:bg-emerald-500/10 disabled:opacity-40">
-                                                    Accept
+                                        {caps.canDisburse && d.stage === 'settlement' && (
+                                            <div className="flex items-center gap-2 mt-2 pl-6">
+                                                <button
+                                                    onClick={() => reviewBill(d.id, 'accepted')}
+                                                    disabled={busy || d.review_status === 'accepted'}
+                                                    className={`text-[11px] font-black px-2.5 py-1 rounded-lg border transition-all ${
+                                                        d.review_status === 'accepted'
+                                                            ? 'bg-emerald-600 text-white border-emerald-600 opacity-90 cursor-default'
+                                                            : 'border-emerald-500/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/10 active:scale-95'
+                                                    }`}
+                                                >
+                                                    ✓ Accept
                                                 </button>
-                                                <button onClick={() => reviewBill(d.id, 'rejected')} disabled={busy || d.review_status === 'rejected'}
-                                                    className="text-[11px] font-bold px-2 py-0.5 rounded-md border border-red-500/40 text-red-700 hover:bg-red-500/10 disabled:opacity-40">
-                                                    Reject
+                                                <button
+                                                    onClick={() => reviewBill(d.id, 'rejected')}
+                                                    disabled={busy || d.review_status === 'rejected'}
+                                                    className={`text-[11px] font-black px-2.5 py-1 rounded-lg border transition-all ${
+                                                        d.review_status === 'rejected'
+                                                            ? 'bg-red-600 text-white border-red-600 opacity-90 cursor-default'
+                                                            : 'border-red-500/40 text-red-700 dark:text-red-400 hover:bg-red-500/10 active:scale-95'
+                                                    }`}
+                                                >
+                                                    ✕ Reject
                                                 </button>
                                             </div>
                                         )}

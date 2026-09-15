@@ -1,15 +1,21 @@
--- ============================================================================
--- Migration: HR Ticketing Omnichannel Outbox Event Triggers
--- Description: Outbox pattern database triggers on hr_tickets & hr_ticket_discussions
--- ============================================================================
+-- Migration: 20260912000003_fix_hr_ticketing_and_outbox_schema.sql
+-- Description: Add missing resolution columns to hr_tickets and fix outbox trigger function with safe json dynamic dereferencing
 
--- Function: Emit HR Ticket Event to omnichannel_events table
+-- 1. Add missing resolution columns to hr_tickets table
+ALTER TABLE public.hr_tickets
+ADD COLUMN IF NOT EXISTS resolution_note TEXT,
+ADD COLUMN IF NOT EXISTS resolved_by_user_id UUID REFERENCES public.users(id) ON DELETE SET NULL;
+
+-- 2. Update Outbox Event Trigger Function with safe dynamic JSON extraction
 CREATE OR REPLACE FUNCTION public.fn_hr_ticket_event_outbox()
 RETURNS TRIGGER AS $$
 DECLARE
     v_event_type TEXT;
     v_payload JSONB;
+    v_row_json JSONB;
 BEGIN
+    v_row_json := to_jsonb(NEW);
+
     IF (TG_OP = 'INSERT') THEN
         IF (NEW.is_confidential = TRUE OR NEW.is_anonymous = TRUE) THEN
             v_event_type := 'HR_CONFIDENTIAL_DIRECTOR_ALERT';
@@ -58,8 +64,8 @@ BEGIN
             'old_level', OLD.current_level,
             'current_level', NEW.current_level,
             'subject', NEW.subject,
-            'resolution_note', NEW.resolution_note,
-            'resolved_by_user_id', NEW.resolved_by_user_id,
+            'resolution_note', v_row_json ->> 'resolution_note',
+            'resolved_by_user_id', v_row_json ->> 'resolved_by_user_id',
             'is_confidential', NEW.is_confidential,
             'is_anonymous', NEW.is_anonymous,
             'updated_at', NEW.updated_at
@@ -75,49 +81,3 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-
--- Trigger: hr_tickets_outbox_trigger
-DROP TRIGGER IF EXISTS trg_hr_tickets_outbox ON public.hr_tickets;
-CREATE TRIGGER trg_hr_tickets_outbox
-AFTER INSERT OR UPDATE ON public.hr_tickets
-FOR EACH ROW EXECUTE FUNCTION public.fn_hr_ticket_event_outbox();
-
--- Trigger for Comments / Responses
-CREATE OR REPLACE FUNCTION public.fn_hr_ticket_discussion_outbox()
-RETURNS TRIGGER AS $$
-DECLARE
-    v_ticket RECORD;
-BEGIN
-    SELECT organization_id, ticket_number, subject, raised_by_user_id, assigned_to_user_id
-    INTO v_ticket
-    FROM public.hr_tickets
-    WHERE id = NEW.ticket_id;
-
-    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'omnichannel_events') THEN
-        INSERT INTO public.omnichannel_events (event_type, payload, organization_id, created_at)
-        VALUES (
-            'HR_TICKET_COMMENT_ADDED',
-            jsonb_build_object(
-                'id', NEW.id,
-                'ticket_id', NEW.ticket_id,
-                'ticket_number', v_ticket.ticket_number,
-                'organization_id', v_ticket.organization_id,
-                'sender_user_id', NEW.sender_user_id,
-                'raised_by_user_id', v_ticket.raised_by_user_id,
-                'assigned_to_user_id', v_ticket.assigned_to_user_id,
-                'message', NEW.content,
-                'created_at', NEW.created_at
-            ),
-            v_ticket.organization_id,
-            NOW()
-        );
-    END IF;
-
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
-DROP TRIGGER IF EXISTS trg_hr_ticket_comments_outbox ON public.hr_ticket_comments;
-CREATE TRIGGER trg_hr_ticket_comments_outbox
-AFTER INSERT ON public.hr_ticket_comments
-FOR EACH ROW EXECUTE FUNCTION public.fn_hr_ticket_discussion_outbox();

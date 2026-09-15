@@ -1176,13 +1176,32 @@ export class NotificationService {
 
     static async send(payload: NotificationPayload) {
         try {
+            let propertyId = (payload.propertyId && payload.propertyId.trim()) ? payload.propertyId.trim() : null;
+            if (!propertyId && payload.organizationId) {
+                const { data: defaultProp } = await supabaseAdmin
+                    .from('properties')
+                    .select('id')
+                    .eq('organization_id', payload.organizationId)
+                    .limit(1)
+                    .maybeSingle();
+                if (defaultProp?.id) propertyId = defaultProp.id;
+            }
+            if (!propertyId) {
+                const { data: anyProp } = await supabaseAdmin
+                    .from('properties')
+                    .select('id')
+                    .limit(1)
+                    .maybeSingle();
+                if (anyProp?.id) propertyId = anyProp.id;
+            }
+
             const { data: notification, error: notifError } = await supabaseAdmin
                 .from('notifications')
                 .insert({
                     user_id: payload.userId,
                     ticket_id: (payload.ticketId && payload.ticketId.trim()) ? payload.ticketId.trim() : null,
                     booking_id: (payload.bookingId && payload.bookingId.trim()) ? payload.bookingId.trim() : null,
-                    property_id: (payload.propertyId && payload.propertyId.trim()) ? payload.propertyId.trim() : null,
+                    property_id: propertyId,
                     organization_id: (payload.organizationId && payload.organizationId.trim()) ? payload.organizationId.trim() : null,
                     notification_type: payload.type,
                     title: payload.title,
@@ -1267,6 +1286,14 @@ export class NotificationService {
                 .limit(1)
                 .maybeSingle();
             if (defaultProp?.id) fallbackPropertyId = defaultProp.id;
+        }
+        if (!fallbackPropertyId) {
+            const { data: anyProp } = await supabaseAdmin
+                .from('properties')
+                .select('id')
+                .limit(1)
+                .maybeSingle();
+            if (anyProp?.id) fallbackPropertyId = anyProp.id;
         }
 
         const rows = unique.map(userId => ({
@@ -2742,7 +2769,7 @@ export class NotificationService {
     static async afterHrTicketCommentAdded(ticketId: string, commentId: string) {
         try {
             const { data: comment } = await supabaseAdmin
-                .from('hr_ticket_discussions')
+                .from('hr_ticket_comments')
                 .select('*')
                 .eq('id', commentId)
                 .maybeSingle();

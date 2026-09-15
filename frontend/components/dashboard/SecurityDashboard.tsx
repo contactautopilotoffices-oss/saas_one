@@ -1,10 +1,11 @@
 'use client';
+import HRTicketsContent from '@/frontend/components/hr/HRTicketsContent';
 
 import { useState, useEffect } from 'react';
 import {
     LayoutDashboard, Ticket, Settings, LogOut, Plus,
     Clock, UsersRound, UserCircle, Shield, Fuel, LogIn, Menu, X, AlertCircle, ClipboardCheck,
-    MessageSquarePlus, CalendarDays
+    MessageSquarePlus, CalendarDays, ShieldCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
@@ -24,7 +25,7 @@ import { useDataCache } from '@/frontend/context/DataCacheContext';
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
 
 // Types
-type Tab = 'overview' | 'requests' | 'checkinout' | 'visitors' | 'diesel' | 'checklist' | 'meeting_rooms' | 'settings' | 'profile';
+type Tab = 'overview' | 'requests' | 'checkinout' | 'visitors' | 'diesel' | 'checklist' | 'meeting_rooms' | 'settings' | 'profile' | 'grievance';
 
 interface Property {
     id: string;
@@ -443,6 +444,26 @@ const SecurityDashboard = () => {
                         </p>
                         <div className="space-y-1">
                             <button
+                                onClick={() => {
+                                    setActiveTab('grievance');
+                                    setSidebarOpen(false);
+                                }}
+                                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 font-bold text-sm text-text-secondary hover:bg-muted hover:text-text-primary group"
+                            >
+                                <ShieldCheck className="w-4 h-4 text-primary" />
+                                <span className="flex-1 text-left">My Grievances</span>
+                            </button>
+                            <button
+                                onClick={() => {
+                                    setActiveTab('grievance');
+                                    setSidebarOpen(false);
+                                }}
+                                className="w-full flex items-center gap-3 px-4 py-2 rounded-xl transition-all duration-200 text-xs font-bold text-primary bg-primary/10 hover:bg-primary/20 group"
+                            >
+                                <Plus className="w-3.5 h-3.5" />
+                                <span>+ Raise Grievance</span>
+                            </button>
+                            <button
                                 onClick={() => handleTabChange('settings')}
                                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'settings'
                                     ? 'bg-primary text-text-inverse shadow-sm'
@@ -572,6 +593,9 @@ const SecurityDashboard = () => {
                                 <div className="bg-white rounded-3xl border border-border p-6 shadow-sm">
                                     <TenantRoomBooking propertyId={property.id} user={user} hideHeader={true} />
                                 </div>
+                            )}
+                            {activeTab === 'grievance' && (
+                                <HRTicketsContent orgId={property?.organization_id || 'org'} />
                             )}
                             {activeTab === 'settings' && <SettingsView />}
                             {activeTab === 'profile' && (

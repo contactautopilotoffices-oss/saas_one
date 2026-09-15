@@ -1,36 +1,62 @@
-import nodemailer from 'nodemailer';
+import * as nodemailer from 'nodemailer';
 
-const smtpUser = process.env.SMTP_USER || process.env.EMAIL_SMTP_USER;
-const smtpPass = process.env.SMTP_PASS || process.env.EMAIL_SMTP_PASS;
-const smtpHost = process.env.SMTP_HOST || process.env.EMAIL_SMTP_HOST || 'smtp.gmail.com';
+const resendApiKey = process.env.RESEND_API_KEY;
+const smtpUser = process.env.SMTP_USER || process.env.EMAIL_SMTP_USER || (resendApiKey ? 'resend' : undefined);
+const smtpPass = process.env.SMTP_PASS || process.env.EMAIL_SMTP_PASS || resendApiKey;
+const smtpHost = process.env.SMTP_HOST || process.env.EMAIL_SMTP_HOST || (resendApiKey ? 'smtp.resend.com' : 'smtp.gmail.com');
 const smtpPort = parseInt(process.env.SMTP_PORT || process.env.EMAIL_SMTP_PORT || '465');
 
 const transporter = nodemailer.createTransport({
     host: smtpHost,
     port: smtpPort,
     secure: process.env.SMTP_SECURE === 'true' || smtpPort === 465,
-    auth: {
+    auth: (smtpUser && smtpPass) ? {
         user: smtpUser,
         pass: smtpPass,
-    },
+    } : undefined,
 });
 
 export const EmailService = {
-    // Generic sender — used by petty cash / payment intimation and any new flow.
-    // Silently skips (returns false) when SMTP creds are not configured.
+    // Generic sender — supports Resend API (RESEND_API_KEY) and SMTP credentials.
     async sendEmail({ to, subject, html, attachments }: {
         to: string | string[];
         subject: string;
         html: string;
         attachments?: { filename: string; content: Buffer; contentType?: string }[];
     }) {
-        if (!process.env.SMTP_USER) {
-            console.warn('[EmailService] SMTP credentials not found, skipping email send.');
+        const apiKey = process.env.RESEND_API_KEY;
+        const sender = process.env.RESEND_FROM_EMAIL || process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER || 'onboarding@resend.dev';
+
+        if (apiKey) {
+            try {
+                const res = await fetch('https://api.resend.com/emails', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${apiKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        from: sender.includes('<') ? sender : `"Autopilot FMS" <${sender}>`,
+                        to: Array.isArray(to) ? to : [to],
+                        subject,
+                        html
+                    })
+                });
+                if (res.ok) return true;
+                const errData = await res.json().catch(() => ({}));
+                console.error('[EmailService] Resend API error:', errData);
+            } catch (err) {
+                console.error('[EmailService] Resend fetch failed, falling back to SMTP:', err);
+            }
+        }
+
+        if (!smtpUser || !smtpPass) {
+            console.warn('[EmailService] Neither RESEND_API_KEY nor SMTP credentials found, skipping email send.');
             return false;
         }
         try {
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: sender.includes('<') ? sender : `"Autopilot FMS" <${sender}>`,
                 to: Array.isArray(to) ? to.join(',') : to,
                 subject,
                 html,
@@ -38,7 +64,7 @@ export const EmailService = {
             });
             return true;
         } catch (error) {
-            console.error('[EmailService] Failed to send email:', error);
+            console.error('[EmailService] Failed to send email via SMTP:', error);
             return false;
         }
     },

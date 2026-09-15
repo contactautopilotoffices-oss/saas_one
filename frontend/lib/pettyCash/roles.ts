@@ -73,6 +73,7 @@ export interface PettyCashRequest {
     /** Custodian — who physically receives the cash. Often not the requester. */
     recipient_name?: string | null;
     recipient_phone?: string | null;
+    assigned_approver_id?: string | null;
     status: string;
     approved_amount?: number | null;
     approved_at?: string | null;
@@ -92,6 +93,7 @@ export interface PettyCashRequest {
     created_at: string;
     requester?: { id: string; full_name?: string; email?: string } | null;
     approver?: { id: string; full_name?: string } | null;
+    assigned_approver?: { id: string; full_name?: string; email?: string } | null;
     payer?: { id: string; full_name?: string } | null;
     property?: { id: string; name?: string; code?: string } | null;
 }

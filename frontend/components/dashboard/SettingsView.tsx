@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from '@/frontend/context/AuthContext';
+import { useAppSession } from '@/frontend/hooks/useAppSession';
 import { createClient } from '@/frontend/utils/supabase/client';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -29,6 +30,7 @@ interface SettingsViewProps {
 
 export default function SettingsView({ onUpdate }: SettingsViewProps) {
     const { user } = useAuth();
+    const { session } = useAppSession();
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
     const [profile, setProfile] = useState<any>(null);
@@ -41,6 +43,27 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
     const [superAdminOrgId, setSuperAdminOrgId] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const supabase = createClient();
+
+    const isTenantAccount = useMemo(() => {
+        const sessionRole = (session?.role || '').toLowerCase();
+        if (['tenant', 'super_tenant', 'tenant_user', 'resident', 'client'].includes(sessionRole)) {
+            return true;
+        }
+        const metaRole = (user?.user_metadata?.role || '').toLowerCase();
+        if (['tenant', 'super_tenant', 'tenant_user', 'resident', 'client'].includes(metaRole)) {
+            return true;
+        }
+        if (userRoles.length > 0) {
+            const employeeRoles = [
+                'staff', 'mst', 'property_admin', 'soft_service_manager', 
+                'soft_service_supervisor', 'soft_service_staff', 'org_admin', 
+                'org_super_admin', 'ops_super_admin', 'master_admin', 'hr', 'hr_head'
+            ];
+            const hasEmployeeRole = userRoles.some(r => employeeRoles.includes((r.role || '').toLowerCase()));
+            if (!hasEmployeeRole) return true;
+        }
+        return false;
+    }, [session, user, userRoles]);
 
     // Permissions
     const [notifPerm, setNotifPerm] = useState<NotificationPermission | 'unsupported'>('default');
@@ -493,19 +516,21 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
                                         </div>
                                     </div>
 
-                                    <div className="space-y-2">
-                                        <label className="text-sm font-semibold text-slate-700">Employee Code (ECode)</label>
-                                        <div className="relative">
-                                            <Hash className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-primary" />
-                                            <input
-                                                type="text"
-                                                value={profile?.employee_code || ''}
-                                                onChange={(e) => setProfile({ ...profile, employee_code: e.target.value.toUpperCase() })}
-                                                className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all font-mono font-bold text-primary"
-                                                placeholder="e.g. E101"
-                                            />
+                                    {!isTenantAccount && (
+                                        <div className="space-y-2">
+                                            <label className="text-sm font-semibold text-slate-700">Employee Code (ECode)</label>
+                                            <div className="relative">
+                                                <Hash className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-primary" />
+                                                <input
+                                                    type="text"
+                                                    value={profile?.employee_code || ''}
+                                                    onChange={(e) => setProfile({ ...profile, employee_code: e.target.value.toUpperCase() })}
+                                                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all font-mono font-bold text-primary"
+                                                    placeholder="e.g. E101"
+                                                />
+                                            </div>
                                         </div>
-                                    </div>
+                                    )}
 
                                     {vendorInfo && (
                                         <div className="space-y-2">
@@ -537,27 +562,29 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
                                         </div>
                                     </div>
 
-                                    <div className="space-y-2">
-                                        <label className="text-sm font-semibold text-slate-700">Reporting Manager</label>
-                                        <div className="relative">
-                                            <UserCheck className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#587e85]" />
-                                            <input
-                                                type="text"
-                                                value={assignedManager || 'Not Assigned'}
-                                                disabled
-                                                className={`w-full pl-10 pr-32 py-2.5 rounded-xl border border-slate-200 bg-slate-50 font-bold cursor-not-allowed ${
-                                                    assignedManager ? 'text-slate-900' : 'text-slate-400 italic'
-                                                }`}
-                                            />
-                                            <div className={`absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold px-2 py-1 rounded-md border ${
-                                                assignedManager
-                                                    ? 'text-[#587e85] bg-[#587e85]/10 border-[#587e85]/20'
-                                                    : 'text-slate-400 bg-slate-100 border-slate-200'
-                                            }`}>
-                                                {assignedManager ? 'Assigned Manager' : 'Not Assigned'}
+                                    {!isTenantAccount && (
+                                        <div className="space-y-2">
+                                            <label className="text-sm font-semibold text-slate-700">Reporting Manager</label>
+                                            <div className="relative">
+                                                <UserCheck className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#587e85]" />
+                                                <input
+                                                    type="text"
+                                                    value={assignedManager || 'Not Assigned'}
+                                                    disabled
+                                                    className={`w-full pl-10 pr-32 py-2.5 rounded-xl border border-slate-200 bg-slate-50 font-bold cursor-not-allowed ${
+                                                        assignedManager ? 'text-slate-900' : 'text-slate-400 italic'
+                                                    }`}
+                                                />
+                                                <div className={`absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold px-2 py-1 rounded-md border ${
+                                                    assignedManager
+                                                        ? 'text-[#587e85] bg-[#587e85]/10 border-[#587e85]/20'
+                                                        : 'text-slate-400 bg-slate-100 border-slate-200'
+                                                }`}>
+                                                    {assignedManager ? 'Assigned Manager' : 'Not Assigned'}
+                                                </div>
                                             </div>
                                         </div>
-                                    </div>
+                                    )}
 
                                     <div className="space-y-2 md:col-span-2">
                                         <label className="text-sm font-semibold text-slate-700">Email Address</label>

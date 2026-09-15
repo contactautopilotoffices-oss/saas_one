@@ -47,12 +47,39 @@ export async function POST(
             return NextResponse.json({ success: false, error: 'Comment content is required' }, { status: 400 });
         }
 
+        let resolvedSenderName = sender_name;
+        if ((!resolvedSenderName || resolvedSenderName === 'Handler / Support' || resolvedSenderName === 'System User') && sender_user_id) {
+            const { data: userData } = await supabaseAdmin
+                .from('users')
+                .select('full_name, email, raw_user_meta_data')
+                .eq('id', sender_user_id)
+                .maybeSingle();
+
+            if (userData?.full_name) {
+                resolvedSenderName = userData.full_name;
+            } else if (userData?.raw_user_meta_data?.full_name) {
+                resolvedSenderName = userData.raw_user_meta_data.full_name;
+            } else if (userData?.email) {
+                resolvedSenderName = userData.email;
+            } else {
+                const { data: empData } = await supabaseAdmin
+                    .from('employee_profiles')
+                    .select('first_name, last_name')
+                    .eq('user_id', sender_user_id)
+                    .maybeSingle();
+                if (empData?.first_name) {
+                    resolvedSenderName = `${empData.first_name} ${empData.last_name || ''}`.trim();
+                }
+            }
+        }
+        if (!resolvedSenderName) resolvedSenderName = 'Handler / Support';
+
         const { data: comment, error } = await supabaseAdmin
             .from('hr_ticket_comments')
             .insert({
                 ticket_id: id,
                 sender_user_id: sender_user_id || null,
-                sender_name: sender_name || 'System User',
+                sender_name: resolvedSenderName,
                 content,
                 attachment_urls,
                 is_internal: Boolean(is_internal)

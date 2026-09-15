@@ -96,6 +96,9 @@ export async function GET(request: Request) {
         (orgMemsRes.data || []).forEach(m => userRoleMap.set(m.user_id, m.role));
         (propMemsRes.data || []).forEach(m => { if (!userRoleMap.has(m.user_id)) userRoleMap.set(m.user_id, m.role); });
 
+        const existingUserIdsInProfiles = new Set(profiles.filter(p => p.user_id).map(p => p.user_id));
+        const existingEmailsInProfiles = new Set(profiles.filter(p => p.email).map(p => (p.email || '').toLowerCase().trim()));
+
         let combined = profiles.map(p => {
             const role = p.user_id ? userRoleMap.get(p.user_id) || (p.is_hr_authority ? 'hr' : 'staff') : null;
             return {
@@ -105,6 +108,34 @@ export async function GET(request: Request) {
                 app_phone: p.user?.phone || null,
                 is_app_linked: Boolean(p.user_id)
             };
+        });
+
+        // In-memory merge app users that have no employee_profiles record (without inserting into DB)
+        appUsers.forEach(u => {
+            if (existingUserIdsInProfiles.has(u.id)) return;
+            if (u.email && existingEmailsInProfiles.has(u.email.toLowerCase().trim())) return;
+
+            const role = userRoleMap.get(u.id) || 'staff';
+            const roleLabel = role.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+            const nameParts = (u.full_name || '').trim().split(' ');
+
+            combined.push({
+                id: u.id,
+                user_id: u.id,
+                employee_code: u.email ? u.email.split('@')[0].toUpperCase() : 'APP-USER',
+                first_name: nameParts[0] || 'User',
+                last_name: nameParts.slice(1).join(' ') || '',
+                full_name: u.full_name || u.email || 'App User',
+                email: u.email || null,
+                phone: u.phone || null,
+                department: role.includes('hr') ? 'Human Resources' : (role.includes('admin') ? 'Administration' : 'App User'),
+                designation: roleLabel,
+                app_role: role,
+                app_email: u.email || null,
+                app_phone: u.phone || null,
+                is_app_linked: true,
+                is_virtual_user: true
+            });
         });
 
         // Apply in-memory filtering for query search if specified
@@ -220,7 +251,11 @@ export async function PATCH(request: Request) {
                 .select('id')
                 .eq('raised_by_user_id', userIdToMatch)
                 .eq('current_level', 1)
-                .in('status', ['new', 'assigned', 'in_progress', 'awaiting_manager_response']);
+                .in('status', [
+                    'new', 'assigned', 'in_progress', 
+                    'awaiting_employee_response', 'awaiting_manager_response', 
+                    'awaiting_hr_response', 'awaiting_internal_approval'
+                ]);
 
             if (openTickets && openTickets.length > 0) {
                 const ticketIds = openTickets.map(t => t.id);

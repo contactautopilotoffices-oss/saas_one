@@ -36,7 +36,8 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
     const [showSignOutModal, setShowSignOutModal] = React.useState(false);
     const [showFeedbackModal, setShowFeedbackModal] = React.useState(false);
 
-    const userRole = user?.user_metadata?.role || membership?.org_role;
+    const rawRole = (user?.user_metadata?.role || membership?.org_role || membership?.properties?.[0]?.role || 'employee').toLowerCase();
+    const userRole = rawRole;
     // Gate the BD Super Admin nav off the SAME source as page.tsx / layout.tsx /
     // CrmOnboardingGate (email allowlist + membership.org_role) so all four
     // call sites agree. user_metadata.role is not reliably populated.
@@ -61,22 +62,13 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
 
         if (isBDRole) return [];
 
-        const isHrRoute = pathname?.includes('/hr-tickets');
-        if (isHrRoute) {
-            if (userRole === 'hr' || userRole === 'hr_head' || userRole === 'director' || isOrgSuperAdmin) {
-                return [
-                    { label: 'Requests & Grievances', href: `/${orgId}/hr-tickets?tab=tickets`, icon: Ticket, domain: 'tickets' as const },
-                    { label: 'Employee Directory', href: `/${orgId}/hr-tickets?tab=directory`, icon: Users, domain: 'tickets' as const },
-                    { label: 'Identity Reconciliation', href: `/${orgId}/hr-tickets?tab=reconciliation`, icon: UserCheck, domain: 'tickets' as const },
-                    { label: 'Admin Config', href: `/${orgId}/hr-tickets?tab=config`, icon: Settings, domain: 'tickets' as const },
-                    { label: 'Analytics', href: `/${orgId}/hr-tickets?tab=analytics`, icon: BarChart3, domain: 'tickets' as const },
-                    { label: 'Main Dashboard', href: `/${orgId}/dashboard`, icon: LayoutDashboard, domain: 'dashboards' as const },
-                ];
-            }
+        if (userRole === 'hr' || userRole === 'hr_head') {
             return [
-                { label: 'My Requests', href: `/${orgId}/hr-tickets?tab=tickets`, icon: Ticket, domain: 'tickets' as const },
-                { label: 'Raise Request', href: `/${orgId}/hr-tickets?action=create`, icon: Plus, domain: 'tickets' as const },
-                { label: 'Main Dashboard', href: `/${orgId}/dashboard`, icon: LayoutDashboard, domain: 'dashboards' as const },
+                { label: 'Requests & Grievances', href: `/${orgId}/hr-tickets?tab=tickets`, icon: Ticket, domain: 'tickets' as const },
+                { label: 'Employee Directory', href: `/${orgId}/hr-tickets?tab=directory`, icon: Users, domain: 'tickets' as const },
+                { label: 'Identity Reconciliation', href: `/${orgId}/hr-tickets?tab=reconciliation`, icon: UserCheck, domain: 'tickets' as const },
+                { label: 'Admin Config', href: `/${orgId}/hr-tickets?tab=config`, icon: Settings, domain: 'tickets' as const },
+                { label: 'Analytics', href: `/${orgId}/hr-tickets?tab=analytics`, icon: BarChart3, domain: 'tickets' as const },
             ];
         }
 
@@ -87,7 +79,7 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
             { label: 'Inventory', href: `/${orgId}/procurement-management`, icon: Package, domain: 'procurement' as const },
             { label: 'Procurement', href: `/${orgId}/procurement-management`, icon: ShoppingCart, domain: 'procurement' as const },
             { label: 'Monthly Requisitions', href: `/${orgId}/procurement-management?tab=monthly-requisitions`, icon: FileUp, domain: 'procurement' as const },
-            {label: 'HR & Grievances', href: `/${orgId}/hr-tickets`, icon: ShieldCheck, domain: 'tickets' as const },
+            { label: 'HR & Grievances', href: `/${orgId}/dashboard?tab=grievance`, icon: ShieldCheck, domain: 'tickets' as const },
             { label: 'Staff', href: `/${orgId}/users`, icon: Users, domain: 'users' as const },
         ];
 
@@ -215,7 +207,20 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
                     <div className="flex flex-col items-center gap-1.5 mb-4">
                         <img src="/autopilot-logo-new.png" alt="Autopilot" className="h-9 w-auto object-contain" />
                         <p className="text-[10px] font-bold text-slate-400 dark:text-slate-400 uppercase tracking-[0.2em] mt-1">
-                            {(userRole === 'hr' || userRole === 'hr_head') ? 'HR HQ CONSOLE' : isOrgSuperAdmin ? 'SUPER ADMIN CONSOLE' : showBdChrome ? 'BD COMMAND CENTER' : isBDRole ? 'CRM DASHBOARD' : 'STAFF DASHBOARD'}
+                            {(() => {
+                            if (['hr', 'hr_head'].includes(rawRole)) return 'HR HQ CONSOLE';
+                            if (['org_super_admin', 'director'].includes(rawRole)) return 'SUPER ADMIN CONSOLE';
+                            if (showBdChrome) return 'BD COMMAND CENTER';
+                            if (isBDRole) return 'CRM DASHBOARD';
+                            if (['mst', 'mst_technician', 'technician', 'maintenance_staff'].includes(rawRole)) return 'MAINTENANCE PORTAL';
+                            if (['security', 'security_guard', 'gatekeeper'].includes(rawRole)) return 'SECURITY DASHBOARD';
+                            if (['property_admin', 'building_admin'].includes(rawRole)) return 'PROPERTY ADMIN CONSOLE';
+                            if (['soft_service_manager', 'soft_service_supervisor', 'manager'].includes(rawRole)) return 'OPERATIONS CONSOLE';
+                            if (['ops_super_admin'].includes(rawRole)) return 'OPS SUPER ADMIN CONSOLE';
+                            if (['vendor'].includes(rawRole)) return 'VENDOR PORTAL';
+                            if (['tenant'].includes(rawRole)) return 'TENANT PORTAL';
+                            return 'STAFF DASHBOARD';
+                        })()}
                         </p>
                     </div>
 

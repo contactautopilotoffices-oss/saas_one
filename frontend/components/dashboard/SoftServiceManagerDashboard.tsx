@@ -1,10 +1,11 @@
 'use client';
 
+import HRTicketsContent from '@/frontend/components/hr/HRTicketsContent';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import {
-    Sparkles, Package, ClipboardCheck, LogOut, Menu, X, LayoutDashboard, Settings, UserCircle, Bell, ScanLine, Smartphone,
-  MessageSquarePlus
+    Sparkles, Package, ClipboardCheck, LogOut, Menu, X, LayoutDashboard, Settings, UserCircle, Bell, ScanLine, Smartphone,
+  MessageSquarePlus, ShieldCheck, Plus
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import dynamic from 'next/dynamic';
@@ -32,14 +33,13 @@ const StockMovementModal = dynamic(
     { ssr: false }
 );
 
-import type { QRScanResult } from '@/frontend/components/shared/UniversalQRScannerModal';
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
 const UniversalQRScannerModal = dynamic(
     () => import('@/frontend/components/shared/UniversalQRScannerModal'),
     { ssr: false }
 );
-
-type Tab = 'stock' | 'scanner' | 'checklist' | 'guest_experience' | 'settings' | 'profile';
+import type { QRScanResult } from '@/frontend/components/shared/UniversalQRScannerModal';
+type Tab = 'stock' | 'scanner' | 'checklist' | 'guest_experience' | 'settings' | 'profile' | 'grievance';
 
 interface SoftServiceManagerDashboardProps {
     propertyId: string;
@@ -55,7 +55,7 @@ const SoftServiceManagerDashboard: React.FC<SoftServiceManagerDashboardProps> = 
     const isManager = userRole === 'soft_service_manager' || userRole === 'soft_service_supervisor';
     const [activeTab, setActiveTab] = useState<Tab>(() => {
         const tab = searchParams?.get('tab') as Tab;
-        if (tab && ['stock', 'scanner', 'checklist', 'guest_experience', 'settings', 'profile'].includes(tab)) return tab;
+        if (tab && ['stock', 'scanner', 'checklist', 'guest_experience', 'settings', 'profile', 'grievance'].includes(tab)) return tab;
         return isManager ? 'stock' : 'checklist';
     });
     const [property, setProperty] = useState<any>(null);
@@ -319,6 +319,10 @@ const SoftServiceManagerDashboard: React.FC<SoftServiceManagerDashboardProps> = 
 
                             {activeTab === 'guest_experience' && (
                                 <GuestExperienceDashboard propertyId={propertyId} />
+                            )}
+
+                            {activeTab === 'grievance' && (
+                                <HRTicketsContent orgId={property?.organization_id || 'org'} />
                             )}
 
                             {activeTab === 'settings' && (

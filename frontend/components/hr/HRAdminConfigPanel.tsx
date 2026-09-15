@@ -9,7 +9,7 @@ interface HRAdminConfigPanelProps {
     orgId?: string;
 }
 
-interface SearchableEmployeeSelectorProps {
+export interface SearchableEmployeeSelectorProps {
     placeholder: string;
     employees: any[];
     selectedIds: string[];
@@ -17,7 +17,83 @@ interface SearchableEmployeeSelectorProps {
     accentColor?: 'blue' | 'purple' | 'red' | 'indigo' | 'emerald';
 }
 
-function SearchableEmployeeSelector({
+export function formatSlaDisplay(valInDays: number | string | null | undefined): string {
+    if (valInDays === null || valInDays === undefined || isNaN(Number(valInDays))) return '-';
+    const numDays = Number(valInDays);
+    if (numDays <= 0) return '0h';
+
+    const totalHours = Math.round(numDays * 24 * 10) / 10;
+    if (totalHours >= 24 && totalHours % 24 === 0) {
+        return `${totalHours / 24}d`;
+    }
+    return `${totalHours}h`;
+}
+
+export function SlaInputCell({
+    valueInDays,
+    onChange
+}: {
+    valueInDays: number | undefined;
+    onChange: (newDays: number) => void;
+}) {
+    const safeDays = valueInDays !== undefined && !isNaN(Number(valueInDays)) ? Number(valueInDays) : 1;
+    const isHoursInitial = safeDays < 1 || (Math.round(safeDays * 24 * 10) / 10) % 24 !== 0;
+    const initialVal = isHoursInitial ? Math.round(safeDays * 24 * 10) / 10 : Math.round(safeDays);
+
+    const [numVal, setNumVal] = useState<number | string>(initialVal || 1);
+    const [unit, setUnit] = useState<'hours' | 'days'>(isHoursInitial ? 'hours' : 'days');
+
+    useEffect(() => {
+        const isHrs = safeDays < 1 || (Math.round(safeDays * 24 * 10) / 10) % 24 !== 0;
+        const curVal = isHrs ? Math.round(safeDays * 24 * 10) / 10 : Math.round(safeDays);
+        setNumVal(curVal);
+        setUnit(isHrs ? 'hours' : 'days');
+    }, [valueInDays]);
+
+    const handleValChange = (valStr: string, currentUnit: 'hours' | 'days') => {
+        setNumVal(valStr);
+        const parsed = parseFloat(valStr) || 0;
+        const days = currentUnit === 'hours' ? parsed / 24 : parsed;
+        onChange(days);
+    };
+
+    const handleUnitChange = (newUnit: 'hours' | 'days') => {
+        setUnit(newUnit);
+        const parsed = typeof numVal === 'number' ? numVal : parseFloat(numVal as string) || 0;
+        let convertedVal = parsed;
+        if (unit === 'days' && newUnit === 'hours') {
+            convertedVal = Math.round(parsed * 24 * 10) / 10;
+        } else if (unit === 'hours' && newUnit === 'days') {
+            convertedVal = Math.round((parsed / 24) * 10) / 10 || 1;
+        }
+        setNumVal(convertedVal);
+        const days = newUnit === 'hours' ? convertedVal / 24 : convertedVal;
+        onChange(days);
+    };
+
+    return (
+        <div className="flex items-center gap-1">
+            <input
+                type="number"
+                step={unit === 'hours' ? '1' : '0.5'}
+                min={0.1}
+                value={numVal}
+                onChange={(e) => handleValChange(e.target.value, unit)}
+                className="w-16 px-1.5 py-1 border border-slate-300 dark:border-slate-700 rounded text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono outline-none focus:ring-1 focus:ring-indigo-500"
+            />
+            <select
+                value={unit}
+                onChange={(e) => handleUnitChange(e.target.value as 'hours' | 'days')}
+                className="px-1.5 py-1 border border-slate-300 dark:border-slate-700 rounded text-[11px] bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold outline-none cursor-pointer"
+            >
+                <option value="hours">hrs</option>
+                <option value="days">days</option>
+            </select>
+        </div>
+    );
+}
+
+export function SearchableEmployeeSelector({
     placeholder,
     employees = [],
     selectedIds = [],
@@ -631,7 +707,7 @@ export default function HRAdminConfigPanel({ orgId }: HRAdminConfigPanelProps = 
                         </div>
                         <div>
                             <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1.5">
-                                Designated Directors (Add 2 or more)
+                                Designated Directors (Level 4 Escalation & Confidential Feedback Recipients)
                             </label>
 
                             {/* Selected Director Badges */}
@@ -695,6 +771,20 @@ export default function HRAdminConfigPanel({ orgId }: HRAdminConfigPanelProps = 
                     designatedHrManagers={designatedHrManagers}
                     designatedHrHeads={designatedHrHeads}
                     designatedDirectors={designatedDirectors}
+                    employeesList={employeesList}
+                    selectedDirectorIds={selectedDirectorIds}
+                    onAddDirector={handleAddDirector}
+                    onRemoveDirector={handleRemoveDirector}
+                    selectedHrHeadIds={selectedHrHeadIds}
+                    onAddHrHead={handleAddHrHead}
+                    onRemoveHrHead={handleRemoveHrHead}
+                    selectedHrManagerIds={selectedHrManagerIds}
+                    onAddHrManager={handleAddHrManager}
+                    onRemoveHrManager={handleRemoveHrManager}
+                    onSaveAuthorities={handleSaveAuthorities}
+                    savingAuthorities={savingAuthorities}
+                    authoritySaveMsg={authoritySaveMsg}
+                    authorityErrorMsg={authorityErrorMsg}
                 />
             )}
 
@@ -772,50 +862,42 @@ export default function HRAdminConfigPanel({ orgId }: HRAdminConfigPanelProps = 
                                         </td>
                                         <td className="p-3.5 font-mono">
                                             {isEditing ? (
-                                                <input
-                                                    type="number"
-                                                    value={editForm.l1_sla_days ?? cat.l1_sla_days}
-                                                    onChange={(e) => setEditForm({ ...editForm, l1_sla_days: parseInt(e.target.value) })}
-                                                    className="w-14 px-2 py-1 border rounded text-xs bg-white dark:bg-slate-800"
+                                                <SlaInputCell
+                                                    valueInDays={editForm.l1_sla_days ?? cat.l1_sla_days}
+                                                    onChange={(newDays) => setEditForm({ ...editForm, l1_sla_days: newDays })}
                                                 />
                                             ) : (
-                                                `${cat.l1_sla_days}d`
+                                                formatSlaDisplay(cat.l1_sla_days)
                                             )}
                                         </td>
                                         <td className="p-3.5 font-mono">
                                             {isEditing ? (
-                                                <input
-                                                    type="number"
-                                                    value={editForm.l2_sla_days ?? cat.l2_sla_days}
-                                                    onChange={(e) => setEditForm({ ...editForm, l2_sla_days: parseInt(e.target.value) })}
-                                                    className="w-14 px-2 py-1 border rounded text-xs bg-white dark:bg-slate-800"
+                                                <SlaInputCell
+                                                    valueInDays={editForm.l2_sla_days ?? cat.l2_sla_days}
+                                                    onChange={(newDays) => setEditForm({ ...editForm, l2_sla_days: newDays })}
                                                 />
                                             ) : (
-                                                `${cat.l2_sla_days}d`
+                                                formatSlaDisplay(cat.l2_sla_days)
                                             )}
                                         </td>
                                         <td className="p-3.5 font-mono">
                                             {isEditing ? (
-                                                <input
-                                                    type="number"
-                                                    value={editForm.l3_sla_days ?? cat.l3_sla_days}
-                                                    onChange={(e) => setEditForm({ ...editForm, l3_sla_days: parseInt(e.target.value) })}
-                                                    className="w-14 px-2 py-1 border rounded text-xs bg-white dark:bg-slate-800"
+                                                <SlaInputCell
+                                                    valueInDays={editForm.l3_sla_days ?? cat.l3_sla_days}
+                                                    onChange={(newDays) => setEditForm({ ...editForm, l3_sla_days: newDays })}
                                                 />
                                             ) : (
-                                                `${cat.l3_sla_days}d`
+                                                formatSlaDisplay(cat.l3_sla_days)
                                             )}
                                         </td>
                                         <td className="p-3.5 font-mono">
                                             {isEditing ? (
-                                                <input
-                                                    type="number"
-                                                    value={editForm.l4_sla_days ?? cat.l4_sla_days}
-                                                    onChange={(e) => setEditForm({ ...editForm, l4_sla_days: parseInt(e.target.value) })}
-                                                    className="w-14 px-2 py-1 border rounded text-xs bg-white dark:bg-slate-800"
+                                                <SlaInputCell
+                                                    valueInDays={editForm.l4_sla_days ?? cat.l4_sla_days}
+                                                    onChange={(newDays) => setEditForm({ ...editForm, l4_sla_days: newDays })}
                                                 />
                                             ) : (
-                                                `${cat.l4_sla_days}d`
+                                                formatSlaDisplay(cat.l4_sla_days)
                                             )}
                                         </td>
                                         <td className="p-3.5 pr-4 text-right">
@@ -942,23 +1024,17 @@ export default function HRAdminConfigPanel({ orgId }: HRAdminConfigPanelProps = 
 
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                     <div>
-                                        <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">L1 SLA (Days)</label>
-                                        <input
-                                            type="number"
-                                            min={1}
-                                            value={newCategory.l1_sla_days}
-                                            onChange={(e) => setNewCategory({ ...newCategory, l1_sla_days: parseInt(e.target.value) || 1 })}
-                                            className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none"
+                                        <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">L1 SLA (Hours / Days)</label>
+                                        <SlaInputCell
+                                            valueInDays={newCategory.l1_sla_days}
+                                            onChange={(newDays) => setNewCategory({ ...newCategory, l1_sla_days: newDays })}
                                         />
                                     </div>
                                     <div>
-                                        <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">L2 SLA (Days)</label>
-                                        <input
-                                            type="number"
-                                            min={1}
-                                            value={newCategory.l2_sla_days}
-                                            onChange={(e) => setNewCategory({ ...newCategory, l2_sla_days: parseInt(e.target.value) || 1 })}
-                                            className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none"
+                                        <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">L2 SLA (Hours / Days)</label>
+                                        <SlaInputCell
+                                            valueInDays={newCategory.l2_sla_days}
+                                            onChange={(newDays) => setNewCategory({ ...newCategory, l2_sla_days: newDays })}
                                         />
                                     </div>
                                 </div>
