@@ -56,7 +56,7 @@ export async function GET() {
             .from('hr_ticket_categories')
             .select(`
                 *,
-                default_hr_owner:users!default_hr_owner_id(id, email, full_name)
+                default_hr_owner:users(id, email, full_name)
             `)
             .order('ticket_type', { ascending: true })
             .order('category_name', { ascending: true });
@@ -85,7 +85,7 @@ export async function GET() {
                 .from('hr_ticket_categories')
                 .select(`
                     *,
-                    default_hr_owner:users!default_hr_owner_id(id, email, full_name)
+                    default_hr_owner:users(id, email, full_name)
                 `)
                 .order('ticket_type', { ascending: true })
                 .order('category_name', { ascending: true });

@@ -65,31 +65,56 @@ export async function GET(
                 }
             }
 
-            const { data: hrMgr } = await supabaseAdmin
-                .from('employee_profiles')
-                .select('user:users!user_id(full_name, email)')
-                .eq('is_hr_manager_authority', true)
-                .maybeSingle();
-            if (hrMgr?.user) {
-                l2Name = (hrMgr.user as any).full_name || (hrMgr.user as any).email || 'HR Ops';
+            try {
+                const { data: hrMgrs, error: mgrErr } = await supabaseAdmin
+                    .from('employee_profiles')
+                    .select('user:users!employee_profiles_user_id_fkey(full_name, email), designation')
+                    .or('designation.eq.Designated HR Manager,is_hr_manager_authority.eq.true')
+                    .limit(1);
+                let hrMgrUser = hrMgrs?.[0]?.user as any;
+
+                if (mgrErr || !hrMgrUser) {
+                    const { data: fallbackMgrs } = await supabaseAdmin
+                        .from('employee_profiles')
+                        .select('user:users!employee_profiles_user_id_fkey(full_name, email)')
+                        .eq('designation', 'Designated HR Manager')
+                        .limit(1);
+                    hrMgrUser = fallbackMgrs?.[0]?.user as any;
+                }
+
+                if (hrMgrUser) {
+                    l2Name = hrMgrUser.full_name || hrMgrUser.email || l2Name;
+                }
+            } catch (e) {
+                console.warn('Error resolving L2 owner:', e);
             }
 
-            const { data: hrHead } = await supabaseAdmin
-                .from('employee_profiles')
-                .select('user:users!user_id(full_name, email)')
-                .eq('is_hr_authority', true)
-                .maybeSingle();
-            if (hrHead?.user) {
-                l3Name = (hrHead.user as any).full_name || (hrHead.user as any).email || 'HR Head';
+            try {
+                const { data: hrHeads } = await supabaseAdmin
+                    .from('employee_profiles')
+                    .select('user:users!employee_profiles_user_id_fkey(full_name, email)')
+                    .eq('is_hr_authority', true)
+                    .limit(1);
+                const hrHeadUser = hrHeads?.[0]?.user as any;
+                if (hrHeadUser) {
+                    l3Name = hrHeadUser.full_name || hrHeadUser.email || l3Name;
+                }
+            } catch (e) {
+                console.warn('Error resolving L3 owner:', e);
             }
 
-            const { data: dir } = await supabaseAdmin
-                .from('employee_profiles')
-                .select('user:users!user_id(full_name, email)')
-                .eq('is_director_authority', true)
-                .maybeSingle();
-            if (dir?.user) {
-                l4Name = (dir.user as any).full_name || (dir.user as any).email || 'Director';
+            try {
+                const { data: dirs } = await supabaseAdmin
+                    .from('employee_profiles')
+                    .select('user:users!employee_profiles_user_id_fkey(full_name, email)')
+                    .eq('is_director_authority', true)
+                    .limit(1);
+                const dirUser = dirs?.[0]?.user as any;
+                if (dirUser) {
+                    l4Name = dirUser.full_name || dirUser.email || l4Name;
+                }
+            } catch (e) {
+                console.warn('Error resolving L4 owner:', e);
             }
         } catch (e) {
             console.error('Error resolving level owners:', e);
