@@ -137,12 +137,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
             const approvedFlag = !!profileData?.is_master_admin || profileData?.is_approved === true || profileData?.approval_status === 'approved';
 
+            const hasActiveMemberships = (orgData && orgData.length > 0) || (propData && propData.length > 0);
+            const onboardingCompleted = !!profileData?.is_master_admin || !!profileData?.onboarding_completed || hasActiveMemberships;
+
+            // Self-heal: If user has active memberships but onboarding_completed is false/null in DB, fix it
+            if (hasActiveMemberships && !profileData?.onboarding_completed) {
+                supabase.from('users').update({ onboarding_completed: true }).eq('id', userId).then(({ error }) => {
+                    if (error) console.warn('Self-healing onboarding_completed error:', error.message);
+                });
+            }
+
             const membershipData: UserMembership = {
                 org_id: (primaryOrg?.organization as any)?.id || null,
                 org_name: (primaryOrg?.organization as any)?.name || null,
                 org_role: primaryOrg?.role || null,
                 is_master_admin: !!profileData?.is_master_admin,
-                onboarding_completed: !!profileData?.onboarding_completed,
+                onboarding_completed: onboardingCompleted,
                 is_approved: approvedFlag,
                 approval_status: profileData?.approval_status || (approvedFlag ? 'approved' : 'pending'),
                 approved_by: profileData?.approved_by || null,

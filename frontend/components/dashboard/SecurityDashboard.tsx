@@ -454,16 +454,6 @@ const SecurityDashboard = () => {
                                 <span className="flex-1 text-left">My Grievances</span>
                             </button>
                             <button
-                                onClick={() => {
-                                    setActiveTab('grievance');
-                                    setSidebarOpen(false);
-                                }}
-                                className="w-full flex items-center gap-3 px-4 py-2 rounded-xl transition-all duration-200 text-xs font-bold text-primary bg-primary/10 hover:bg-primary/20 group"
-                            >
-                                <Plus className="w-3.5 h-3.5" />
-                                <span>+ Raise Grievance</span>
-                            </button>
-                            <button
                                 onClick={() => handleTabChange('settings')}
                                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'settings'
                                     ? 'bg-primary text-text-inverse shadow-sm'

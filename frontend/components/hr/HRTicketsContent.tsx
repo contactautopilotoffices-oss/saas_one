@@ -44,7 +44,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
 
     const userRole = (user?.user_metadata?.role || membership?.org_role || membership?.properties?.[0]?.role || 'employee').toLowerCase();
     const isHrAdmin = ['hr', 'hr_head', 'org_super_admin', 'director'].includes(userRole);
-    const isManager = ['manager', 'soft_service_manager', 'soft_service_supervisor', 'property_admin', 'building_admin', 'mst_manager', 'supervisor'].includes(userRole);
+    const isManager = ['manager', 'reporting_manager', 'soft_service_manager', 'soft_service_supervisor', 'property_admin', 'building_admin', 'mst_manager', 'supervisor'].includes(userRole);
 
     useEffect(() => {
         if (!isHrAdmin && (viewMode === 'kanban' || viewMode === 'properties')) {
@@ -52,7 +52,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         }
     }, [isHrAdmin, viewMode]);
 
-    // Handle URL search params on mount & propertyId sync from top header
+    // Handle URL search params on mount, role resolution, & propertyId sync from top header
     useEffect(() => {
         const tabParam = searchParams.get('tab');
         const actionParam = searchParams.get('action');
@@ -67,11 +67,13 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         }
         if (filterParam && ['all', 'my_raised', 'assigned_to_me'].includes(filterParam)) {
             setScopeFilter(filterParam as any);
-        } else if (!isHrAdmin && !isManager) {
-            setScopeFilter('my_raised');
+        } else if (isHrAdmin) {
+            setScopeFilter('all');
+        } else {
+            setScopeFilter('assigned_to_me');
         }
         setSelectedPropertyId(propertyParam || 'all');
-    }, [searchParams]);
+    }, [searchParams, isHrAdmin, isManager]);
 
     useEffect(() => {
         fetchProperties();
@@ -79,7 +81,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
 
     useEffect(() => {
         fetchTickets();
-    }, [orgId, user?.id, selectedPropertyId]);
+    }, [orgId, user?.id, userRole, selectedPropertyId]);
 
     // Real-time automatic background data refresh (every 10s & on window focus)
     useEffect(() => {
@@ -179,14 +181,34 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         }
     };
 
+    // Helper function to check if a ticket is assigned to, raised by team, or historically managed by the user
+    const isAssignedOrManagedByMe = (t: any) => {
+        if (!user?.id) return false;
+        const isAssigned = t.assigned_to_user_id === user.id;
+        const isTeamGrievance = t.raised_by_user_id !== user.id;
+        
+        const userFullName = (user.user_metadata?.full_name || user.email || '').toLowerCase().trim();
+        const mgrCode = (t.employee_snapshot?.manager_code || '').toLowerCase().trim();
+        const mgrName = (t.employee_snapshot?.manager_name || '').toLowerCase().trim();
+        const repMgrName = (t.employee_snapshot?.reporting_manager_name || '').toLowerCase().trim();
+        const l1Owner = (t.level_owners?.l1 || '').toLowerCase().trim();
+        
+        const isSnapshotManagerMatch = Boolean(
+            userFullName && (
+                (mgrCode && (mgrCode.includes(userFullName) || userFullName.includes(mgrCode))) ||
+                (mgrName && (mgrName.includes(userFullName) || userFullName.includes(mgrName))) ||
+                (repMgrName && (repMgrName.includes(userFullName) || userFullName.includes(repMgrName))) ||
+                (l1Owner && (l1Owner.includes(userFullName) || userFullName.includes(l1Owner)))
+            )
+        );
+
+        return isAssigned || isTeamGrievance || isSnapshotManagerMatch;
+    };
+
     // Filter tickets based on UI search, scope, type, and status filters
     const filteredTickets = tickets.filter(t => {
         if (scopeFilter === 'my_raised' && t.raised_by_user_id !== user?.id) return false;
-        if (scopeFilter === 'assigned_to_me') {
-            const isAssigned = t.assigned_to_user_id === user?.id;
-            const isTeamGrievance = isManager && t.raised_by_user_id !== user?.id;
-            if (!isAssigned && !isTeamGrievance) return false;
-        }
+        if (scopeFilter === 'assigned_to_me' && !isAssignedOrManagedByMe(t)) return false;
         if (ticketTypeFilter !== 'all' && t.ticket_type !== ticketTypeFilter) return false;
         if (statusFilter !== 'all' && t.status !== statusFilter) return false;
         if (searchQuery.trim()) {
@@ -204,11 +226,9 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
     );
 
     // KPI Counters calculation
-    const assignedToMeTickets = tickets.filter(t =>
-        t.assigned_to_user_id === user?.id ||
-        (isManager && t.raised_by_user_id !== user?.id && !['resolved', 'closed'].includes(t.status))
-    );
-    const assignedPendingCount = assignedToMeTickets.filter(t => !['resolved', 'closed'].includes(t.status)).length;
+    const assignedToMeTickets = tickets.filter(t => isAssignedOrManagedByMe(t));
+    const actionablePendingTickets = assignedToMeTickets.filter(t => !['resolved', 'closed'].includes(t.status));
+    const assignedPendingCount = actionablePendingTickets.length;
     const totalCount = tickets.length;
     const openGrievancesCount = tickets.filter(t => t.ticket_type === 'grievance' && ['new', 'assigned', 'in_progress', 'awaiting_manager_response'].includes(t.status)).length;
     const hrQueriesCount = tickets.filter(t => t.ticket_type === 'hr_query').length;
@@ -402,7 +422,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                 {activeTab === 'tickets' && (
                     <div className="space-y-4">
                         {/* Assigned to You • Action Required Section */}
-                        {assignedToMeTickets.length > 0 && (
+                        {actionablePendingTickets.length > 0 && (
                             <div className="bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent dark:from-amber-950/40 dark:via-amber-950/20 dark:to-transparent rounded-3xl p-5 border border-amber-300/80 dark:border-amber-700/60 shadow-sm space-y-4">
                                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                                     <div className="flex items-center gap-3">
@@ -430,19 +450,19 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                                             onClick={() => setScopeFilter(scopeFilter === 'assigned_to_me' ? 'all' : 'assigned_to_me')}
                                             className="px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all bg-white dark:bg-slate-800 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700 hover:bg-amber-50 shadow-xs"
                                         >
-                                            {scopeFilter === 'assigned_to_me' ? 'Show All Requests' : 'Filter Kanban to Assigned Only'}
+                                            {scopeFilter === 'assigned_to_me' ? 'Show All Requests' : 'Filter View to Assigned Only'}
                                         </button>
                                     </div>
                                 </div>
 
-                                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5">
-                                    {assignedToMeTickets.slice(0, 6).map((t) => {
+                                <div className="flex items-stretch gap-3.5 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-amber-300 dark:scrollbar-thumb-amber-700 snap-x">
+                                    {actionablePendingTickets.map((t) => {
                                         const isUrgent = t.priority === 'urgent' || t.priority === 'high';
                                         return (
                                             <div
                                                 key={t.id}
                                                 onClick={() => setSelectedTicketId(t.id)}
-                                                className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-amber-200/80 dark:border-amber-800/60 shadow-xs hover:shadow-md hover:border-amber-400 dark:hover:border-amber-600 transition-all cursor-pointer flex flex-col justify-between group"
+                                                className="min-w-[280px] sm:min-w-[320px] max-w-[340px] shrink-0 snap-start bg-white dark:bg-slate-900 rounded-2xl p-4 border border-amber-200/80 dark:border-amber-800/60 shadow-xs hover:shadow-md hover:border-amber-400 dark:hover:border-amber-600 transition-all cursor-pointer flex flex-col justify-between group"
                                             >
                                                 <div className="space-y-2.5">
                                                     <div className="flex items-center justify-between">
@@ -537,26 +557,12 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                                     }`}
                                 >
                                     <ShieldCheck className="w-3.5 h-3.5" />
-                                    <span>Assigned to Me / Actionables ({tickets.filter(t => t.assigned_to_user_id === user?.id).length})</span>
+                                    <span>Assigned / Team Requests ({assignedToMeTickets.length})</span>
                                 </button>
                             </div>
 
-                            {/* View Mode Toggles (Kanban & Property Wise strictly for HR & Org Admin) */}
+                            {/* View Mode Toggles (Property Wise strictly for HR & Org Admin) */}
                             <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-1 rounded-xl border border-slate-200/80 dark:border-slate-700/80 shrink-0">
-                                {isHrAdmin && (
-                                    <button
-                                        onClick={() => setViewMode('kanban')}
-                                        className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
-                                            viewMode === 'kanban'
-                                                ? 'bg-[#587e85] text-white shadow-sm'
-                                                : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-                                        }`}
-                                        title="Kanban Board View"
-                                    >
-                                        <Kanban className="w-3.5 h-3.5" />
-                                        <span>Kanban</span>
-                                    </button>
-                                )}
 
                                 <button
                                     onClick={() => setViewMode('table')}

@@ -895,13 +895,6 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                                 <span className="flex-1 text-left">Grievances & Tickets</span>
                             </button>
                             <button
-                                onClick={() => handleTabChange('grievance')}
-                                className="w-full flex items-center gap-3 px-4 py-2 rounded-xl transition-all duration-200 text-xs font-bold text-primary bg-primary/10 hover:bg-primary/20 group"
-                            >
-                                <Plus className="w-3.5 h-3.5" />
-                                <span>+ Raise Grievance</span>
-                            </button>
-                            <button
                                 onClick={() => setShowFeedbackModal(true)}
                                 className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm text-text-secondary hover:bg-primary/10 hover:text-primary group"
                             >

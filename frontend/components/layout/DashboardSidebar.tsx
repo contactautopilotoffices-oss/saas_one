@@ -341,16 +341,7 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
                                 }`}
                             >
                                 <ShieldCheck className="w-4 h-4 shrink-0 transition-transform group-hover:scale-105" />
-                                <span className="truncate">My Grievances & HR Tickets</span>
-                            </Link>
-
-                            <Link
-                                href={`/${orgId}/hr-tickets?action=create`}
-                                onClick={handleLinkClick}
-                                className="flex items-center gap-3.5 px-4 py-2.5 rounded-2xl transition-all font-semibold text-xs sm:text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900 group"
-                            >
-                                <Plus className="w-4 h-4 shrink-0 transition-transform group-hover:scale-105 text-[#587e85]" />
-                                <span className="truncate">+ Raise Grievance</span>
+                                <span className="truncate">My Grievances</span>
                             </Link>
 
                             {(userRole !== 'hr' && userRole !== 'hr_head' && (isOrgSuperAdmin || userRole === 'property_admin')) && (

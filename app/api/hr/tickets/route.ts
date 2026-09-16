@@ -32,13 +32,38 @@ export async function GET(request: Request) {
             query = query.eq('organization_id', orgId);
         }
         if (propertyId && propertyId !== 'all') {
-            query = query.eq('employee_snapshot->>property_id', propertyId);
+            const { data: prop } = await supabaseAdmin
+                .from('properties')
+                .select('name')
+                .eq('id', propertyId)
+                .maybeSingle();
+            
+            const propName = prop?.name;
+            if (propName) {
+                query = query.or(`employee_snapshot->>property_id.eq.${propertyId},employee_snapshot->>location.ilike.%${propName}%,employee_snapshot->>property_id.is.null`);
+            } else {
+                query = query.or(`employee_snapshot->>property_id.eq.${propertyId},employee_snapshot->>property_id.is.null`);
+            }
         }
 
         // Granular Role Scoping
-        if (['hr', 'hr_head', 'org_super_admin'].includes(role)) {
-            query = query.eq('is_confidential', false);
-        } else if (role === 'director') {
+        const normalizedRole = (role || '').toLowerCase();
+        
+        let isHrAuthorityUser = false;
+        if (userId) {
+            const { data: hrCheck } = await supabaseAdmin
+                .from('employee_profiles')
+                .select('is_hr_authority, is_hr_manager_authority')
+                .eq('user_id', userId)
+                .maybeSingle();
+            if (hrCheck?.is_hr_authority || hrCheck?.is_hr_manager_authority) {
+                isHrAuthorityUser = true;
+            }
+        }
+
+        if (isHrAuthorityUser || ['hr', 'hr_head', 'hr_manager', 'hr_ops', 'org_super_admin', 'ops_super_admin', 'master_admin', 'org_admin'].includes(normalizedRole)) {
+            query = query.or('is_confidential.eq.false,is_confidential.is.null');
+        } else if (normalizedRole === 'director') {
             query = query.or('is_confidential.eq.true,is_anonymous.eq.true,current_level.eq.4');
         } else if (userId) {
             // Dynamically check if user is a reporting manager for any employees
@@ -48,17 +73,38 @@ export async function GET(request: Request) {
                 .eq('reporting_manager_id', userId)
                 .not('user_id', 'is', null);
 
+            // Fetch user profile for name matching in level_owners / snapshots
+            const { data: uProfile } = await supabaseAdmin
+                .from('users')
+                .select('full_name')
+                .eq('id', userId)
+                .maybeSingle();
+
+            // Fetch any tickets where this user was involved via audit logs (e.g. escalated away)
+            const { data: auditLogs } = await supabaseAdmin
+                .from('hr_ticket_audit_logs')
+                .select('ticket_id')
+                .or(`actor_user_id.eq.${userId}`);
+
             const reporteeUserIds = (reportees || []).map(r => r.user_id).filter(Boolean);
+            const auditTicketIds = (auditLogs || []).map(a => a.ticket_id).filter(Boolean);
             const allowedUserIds = Array.from(new Set([userId, ...reporteeUserIds]));
 
-            if (reporteeUserIds.length > 0) {
-                // Reporting Manager: View tickets assigned to them OR raised by any of their reportees (even after escalation)
-                query = query.eq('is_confidential', false)
-                    .or(`assigned_to_user_id.eq.${userId},raised_by_user_id.in.(${allowedUserIds.join(',')})`);
-            } else {
-                // Individual staff/employee: View tickets raised by or assigned to them
-                query = query.or(`raised_by_user_id.eq.${userId},assigned_to_user_id.eq.${userId}`);
+            const filterConditions = [
+                `assigned_to_user_id.eq.${userId}`,
+                `raised_by_user_id.in.(${allowedUserIds.join(',')})`
+            ];
+            if (uProfile?.full_name && uProfile.full_name.trim()) {
+                const cleanName = uProfile.full_name.trim();
+                filterConditions.push(`employee_snapshot->>manager_code.ilike."*${cleanName}*"`);
+                filterConditions.push(`employee_snapshot->>manager_name.ilike."*${cleanName}*"`);
+                filterConditions.push(`employee_snapshot->>reporting_manager_name.ilike."*${cleanName}*"`);
             }
+            if (auditTicketIds.length > 0) {
+                filterConditions.push(`id.in.(${Array.from(new Set(auditTicketIds)).join(',')})`);
+            }
+
+            query = query.or(filterConditions.join(','));
         }
 
         if (type) query = query.eq('ticket_type', type);
@@ -122,7 +168,7 @@ export async function POST(request: Request) {
         if (raised_by_user_id) {
             const { data: profile } = await supabaseAdmin
                 .from('employee_profiles')
-                .select('*')
+                .select('*, reporting_manager:users!reporting_manager_id(full_name, email)')
                 .eq('user_id', raised_by_user_id)
                 .maybeSingle();
             empProfile = profile;
@@ -201,14 +247,17 @@ export async function POST(request: Request) {
         const slaDueAt = new Date(Date.now() + slaDays * 24 * 60 * 60 * 1000);
 
         // 6. Employee Snapshot
+        const managerName = empProfile?.reporting_manager?.full_name || empProfile?.reporting_manager?.email || empProfile?.reporting_manager_code || null;
         const snapshot = empProfile ? {
             name: `${empProfile.first_name} ${empProfile.last_name}`,
             code: empProfile.employee_code,
             department: empProfile.department,
             designation: empProfile.designation,
             location: empProfile.location,
+            property_id: property_id || empProfile?.property_id || null,
+            manager_name: managerName,
             manager_code: empProfile.reporting_manager_code
-        } : { name: 'Employee', department: 'General', location: 'Office' };
+        } : { name: 'Employee', department: 'General', location: 'Office', property_id: property_id || null };
 
         // 7. Insert Ticket
         const { data: newTicket, error: createErr } = await supabaseAdmin

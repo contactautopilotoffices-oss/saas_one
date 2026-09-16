@@ -176,6 +176,36 @@ export async function PATCH(request: Request) {
 
         if (error) throw error;
 
+        // Update active tickets belonging to this category to reflect new SLA policy
+        if (
+            updates.l1_sla_days !== undefined ||
+            updates.l2_sla_days !== undefined ||
+            updates.l3_sla_days !== undefined ||
+            updates.l4_sla_days !== undefined
+        ) {
+            try {
+                const { data: activeTickets } = await supabaseAdmin
+                    .from('hr_tickets')
+                    .select('id, created_at, current_level')
+                    .eq('category_id', id)
+                    .not('status', 'in', '("resolved","closed","cancelled")');
+
+                for (const ticket of (activeTickets || [])) {
+                    const lvl = ticket.current_level || 1;
+                    const slaDays = Number(data[`l${lvl}_sla_days`]) || (lvl === 1 ? 3 : lvl === 2 ? 7 : lvl === 3 ? 10 : 12);
+                    const createdAtMs = new Date(ticket.created_at).getTime();
+                    const newSlaDueAt = new Date(createdAtMs + slaDays * 24 * 60 * 60 * 1000).toISOString();
+
+                    await supabaseAdmin
+                        .from('hr_tickets')
+                        .update({ sla_due_at: newSlaDueAt, updated_at: new Date().toISOString() })
+                        .eq('id', ticket.id);
+                }
+            } catch (tErr: any) {
+                console.warn('Active tickets SLA sync warning:', tErr.message);
+            }
+        }
+
         // Log SLA Config Audit Trail (who changed SLA, when, old vs new values)
         if (existingCat && actor_user_id) {
             const oldSla = `L1:${existingCat.l1_sla_days}d, L2:${existingCat.l2_sla_days}d, L3:${existingCat.l3_sla_days}d, L4:${existingCat.l4_sla_days}d`;

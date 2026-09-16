@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { NotificationService } from '@/backend/services/NotificationService';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -89,12 +90,17 @@ export async function POST(
 
         if (error) throw error;
 
-        // Log audit event
+        // Audit log
         await supabaseAdmin.from('hr_ticket_audit_logs').insert({
             ticket_id: id,
             actor_user_id: sender_user_id || null,
             action: is_internal ? 'INTERNAL_NOTE_ADDED' : 'PUBLIC_REPLY_ADDED',
             new_values: { sender_name, is_internal, content_snippet: content.substring(0, 50) }
+        });
+
+        // Trigger Omnichannel Comment Notification
+        NotificationService.afterHrTicketCommentAdded(comment.id).catch(err => {
+            console.error('Failed to trigger comment notification:', err);
         });
 
         return NextResponse.json({ success: true, data: comment });

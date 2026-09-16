@@ -137,14 +137,21 @@ export default function OnboardingPage() {
     const [error, setError] = useState('');
 
     const router = useRouter();
-    const { user, isLoading: authLoading, refreshMembership } = useAuth();
+    const { user, isLoading: authLoading, membership, isMembershipLoading, refreshMembership } = useAuth();
     const supabase = createClient();
 
     useEffect(() => {
         const initialize = async () => {
-            if (authLoading) return; // Wait for auth to settle
+            if (authLoading || isMembershipLoading) return; // Wait for auth & membership to settle
             if (!user) {
                 router.push('/login');
+                return;
+            }
+
+            // Auto-redirect away from onboarding if user already has memberships or completed onboarding
+            if (membership?.org_id || (membership?.properties && membership.properties.length > 0) || membership?.onboarding_completed) {
+                console.log('User already onboarded or has memberships. Redirecting to home...');
+                router.replace('/');
                 return;
             }
 
@@ -179,7 +186,7 @@ export default function OnboardingPage() {
         };
 
         initialize();
-    }, [user, authLoading, router, supabase]);
+    }, [user, authLoading, membership, isMembershipLoading, router, supabase]);
 
 
     useEffect(() => {

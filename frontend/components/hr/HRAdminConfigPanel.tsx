@@ -20,13 +20,18 @@ export interface SearchableEmployeeSelectorProps {
 export function formatSlaDisplay(valInDays: number | string | null | undefined): string {
     if (valInDays === null || valInDays === undefined || isNaN(Number(valInDays))) return '-';
     const numDays = Number(valInDays);
-    if (numDays <= 0) return '0h';
+    if (numDays <= 0) return '0m';
 
-    const totalHours = Math.round(numDays * 24 * 10) / 10;
-    if (totalHours >= 24 && totalHours % 24 === 0) {
-        return `${totalHours / 24}d`;
+    const totalMins = Math.round(numDays * 24 * 60);
+    if (totalMins < 60) {
+        return `${totalMins}m`;
     }
-    return `${totalHours}h`;
+
+    const totalHours = Math.round((totalMins / 60) * 10) / 10;
+    if (totalHours < 24 || totalMins % (24 * 60) !== 0) {
+        return `${totalHours}h`;
+    }
+    return `${totalHours / 24}d`;
 }
 
 export function SlaInputCell({
@@ -37,37 +42,79 @@ export function SlaInputCell({
     onChange: (newDays: number) => void;
 }) {
     const safeDays = valueInDays !== undefined && !isNaN(Number(valueInDays)) ? Number(valueInDays) : 1;
-    const isHoursInitial = safeDays < 1 || (Math.round(safeDays * 24 * 10) / 10) % 24 !== 0;
-    const initialVal = isHoursInitial ? Math.round(safeDays * 24 * 10) / 10 : Math.round(safeDays);
+    const totalMins = Math.round(safeDays * 24 * 60);
+
+    let initialUnit: 'mins' | 'hours' | 'days' = 'days';
+    let initialVal = Math.round(safeDays);
+
+    if (totalMins < 60) {
+        initialUnit = 'mins';
+        initialVal = totalMins;
+    } else if (totalMins % 60 !== 0 || (totalMins / 60) % 24 !== 0) {
+        initialUnit = 'hours';
+        initialVal = Math.round((totalMins / 60) * 10) / 10;
+    } else {
+        initialUnit = 'days';
+        initialVal = Math.round(safeDays);
+    }
 
     const [numVal, setNumVal] = useState<number | string>(initialVal || 1);
-    const [unit, setUnit] = useState<'hours' | 'days'>(isHoursInitial ? 'hours' : 'days');
+    const [unit, setUnit] = useState<'mins' | 'hours' | 'days'>(initialUnit);
 
     useEffect(() => {
-        const isHrs = safeDays < 1 || (Math.round(safeDays * 24 * 10) / 10) % 24 !== 0;
-        const curVal = isHrs ? Math.round(safeDays * 24 * 10) / 10 : Math.round(safeDays);
-        setNumVal(curVal);
-        setUnit(isHrs ? 'hours' : 'days');
+        const mins = Math.round(safeDays * 24 * 60);
+        let u: 'mins' | 'hours' | 'days' = 'days';
+        let v = Math.round(safeDays);
+
+        if (mins < 60) {
+            u = 'mins';
+            v = mins;
+        } else if (mins % 60 !== 0 || (mins / 60) % 24 !== 0) {
+            u = 'hours';
+            v = Math.round((mins / 60) * 10) / 10;
+        } else {
+            u = 'days';
+            v = Math.round(safeDays);
+        }
+
+        // Avoid overwriting numVal if current input value already matches valueInDays within tolerance
+        const currentParsed = typeof numVal === 'number' ? numVal : parseFloat(numVal as string);
+        if (!isNaN(currentParsed)) {
+            const currentDays = unit === 'mins' ? currentParsed / (24 * 60) : unit === 'hours' ? currentParsed / 24 : currentParsed;
+            if (Math.abs(currentDays - safeDays) < 0.0001) {
+                return;
+            }
+        }
+
+        setNumVal(v);
+        setUnit(u);
     }, [valueInDays]);
 
-    const handleValChange = (valStr: string, currentUnit: 'hours' | 'days') => {
+    const handleValChange = (valStr: string, currentUnit: 'mins' | 'hours' | 'days') => {
         setNumVal(valStr);
-        const parsed = parseFloat(valStr) || 0;
-        const days = currentUnit === 'hours' ? parsed / 24 : parsed;
+        if (valStr.trim() === '') return;
+        const parsed = parseFloat(valStr);
+        if (isNaN(parsed)) return;
+
+        const days = currentUnit === 'mins' ? parsed / (24 * 60) : currentUnit === 'hours' ? parsed / 24 : parsed;
         onChange(days);
     };
 
-    const handleUnitChange = (newUnit: 'hours' | 'days') => {
+    const handleUnitChange = (newUnit: 'mins' | 'hours' | 'days') => {
         setUnit(newUnit);
         const parsed = typeof numVal === 'number' ? numVal : parseFloat(numVal as string) || 0;
-        let convertedVal = parsed;
-        if (unit === 'days' && newUnit === 'hours') {
-            convertedVal = Math.round(parsed * 24 * 10) / 10;
-        } else if (unit === 'hours' && newUnit === 'days') {
-            convertedVal = Math.round((parsed / 24) * 10) / 10 || 1;
+        const currentDays = unit === 'mins' ? parsed / (24 * 60) : unit === 'hours' ? parsed / 24 : parsed;
+
+        let convertedVal: number;
+        if (newUnit === 'mins') {
+            convertedVal = Math.round(currentDays * 24 * 60) || 1;
+        } else if (newUnit === 'hours') {
+            convertedVal = Math.round((currentDays * 24) * 10) / 10 || 1;
+        } else {
+            convertedVal = Math.round(currentDays * 10) / 10 || 1;
         }
         setNumVal(convertedVal);
-        const days = newUnit === 'hours' ? convertedVal / 24 : convertedVal;
+        const days = newUnit === 'mins' ? convertedVal / (24 * 60) : newUnit === 'hours' ? convertedVal / 24 : convertedVal;
         onChange(days);
     };
 
@@ -75,17 +122,18 @@ export function SlaInputCell({
         <div className="flex items-center gap-1">
             <input
                 type="number"
-                step={unit === 'hours' ? '1' : '0.5'}
-                min={0.1}
+                step={unit === 'mins' ? '1' : unit === 'hours' ? '0.5' : '0.5'}
+                min={unit === 'mins' ? 1 : 0.1}
                 value={numVal}
                 onChange={(e) => handleValChange(e.target.value, unit)}
                 className="w-16 px-1.5 py-1 border border-slate-300 dark:border-slate-700 rounded text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono outline-none focus:ring-1 focus:ring-indigo-500"
             />
             <select
                 value={unit}
-                onChange={(e) => handleUnitChange(e.target.value as 'hours' | 'days')}
+                onChange={(e) => handleUnitChange(e.target.value as 'mins' | 'hours' | 'days')}
                 className="px-1.5 py-1 border border-slate-300 dark:border-slate-700 rounded text-[11px] bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold outline-none cursor-pointer"
             >
+                <option value="mins">mins</option>
                 <option value="hours">hrs</option>
                 <option value="days">days</option>
             </select>
@@ -1022,19 +1070,33 @@ export default function HRAdminConfigPanel({ orgId }: HRAdminConfigPanelProps = 
                                     </select>
                                 </div>
 
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div className="grid grid-cols-2 gap-3 pt-1">
                                     <div>
-                                        <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">L1 SLA (Hours / Days)</label>
+                                        <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">L1 SLA</label>
                                         <SlaInputCell
                                             valueInDays={newCategory.l1_sla_days}
                                             onChange={(newDays) => setNewCategory({ ...newCategory, l1_sla_days: newDays })}
                                         />
                                     </div>
                                     <div>
-                                        <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">L2 SLA (Hours / Days)</label>
+                                        <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">L2 SLA</label>
                                         <SlaInputCell
                                             valueInDays={newCategory.l2_sla_days}
                                             onChange={(newDays) => setNewCategory({ ...newCategory, l2_sla_days: newDays })}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">L3 SLA</label>
+                                        <SlaInputCell
+                                            valueInDays={newCategory.l3_sla_days}
+                                            onChange={(newDays) => setNewCategory({ ...newCategory, l3_sla_days: newDays })}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">L4 SLA</label>
+                                        <SlaInputCell
+                                            valueInDays={newCategory.l4_sla_days}
+                                            onChange={(newDays) => setNewCategory({ ...newCategory, l4_sla_days: newDays })}
                                         />
                                     </div>
                                 </div>

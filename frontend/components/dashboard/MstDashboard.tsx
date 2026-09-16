@@ -790,16 +790,6 @@ const MstDashboard = () => {
                                 <span className="flex-1 text-left">My Grievances</span>
                             </button>
                             <button
-                                onClick={() => {
-                                    handleTabChange('grievance');
-                                    setSidebarOpen(false);
-                                }}
-                                className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg transition-all text-xs font-bold text-primary bg-primary/10 hover:bg-primary/20 group"
-                            >
-                                <Plus className="w-3.5 h-3.5" />
-                                <span>+ Raise Grievance</span>
-                            </button>
-                            <button
                                 onClick={() => { setShowFeedbackModal(true); setSidebarOpen(false); }}
                                 className="w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg transition-all text-sm font-bold text-text-secondary hover:bg-muted hover:text-text-primary group"
                             >

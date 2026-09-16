@@ -48,13 +48,6 @@ export default function Home() {
                     return;
                 }
 
-                // 1.5 Check if user has NOT completed onboarding yet
-                // If onboarding is incomplete, send user to /onboarding regardless of approval state
-                if (!membership?.is_master_admin && membership?.onboarding_completed === false) {
-                    router.replace('/onboarding');
-                    return;
-                }
-
                 // 1.6 Approval gate (from origin/main). Runs BEFORE any silo
                 // routing: an unapproved user must not be routed into a workspace.
                 if (!membership?.is_master_admin && membership?.is_approved === false) {

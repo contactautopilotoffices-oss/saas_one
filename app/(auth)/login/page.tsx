@@ -224,12 +224,6 @@ function AuthContent() {
                     return;
                 }
 
-                // Check onboarding completion FIRST
-                if (!userProfile.onboarding_completed) {
-                    window.location.href = '/onboarding';
-                    return;
-                }
-
                 // Check approval status for OTP login
                 const isOtpApproved = userProfile.is_approved === true || userProfile.approval_status === 'approved';
                 if (!isOtpApproved) {
@@ -294,12 +288,6 @@ function AuthContent() {
                     } else {
                         router.replace('/master');
                     }
-                    return;
-                }
-
-                // ✅ Step 2.2: Check onboarding completion FIRST
-                if (!userProfile.onboarding_completed) {
-                    router.replace('/onboarding');
                     return;
                 }
 
@@ -420,6 +408,12 @@ function AuthContent() {
                     } else {
                         router.replace(`/property/${pId}/dashboard`);
                     }
+                    return;
+                }
+
+                // If user has no memberships and hasn't completed onboarding, send to onboarding
+                if (!userProfile.onboarding_completed) {
+                    router.replace('/onboarding');
                     return;
                 }
 

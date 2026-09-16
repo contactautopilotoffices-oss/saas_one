@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { NotificationService } from '@/backend/services/NotificationService';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -12,7 +13,7 @@ export async function GET() {
         // 1. Fetch all open tickets where SLA has expired and status is not resolved/closed/cancelled
         const { data: breachedTickets, error } = await supabaseAdmin
             .from('hr_tickets')
-            .select('*')
+            .select('*, category:hr_ticket_categories(*)')
             .lt('sla_due_at', nowIso)
             .not('status', 'in', '("resolved","closed","cancelled")')
             .lt('current_level', 4);
@@ -93,9 +94,15 @@ export async function GET() {
                 }
             }
 
-            // Extend SLA for next level (+4 days default window)
-            const newSla = new Date();
-            newSla.setDate(newSla.getDate() + 4);
+            // Calculate SLA for next level using category's configured SLA days
+            let nextLevelSlaDays = nextLevel === 2 ? 7 : nextLevel === 3 ? 10 : 12;
+            if (ticket.category) {
+                const key = `l${nextLevel}_sla_days` as keyof typeof ticket.category;
+                if (ticket.category[key] !== undefined && !isNaN(Number(ticket.category[key]))) {
+                    nextLevelSlaDays = Number(ticket.category[key]);
+                }
+            }
+            const newSla = new Date(Date.now() + nextLevelSlaDays * 24 * 60 * 60 * 1000);
 
             await supabaseAdmin
                 .from('hr_tickets')
@@ -114,6 +121,17 @@ export async function GET() {
                 action: `AUTO_ESCALATED_SLA_BREACH_L${nextLevel}`,
                 old_values: { level: ticket.current_level, status: ticket.status },
                 new_values: { level: nextLevel, status: 'escalated', assigned_to: nextAssigneeId }
+            });
+
+            // Dispatch Omnichannel SLA Escalation Notification
+            NotificationService.afterHrTicketEscalated(
+                ticket.id,
+                ticket.current_level,
+                nextLevel,
+                true, // isSlaAutoEscalated
+                undefined
+            ).catch(err => {
+                console.error('Failed SLA escalation notification:', err);
             });
 
             escalatedList.push({ ticket_number: ticket.ticket_number, from_level: ticket.current_level, to_level: nextLevel });

@@ -2695,36 +2695,38 @@ export class NotificationService {
     // ============================================================================
     static async afterHrTicketCreated(ticketId: string) {
         try {
-            const { data: ticket } = await supabaseAdmin
+            const { data: ticket, error } = await supabaseAdmin
                 .from('hr_tickets')
-                .select('*, raised_by:users!raised_by_user_id(id, full_name, email), assigned_to:users!assigned_to_user_id(id, full_name, email), category:hr_ticket_categories(category_name)')
+                .select('*, category:hr_ticket_categories(*), raised_by:users!raised_by_user_id(id, full_name, email, phone), assigned_to:users!assigned_to_user_id(id, full_name, email, phone)')
                 .eq('id', ticketId)
                 .maybeSingle();
 
-            if (!ticket) return;
+            if (error || !ticket) return;
 
-            const isConfidential = ticket.is_confidential || ticket.is_anonymous;
-            const eventType = isConfidential ? 'HR_CONFIDENTIAL_DIRECTOR_ALERT' : 'HR_TICKET_CREATED';
+            const categoryName = ticket.category?.category_name || ticket.ticket_type?.replace(/_/g, ' ') || 'Grievance';
+            const submitterName = ticket.is_anonymous ? 'Anonymous Employee' : (ticket.employee_snapshot?.name || ticket.raised_by?.full_name || 'Employee');
+            const assigneeName = ticket.assigned_to?.full_name || ticket.assigned_to?.email || `Level ${ticket.current_level} Authority`;
 
-            // 1. Process WhatsApp Omnichannel Event
-            const { WhatsAppEventProcessor } = await import('./WhatsAppEventProcessor');
-            await WhatsAppEventProcessor.processEvent({
-                event_type: eventType,
-                payload: ticket
-            }).catch(err => console.error('[NotificationService] WhatsApp HR ticket created error:', err));
-
-            // 2. In-App Notification Dispatch
-            const targetUsers = Array.from(new Set([
-                ticket.raised_by_user_id,
-                ticket.assigned_to_user_id
-            ])).filter(Boolean) as string[];
-
-            if (targetUsers.length > 0) {
-                await this.sendToMany(targetUsers, {
+            // 1. Send Omnichannel Notification to Submitter
+            if (ticket.raised_by_user_id) {
+                await this.send({
+                    userId: ticket.raised_by_user_id,
                     organizationId: ticket.organization_id,
                     type: 'HR_TICKET_CREATED',
-                    title: `HR Ticket #${ticket.ticket_number} Created`,
-                    message: `${ticket.subject} (${ticket.category?.category_name || 'Grievance'})`,
+                    title: `HR Ticket #${ticket.ticket_number} Submitted`,
+                    message: `Your HR request "${ticket.subject}" (${categoryName}) has been successfully submitted and assigned to ${assigneeName} for Level ${ticket.current_level} review.`,
+                    deepLink: `/hr-tickets?tab=tickets&id=${ticket.id}`
+                });
+            }
+
+            // 2. Send Omnichannel Notification to Assigned Level Handler
+            if (ticket.assigned_to_user_id) {
+                await this.send({
+                    userId: ticket.assigned_to_user_id,
+                    organizationId: ticket.organization_id,
+                    type: 'HR_TICKET_ASSIGNED',
+                    title: `New HR Ticket Assigned #${ticket.ticket_number}`,
+                    message: `New HR request "${ticket.subject}" assigned to you for Level ${ticket.current_level} review. Submitter: ${submitterName}, Priority: ${ticket.priority?.toUpperCase()}.`,
                     deepLink: `/hr-tickets?tab=tickets&id=${ticket.id}`
                 });
             }
@@ -2733,31 +2735,70 @@ export class NotificationService {
         }
     }
 
-    static async afterHrTicketStatusUpdated(ticketId: string, oldStatus: string, newStatus: string, actorId?: string) {
+    static async afterHrTicketEscalated(ticketId: string, fromLevel: number, toLevel: number, isSlaBreach: boolean = false, actorUserId?: string) {
         try {
             const { data: ticket } = await supabaseAdmin
                 .from('hr_tickets')
-                .select('*')
+                .select('*, category:hr_ticket_categories(*), raised_by:users!raised_by_user_id(id, full_name, email, phone), assigned_to:users!assigned_to_user_id(id, full_name, email, phone)')
                 .eq('id', ticketId)
                 .maybeSingle();
 
             if (!ticket) return;
 
-            const { WhatsAppEventProcessor } = await import('./WhatsAppEventProcessor');
-            if (newStatus === 'resolved' || newStatus === 'closed') {
-                await WhatsAppEventProcessor.processEvent({
-                    event_type: 'HR_TICKET_RESOLVED',
-                    payload: ticket
-                }).catch(err => console.error('[NotificationService] WhatsApp HR ticket resolved error:', err));
+            const submitterName = ticket.is_anonymous ? 'Anonymous Employee' : (ticket.employee_snapshot?.name || ticket.raised_by?.full_name || 'Employee');
+            const newAssigneeName = ticket.assigned_to?.full_name || ticket.assigned_to?.email || `Level ${toLevel} Authority`;
+            const reason = isSlaBreach ? 'due to SLA timeout' : 'by handler escalation';
+
+            // 1. Notify Newly Assigned Level Owner
+            if (ticket.assigned_to_user_id) {
+                await this.send({
+                    userId: ticket.assigned_to_user_id,
+                    organizationId: ticket.organization_id,
+                    type: 'HR_TICKET_ESCALATED',
+                    title: `⚠️ HR Ticket Escalated to Level ${toLevel} #${ticket.ticket_number}`,
+                    message: `HR Ticket "${ticket.subject}" has been ESCALATED to Level ${toLevel} (${newAssigneeName}) ${reason}. Submitter: ${submitterName}.`,
+                    deepLink: `/hr-tickets?tab=tickets&id=${ticket.id}`
+                });
             }
+
+            // 2. Notify Submitter of Progress/Escalation
+            if (ticket.raised_by_user_id) {
+                await this.send({
+                    userId: ticket.raised_by_user_id,
+                    organizationId: ticket.organization_id,
+                    type: 'HR_TICKET_ESCALATED',
+                    title: `HR Ticket #${ticket.ticket_number} Escalated to Level ${toLevel}`,
+                    message: `Your HR request "${ticket.subject}" has been escalated to Level ${toLevel} for higher-level review by ${newAssigneeName}.`,
+                    deepLink: `/hr-tickets?tab=tickets&id=${ticket.id}`
+                });
+            }
+        } catch (err) {
+            console.error('[NotificationService] afterHrTicketEscalated error:', err);
+        }
+    }
+
+    static async afterHrTicketStatusUpdated(ticketId: string, oldStatus: string, newStatus: string, actorUserId?: string) {
+        try {
+            const { data: ticket } = await supabaseAdmin
+                .from('hr_tickets')
+                .select('*, resolved_by:users!resolved_by_user_id(id, full_name, email)')
+                .eq('id', ticketId)
+                .maybeSingle();
+
+            if (!ticket) return;
+
+            const isResolved = newStatus === 'resolved' || newStatus === 'closed';
+            const resolverName = ticket.resolved_by?.full_name || 'HR Handler';
 
             if (ticket.raised_by_user_id) {
                 await this.send({
                     userId: ticket.raised_by_user_id,
                     organizationId: ticket.organization_id,
-                    type: 'HR_TICKET_STATUS_UPDATED',
-                    title: `HR Ticket #${ticket.ticket_number} Status Updated`,
-                    message: `Status changed to ${newStatus.toUpperCase().replace('_', ' ')}.`,
+                    type: isResolved ? 'HR_TICKET_RESOLVED' : 'HR_TICKET_STATUS_UPDATED',
+                    title: isResolved ? `✅ HR Ticket #${ticket.ticket_number} Resolved & Closed` : `HR Ticket #${ticket.ticket_number} Status Updated`,
+                    message: isResolved
+                        ? `Your HR request "${ticket.subject}" has been RESOLVED & CLOSED at Level ${ticket.current_level} by ${resolverName}.${ticket.resolution_note ? ` Note: "${ticket.resolution_note}"` : ''}`
+                        : `Status changed to ${newStatus.toUpperCase().replace(/_/g, ' ')}.`,
                     deepLink: `/hr-tickets?tab=tickets&id=${ticket.id}`
                 });
             }
@@ -2766,21 +2807,31 @@ export class NotificationService {
         }
     }
 
-    static async afterHrTicketCommentAdded(ticketId: string, commentId: string) {
+    static async afterHrTicketCommentAdded(commentId: string) {
         try {
             const { data: comment } = await supabaseAdmin
                 .from('hr_ticket_comments')
-                .select('*')
+                .select('*, ticket:hr_tickets(*)')
                 .eq('id', commentId)
                 .maybeSingle();
 
-            if (!comment) return;
+            if (!comment || !comment.ticket) return;
+            if (comment.is_internal) return; // Do not notify submitter on internal handler notes
 
-            const { WhatsAppEventProcessor } = await import('./WhatsAppEventProcessor');
-            await WhatsAppEventProcessor.processEvent({
-                event_type: 'HR_TICKET_COMMENT_ADDED',
-                payload: comment
-            }).catch(err => console.error('[NotificationService] WhatsApp HR ticket comment error:', err));
+            const ticket = comment.ticket;
+            const isSenderSubmitter = comment.sender_user_id === ticket.raised_by_user_id;
+            const recipientUserId = isSenderSubmitter ? ticket.assigned_to_user_id : ticket.raised_by_user_id;
+
+            if (recipientUserId) {
+                await this.send({
+                    userId: recipientUserId,
+                    organizationId: ticket.organization_id,
+                    type: 'HR_TICKET_COMMENT_ADDED',
+                    title: `New Reply on HR Ticket #${ticket.ticket_number}`,
+                    message: `Reply from ${comment.sender_name || 'User'}: "${comment.content.substring(0, 60)}${comment.content.length > 60 ? '...' : ''}"`,
+                    deepLink: `/hr-tickets?tab=tickets&id=${ticket.id}`
+                });
+            }
         } catch (err) {
             console.error('[NotificationService] afterHrTicketCommentAdded error:', err);
         }

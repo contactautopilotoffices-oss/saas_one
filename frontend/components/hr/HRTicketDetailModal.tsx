@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Send, Lock, Clock, AlertTriangle, ShieldCheck, ArrowUpRight, User, CheckCircle, MessageSquare } from 'lucide-react';
 import SLALiveTimer from '@/frontend/components/hr/SLALiveTimer';
+import { formatDateIN, formatDateTimeIN, formatDateTimeShortIN } from '@/frontend/lib/dateFormat';
 
 interface HRTicketDetailModalProps {
     isOpen: boolean;
@@ -118,14 +119,82 @@ export default function HRTicketDetailModal({ isOpen, ticketId, onClose, onRefre
 
     const isTicketResolvedOrClosed = ticket?.status === 'resolved' || ticket?.status === 'closed';
     const isEscalatedAway = Boolean(
-        ticket?.status === 'escalated' || 
-        (ticket?.current_level > 1 && !isAssignedToMe && !isActiveLevelAuthority)
+        !isRaisedByMe && (
+            ticket?.status === 'escalated' || 
+            (ticket?.current_level > 1 && !isAssignedToMe && !isActiveLevelAuthority)
+        )
     );
 
     // Can edit/action ticket ONLY if user is active assignee / authority or submitter, and ticket is not closed
     const canEditTicket = (isActiveLevelAuthority || isRaisedByMe) && !isTicketResolvedOrClosed;
     const canChangeStatus = isActiveLevelAuthority && !isTicketResolvedOrClosed;
     const isHandler = isActiveLevelAuthority;
+
+    const getAuditPerformerName = (log: any) => {
+        if (!ticket) return 'System / Auto';
+        if (log.actor) {
+            if (ticket.is_anonymous && log.actor_user_id === ticket.raised_by_user_id) {
+                return 'Anonymous Employee';
+            }
+            return log.actor.full_name || log.actor.email || 'User';
+        }
+        if (log.actor_user_id) {
+            if (log.actor_user_id === ticket.raised_by_user_id) {
+                return ticket.is_anonymous ? 'Anonymous Employee' : (ticket.employee_snapshot?.name || ticket.raised_by?.full_name || ticket.raised_by?.email || 'Employee Submitter');
+            }
+            if (log.actor_user_id === ticket.assigned_to_user_id) {
+                return ticket.assigned_to?.full_name || ticket.assigned_to?.email || 'Assigned Handler';
+            }
+            if (log.actor_user_id === ticket.resolved_by_user_id) {
+                return ticket.resolved_by?.full_name || ticket.resolved_by?.email || 'Resolver';
+            }
+        }
+        if (log.new_values?.sender_name) {
+            return log.new_values.sender_name;
+        }
+        return 'System / Auto';
+    };
+
+    const getAuditActionBadge = (action: string) => {
+        const act = (action || '').toUpperCase();
+        if (act === 'CREATED') return { label: 'Ticket Created', color: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/60 dark:text-indigo-300 border-indigo-200' };
+        if (act === 'PUBLIC_REPLY_ADDED') return { label: 'Public Reply', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300 border-emerald-200' };
+        if (act === 'INTERNAL_NOTE_ADDED') return { label: 'Internal Handler Note', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/60 dark:text-amber-300 border-amber-200' };
+        if (act.startsWith('ESCALATED_L')) return { label: `Escalated to Level ${act.replace('ESCALATED_L', '')}`, color: 'bg-orange-100 text-orange-700 dark:bg-orange-900/60 dark:text-orange-300 border-orange-200' };
+        if (act.startsWith('AUTO_ESCALATED')) return { label: 'Auto SLA Escalated', color: 'bg-rose-100 text-rose-700 dark:bg-rose-900/60 dark:text-rose-300 border-rose-200' };
+        if (act.startsWith('RESOLVED')) return { label: `Resolved & Closed ${act.includes('_L') ? `(Level ${act.split('_L')[1]})` : ''}`, color: 'bg-emerald-600 text-white border-emerald-700' };
+        if (act === 'REOPENED') return { label: 'Ticket Reopened', color: 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200 border-slate-300' };
+        if (act === 'STATUS_UPDATE') return { label: 'Status Update', color: 'bg-sky-100 text-sky-700 dark:bg-sky-900/60 dark:text-sky-300 border-sky-200' };
+        return { label: act.replace(/_/g, ' '), color: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border-slate-200' };
+    };
+
+    const getClosingDetails = () => {
+        if (!ticket) return { levelNum: 1, levelLabel: 'Level 1', resolverName: 'Handler' };
+        const levelNum = ticket.current_level || 1;
+        const levelLabels: Record<number, string> = {
+            1: 'Level 1 (L1 Manager)',
+            2: 'Level 2 (L2 HR Dept)',
+            3: 'Level 3 (L3 HR Head)',
+            4: 'Level 4 (L4 Director)'
+        };
+        const levelLabel = levelLabels[levelNum] || `Level ${levelNum}`;
+
+        let resolverName = ticket.resolved_by?.full_name || ticket.resolved_by?.email;
+        if (!resolverName && ticket.audit_logs?.length) {
+            const resLog = ticket.audit_logs.find((l: any) =>
+                (l.action && l.action.toUpperCase().startsWith('RESOLVED')) ||
+                l.new_values?.status === 'resolved' ||
+                l.new_values?.status === 'closed'
+            );
+            if (resLog) {
+                resolverName = getAuditPerformerName(resLog);
+            }
+        }
+        if (!resolverName) {
+            resolverName = ticket.assigned_to?.full_name || ticket.assigned_to?.email || 'HR Handler';
+        }
+        return { levelNum, levelLabel, resolverName };
+    };
 
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-md p-2 sm:p-4">
@@ -164,7 +233,7 @@ export default function HRTicketDetailModal({ isOpen, ticketId, onClose, onRefre
                                 <div className="text-xs font-black text-slate-700 dark:text-slate-300 flex items-center justify-between">
                                     <span className="uppercase tracking-wider text-[10px] text-slate-400">Escalation Hierarchy & Level Owners</span>
                                     <span className="text-[#587e85] dark:text-teal-400 font-black text-xs">
-                                        Level {ticket.current_level} of 4 Active
+                                        {isTicketResolvedOrClosed ? `Resolved at Level ${ticket.current_level}` : `Level ${ticket.current_level} of 4 Active`}
                                     </span>
                                 </div>
                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
@@ -176,26 +245,42 @@ export default function HRTicketDetailModal({ isOpen, ticketId, onClose, onRefre
                                     ].map((step) => {
                                         const isCurrent = ticket.current_level === step.level;
                                         const isPassed = ticket.current_level > step.level;
+                                        const isClosedAtThisLevel = isTicketResolvedOrClosed && ticket.current_level === step.level;
+
                                         return (
                                             <div
                                                 key={step.level}
                                                 className={`p-2.5 rounded-xl text-[11px] transition-all flex flex-col justify-between items-center ${
-                                                    isCurrent
+                                                    isClosedAtThisLevel
+                                                        ? 'bg-emerald-600 text-white shadow-md ring-2 ring-emerald-500/40 font-black'
+                                                        : isCurrent
                                                         ? 'bg-[#587e85] text-white shadow-md ring-2 ring-[#587e85]/40 font-black'
                                                         : isPassed
                                                         ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 font-bold'
                                                         : 'bg-white dark:bg-slate-800 text-slate-400 border border-slate-200 dark:border-slate-700 font-medium'
                                                 }`}
                                             >
-                                                <div className="text-[10px] uppercase tracking-wider font-bold opacity-80">{step.label}</div>
-                                                <div className="text-[11px] font-extrabold truncate w-full mt-1" title={step.owner}>
-                                                    {step.owner}
+                                                <div className="text-[10px] uppercase tracking-wider font-bold opacity-90 flex items-center justify-center gap-1 text-center">
+                                                    {isClosedAtThisLevel && <CheckCircle className="w-3 h-3 text-white shrink-0" />}
+                                                    {step.label}
+                                                </div>
+                                                <div className="text-[11px] font-extrabold break-words leading-tight text-center w-full mt-1.5" title={step.owner}>
+                                                    {isClosedAtThisLevel ? `Closed by ${getClosingDetails().resolverName}` : step.owner}
                                                 </div>
                                             </div>
                                         );
                                     })}
                                 </div>
                             </div>
+
+                            {isEscalatedAway && (
+                                <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl text-xs text-amber-800 dark:text-amber-300 flex items-center gap-2">
+                                    <Lock className="w-4 h-4 text-amber-600 shrink-0" />
+                                    <span>
+                                        This ticket has been escalated to Level {ticket.current_level} ({ticket.level_owners?.[`l${ticket.current_level}`] || 'Higher Authority'}). You are viewing this ticket in read-only mode.
+                                    </span>
+                                </div>
+                            )}
 
                             {/* Ticket Description */}
                             <div className="space-y-2">
@@ -267,7 +352,7 @@ export default function HRTicketDetailModal({ isOpen, ticketId, onClose, onRefre
                                                                          Internal Handler Note ({senderDisplayName})
                                                                      </span>
                                                                      <span className="text-[10px] opacity-75">
-                                                                         {new Date(comment.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                                         {formatDateTimeShortIN(comment.created_at)}
                                                                      </span>
                                                                  </div>
                                                                  <p className="whitespace-pre-wrap leading-relaxed">{comment.content}</p>
@@ -294,7 +379,7 @@ export default function HRTicketDetailModal({ isOpen, ticketId, onClose, onRefre
                                                                  </div>
                                                                  <p className="whitespace-pre-wrap leading-relaxed text-xs font-normal">{comment.content}</p>
                                                                  <div className="text-[9px] text-slate-400 dark:text-slate-500 text-right pt-0.5 font-mono">
-                                                                     {new Date(comment.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                                     {formatDateTimeShortIN(comment.created_at)}
                                                                  </div>
                                                              </div>
                                                          </div>
@@ -338,6 +423,14 @@ export default function HRTicketDetailModal({ isOpen, ticketId, onClose, onRefre
                                                     </button>
                                                 </div>
                                             </form>
+                                        ) : isTicketResolvedOrClosed ? (
+                                            <div className="mt-auto p-3 bg-emerald-50 dark:bg-emerald-950/40 rounded-2xl border border-emerald-200 dark:border-emerald-800 text-center text-[11px] font-bold text-emerald-800 dark:text-emerald-300 flex items-center justify-center gap-1.5">
+                                                <CheckCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                                {isRaisedByMe
+                                                    ? 'Ticket Resolved & Closed — You can reopen this ticket below if your issue requires further attention.'
+                                                    : `Ticket Resolved & Closed — Completed at Level ${ticket.current_level} (${getClosingDetails().resolverName})`
+                                                }
+                                            </div>
                                         ) : (
                                             <div className="mt-auto p-3 bg-slate-100 dark:bg-slate-800/80 rounded-2xl border border-slate-200 dark:border-slate-700 text-center text-[11px] font-bold text-slate-500 dark:text-slate-400">
                                                 🔒 Read-Only Tracking Mode — Action controls & replies belong to Level {ticket.current_level} ({ticket.assigned_to?.full_name || 'Active Assignee'})
@@ -345,17 +438,57 @@ export default function HRTicketDetailModal({ isOpen, ticketId, onClose, onRefre
                                         )}
                                     </div>
                                 ) : (
-                                    <div className="space-y-2 max-h-[350px] overflow-y-auto">
-                                        {ticket.audit_logs?.map((log: any) => (
-                                            <div key={log.id} className="p-3 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-200/60 dark:border-slate-700/50 text-xs space-y-1">
-                                                <div className="flex justify-between font-bold text-slate-700 dark:text-slate-300">
-                                                    <span>{log.action}</span>
-                                                    <span className="text-[10px] font-normal text-slate-400">
-                                                        {new Date(log.created_at).toLocaleString()}
-                                                    </span>
-                                                </div>
+                                    <div className="space-y-2.5 max-h-[360px] overflow-y-auto pr-1">
+                                        {!ticket.audit_logs || ticket.audit_logs.length === 0 ? (
+                                            <div className="text-center py-8 text-xs text-slate-400 font-medium">
+                                                No audit history entries recorded yet.
                                             </div>
-                                        ))}
+                                        ) : (
+                                            ticket.audit_logs.map((log: any) => {
+                                                const badge = getAuditActionBadge(log.action);
+                                                const performerName = getAuditPerformerName(log);
+                                                const isAuto = performerName === 'System / Auto';
+
+                                                return (
+                                                    <div
+                                                        key={log.id}
+                                                        className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200/70 dark:border-slate-700/60 text-xs space-y-2 shadow-xs"
+                                                    >
+                                                        <div className="flex items-center justify-between gap-2">
+                                                            <span className={`px-2 py-0.5 text-[10px] font-black rounded-lg border uppercase tracking-wider ${badge.color}`}>
+                                                                {badge.label}
+                                                            </span>
+                                                            <span className="text-[10px] font-mono text-slate-400">
+                                                                {formatDateTimeIN(log.created_at)}
+                                                            </span>
+                                                        </div>
+
+                                                        <div className="flex items-center gap-1.5 text-slate-700 dark:text-slate-200 font-semibold text-xs">
+                                                            <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                                            <span>Performed by:</span>
+                                                            <span className={`font-black ${isAuto ? 'text-slate-500 italic' : 'text-indigo-600 dark:text-indigo-400'}`}>
+                                                                {performerName}
+                                                            </span>
+                                                        </div>
+
+                                                        {/* Details context if status/notes change */}
+                                                        {log.new_values && (log.new_values.status || log.new_values.content_snippet || log.new_values.resolution_note || log.old_values?.status) && (
+                                                            <div className="text-[11px] bg-white/80 dark:bg-slate-900/60 p-2 rounded-xl border border-slate-200/60 dark:border-slate-800 text-slate-600 dark:text-slate-400 space-y-0.5">
+                                                                {log.old_values?.status && log.new_values?.status && log.old_values.status !== log.new_values.status && (
+                                                                    <div>Status: <span className="font-mono text-slate-500">{log.old_values.status}</span> ➔ <strong className="text-slate-900 dark:text-white font-mono">{log.new_values.status}</strong></div>
+                                                                )}
+                                                                {log.new_values.resolution_note && (
+                                                                    <div>Resolution Note: <em className="text-slate-800 dark:text-slate-200">"{log.new_values.resolution_note}"</em></div>
+                                                                )}
+                                                                {log.new_values.content_snippet && (
+                                                                    <div>Note snippet: <em className="text-slate-800 dark:text-slate-200">"{log.new_values.content_snippet}..."</em></div>
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })
+                                        )}
                                     </div>
                                 )}
                             </div>
@@ -372,7 +505,7 @@ export default function HRTicketDetailModal({ isOpen, ticketId, onClose, onRefre
                                     </span>
                                     {ticket.sla_due_at && (
                                         <span className="text-[10px] text-slate-400 font-mono">
-                                            Due: {new Date(ticket.sla_due_at).toLocaleDateString()}
+                                            Due: {formatDateIN(ticket.sla_due_at)}
                                         </span>
                                     )}
                                 </div>
@@ -389,21 +522,35 @@ export default function HRTicketDetailModal({ isOpen, ticketId, onClose, onRefre
                                 <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
                                     Employee Snapshot
                                 </h4>
-                                <div className="p-3 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 text-xs space-y-2">
-                                    <div>
-                                        <div className="text-[10px] text-slate-400">Name / Code</div>
-                                        <div className="font-semibold text-slate-900 dark:text-white">
-                                            {ticket.employee_snapshot?.name} ({ticket.employee_snapshot?.code || 'N/A'})
-                                        </div>
-                                    </div>
+                                <div className="p-3 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 text-xs space-y-2.5">
                                     <div className="grid grid-cols-2 gap-2">
                                         <div>
+                                            <div className="text-[10px] text-slate-400">Employee Name</div>
+                                            <div className="font-semibold text-slate-900 dark:text-white break-words">
+                                                {ticket.employee_snapshot?.name || 'N/A'}
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <div className="text-[10px] text-slate-400">Employee Code</div>
+                                            <div className="font-semibold text-slate-900 dark:text-white font-mono">
+                                                {ticket.employee_snapshot?.code || 'N/A'}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <div className="text-[10px] text-slate-400">Assigned Manager</div>
+                                        <div className="font-semibold text-slate-900 dark:text-white">
+                                            {ticket.employee_snapshot?.manager_name || ticket.employee_snapshot?.reporting_manager_name || ticket.level_owners?.l1 || 'N/A'}
+                                        </div>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100 dark:border-slate-700/60">
+                                        <div>
                                             <div className="text-[10px] text-slate-400">Department</div>
-                                            <div className="font-semibold">{ticket.employee_snapshot?.department}</div>
+                                            <div className="font-semibold">{ticket.employee_snapshot?.department || 'N/A'}</div>
                                         </div>
                                         <div>
                                             <div className="text-[10px] text-slate-400">Location</div>
-                                            <div className="font-semibold">{ticket.employee_snapshot?.location}</div>
+                                            <div className="font-semibold">{ticket.employee_snapshot?.location || 'N/A'}</div>
                                         </div>
                                     </div>
                                 </div>
@@ -417,24 +564,55 @@ export default function HRTicketDetailModal({ isOpen, ticketId, onClose, onRefre
 
                                 {isTicketResolvedOrClosed ? (
                                     <div className="space-y-3">
-                                        <div className="p-3.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-2xl text-xs space-y-1.5">
-                                            <div className="font-bold text-emerald-800 dark:text-emerald-300 flex items-center gap-1.5">
-                                                <CheckCircle className="w-4 h-4 text-emerald-600" />
-                                                Ticket Resolved & Closed
-                                            </div>
-                                            {ticket.resolution_note ? (
-                                                <p className="text-xs text-slate-700 dark:text-slate-300 italic bg-white/60 dark:bg-slate-900/60 p-2 rounded-xl border border-emerald-200/60 dark:border-emerald-800/60">
-                                                    "{ticket.resolution_note}"
-                                                </p>
-                                            ) : (
-                                                <p className="text-[11px] text-slate-500 italic">No formal resolution note recorded.</p>
-                                            )}
-                                            {ticket.resolved_at && (
-                                                <div className="text-[10px] text-emerald-700/80 dark:text-emerald-400/80 font-medium pt-1 border-t border-emerald-200/60 dark:border-emerald-800/60">
-                                                    Resolved on {new Date(ticket.resolved_at).toLocaleString()}
+                                        {(() => {
+                                            const { levelNum, levelLabel, resolverName } = getClosingDetails();
+                                            return (
+                                                <div className="p-3.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-2xl text-xs space-y-2.5 shadow-xs">
+                                                    <div className="font-extrabold text-emerald-800 dark:text-emerald-300 flex items-center justify-between gap-1.5">
+                                                        <span className="flex items-center gap-1.5">
+                                                            <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                                                            Ticket Resolved & Closed
+                                                        </span>
+                                                        <span className="px-2 py-0.5 bg-emerald-600 text-white font-mono text-[10px] font-black rounded-lg uppercase tracking-wider shrink-0">
+                                                            L{levelNum} Closed
+                                                        </span>
+                                                    </div>
+
+                                                    {/* Highlighted Metadata: Closed At Level & Who Closed */}
+                                                    <div className="p-2.5 bg-white/90 dark:bg-slate-900/80 rounded-xl border border-emerald-200/80 dark:border-emerald-800/80 space-y-1.5">
+                                                        <div className="flex items-center justify-between text-[11px]">
+                                                            <span className="text-slate-500 font-medium">Closed At Level:</span>
+                                                            <span className="font-black text-slate-800 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md">
+                                                                {levelLabel}
+                                                            </span>
+                                                        </div>
+                                                        <div className="flex items-center justify-between text-[11px]">
+                                                            <span className="text-slate-500 font-medium">Closed / Resolved By:</span>
+                                                            <span className="font-black text-emerald-700 dark:text-emerald-300 flex items-center gap-1">
+                                                                <User className="w-3 h-3 text-emerald-600 shrink-0" />
+                                                                {resolverName}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+
+                                                    {ticket.resolution_note ? (
+                                                        <div className="space-y-1">
+                                                            <div className="text-[10px] uppercase tracking-wider font-extrabold text-emerald-800 dark:text-emerald-400">Resolution Note:</div>
+                                                            <p className="text-xs text-slate-700 dark:text-slate-300 italic bg-white/60 dark:bg-slate-900/60 p-2 rounded-xl border border-emerald-200/60 dark:border-emerald-800/60">
+                                                                "{ticket.resolution_note}"
+                                                            </p>
+                                                        </div>
+                                                    ) : (
+                                                        <p className="text-[11px] text-slate-500 italic">No formal resolution note recorded.</p>
+                                                    )}
+                                                    {ticket.resolved_at && (
+                                                        <div className="text-[10px] text-emerald-700/80 dark:text-emerald-400/80 font-medium pt-1 border-t border-emerald-200/60 dark:border-emerald-800/60">
+                                                            Resolved on {formatDateTimeIN(ticket.resolved_at)}
+                                                        </div>
+                                                    )}
                                                 </div>
-                                            )}
-                                        </div>
+                                            );
+                                        })()}
 
                                         {(canChangeStatus || currentUserId === ticket.raised_by_user_id) && (
                                             <button
@@ -518,10 +696,10 @@ export default function HRTicketDetailModal({ isOpen, ticketId, onClose, onRefre
                                     <div className="p-3.5 bg-amber-50/80 dark:bg-amber-950/40 border border-amber-200/80 dark:border-amber-800 rounded-2xl text-xs space-y-1">
                                         <div className="font-extrabold text-amber-900 dark:text-amber-300 flex items-center gap-1.5">
                                             <Lock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                                            Tracking Mode — Read Only
+                                            {isRaisedByMe ? 'Active Level Handler' : 'Tracking Mode — Read Only'}
                                         </div>
                                         <p className="text-[11px] text-amber-800/90 dark:text-amber-300/90 leading-relaxed font-medium">
-                                            Active level: <strong>Level {ticket.current_level} ({ticket.assigned_to?.full_name || 'Level Authority'})</strong>. You can view all overall progress and live updates.
+                                            Active level: <strong>Level {ticket.current_level} ({ticket.assigned_to?.full_name || 'Level Authority'})</strong>. {isRaisedByMe ? 'You can communicate directly with the handler in the conversation thread.' : 'You can view all overall progress and live updates.'}
                                         </p>
                                     </div>
                                 )}

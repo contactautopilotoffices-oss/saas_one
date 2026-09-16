@@ -19,10 +19,15 @@ export async function GET(
                 category:hr_ticket_categories(*),
                 raised_by:users!raised_by_user_id(id, email, full_name, phone),
                 assigned_to:users!assigned_to_user_id(id, email, full_name, phone),
+                resolved_by:users!resolved_by_user_id(id, email, full_name, phone),
                 comments:hr_ticket_comments(*),
-                audit_logs:hr_ticket_audit_logs(*)
+                audit_logs:hr_ticket_audit_logs(
+                    *,
+                    actor:users!actor_user_id(id, email, full_name, phone)
+                )
             `)
             .eq('id', id)
+            .order('created_at', { ascending: false, foreignTable: 'audit_logs' })
             .single();
 
         if (error || !ticket) {
@@ -44,11 +49,19 @@ export async function GET(
             if (ticket.raised_by_user_id) {
                 const { data: emp } = await supabaseAdmin
                     .from('employee_profiles')
-                    .select('reporting_manager_id, reporting_manager:users!reporting_manager_id(full_name, email)')
+                    .select('employee_code, reporting_manager_code, reporting_manager_id, reporting_manager:users!reporting_manager_id(full_name, email)')
                     .eq('user_id', ticket.raised_by_user_id)
                     .maybeSingle();
                 if (emp?.reporting_manager) {
                     l1Name = (emp.reporting_manager as any).full_name || (emp.reporting_manager as any).email || l1Name;
+                }
+                if (ticket.employee_snapshot && !ticket.is_anonymous) {
+                    if (!ticket.employee_snapshot.code && emp?.employee_code) {
+                        ticket.employee_snapshot.code = emp.employee_code;
+                    }
+                    if (!ticket.employee_snapshot.manager_name) {
+                        ticket.employee_snapshot.manager_name = l1Name || emp?.reporting_manager_code;
+                    }
                 }
             }
 
@@ -93,6 +106,10 @@ export async function GET(
             l3: l3Name,
             l4: l4Name
         };
+
+        if (ticket.employee_snapshot && !ticket.is_anonymous && !ticket.employee_snapshot.manager_name) {
+            ticket.employee_snapshot.manager_name = l1Name;
+        }
 
         return NextResponse.json({ success: true, data: ticket });
     } catch (err: any) {
@@ -180,6 +197,18 @@ export async function PATCH(
                     .maybeSingle();
                 if (directors?.user_id) updates.assigned_to_user_id = directors.user_id;
             }
+
+            // Recalculate SLA due date for next level based on category configured SLA days
+            if (existing.category_id) {
+                const { data: cat } = await supabaseAdmin
+                    .from('hr_ticket_categories')
+                    .select('*')
+                    .eq('id', existing.category_id)
+                    .maybeSingle();
+                const key = `l${nextLevel}_sla_days` as keyof typeof cat;
+                const slaDays = (cat && cat[key] !== undefined && !isNaN(Number(cat[key]))) ? Number(cat[key]) : (nextLevel === 2 ? 7 : nextLevel === 3 ? 10 : 12);
+                updates.sla_due_at = new Date(Date.now() + slaDays * 24 * 60 * 60 * 1000).toISOString();
+            }
         } else if (current_level) {
             updates.current_level = current_level;
         }
@@ -194,18 +223,33 @@ export async function PATCH(
         if (updateErr) throw updateErr;
 
         // Audit Log
+        let auditAction = 'STATUS_UPDATE';
+        if (escalate) {
+            auditAction = `ESCALATED_L${updates.current_level}`;
+        } else if (status === 'resolved' || status === 'closed') {
+            auditAction = `RESOLVED_L${existing.current_level || 1}`;
+        } else if (status === 'reopened') {
+            auditAction = 'REOPENED';
+        }
+
         await supabaseAdmin.from('hr_ticket_audit_logs').insert({
             ticket_id: id,
-            actor_user_id: actor_user_id || null,
-            action: escalate ? `ESCALATED_L${updates.current_level}` : 'STATUS_UPDATE',
+            actor_user_id: actor_user_id || resolved_by_user_id || null,
+            action: auditAction,
             old_values: { status: existing.status, level: existing.current_level, assigned_to: existing.assigned_to_user_id },
             new_values: updates
         });
 
         // Omnichannel WhatsApp & In-App Status Notification Hook
-        NotificationService.afterHrTicketStatusUpdated(id, existing.status, updated.status, actor_user_id).catch(err => {
-            console.error('Failed to trigger HR ticket status notification:', err);
-        });
+        if (escalate) {
+            NotificationService.afterHrTicketEscalated(id, existing.current_level, updated.current_level, false, actor_user_id).catch(err => {
+                console.error('Failed to trigger HR ticket escalation notification:', err);
+            });
+        } else {
+            NotificationService.afterHrTicketStatusUpdated(id, existing.status, updated.status, actor_user_id).catch(err => {
+                console.error('Failed to trigger HR ticket status notification:', err);
+            });
+        }
 
         return NextResponse.json({ success: true, data: updated });
     } catch (err: any) {
