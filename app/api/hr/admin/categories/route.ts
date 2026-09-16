@@ -152,11 +152,19 @@ export async function POST(request: Request) {
 export async function PATCH(request: Request) {
     try {
         const body = await request.json();
-        const { id, actor_user_id, ...updates } = body;
+        const { id, actor_user_id, default_hr_owner, users, ...updates } = body;
+        delete updates.default_hr_owner;
+        delete updates.users;
+        delete (updates as any).created_at;
 
         if (!id) {
             return NextResponse.json({ success: false, error: 'Category ID is required' }, { status: 400 });
         }
+
+        if (updates.l1_sla_days !== undefined) updates.l1_sla_days = Number(updates.l1_sla_days);
+        if (updates.l2_sla_days !== undefined) updates.l2_sla_days = Number(updates.l2_sla_days);
+        if (updates.l3_sla_days !== undefined) updates.l3_sla_days = Number(updates.l3_sla_days);
+        if (updates.l4_sla_days !== undefined) updates.l4_sla_days = Number(updates.l4_sla_days);
 
         // Fetch existing category before updating for SLA change logging
         const { data: existingCat } = await supabaseAdmin
