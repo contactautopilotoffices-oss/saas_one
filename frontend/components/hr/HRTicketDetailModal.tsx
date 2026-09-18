@@ -243,6 +243,20 @@ export default function HRTicketDetailModal({ isOpen, ticketId, onClose, onRefre
                                         </span>
                                     );
                                 })()}
+                                <span className={`px-2.5 py-1 text-[11px] font-black rounded-lg uppercase tracking-wider inline-flex items-center gap-1.5 ${
+                                     ticket.status === 'closed'
+                                         ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300'
+                                         : ticket.status === 'pending_acknowledgement' || ticket.status === 'resolved'
+                                         ? 'bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300'
+                                         : ticket.status === 'in_progress'
+                                         ? 'bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 border border-blue-300'
+                                         : ticket.status === 'escalated'
+                                         ? 'bg-purple-100 dark:bg-purple-950/80 text-purple-800 dark:text-purple-200 border border-purple-300 font-extrabold'
+                                         : 'bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 border border-indigo-200'
+                                 }`}>
+                                     {ticket.status === 'escalated' && <span className="w-1.5 h-1.5 rounded-full bg-purple-600 dark:bg-purple-400 animate-pulse" />}
+                                     Status: {ticket.status === 'pending_acknowledgement' ? 'PENDING ACKNOWLEDGEMENT' : ticket.status === 'escalated' ? `ESCALATED (L${ticket.current_level})` : ticket.status?.replace(/_/g, ' ')}
+                                 </span>
                                 <span className="px-2.5 py-1 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border border-indigo-500/20 text-[11px] font-extrabold rounded-lg uppercase tracking-wider flex items-center gap-1">
                                     <ShieldCheck className="w-3.5 h-3.5 text-indigo-600" />
                                     Escalation Level {ticket.current_level || 1}
@@ -291,7 +305,7 @@ export default function HRTicketDetailModal({ isOpen, ticketId, onClose, onRefre
                                                 return (
                                                     <div
                                                         key={lvlNum}
-                                                        className={`flex flex-col items-center justify-center p-3.5 rounded-2xl border text-center transition-all duration-200 min-h-[76px] ${
+                                                        className={`flex flex-col items-center justify-center p-2.5 sm:p-3 rounded-2xl border text-center transition-all duration-200 min-h-[78px] ${
                                                             isActive
                                                                 ? 'bg-[#486b72] dark:bg-[#486b72] text-white border-[#486b72] shadow-md shadow-[#486b72]/20 ring-2 ring-[#486b72]/30'
                                                                 : isPassed
@@ -308,13 +322,16 @@ export default function HRTicketDetailModal({ isOpen, ticketId, onClose, onRefre
                                                         }`}>
                                                             {`Level ${lvlNum}`}
                                                         </div>
-                                                        <div className={`text-xs font-black mt-1.5 line-clamp-2 ${
-                                                            isActive
-                                                                ? 'text-white'
-                                                                : isPassed
-                                                                ? 'text-emerald-800 dark:text-emerald-300'
-                                                                : 'text-slate-400 dark:text-slate-400'
-                                                        }`}>
+                                                        <div 
+                                                            title={step.assignee}
+                                                            className={`text-[10.5px] sm:text-[11px] leading-snug font-extrabold mt-1 max-w-full break-words px-0.5 ${
+                                                                isActive
+                                                                    ? 'text-white'
+                                                                    : isPassed
+                                                                    ? 'text-emerald-800 dark:text-emerald-300'
+                                                                    : 'text-slate-600 dark:text-slate-400'
+                                                            }`}
+                                                        >
                                                             {step.assignee || `Level ${lvlNum}`}
                                                         </div>
                                                     </div>
@@ -823,7 +840,7 @@ export default function HRTicketDetailModal({ isOpen, ticketId, onClose, onRefre
                                                 {isRaisedByMe ? 'Active Level Handler' : 'Tracking Mode — Read Only'}
                                             </div>
                                             <p className="text-[11px] text-amber-800/90 dark:text-amber-300/90 leading-relaxed font-medium">
-                                                Active level: <strong>Level {ticket.current_level} ({ticket.assigned_to?.full_name || 'Level Authority'})</strong>. {isRaisedByMe ? 'You can communicate directly with the handler in the conversation thread.' : 'You can view all overall progress and live updates.'}
+                                                Active level: <strong>Level {ticket.current_level} ({ticket.escalation_flow?.find((s: any) => s.level === ticket.current_level)?.assignee || ticket.level_owners?.[`l${ticket.current_level}`] || ticket.assigned_to?.full_name || 'Level Authority'})</strong>. {isRaisedByMe ? 'You can communicate directly with the handler in the conversation thread.' : 'You can view all overall progress and live updates.'}
                                             </p>
                                         </div>
                                     )}

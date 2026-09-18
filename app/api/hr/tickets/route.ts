@@ -53,7 +53,7 @@ export async function GET(request: Request) {
 
         // Granular Role Scoping
         const normalizedRole = (role || '').toLowerCase();
-        const hrRoles = ['hr', 'hr_head', 'hr_manager', 'hr_ops', 'org_super_admin', 'ops_super_admin', 'master_admin', 'org_admin'];
+        const hrRoles = ['hr', 'hr_head', 'hr_manager', 'hr_ops', 'org_super_admin', 'master_admin', 'org_admin'];
         
         let isHrAuthorityUser = false;
         if (userId) {
@@ -164,17 +164,80 @@ export async function GET(request: Request) {
         const { data, error } = await query;
         if (error) throw error;
 
-        // Mask identity for anonymous tickets
+        // Load organization escalation config to dynamically attach current level owners for tickets
+        let flowAssigneesConfig: any = {};
+        try {
+            const { data: orgSettings } = await supabaseAdmin
+                .from('organization_settings')
+                .select('hr_escalation_config, notification_matrix')
+                .limit(1)
+                .maybeSingle();
+
+            const configObj = orgSettings?.notification_matrix?.hr_escalation_config || orgSettings?.hr_escalation_config || {};
+            flowAssigneesConfig = configObj.flow_assignees || {};
+            while (flowAssigneesConfig && flowAssigneesConfig.flow_assignees) {
+                flowAssigneesConfig = flowAssigneesConfig.flow_assignees;
+            }
+        } catch (e) {
+            console.warn('Could not read hr_escalation_config in tickets list:', e);
+        }
+
+        // Collect all custom assignee IDs from flowAssigneesConfig to resolve names
+        const allCustomIds = new Set<string>();
+        Object.keys(flowAssigneesConfig).forEach(flowType => {
+            const flowObj = flowAssigneesConfig[flowType] || {};
+            Object.keys(flowObj).forEach(lvl => {
+                const arr = flowObj[lvl];
+                if (Array.isArray(arr)) {
+                    arr.forEach((id: string) => allCustomIds.add(id));
+                }
+            });
+        });
+
+        const profileNameMap = new Map<string, string>();
+        if (allCustomIds.size > 0) {
+            const filterOr = Array.from(allCustomIds).map(id => `id.eq.${id},user_id.eq.${id}`).join(',');
+            const { data: profs } = await supabaseAdmin
+                .from('employee_profiles')
+                .select('id, user_id, user:users!employee_profiles_user_id_fkey(full_name, email), first_name, last_name')
+                .or(filterOr);
+
+            (profs || []).forEach(p => {
+                const name = (p.user as any)?.full_name || (p.user as any)?.email || `${p.first_name || ''} ${p.last_name || ''}`.trim();
+                if (name) {
+                    if (p.id) profileNameMap.set(p.id, name);
+                    if (p.user_id) profileNameMap.set(p.user_id, name);
+                }
+            });
+        }
+
+        // Mask identity for anonymous tickets & attach dynamic current_level_owner
         const sanitized = (data || []).map(t => {
+            const tType = t.ticket_type || t.category?.ticket_type || 'grievance';
+            const curLvl = t.current_level || 1;
+            const stepAssignees = flowAssigneesConfig[tType]?.[String(curLvl)] || flowAssigneesConfig[tType]?.[curLvl];
+            let currentLevelOwner = '';
+            if (Array.isArray(stepAssignees) && stepAssignees.length > 0) {
+                const names = stepAssignees.map(id => profileNameMap.get(id)).filter(Boolean);
+                if (names.length > 0) {
+                    currentLevelOwner = names.join(' & ');
+                }
+            }
+
+            const item = {
+                ...t,
+                current_level_owner: currentLevelOwner || t.assigned_to?.full_name || 'Manager / HR'
+            };
+
             if (t.is_anonymous) {
                 return {
-                    ...t,
+                    ...item,
                     raised_by_user_id: null,
                     raised_by: { id: null, email: 'anonymous@hidden.local', raw_user_meta_data: { full_name: 'Anonymous Employee' } },
                     employee_snapshot: { name: 'Anonymous Employee', department: 'Confidential', location: 'Hidden' }
                 };
             }
-            return t;
+            return item;
         });
 
         return NextResponse.json({ success: true, data: sanitized });

@@ -431,6 +431,7 @@ export async function POST(request: Request) {
                     const upsertData: any = {
                         organization_id: orgId,
                         notification_matrix: updatedMatrix,
+                        hr_escalation_config: newEscalationConfig,
                         updated_at: new Date().toISOString()
                     };
 

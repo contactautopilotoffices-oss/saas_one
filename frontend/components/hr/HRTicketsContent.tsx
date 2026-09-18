@@ -55,8 +55,8 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
     const dropdownRef = useRef<HTMLDivElement>(null);
 
     const userRole = (user?.user_metadata?.role || membership?.org_role || membership?.properties?.[0]?.role || 'employee').toLowerCase();
-    const isHrAdmin = ['hr', 'hr_head', 'org_super_admin', 'director'].includes(userRole);
-    const isManager = ['manager', 'reporting_manager', 'soft_service_manager', 'soft_service_supervisor', 'property_admin', 'building_admin', 'mst_manager', 'supervisor'].includes(userRole);
+    const isHrAdmin = ['hr', 'hr_head', 'hr_manager', 'org_admin', 'org_super_admin', 'director'].includes(userRole);
+    const isManager = ['manager', 'reporting_manager', 'soft_service_manager', 'soft_service_supervisor', 'property_admin', 'building_admin', 'mst_manager', 'supervisor', 'ops_super_admin', 'org_admin'].includes(userRole);
 
     useEffect(() => {
         if (!isHrAdmin && (viewMode === 'kanban' || viewMode === 'properties')) {
@@ -323,8 +323,17 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         const tAssignedEmail = (t.assigned_to_email || t.assigned_to?.email || t.assigned_to_user_email || '').toLowerCase().trim();
         const tAssignedCode = (t.assigned_to_code || t.assigned_to?.employee_code || '').toLowerCase().trim();
 
-        if (uid && (tAssignedId === uid || t.assigned_to_user_id === uid)) return true;
-        if (pId && (tAssignedId === pId || tAssignedId.includes(pId))) return true;
+        if (uid) {
+            if (tAssignedId === uid || t.assigned_to_user_id === uid) return true;
+            if (t.manager_user_id === uid || t.employee_snapshot?.manager_user_id === uid) return true;
+            if (Array.isArray(t.assigned_history) && t.assigned_history.includes(uid)) return true;
+            if (Array.isArray(t.employee_snapshot?.assigned_history) && t.employee_snapshot.assigned_history.includes(uid)) return true;
+        }
+        if (pId) {
+            if (tAssignedId === pId || tAssignedId.includes(pId)) return true;
+            if (Array.isArray(t.assigned_history) && t.assigned_history.includes(pId)) return true;
+            if (Array.isArray(t.employee_snapshot?.assigned_history) && t.employee_snapshot.assigned_history.includes(pId)) return true;
+        }
         if (uEmail && (tAssignedEmail === uEmail || tAssignedId.toLowerCase() === uEmail)) return true;
         if (pEmail && (tAssignedEmail === pEmail || tAssignedId.toLowerCase() === pEmail)) return true;
         if (pCode && (tAssignedCode === pCode || tAssignedId.toLowerCase() === pCode)) return true;
@@ -335,6 +344,28 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
     const isDirectlyAssignedToMe = React.useCallback((t: any) => {
         return isTicketAssignedToUser(t, user?.id, user?.email, userEmpProfile);
     }, [user, userEmpProfile, isTicketAssignedToUser]);
+
+    // Checks if the logged-in user is the CURRENT active assignee of this ticket (excludes past escalated levels)
+    const isCurrentlyAssignedToMe = React.useCallback((t: any) => {
+        if (!t || !user) return false;
+        const uid = user.id;
+        const uEmail = (user.email || '').toLowerCase().trim();
+        const pId = userEmpProfile?.id || '';
+        const pCode = (userEmpProfile?.employee_code || '').toLowerCase().trim();
+        const pEmail = (userEmpProfile?.email || '').toLowerCase().trim();
+
+        const tAssignedId = (t.assigned_to_user_id || '').trim();
+        const tAssignedEmail = (t.assigned_to_email || t.assigned_to?.email || t.assigned_to_user_email || '').toLowerCase().trim();
+        const tAssignedCode = (t.assigned_to_code || t.assigned_to?.employee_code || '').toLowerCase().trim();
+
+        if (uid && tAssignedId === uid) return true;
+        if (pId && (tAssignedId === pId || tAssignedId.includes(pId))) return true;
+        if (uEmail && (tAssignedEmail === uEmail || tAssignedId.toLowerCase() === uEmail)) return true;
+        if (pEmail && (tAssignedEmail === pEmail || tAssignedId.toLowerCase() === pEmail)) return true;
+        if (pCode && (tAssignedCode === pCode || tAssignedId.toLowerCase() === pCode)) return true;
+
+        return false;
+    }, [user, userEmpProfile]);
 
     const isGrievance = React.useCallback((t: any) => {
         if (!t) return false;
@@ -369,7 +400,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
     } = useMemo(() => {
         const total = tickets.length;
         const assignedToYou = tickets.filter(t => isDirectlyAssignedToMe(t)).length;
-        const assignedPending = tickets.filter(t => isDirectlyAssignedToMe(t) && !['resolved', 'closed'].includes(t.status)).length;
+        const assignedPending = tickets.filter(t => isCurrentlyAssignedToMe(t) && !['resolved', 'closed'].includes(t.status)).length;
 
         const grievances = tickets.filter(t => isGrievance(t)).length;
         const pendingGrievances = tickets.filter(t => isGrievance(t) && !['resolved', 'closed'].includes(t.status)).length;
@@ -1218,9 +1249,9 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                             {isHrAdmin && (
                                 <button
                                     type="button"
-                                    onClick={() => { setScopeFilter('all'); setSelectedAssigneeFilter('all'); }}
+                                    onClick={() => { setScopeFilter('all'); setSelectedAssigneeFilter('all'); setTicketTypeFilter('all'); setStatusFilter('all'); }}
                                     className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
-                                        scopeFilter === 'all' ? 'bg-[#587e85] text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                                        scopeFilter === 'all' && ticketTypeFilter === 'all' ? 'bg-[#587e85] text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'
                                     }`}
                                 >
                                     <Ticket className="w-3.5 h-3.5" />
@@ -1247,7 +1278,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                                 }`}
                             >
                                 <ShieldCheck className="w-3.5 h-3.5" />
-                                <span>Assigned Directly to Me ({tickets.filter(t => isDirectlyAssignedToMe(t)).length})</span>
+                                <span>Assigned to Me & Involvements ({tickets.filter(t => isDirectlyAssignedToMe(t)).length})</span>
                             </button>
 
                             <button
@@ -1419,7 +1450,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                                                         </div>
                                                     </td>
                                                     <td className="p-4">
-                                                        <span className="px-2.5 py-1 rounded-lg text-[10.5px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                                                        <span className="px-2.5 py-1 rounded-lg text-[10.5px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 whitespace-nowrap">
                                                             {t.category?.category_name || t.category_name || 'Grievance'}
                                                         </span>
                                                     </td>
@@ -1427,27 +1458,35 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                                                         {t.subject}
                                                     </td>
                                                     <td className="p-4">
-                                                        <div className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400">
-                                                            Level {t.current_level}
+                                                        <div className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 flex items-center gap-1">
+                                                            <span>Level {t.current_level}</span>
+                                                            {t.status === 'escalated' && (
+                                                                <span className="text-[9px] font-black px-1.5 py-0.2 rounded bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 border border-purple-200">
+                                                                    Active
+                                                                </span>
+                                                            )}
                                                         </div>
-                                                        <div className="text-[11px] font-medium text-slate-500">
-                                                            {t.assigned_to?.full_name || t.assigned_to_user_id || 'Manager / HR'}
+                                                        <div className="text-[11px] font-medium text-slate-700 dark:text-slate-300 mt-0.5 max-w-[220px]" title={t.current_level_owner || getTicketAssigneeName(t)}>
+                                                            {t.current_level_owner || getTicketAssigneeName(t)}
                                                         </div>
                                                     </td>
                                                     <td className="p-4">
                                                         <SLALiveTimer slaDueAt={t.sla_due_at} status={t.status} />
                                                     </td>
                                                     <td className="p-4">
-                                                        <span className={`px-2.5 py-1 rounded-full text-[10.5px] font-black uppercase tracking-wider ${
+                                                        <span className={`px-2.5 py-1 rounded-full text-[10.5px] font-black uppercase tracking-wider inline-flex items-center gap-1.5 shadow-2xs whitespace-nowrap ${
                                                             t.status === 'closed'
                                                                 ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800'
                                                                 : t.status === 'pending_acknowledgement' || t.status === 'resolved'
                                                                 ? 'bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800'
                                                                 : t.status === 'in_progress'
                                                                 ? 'bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 border border-blue-300 dark:border-blue-800'
-                                                                : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200'
+                                                                : t.status === 'escalated'
+                                                                ? 'bg-purple-100 dark:bg-purple-950/80 text-purple-800 dark:text-purple-200 border border-purple-300 dark:border-purple-700 font-extrabold'
+                                                                : 'bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800'
                                                         }`}>
-                                                            {t.status === 'pending_acknowledgement' ? 'PENDING ACKNOWLEDGEMENT' : t.status.replace(/_/g, ' ')}
+                                                            {t.status === 'escalated' && <span className="w-1.5 h-1.5 rounded-full bg-purple-600 dark:bg-purple-400 animate-pulse" />}
+                                                            {t.status === 'pending_acknowledgement' ? 'PENDING ACKNOWLEDGEMENT' : t.status === 'escalated' ? `ESCALATED (L${t.current_level})` : t.status.replace(/_/g, ' ')}
                                                         </span>
                                                     </td>
                                                     <td className="p-4 text-right">

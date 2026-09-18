@@ -142,13 +142,16 @@ export async function GET(
         try {
             const { data: orgSettings } = await supabaseAdmin
                 .from('organization_settings')
-                .select('hr_escalation_config')
+                .select('hr_escalation_config, notification_matrix')
                 .limit(1)
                 .maybeSingle();
-            if (orgSettings?.hr_escalation_config) {
-                flowAssigneesConfig = orgSettings.hr_escalation_config.flow_assignees || {};
-                flowLevelsConfig = orgSettings.hr_escalation_config.flow_levels || {};
+
+            const configObj = orgSettings?.notification_matrix?.hr_escalation_config || orgSettings?.hr_escalation_config || {};
+            flowAssigneesConfig = configObj.flow_assignees || {};
+            while (flowAssigneesConfig && flowAssigneesConfig.flow_assignees) {
+                flowAssigneesConfig = flowAssigneesConfig.flow_assignees;
             }
+            flowLevelsConfig = configObj.flow_levels || {};
         } catch (e) {
             console.warn('Could not read hr_escalation_config in GET ticket detail:', e);
         }
@@ -162,8 +165,9 @@ export async function GET(
             let assigneeName = '';
             const stepAssignees = flowAssigneesConfig[tType]?.[String(i)] || flowAssigneesConfig[tType]?.[i];
             
+            // 1. Dynamic check: Are specific user(s) assigned in Admin Config for this level?
             if (Array.isArray(stepAssignees) && stepAssignees.length > 0) {
-                const filterOr = stepAssignees.map(id => `id.eq.${id},user_id.eq.${id}`).join(',');
+                const filterOr = stepAssignees.map((id: string) => `id.eq.${id},user_id.eq.${id}`).join(',');
                 const { data: targetProfs } = await supabaseAdmin
                     .from('employee_profiles')
                     .select('user:users!employee_profiles_user_id_fkey(full_name, email), first_name, last_name')
@@ -179,15 +183,41 @@ export async function GET(
                 }
             }
 
+            // 2. If not explicitly assigned, check the designated ownerType from Admin Config
             if (!assigneeName) {
-                if (i === 1) assigneeName = l1Name;
-                else if (i === 2) assigneeName = l2Name;
-                else if (i === 3) assigneeName = l3Name;
-                else if (i === 4) assigneeName = l4Name;
-                else assigneeName = `Level ${i} Authority`;
+                const currentLevelMeta = (customFlowLevels || []).find((l: any) => l.level === i);
+                const ownerType = currentLevelMeta?.ownerType;
+
+                if (ownerType === 'reporting_manager' || i === 1) {
+                    assigneeName = l1Name;
+                } else if (ownerType === 'hr' || (!ownerType && i === 2)) {
+                    const { data: hrMgrs } = await supabaseAdmin
+                        .from('employee_profiles')
+                        .select('user:users!employee_profiles_user_id_fkey(full_name, email), first_name, last_name')
+                        .or('designation.eq.Designated HR Manager,is_hr_manager_authority.eq.true');
+                    const names = (hrMgrs || []).map(p => (p.user as any)?.full_name || (p.user as any)?.email || `${p.first_name || ''} ${p.last_name || ''}`.trim()).filter(Boolean);
+                    assigneeName = names.length > 0 ? names.join(' & ') : l2Name;
+                } else if (ownerType === 'hr_head' || (!ownerType && i === 3)) {
+                    const { data: hrHeads } = await supabaseAdmin
+                        .from('employee_profiles')
+                        .select('user:users!employee_profiles_user_id_fkey(full_name, email), first_name, last_name')
+                        .eq('is_hr_authority', true);
+                    const names = (hrHeads || []).map(p => (p.user as any)?.full_name || (p.user as any)?.email || `${p.first_name || ''} ${p.last_name || ''}`.trim()).filter(Boolean);
+                    assigneeName = names.length > 0 ? names.join(' & ') : l3Name;
+                } else if (ownerType === 'director' || ownerType === 'super_admin' || (!ownerType && i === 4)) {
+                    const { data: dirs } = await supabaseAdmin
+                        .from('employee_profiles')
+                        .select('user:users!employee_profiles_user_id_fkey(full_name, email), first_name, last_name')
+                        .eq('is_director_authority', true);
+                    const names = (dirs || []).map(p => (p.user as any)?.full_name || (p.user as any)?.email || `${p.first_name || ''} ${p.last_name || ''}`.trim()).filter(Boolean);
+                    assigneeName = names.length > 0 ? names.join(' & ') : l4Name;
+                } else {
+                    assigneeName = `Level ${i} Authority`;
+                }
             }
 
-            if (ticket.current_level === i && ticket.assigned_to?.full_name) {
+            // 3. Fallback to ticket.assigned_to ONLY if no assignee was resolved from admin config
+            if (!assigneeName && ticket.current_level === i && ticket.assigned_to?.full_name) {
                 assigneeName = ticket.assigned_to.full_name;
             }
 
@@ -199,6 +229,12 @@ export async function GET(
         }
 
         ticket.escalation_flow = escalationFlow;
+        ticket.level_owners = {
+            l1: escalationFlow[0]?.assignee || l1Name,
+            l2: escalationFlow[1]?.assignee || l2Name,
+            l3: escalationFlow[2]?.assignee || l3Name,
+            l4: escalationFlow[3]?.assignee || l4Name
+        };
 
         return NextResponse.json({ success: true, data: ticket });
     } catch (err: any) {
@@ -225,10 +261,20 @@ export async function PATCH(
             return NextResponse.json({ success: false, error: 'Ticket not found' }, { status: 404 });
         }
 
+        const cleanUuid = (val: any): string | null => {
+            if (!val || typeof val !== 'string') return null;
+            const trimmed = val.trim();
+            const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed);
+            return isUuid ? trimmed : null;
+        };
+
+        const safeActorId = cleanUuid(actor_user_id) || cleanUuid(resolved_by_user_id);
+        const safeResolvedById = cleanUuid(resolved_by_user_id) || safeActorId;
+
         const updates: any = { updated_at: new Date().toISOString() };
         if (status) updates.status = status;
         if (priority) updates.priority = priority;
-        if (assigned_to_user_id) updates.assigned_to_user_id = assigned_to_user_id;
+        if (cleanUuid(assigned_to_user_id)) updates.assigned_to_user_id = cleanUuid(assigned_to_user_id);
         if (resolution_note !== undefined) updates.resolution_note = resolution_note;
 
         const currentSnapshot = existing.employee_snapshot || {};
@@ -236,15 +282,15 @@ export async function PATCH(
         if (status === 'resolved' || status === 'pending_acknowledgement' || action === 'resolve') {
             updates.status = 'pending_acknowledgement';
             updates.resolved_at = new Date().toISOString();
-            if (resolved_by_user_id || actor_user_id) {
-                updates.resolved_by_user_id = resolved_by_user_id || actor_user_id;
+            if (safeResolvedById) {
+                updates.resolved_by_user_id = safeResolvedById;
             }
         }
         if (status === 'closed' || action === 'acknowledge') {
             updates.status = 'closed';
             updates.closed_at = new Date().toISOString();
             currentSnapshot.acknowledged_at = new Date().toISOString();
-            currentSnapshot.acknowledged_by_user_id = actor_user_id || body.acknowledged_by_user_id || null;
+            currentSnapshot.acknowledged_by_user_id = safeActorId || cleanUuid(body.acknowledged_by_user_id);
             currentSnapshot.acknowledgement_note = acknowledgement_note || 'Confirmed & Acknowledged by Submitter';
             updates.employee_snapshot = currentSnapshot;
         }
@@ -343,7 +389,7 @@ export async function PATCH(
         let auditAction = 'STATUS_UPDATE';
         if (escalate) {
             auditAction = `ESCALATED_L${updates.current_level}`;
-        } else if (action === 'acknowledge' || (status === 'closed' && actor_user_id === existing.raised_by_user_id)) {
+        } else if (action === 'acknowledge' || (status === 'closed' && safeActorId === existing.raised_by_user_id)) {
             auditAction = 'ACKNOWLEDGED_BY_CREATOR';
         } else if (status === 'resolved' || status === 'closed') {
             auditAction = `RESOLVED_L${existing.current_level || 1}`;
@@ -353,7 +399,7 @@ export async function PATCH(
 
         await supabaseAdmin.from('hr_ticket_audit_logs').insert({
             ticket_id: id,
-            actor_user_id: actor_user_id || resolved_by_user_id || null,
+            actor_user_id: safeActorId,
             action: auditAction,
             old_values: { status: existing.status, level: existing.current_level, assigned_to: existing.assigned_to_user_id },
             new_values: updates

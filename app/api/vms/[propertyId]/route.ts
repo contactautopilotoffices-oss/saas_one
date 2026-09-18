@@ -49,8 +49,9 @@ export async function POST(
         const supabase = await createClient();
         const { data: { user } } = await supabase.auth.getUser();
 
-        const rawHost = (body.whom_to_meet || '').trim();
-        const isGeneralOrNoHost = !body.host_id && !body.whom_to_meet_uid && (!rawHost || rawHost.toLowerCase() === 'general' || rawHost.toLowerCase() === 'none' || rawHost.toLowerCase() === 'n/a');
+        const rawHost = (body.whom_to_meet || '').trim().toLowerCase();
+        const generalKeywords = ['general', 'general visit', 'general visit ', 'none', 'n/a', 'na', 'delivery', 'courier', 'maintenance', 'facility', ''];
+        const isGeneralOrNoHost = !body.host_id && !body.whom_to_meet_uid && (generalKeywords.includes(rawHost) || !rawHost);
         const defaultApprovalStatus = isGeneralOrNoHost ? 'approved' : 'pending';
 
         // Insert visitor log

@@ -47,22 +47,36 @@ const VMSOrgVisitorDashboard: React.FC<VMSOrgVisitorDashboardProps> = ({ orgId }
 
     const isUserHost = (visitor: VisitorLog) => {
         if (!user) return false;
-        const currentUserId = user.id;
-        const currentUserEmail = (user.email || '').toLowerCase();
-        const currentUserName = (user.user_metadata?.full_name || '').toLowerCase();
+        const currentUserId = String(user.id);
+        const currentUserEmail = (user.email || '').trim().toLowerCase();
+        const currentUserName = (user.user_metadata?.full_name || '').trim().toLowerCase();
 
-        if ((visitor as any).host_id && String((visitor as any).host_id) === String(currentUserId)) return true;
-        if ((visitor as any).whom_to_meet_uid && String((visitor as any).whom_to_meet_uid) === String(currentUserId)) return true;
-        if (visitor.whom_to_meet) {
-            const wtm = visitor.whom_to_meet.toLowerCase();
+        // 1. Direct host ID or UID match (Highest precedence - exact host)
+        if ((visitor as any).host_id && String((visitor as any).host_id) === currentUserId) return true;
+        if ((visitor as any).whom_to_meet_uid && String((visitor as any).whom_to_meet_uid) === currentUserId) return true;
+
+        // 2. String match on host email or full name (ONLY if non-empty and specific host)
+        const wtm = (visitor.whom_to_meet || '').trim().toLowerCase();
+        const isGeneralVisit = !wtm || ['general', 'general visit', 'none', 'n/a', 'na', 'delivery', 'courier'].includes(wtm);
+
+        if (!isGeneralVisit) {
             if (currentUserEmail && wtm.includes(currentUserEmail)) return true;
-            if (currentUserName && (wtm === currentUserName || wtm.includes(currentUserName))) return true;
+            if (currentUserName && currentUserName.length >= 3 && (wtm === currentUserName || wtm.includes(currentUserName))) return true;
         }
-        if (!(visitor as any).host_id && !(visitor as any).whom_to_meet_uid) {
-            const userRole = (membership?.org_role || '').toLowerCase();
-            const isElevated = ['ops_super_admin', 'org_super_admin', 'master_admin', 'org_admin', 'property_admin', 'security'].includes(userRole);
-            if (isElevated) return true;
+
+        // 3. Elevated role check:
+        // Property/Org Admins have override permissions for approval
+        const userRole = (membership?.org_role || '').toLowerCase();
+        const isElevatedAdmin = ['ops_super_admin', 'org_super_admin', 'master_admin', 'org_admin', 'property_admin'].includes(userRole);
+
+        if (!(visitor as any).host_id && !(visitor as any).whom_to_meet_uid && isGeneralVisit) {
+            // General/Untagged visits can be approved by security or property admin
+            if (isElevatedAdmin || userRole === 'security') return true;
+        } else {
+            // Specific host requested: only elevated Property/Org Admin can override if not the tagged user
+            if (isElevatedAdmin) return true;
         }
+
         return false;
     };
     const [stats, setStats] = useState({ total_visitors: 0, checked_in: 0, checked_out: 0 });
@@ -453,21 +467,21 @@ const VMSOrgVisitorDashboard: React.FC<VMSOrgVisitorDashboardProps> = ({ orgId }
                                     <td className="px-5 py-4">
                                         <div className="flex flex-col gap-1 items-start">
                                             <span className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${
-                                                visitor.approval_status === 'pending'
+                                                visitor.status === 'checked_out'
+                                                    ? 'bg-slate-100 text-slate-600 border border-slate-200'
+                                                    : visitor.approval_status === 'pending'
                                                     ? 'bg-amber-50 text-amber-700 border border-amber-200'
                                                     : visitor.approval_status === 'rejected'
                                                     ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                                                    : visitor.status === 'checked_in'
-                                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                                    : 'bg-slate-100 text-slate-600'
+                                                    : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                                             }`}>
-                                                {visitor.approval_status === 'pending'
+                                                {visitor.status === 'checked_out'
+                                                    ? 'Checked Out'
+                                                    : visitor.approval_status === 'pending'
                                                     ? 'Pending Approval'
                                                     : visitor.approval_status === 'rejected'
                                                     ? 'Rejected'
-                                                    : visitor.status === 'checked_in'
-                                                    ? 'On Premise'
-                                                    : 'Checked Out'}
+                                                    : 'On Premise'}
                                             </span>
                                         </div>
                                     </td>
@@ -537,15 +551,15 @@ const VMSOrgVisitorDashboard: React.FC<VMSOrgVisitorDashboardProps> = ({ orgId }
                                     </div>
                                 </div>
                                 <span className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${
-                                    visitor.approval_status === 'pending'
+                                    visitor.status === 'checked_out'
+                                        ? 'bg-slate-100 text-slate-600'
+                                        : visitor.approval_status === 'pending'
                                         ? 'bg-amber-50 text-amber-700 border border-amber-200'
                                         : visitor.approval_status === 'rejected'
                                         ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                                        : visitor.status === 'checked_in'
-                                        ? 'bg-emerald-50 text-emerald-700'
-                                        : 'bg-slate-100 text-slate-600'
+                                        : 'bg-emerald-50 text-emerald-700'
                                 }`}>
-                                    {visitor.approval_status === 'pending' ? 'Pending' : visitor.approval_status === 'rejected' ? 'Rejected' : visitor.status === 'checked_in' ? 'In' : 'Out'}
+                                    {visitor.status === 'checked_out' ? 'Out' : visitor.approval_status === 'pending' ? 'Pending' : visitor.approval_status === 'rejected' ? 'Rejected' : 'In'}
                                 </span>
                             </div>
 
@@ -706,7 +720,7 @@ const VMSOrgVisitorDashboard: React.FC<VMSOrgVisitorDashboardProps> = ({ orgId }
 
                                 {selectedVisitor.status === 'checked_in' && (
                                     <div className="space-y-3 pt-2">
-                                        {selectedVisitor.approval_status === 'pending' && (
+                                        {selectedVisitor.approval_status === 'pending' && isUserHost(selectedVisitor) && (
                                             <div className="grid grid-cols-2 gap-3">
                                                 <button
                                                     onClick={() => handleApproveEntry(selectedVisitor, 'approved')}
