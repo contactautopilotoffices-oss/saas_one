@@ -249,25 +249,55 @@ const MODULES_META: ModuleMeta[] = [
         color: 'text-indigo-600 bg-indigo-50 border-indigo-100',
         events: [
             {
-                key: 'hr_ticket_created',
-                name: 'New HR Request / Grievance Raised',
-                description: 'Sent immediately to designated HR admins and managers when an employee files a query or workplace grievance.',
-                hasContextual: { assignee: true, requester: true }
-            },
-            {
-                key: 'hr_ticket_assigned',
-                name: 'Grievance / Request Assigned to Manager or HR',
-                description: 'Sent to the assigned L1 Manager or L2 HR Admin with grievance details and target resolution timeline.',
-                hasContextual: { assignee: true }
-            },
-            {
-                key: 'hr_ticket_status_updated',
-                name: 'HR Request / Grievance Status Update',
-                description: 'Sent to the employee when their HR request or grievance status is updated (In Progress, Awaiting Info, Resolved).',
+                key: 'hr_ticket_created_submitter',
+                name: 'Ticket Submitted (To Submitter)',
+                description: 'Sent immediately to the submitter confirming their HR ticket creation and assigned handler.',
                 hasContextual: { requester: true }
             },
             {
-                key: 'hr_ticket_sla_reminder',
+                key: 'hr_ticket_assigned_handler',
+                name: 'New Ticket Assignment (To Assigned Manager / Handler)',
+                description: 'Sent to the assigned L1 Manager or L2 HR Handler with ticket details and SLA window.',
+                hasContextual: { assignee: true }
+            },
+            {
+                key: 'hr_ticket_escalated_handler',
+                name: 'Escalation Notification (To Higher Level Authority)',
+                description: 'Sent to Level 2/3/4 authorities when a ticket escalates automatically due to SLA timeout.',
+                hasContextual: { assignee: true, approver: true }
+            },
+            {
+                key: 'hr_ticket_status_updated',
+                name: 'Ticket Status Update (To Submitter)',
+                description: 'Sent to the employee when their ticket status changes (In Progress, Awaiting Info, Resolved, Closed).',
+                hasContextual: { requester: true }
+            },
+            {
+                key: 'hr_ticket_comment_added',
+                name: 'New Reply / Public Comment Added',
+                description: 'Sent when a new reply or comment is posted on the HR ticket.',
+                hasContextual: { assignee: true, requester: true }
+            },
+            {
+                key: 'hr_ticket_resolved_ack',
+                name: 'Ticket Resolved & Acknowledgment Required',
+                description: 'Sent to the submitter when ticket is marked as resolved, requesting acknowledgment & closure.',
+                hasContextual: { requester: true }
+            },
+            {
+                key: 'hr_ticket_acknowledged_closed',
+                name: 'Ticket Acknowledged & Closed Alert',
+                description: 'Sent to assigned handler and HR Admin when employee clicks Acknowledge & Close.',
+                hasContextual: { assignee: true, approver: true }
+            },
+            {
+                key: 'hr_ticket_reportee_alert',
+                name: 'Department Reportee Ticket Alert (To Manager)',
+                description: 'Sent to reporting manager when a ticket is created or assigned to their direct reportee.',
+                hasContextual: { approver: true }
+            },
+            {
+                key: 'hr_ticket_sla_warning',
                 name: 'HR Resolution SLA Deadline Warning',
                 description: 'Automated alert sent before an HR request or workplace grievance resolution SLA deadline breaches.',
                 isReminder: true,

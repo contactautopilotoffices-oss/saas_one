@@ -12,14 +12,15 @@ export async function GET(request: Request) {
         const queryStr = searchParams.get('q');
         const orgId = searchParams.get('organization_id') || searchParams.get('orgId');
 
-        // 1. Fetch profiles from employee_profiles table
+        // 1. Fetch profiles from employee_profiles table (active profiles only)
         let query = supabaseAdmin
             .from('employee_profiles')
             .select(`
                 *,
-                user:users!user_id(id, email, full_name, phone),
+                user:users!user_id(id, email, full_name, phone, deleted_at),
                 reporting_manager:users!reporting_manager_id(id, email, full_name, phone)
             `)
+            .or('is_active.eq.true,is_active.is.null')
             .order('employee_code', { ascending: true });
 
         if (orgId) {
@@ -32,25 +33,45 @@ export async function GET(request: Request) {
         const { data: dbProfiles, error: profileErr } = await query;
         if (profileErr) console.warn('Error querying employee_profiles:', profileErr);
 
-        let profiles = dbProfiles || [];
+        let profiles = (dbProfiles || []).filter(p => {
+            if (p.is_active === false) return false;
+            if (p.user && p.user.deleted_at) return false;
+            return true;
+        });
 
-        // 2. Fetch memberships to identify tenant, super_tenant, and vendor users to exclude from HR
-        const EXCLUDED_HR_ROLES = new Set(['tenant', 'super_tenant', 'tenant_admin', 'vendor', 'maintenance_vendor']);
+        // 2. Fetch memberships to identify tenant and vendor users to exclude from HR
+        const isTenantOrVendorRole = (role?: string | null): boolean => {
+            if (!role) return false;
+            const r = role.toLowerCase().trim();
+            return (
+                r.includes('tenant') ||
+                r.includes('vendor') ||
+                ['tenant', 'super_tenant', 'tenant_admin', 'vendor', 'maintenance_vendor', 'food_vendor', 'pantry_vendor', 'cafeteria_vendor', 'external_vendor'].includes(r)
+            );
+        };
 
         const [orgMemsRes, propMemsRes, appUsersRes] = await Promise.all([
             supabaseAdmin.from('organization_memberships').select('user_id, role'),
             supabaseAdmin.from('property_memberships').select('user_id, role'),
-            supabaseAdmin.from('users').select('id, email, phone, full_name')
+            supabaseAdmin.from('users').select('id, email, phone, full_name, deleted_at').is('deleted_at', null)
         ]);
 
         const excludedUserIds = new Set<string>();
-        (orgMemsRes.data || []).forEach(m => { if (EXCLUDED_HR_ROLES.has(m.role)) excludedUserIds.add(m.user_id); });
-        (propMemsRes.data || []).forEach(m => { if (EXCLUDED_HR_ROLES.has(m.role)) excludedUserIds.add(m.user_id); });
+
+        (orgMemsRes.data || []).forEach(m => {
+            if (isTenantOrVendorRole(m.role)) excludedUserIds.add(m.user_id);
+        });
+        (propMemsRes.data || []).forEach(m => {
+            if (isTenantOrVendorRole(m.role)) excludedUserIds.add(m.user_id);
+        });
 
         // Filter out employee profiles that are linked to tenant or vendor user accounts
         profiles = profiles.filter(p => !p.user_id || !excludedUserIds.has(p.user_id));
 
-        const appUsers = (appUsersRes.data || []).filter(u => !excludedUserIds.has(u.id));
+        // Include any active user who is not deleted and not in excluded tenant/vendor roles
+        const appUsers = (appUsersRes.data || []).filter(u => 
+            !u.deleted_at && !excludedUserIds.has(u.id)
+        );
 
         if (appUsers.length > 0 && profiles.length > 0) {
             const updatesToPersist: { id: string; user_id: string }[] = [];
@@ -93,49 +114,45 @@ export async function GET(request: Request) {
 
         // Build role lookup map for linked users
         const userRoleMap = new Map<string, string>();
-        (orgMemsRes.data || []).forEach(m => userRoleMap.set(m.user_id, m.role));
-        (propMemsRes.data || []).forEach(m => { if (!userRoleMap.has(m.user_id)) userRoleMap.set(m.user_id, m.role); });
+        (orgMemsRes.data || []).forEach(m => {
+            if (m.role && m.role !== 'staff') userRoleMap.set(m.user_id, m.role);
+            else if (!userRoleMap.has(m.user_id)) userRoleMap.set(m.user_id, m.role);
+        });
+        (propMemsRes.data || []).forEach(m => {
+            if (m.role && m.role !== 'staff') userRoleMap.set(m.user_id, m.role);
+            else if (!userRoleMap.has(m.user_id)) userRoleMap.set(m.user_id, m.role);
+        });
 
         const existingUserIdsInProfiles = new Set(profiles.filter(p => p.user_id).map(p => p.user_id));
         const existingEmailsInProfiles = new Set(profiles.filter(p => p.email).map(p => (p.email || '').toLowerCase().trim()));
 
         let combined = profiles.map(p => {
-            const role = p.user_id ? userRoleMap.get(p.user_id) || (p.is_hr_authority ? 'hr' : 'staff') : null;
+            let role = p.user_id ? userRoleMap.get(p.user_id) || null : null;
+            if (p.user?.is_master_admin) {
+                role = 'master_admin';
+            }
+            
+            // If linked user role is staff or unassigned, derive actual role from HR flags or designation
+            if (p.user_id && (!role || role === 'staff')) {
+                const desigLower = (p.designation || '').toLowerCase();
+                if (p.is_director_authority || desigLower.includes('director') || desigLower === 'md' || desigLower === 'ceo') role = 'director';
+                else if (p.is_hr_authority || p.is_hr_manager_authority) role = 'hr';
+                else if (desigLower.includes('general manager') || desigLower.includes('senior manager') || desigLower.includes('manager') || desigLower.includes('vp') || desigLower.includes('lead')) role = 'manager';
+                else if (p.designation) role = p.designation.toLowerCase().replace(/\s+/g, '_');
+                else role = 'staff';
+            }
+
+            const appEmail = p.user?.email || p.email || null;
+            const appPhone = p.user?.phone || p.phone || null;
+
             return {
                 ...p,
-                app_role: role,
-                app_email: p.user?.email || null,
-                app_phone: p.user?.phone || null,
+                email: p.email || appEmail,
+                app_role: role || (p.user_id ? 'app_user' : null),
+                app_email: appEmail,
+                app_phone: appPhone,
                 is_app_linked: Boolean(p.user_id)
             };
-        });
-
-        // In-memory merge app users that have no employee_profiles record (without inserting into DB)
-        appUsers.forEach(u => {
-            if (existingUserIdsInProfiles.has(u.id)) return;
-            if (u.email && existingEmailsInProfiles.has(u.email.toLowerCase().trim())) return;
-
-            const role = userRoleMap.get(u.id) || 'staff';
-            const roleLabel = role.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-            const nameParts = (u.full_name || '').trim().split(' ');
-
-            combined.push({
-                id: u.id,
-                user_id: u.id,
-                employee_code: u.email ? u.email.split('@')[0].toUpperCase() : 'APP-USER',
-                first_name: nameParts[0] || 'User',
-                last_name: nameParts.slice(1).join(' ') || '',
-                full_name: u.full_name || u.email || 'App User',
-                email: u.email || null,
-                phone: u.phone || null,
-                department: role.includes('hr') ? 'Human Resources' : (role.includes('admin') ? 'Administration' : 'App User'),
-                designation: roleLabel,
-                app_role: role,
-                app_email: u.email || null,
-                app_phone: u.phone || null,
-                is_app_linked: true,
-                is_virtual_user: true
-            });
         });
 
         // Apply in-memory filtering for query search if specified
@@ -213,16 +230,37 @@ export async function PATCH(request: Request) {
         if (reporting_manager_id) {
             const { data: mgrProfile } = await supabaseAdmin
                 .from('employee_profiles')
-                .select('employee_code, first_name, last_name')
+                .select('employee_code, first_name, last_name, user_id')
                 .or(`user_id.eq.${reporting_manager_id},id.eq.${reporting_manager_id}`)
                 .maybeSingle();
 
             if (mgrProfile) {
                 newMgrCode = `${mgrProfile.first_name} ${mgrProfile.last_name}`;
             } else {
-                const { data: mgrUser } = await supabaseAdmin.from('users').select('full_name, email').eq('id', reporting_manager_id).maybeSingle();
+                const { data: mgrUser } = await supabaseAdmin.from('users').select('id, full_name, email, phone').eq('id', reporting_manager_id).maybeSingle();
                 if (mgrUser) {
                     newMgrCode = mgrUser.full_name || mgrUser.email;
+                    // Auto-create manager's employee_profiles record if missing
+                    const fullName = mgrUser.full_name || mgrUser.email.split('@')[0];
+                    const nameParts = fullName.split(' ');
+                    try {
+                        await supabaseAdmin
+                            .from('employee_profiles')
+                            .upsert({
+                                user_id: mgrUser.id,
+                                organization_id: '211e1330-ad83-446d-941f-dcea48396798',
+                                employee_code: `E${mgrUser.id.substring(0, 4).toUpperCase()}`,
+                                first_name: nameParts[0] || 'Manager',
+                                last_name: nameParts.slice(1).join(' ') || '',
+                                department: 'Operations',
+                                designation: 'Manager',
+                                email: mgrUser.email,
+                                phone: mgrUser.phone || null,
+                                is_active: true
+                            }, { onConflict: 'user_id' });
+                    } catch (err: any) {
+                        console.warn('Auto-create manager profile failed:', err);
+                    }
                 }
             }
         }

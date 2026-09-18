@@ -120,10 +120,45 @@ const OrgAdminDashboard = () => {
     const { user, signOut, membership } = useAuth();
     const params = useParams();
     const router = useRouter();
+    const searchParams = useSearchParams();
     const orgSlugOrId = params?.orgId as string;
 
-    // State
-    const [activeTab, setActiveTab] = useState<Tab>('overview');
+    // Active Tab with URL searchParams & localStorage persistence
+    const [activeTab, setActiveTabRaw] = useState<Tab>(() => {
+        if (typeof window !== 'undefined') {
+            const urlParams = new URLSearchParams(window.location.search);
+            const tabParam = urlParams.get('tab');
+            if (tabParam) return tabParam as Tab;
+            const savedKey = orgSlugOrId ? `active_tab_${orgSlugOrId}` : 'active_tab_org';
+            const saved = localStorage.getItem(savedKey);
+            if (saved) return saved as Tab;
+        }
+        return 'overview';
+    });
+
+    const setActiveTab = useCallback((newTab: Tab | ((prev: Tab) => Tab)) => {
+        setActiveTabRaw((prevTab) => {
+            const resolvedTab = typeof newTab === 'function' ? newTab(prevTab) : newTab;
+            if (typeof window !== 'undefined') {
+                try {
+                    const savedKey = orgSlugOrId ? `active_tab_${orgSlugOrId}` : 'active_tab_org';
+                    localStorage.setItem(savedKey, resolvedTab);
+                    const url = new URL(window.location.href);
+                    url.searchParams.set('tab', resolvedTab);
+                    window.history.replaceState(null, '', url.toString());
+                } catch (e) {}
+            }
+            return resolvedTab;
+        });
+    }, [orgSlugOrId]);
+
+    useEffect(() => {
+        const tabParam = searchParams.get('tab');
+        if (tabParam) {
+            setActiveTabRaw(tabParam as Tab);
+        }
+    }, [searchParams]);
+
     const [org, setOrg] = useState<Organization | null>(null);
     const [properties, setProperties] = useState<Property[]>([]);
     const [orgUsers, setOrgUsers] = useState<OrgUser[]>([]);
@@ -219,8 +254,6 @@ const OrgAdminDashboard = () => {
     const [upcomingPpmTasks, setUpcomingPpmTasks] = useState<any[]>([]);
     const [isSummariesLoading, setIsSummariesLoading] = useState(false);
     const { getCachedData, setCachedData, invalidateCache } = useDataCache();
-    
-    const searchParams = useSearchParams();
 
     // Restore showRequestsList, filter, and selectedPropertyId from URL on mount/back navigation
     // Restore showRequestsList, filter, and selectedPropertyId from URL on mount/back navigation

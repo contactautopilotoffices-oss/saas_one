@@ -55,7 +55,7 @@ export default function SLALiveTimer({ slaDueAt, status, compact = false }: SLAL
     }
 
     if (!slaDueAt || !timeLeft) {
-        return <span className="text-[10px] text-slate-400 italic">No SLA set</span>;
+        return <span className="text-[10px] text-slate-400 italic">No TAT set</span>;
     }
 
     const { days, hours, minutes, seconds, isOverdue } = timeLeft;

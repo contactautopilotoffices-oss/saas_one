@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { NotificationService } from '@/backend/services/NotificationService';
+import { runAutoSlaEscalation } from '@/backend/lib/hr/slaEscalation';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -9,7 +10,11 @@ const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
 export async function GET(request: Request) {
     try {
+        // Run SLA breach auto-escalation check in real-time on ticket fetch
+        await runAutoSlaEscalation().catch(err => console.error('[HR SLA Auto Check Error]:', err));
+
         const { searchParams } = new URL(request.url);
+
         const orgId = searchParams.get('orgId');
         const userId = searchParams.get('userId');
         const role = searchParams.get('role') || 'employee';
@@ -48,30 +53,47 @@ export async function GET(request: Request) {
 
         // Granular Role Scoping
         const normalizedRole = (role || '').toLowerCase();
+        const hrRoles = ['hr', 'hr_head', 'hr_manager', 'hr_ops', 'org_super_admin', 'ops_super_admin', 'master_admin', 'org_admin'];
         
         let isHrAuthorityUser = false;
         if (userId) {
-            const { data: hrCheck } = await supabaseAdmin
+            // Check employee_profiles for HR authority flags (avoid .maybeSingle() error when multiple rows exist)
+            const { data: hrEmps } = await supabaseAdmin
                 .from('employee_profiles')
                 .select('is_hr_authority, is_hr_manager_authority')
-                .eq('user_id', userId)
-                .maybeSingle();
-            if (hrCheck?.is_hr_authority || hrCheck?.is_hr_manager_authority) {
+                .eq('user_id', userId);
+
+            if (hrEmps && hrEmps.some(e => e.is_hr_authority || e.is_hr_manager_authority)) {
                 isHrAuthorityUser = true;
+            }
+
+            // Check organization_memberships for App roles (hr, hr_head, org_super_admin, etc.)
+            if (!isHrAuthorityUser) {
+                const { data: mems } = await supabaseAdmin
+                    .from('organization_memberships')
+                    .select('role')
+                    .eq('user_id', userId);
+
+                if (mems && mems.some(m => hrRoles.includes((m.role || '').toLowerCase()))) {
+                    isHrAuthorityUser = true;
+                }
             }
         }
 
-        if (isHrAuthorityUser || ['hr', 'hr_head', 'hr_manager', 'hr_ops', 'org_super_admin', 'ops_super_admin', 'master_admin', 'org_admin'].includes(normalizedRole)) {
+        if (isHrAuthorityUser || hrRoles.includes(normalizedRole)) {
             query = query.or('is_confidential.eq.false,is_confidential.is.null');
         } else if (normalizedRole === 'director') {
             query = query.or('is_confidential.eq.true,is_anonymous.eq.true,current_level.eq.4');
         } else if (userId) {
-            // Dynamically check if user is a reporting manager for any employees
-            const { data: reportees } = await supabaseAdmin
+            // Fetch manager's employee profile (if any) to resolve profile ID & employee code
+            const { data: mgrProfile } = await supabaseAdmin
                 .from('employee_profiles')
-                .select('user_id')
-                .eq('reporting_manager_id', userId)
-                .not('user_id', 'is', null);
+                .select('id, employee_code, user_id')
+                .eq('user_id', userId)
+                .maybeSingle();
+
+            const mgrProfId = mgrProfile?.id;
+            const mgrCode = mgrProfile?.employee_code;
 
             // Fetch user profile for name matching in level_owners / snapshots
             const { data: uProfile } = await supabaseAdmin
@@ -80,25 +102,54 @@ export async function GET(request: Request) {
                 .eq('id', userId)
                 .maybeSingle();
 
-            // Fetch any tickets where this user was involved via audit logs (e.g. escalated away)
+            // Dynamically check if user is a reporting manager for any employees (matching user_id, profile id, or manager name/code)
+            const reporteeConditions: string[] = [
+                `reporting_manager_id.eq.${userId}`
+            ];
+            if (mgrProfId) {
+                reporteeConditions.push(`reporting_manager_id.eq.${mgrProfId}`);
+            }
+            if (uProfile?.full_name && uProfile.full_name.trim()) {
+                const cleanName = uProfile.full_name.trim();
+                reporteeConditions.push(`reporting_manager_code.ilike.*${cleanName}*`);
+            }
+            if (mgrCode) {
+                reporteeConditions.push(`reporting_manager_code.ilike.*${mgrCode}*`);
+            }
+
+            const { data: reportees } = await supabaseAdmin
+                .from('employee_profiles')
+                .select('user_id')
+                .or(reporteeConditions.join(','))
+                .not('user_id', 'is', null);
+
+            // Fetch any tickets where this user was involved via audit logs (actor or previous/new assigned manager)
             const { data: auditLogs } = await supabaseAdmin
                 .from('hr_ticket_audit_logs')
                 .select('ticket_id')
-                .or(`actor_user_id.eq.${userId}`);
+                .or(`actor_user_id.eq.${userId},old_values->>assigned_to.eq.${userId},new_values->>assigned_to.eq.${userId}`);
 
             const reporteeUserIds = (reportees || []).map(r => r.user_id).filter(Boolean);
             const auditTicketIds = (auditLogs || []).map(a => a.ticket_id).filter(Boolean);
             const allowedUserIds = Array.from(new Set([userId, ...reporteeUserIds]));
 
-            const filterConditions = [
+            const filterConditions: string[] = [
                 `assigned_to_user_id.eq.${userId}`,
-                `raised_by_user_id.in.(${allowedUserIds.join(',')})`
+                `manager_user_id.eq.${userId}`,
+                `assigned_history.cs.["${userId}"]`,
+                `employee_snapshot->>manager_user_id.eq.${userId}`
             ];
+            if (allowedUserIds.length > 0) {
+                filterConditions.push(`raised_by_user_id.in.(${allowedUserIds.join(',')})`);
+            }
             if (uProfile?.full_name && uProfile.full_name.trim()) {
                 const cleanName = uProfile.full_name.trim();
-                filterConditions.push(`employee_snapshot->>manager_code.ilike."*${cleanName}*"`);
-                filterConditions.push(`employee_snapshot->>manager_name.ilike."*${cleanName}*"`);
-                filterConditions.push(`employee_snapshot->>reporting_manager_name.ilike."*${cleanName}*"`);
+                filterConditions.push(`employee_snapshot->>manager_code.ilike.*${cleanName}*`);
+                filterConditions.push(`employee_snapshot->>manager_name.ilike.*${cleanName}*`);
+                filterConditions.push(`employee_snapshot->>reporting_manager_name.ilike.*${cleanName}*`);
+            }
+            if (mgrCode) {
+                filterConditions.push(`employee_snapshot->>manager_code.ilike.*${mgrCode}*`);
             }
             if (auditTicketIds.length > 0) {
                 filterConditions.push(`id.in.(${Array.from(new Set(auditTicketIds)).join(',')})`);
@@ -165,13 +216,30 @@ export async function POST(request: Request) {
 
         // 2. Fetch employee profile & reporting manager
         let empProfile: any = null;
+        let submitterUser: any = null;
         if (raised_by_user_id) {
+            const { data: userObj } = await supabaseAdmin
+                .from('users')
+                .select('id, email, full_name')
+                .eq('id', raised_by_user_id)
+                .maybeSingle();
+            submitterUser = userObj;
+
             const { data: profile } = await supabaseAdmin
                 .from('employee_profiles')
                 .select('*, reporting_manager:users!reporting_manager_id(full_name, email)')
                 .eq('user_id', raised_by_user_id)
                 .maybeSingle();
             empProfile = profile;
+
+            if (!empProfile && submitterUser?.email) {
+                const { data: profByEmail } = await supabaseAdmin
+                    .from('employee_profiles')
+                    .select('*, reporting_manager:users!reporting_manager_id(full_name, email)')
+                    .eq('email', submitterUser.email)
+                    .maybeSingle();
+                if (profByEmail) empProfile = profByEmail;
+            }
         }
 
         const effectiveOrgId = organization_id || empProfile?.organization_id || '211e1330-ad83-446d-941f-dcea48396798';
@@ -202,6 +270,7 @@ export async function POST(request: Request) {
         else if (is_confidential) ticketType = 'confidential_feedback';
 
         let firstLevelOwnerId: string | null = null;
+        let isFallbackHrManager = false;
 
         if (ticketType === 'confidential_feedback' || ticketType === 'anonymous_feedback' || category.first_level_owner_type === 'director') {
             const { data: directors } = await supabaseAdmin
@@ -226,7 +295,35 @@ export async function POST(request: Request) {
         } else {
             firstLevelOwnerId = empProfile?.reporting_manager_id || empProfile?.alternate_manager_id;
 
+            // If reporting_manager_id is null, try resolving manager user_id by reporting_manager_code / name
+            if (!firstLevelOwnerId && empProfile?.reporting_manager_code) {
+                const mgrCodeStr = empProfile.reporting_manager_code.trim();
+                // 1. Try matching employee_code
+                const { data: mgrEmpByCode } = await supabaseAdmin
+                    .from('employee_profiles')
+                    .select('user_id')
+                    .eq('employee_code', mgrCodeStr)
+                    .not('user_id', 'is', null)
+                    .maybeSingle();
+
+                if (mgrEmpByCode?.user_id) {
+                    firstLevelOwnerId = mgrEmpByCode.user_id;
+                } else {
+                    // 2. Try matching user full_name or email
+                    const { data: mgrUserByName } = await supabaseAdmin
+                        .from('users')
+                        .select('id')
+                        .or(`full_name.ilike.%${mgrCodeStr}%,email.ilike.%${mgrCodeStr}%`)
+                        .maybeSingle();
+
+                    if (mgrUserByName?.id) {
+                        firstLevelOwnerId = mgrUserByName.id;
+                    }
+                }
+            }
+
             if (!firstLevelOwnerId || firstLevelOwnerId === raised_by_user_id) {
+                isFallbackHrManager = true;
                 const { data: hrStaff } = await supabaseAdmin
                     .from('employee_profiles')
                     .select('user_id')
@@ -242,22 +339,39 @@ export async function POST(request: Request) {
             firstLevelOwnerId = category.default_hr_owner_id;
         }
 
+        // Fetch resolved assigned owner name for snapshot
+        let assignedOwnerName: string | null = null;
+        if (firstLevelOwnerId) {
+            const { data: ownerUser } = await supabaseAdmin
+                .from('users')
+                .select('full_name, email')
+                .eq('id', firstLevelOwnerId)
+                .maybeSingle();
+            assignedOwnerName = ownerUser?.full_name || ownerUser?.email || null;
+        }
+
         // 5. Calculate SLA target date
         const slaDays = Number(category.l1_sla_days) || 3;
         const slaDueAt = new Date(Date.now() + slaDays * 24 * 60 * 60 * 1000);
 
-        // 6. Employee Snapshot
-        const managerName = empProfile?.reporting_manager?.full_name || empProfile?.reporting_manager?.email || empProfile?.reporting_manager_code || null;
-        const snapshot = empProfile ? {
-            name: `${empProfile.first_name} ${empProfile.last_name}`,
-            code: empProfile.employee_code,
-            department: empProfile.department,
-            designation: empProfile.designation,
-            location: empProfile.location,
+        // 6. Employee Snapshot with manager_user_id & assigned_history
+        const managerName = assignedOwnerName || empProfile?.reporting_manager?.full_name || empProfile?.reporting_manager?.email || empProfile?.reporting_manager_code || 'HR Head';
+        const submitterName = (empProfile?.first_name ? `${empProfile.first_name} ${empProfile.last_name || ''}`.trim() : null) || submitterUser?.full_name || submitterUser?.email || 'Employee';
+        const managerUserId = empProfile?.reporting_manager?.id || firstLevelOwnerId;
+
+        const snapshot = {
+            name: submitterName,
+            code: empProfile?.employee_code || 'N/A',
+            department: empProfile?.department || 'General',
+            designation: empProfile?.designation || 'Staff',
+            location: empLocation,
             property_id: property_id || empProfile?.property_id || null,
             manager_name: managerName,
-            manager_code: empProfile.reporting_manager_code
-        } : { name: 'Employee', department: 'General', location: 'Office', property_id: property_id || null };
+            manager_code: empProfile?.reporting_manager_code || null,
+            manager_user_id: managerUserId,
+            assigned_history: [firstLevelOwnerId, managerUserId].filter(Boolean),
+            routing_mode: isFallbackHrManager ? 'hr_fallback_no_manager' : 'direct_reporting_manager'
+        };
 
         // 7. Insert Ticket
         const { data: newTicket, error: createErr } = await supabaseAdmin
@@ -270,6 +384,8 @@ export async function POST(request: Request) {
                 raised_by_user_id: is_anonymous ? null : raised_by_user_id,
                 anonymous_token: is_anonymous ? `anon_${Math.random().toString(36).substring(2, 10)}` : null,
                 employee_snapshot: snapshot,
+                manager_user_id: managerUserId,
+                assigned_history: Array.from(new Set([firstLevelOwnerId, managerUserId].filter(Boolean))),
                 subject,
                 description,
                 attachment_urls,
@@ -292,11 +408,6 @@ export async function POST(request: Request) {
             actor_user_id: raised_by_user_id,
             action: 'CREATED',
             new_values: { ticket_number: ticketNumber, status: 'new', assigned_to: firstLevelOwnerId }
-        });
-
-        // 9. Dispatch Omnichannel WhatsApp & In-App Notification
-        NotificationService.afterHrTicketCreated(newTicket.id).catch(err => {
-            console.error('Failed to trigger HR ticket created notification:', err);
         });
 
         return NextResponse.json({ success: true, data: newTicket });

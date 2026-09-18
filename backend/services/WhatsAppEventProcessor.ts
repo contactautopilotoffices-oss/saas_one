@@ -190,6 +190,12 @@ export const WhatsAppEventProcessor = {
             case 'HR_TICKET_COMMENT_ADDED':
                 await this.handleHrTicketCommentAdded(payload);
                 break;
+            case 'HR_TICKET_ACKNOWLEDGED':
+                await this.handleHrTicketAcknowledged(payload);
+                break;
+            case 'HR_TICKET_REPORTEE_ALERT':
+                await this.handleHrTicketReporteeAlert(payload);
+                break;
 
             // SOP Checklists
             case 'CHECKLIST_SLOT_REMINDER':
@@ -2211,6 +2217,76 @@ export const WhatsAppEventProcessor = {
                 },
                 summaryMessage: `New comment on HR Ticket #${ticketNo} from ${senderName}`,
                 contextualUserIds: { assigneeId: targetUserId }
+            });
+        }
+    },
+
+    async handleHrTicketAcknowledged(payload: any): Promise<void> {
+        const ticketId = payload.id;
+        const { data: ticket } = await supabaseAdmin
+            .from('hr_tickets')
+            .select('*, raised_by:users!raised_by_user_id(full_name), assigned_to:users!assigned_to_user_id(full_name)')
+            .eq('id', ticketId)
+            .maybeSingle();
+
+        const orgId = payload.organization_id || ticket?.organization_id;
+        const empName = ticket?.raised_by?.full_name || 'Employee';
+        const ticketNo = ticket?.ticket_number || payload.ticket_number;
+        const handlerName = ticket?.assigned_to?.full_name || 'HR Handler';
+
+        await this.dispatch({
+            featureKey: 'hr_ticket_acknowledged_closed',
+            templateEventKey: 'hr_ticket_acknowledged_closed',
+            organizationId: orgId,
+            entityId: ticketId,
+            paramValues: {
+                user_name: handlerName,
+                submitter_name: empName,
+                ticket_number: ticketNo,
+                subject: ticket?.subject || payload.subject || 'Grievance',
+                date: formatWhatsAppDate(new Date())
+            },
+            summaryMessage: `HR Ticket #${ticketNo} acknowledged and closed by submitter ${empName}`,
+            contextualUserIds: { assigneeId: ticket?.assigned_to_user_id || payload.assigned_to_user_id }
+        });
+    },
+
+    async handleHrTicketReporteeAlert(payload: any): Promise<void> {
+        const ticketId = payload.id;
+        const orgId = payload.organization_id;
+        const managerUserId = payload.manager_user_id;
+
+        const { data: ticket } = await supabaseAdmin
+            .from('hr_tickets')
+            .select('*, category:hr_ticket_categories(category_name), assigned_to:users!assigned_to_user_id(full_name)')
+            .eq('id', ticketId)
+            .maybeSingle();
+
+        const reporteeName = ticket?.assigned_to?.full_name || payload.reportee_name || 'Reportee';
+        const ticketNo = ticket?.ticket_number || payload.ticket_number;
+
+        if (managerUserId) {
+            const { data: mgr } = await supabaseAdmin
+                .from('users')
+                .select('full_name')
+                .eq('id', managerUserId)
+                .maybeSingle();
+
+            await this.dispatch({
+                featureKey: 'hr_ticket_reportee_alert',
+                templateEventKey: 'hr_ticket_reportee_alert',
+                organizationId: orgId,
+                entityId: ticketId,
+                paramValues: {
+                    user_name: mgr?.full_name || 'Manager',
+                    ticket_number: ticketNo,
+                    reportee_name: reporteeName,
+                    subject: ticket?.subject || payload.subject || 'Grievance',
+                    category_name: ticket?.category?.category_name || 'HR Query',
+                    date: formatWhatsAppDate(new Date())
+                },
+                summaryMessage: `Department alert: Ticket #${ticketNo} assigned to reportee ${reporteeName}`,
+                contextualUserIds: { extraUserIds: [managerUserId] }
             });
         }
     }

@@ -1242,10 +1242,15 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                                     )}
                                 </div>
 
-                                {/* Role Badge */}
-                                <span className="px-4 py-1.5 bg-amber-500 text-slate-900 rounded-full text-xs font-black uppercase tracking-wider shadow-lg">
-                                    {formatRole(selectedUserForProfile.orgRole || selectedUserForProfile.propertyRole || 'User')}
-                                </span>
+                                {/* Role Badges */}
+                                <div className="flex items-center gap-2 flex-wrap justify-center mt-1">
+                                    <span className="px-3 py-1 bg-emerald-500 text-slate-900 rounded-full text-xs font-black uppercase tracking-wider shadow-md">
+                                        App Role: {formatRole(selectedUserForProfile.orgRole || selectedUserForProfile.propertyRole || 'User')}
+                                    </span>
+                                    <span className="px-3 py-1 bg-indigo-500 text-white rounded-full text-xs font-black tracking-wider shadow-md">
+                                        Employee Role: {(selectedUserForProfile as any).designation || 'Staff'}
+                                    </span>
+                                </div>
                             </div>
 
                             {/* Card Body with User Info */}
@@ -1255,6 +1260,20 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                                         <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Full Name</span>
                                         <span className="text-sm font-bold text-slate-900">
                                             {selectedUserForProfile.full_name}
+                                        </span>
+                                    </div>
+
+                                    <div className="flex justify-between items-center py-3 border-b border-slate-100">
+                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Employee Designation</span>
+                                        <span className="text-sm font-extrabold text-indigo-600">
+                                            {(selectedUserForProfile as any).designation || 'Forward Deployed Engineer'}
+                                        </span>
+                                    </div>
+
+                                    <div className="flex justify-between items-center py-3 border-b border-slate-100">
+                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">App Authority Role</span>
+                                        <span className="text-sm font-extrabold text-emerald-600 uppercase">
+                                            {formatRole(selectedUserForProfile.orgRole || selectedUserForProfile.propertyRole || 'User')}
                                         </span>
                                     </div>
 

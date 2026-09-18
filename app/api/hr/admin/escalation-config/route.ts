@@ -161,6 +161,76 @@ export async function GET(request: Request) {
         const hrHeads = mergedEmployees.filter(p => p.is_hr_authority === true);
         const directors = mergedEmployees.filter(p => p.is_director_authority === true);
 
+        // 4. Fetch per-flow, per-level custom step assignees & custom flow levels from organization_settings
+        let flowAssigneesRaw: any = {};
+        let flowLevelsRaw: any = null;
+        try {
+            const { data: settingsData } = await supabaseAdmin
+                .from('organization_settings')
+                .select('*')
+                .limit(1)
+                .maybeSingle();
+
+            if (settingsData) {
+                const configObj = settingsData.notification_matrix?.hr_escalation_config || settingsData.hr_escalation_config || {};
+                flowAssigneesRaw = configObj.flow_assignees || configObj || {};
+                while (flowAssigneesRaw && flowAssigneesRaw.flow_assignees) {
+                    flowAssigneesRaw = flowAssigneesRaw.flow_assignees;
+                }
+                flowLevelsRaw = configObj.flow_levels || null;
+            }
+        } catch (sErr) {
+            console.warn('Could not read hr_escalation_config from organization_settings:', sErr);
+        }
+
+        // Map ID lists in flowAssigneesRaw to full employee profile objects dynamically across any number of levels
+        const formattedFlowAssignees: Record<string, Record<string, any[]>> = {};
+        const flows = ['grievance', 'hr_query', 'confidential_feedback', 'anonymous_feedback'];
+
+        flows.forEach(flowId => {
+            formattedFlowAssignees[flowId] = {};
+            const flowConfig = flowAssigneesRaw[flowId] || {};
+            
+            // Collect all level keys present in flowConfig or default 1..10
+            const levelKeys = new Set<string>(Object.keys(flowConfig));
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].forEach(n => levelKeys.add(String(n)));
+
+            levelKeys.forEach(levelKey => {
+                const targetIds: string[] = Array.isArray(flowConfig[levelKey]) ? flowConfig[levelKey] : [];
+                if (targetIds.length > 0) {
+                    const matchedEmps = targetIds.map(id => {
+                        return mergedEmployees.find(e => e.id === id || e.user_id === id) || { id, full_name: id };
+                    });
+                    formattedFlowAssignees[flowId][levelKey] = matchedEmps;
+                } else {
+                    formattedFlowAssignees[flowId][levelKey] = [];
+                }
+            });
+        });
+
+        const defaultFlowLevels: Record<string, any[]> = {
+            grievance: [
+                { level: 1, title: 'Level 1: Initial Ownership', ownerRole: 'Reporting Manager / HOD', ownerType: 'reporting_manager', slaText: '3 Working Days', slaHours: '72 Hours', description: 'Direct reporting manager conducts initial investigation, talks to employee, and attempts internal resolution.', escalationTrigger: 'If unresolved or no response after 3 Working Days' },
+                { level: 2, title: 'Level 2: HR Department Escalation', ownerRole: 'HR Department', ownerType: 'hr', slaText: '7 Working Days', slaHours: '96 Hours', description: 'HR Department steps in to mediate between employee and department, reviews policy guidelines and formal grievances.', escalationTrigger: 'If unresolved or pending after 7 Working Days total' },
+                { level: 3, title: 'Level 3: HR Head Review', ownerRole: 'HR Head', ownerType: 'hr_head', slaText: '10 Working Days', slaHours: '72 Hours', description: 'HR Head takes over high-level mediation, formal committee review, and binding policy decisions.', escalationTrigger: 'If unresolved after 10 Working Days total' },
+                { level: 4, title: 'Level 4: Final Internal Escalation', ownerRole: 'Director', ownerType: 'director', slaText: '12 Working Days', slaHours: 'Final SLA', description: 'Escalated to Director for final internal resolution, compliance audit, or policy exception approval.', escalationTrigger: 'SLA Breach Flagged on Organization MIS Dashboard' }
+            ],
+            hr_query: [
+                { level: 1, title: 'Level 1: HR Executive / HR Owner', ownerRole: 'HR Executive / Concerned HR Owner', ownerType: 'hr', slaText: '0 - 2 Days', slaHours: '48 Hours', description: 'Assigned HR representative reviews query (Payroll, Leave, PF/ESIC, Reimbursements) and responds directly to employee.', escalationTrigger: 'If query unaddressed after SLA expiry' },
+                { level: 2, title: 'Level 2: HR Manager Escalation', ownerRole: 'HR Manager', ownerType: 'hr_head', slaText: 'Day 2 - Day 5', slaHours: '72 Hours', description: 'Escalated to HR Manager for salary calculation verification, tax adjustment, or policy clarification.', escalationTrigger: 'If query remains unresolved' },
+                { level: 3, title: 'Level 3: HR Head Review', ownerRole: 'HR Head', ownerType: 'hr_head', slaText: 'Day 5 - Day 7', slaHours: '48 Hours', description: 'Escalated to HR Head to resolve complex payroll disputes or policy exceptions.', escalationTrigger: 'If unresolved by HR Manager' },
+                { level: 4, title: 'Level 4: Management Review', ownerRole: 'Management, wherever required', ownerType: 'director', slaText: 'Day 7+', slaHours: 'Final SLA', description: 'Final review by Management for company-wide policy exceptions or executive decisions.', escalationTrigger: 'SLA Breach Flagged' }
+            ],
+            confidential_feedback: [
+                { level: 1, title: 'Level 1: Director Review', ownerRole: 'Director', ownerType: 'director', slaText: '0 - 2 Days', slaHours: '48 Hours', description: 'Bypasses reporting manager completely for employee privacy. Directly visible to authorized Director(s).', escalationTrigger: 'If unaddressed after 48 Hours' },
+                { level: 2, title: 'Level 2: Board / Managing Director', ownerRole: 'Managing Director / Executive Board', ownerType: 'super_admin', slaText: 'Day 2+', slaHours: 'Final SLA', description: 'Direct escalation to company executive officers for confidential ethics or whistleblowing review.', escalationTrigger: 'Critical Priority Alert' }
+            ],
+            anonymous_feedback: [
+                { level: 1, title: 'Level 1: Anonymous Ethics Channel', ownerRole: 'Director', ownerType: 'director', slaText: '0 - 3 Days', slaHours: '72 Hours', description: 'Employee identity is cryptographically masked. Routed directly to Director without sender identity.', escalationTrigger: 'If unaddressed after 72 Hours' },
+                { level: 2, title: 'Level 2: Executive Board Audit', ownerRole: 'Managing Director / Executive Board', ownerType: 'director', slaText: 'Day 3+', slaHours: 'Final SLA', description: 'Escalated to Managing Director to ensure company culture feedback is reviewed and actioned.', escalationTrigger: 'SLA Breach Flagged' }
+            ]
+        };
+
         return NextResponse.json({
             success: true,
             data: {
@@ -169,7 +239,9 @@ export async function GET(request: Request) {
                 designated_hr_heads: hrHeads,
                 designated_directors: directors,
                 designated_hr_head: hrHeads[0] || null,
-                designated_director: directors[0] || null
+                designated_director: directors[0] || null,
+                flow_assignees: formattedFlowAssignees,
+                flow_levels: flowLevelsRaw && Object.keys(flowLevelsRaw).length > 0 ? flowLevelsRaw : defaultFlowLevels
             }
         });
     } catch (err: any) {
@@ -323,9 +395,111 @@ export async function POST(request: Request) {
             if (setDirErr) console.error('Error setting director authority:', setDirErr);
         }
 
+        // 4. Save per-flow, per-level custom step assignees & flow levels into organization_settings
+        if (body.flow_assignees || body.flow_levels) {
+            try {
+                // Fetch first org id or default
+                const { data: orgData } = await supabaseAdmin.from('organizations').select('id').limit(1).maybeSingle();
+                const orgId = body.organization_id || orgData?.id;
+
+                if (orgId) {
+                    const { data: existingSettings } = await supabaseAdmin
+                        .from('organization_settings')
+                        .select('notification_matrix')
+                        .eq('organization_id', orgId)
+                        .maybeSingle();
+
+                    const currentMatrix = existingSettings?.notification_matrix || {};
+                    const currentEscalationConfig = currentMatrix.hr_escalation_config || {};
+
+                    let cleanAssignees = body.flow_assignees;
+                    while (cleanAssignees && cleanAssignees.flow_assignees) {
+                        cleanAssignees = cleanAssignees.flow_assignees;
+                    }
+
+                    const newEscalationConfig = {
+                        ...currentEscalationConfig,
+                        ...(cleanAssignees ? { flow_assignees: cleanAssignees } : {}),
+                        ...(body.flow_levels ? { flow_levels: body.flow_levels } : {})
+                    };
+
+                    const updatedMatrix = {
+                        ...currentMatrix,
+                        hr_escalation_config: newEscalationConfig
+                    };
+
+                    const upsertData: any = {
+                        organization_id: orgId,
+                        notification_matrix: updatedMatrix,
+                        updated_at: new Date().toISOString()
+                    };
+
+                    await supabaseAdmin
+                        .from('organization_settings')
+                        .upsert(upsertData, { onConflict: 'organization_id' });
+
+                    // Also sync updated flow_levels SLA days to hr_ticket_categories table
+                    if (body.flow_levels && typeof body.flow_levels === 'object') {
+                        const parseSlaTextToDays = (slaText: string | undefined, defaultDays: number): number => {
+                            if (!slaText) return defaultDays;
+                            const clean = slaText.trim();
+                            const matchMin = clean.match(/(\d+(?:\.\d+)?)\s*(?:m|min|mins|minutes)/i);
+                            if (matchMin && matchMin[1]) {
+                                return Number((parseFloat(matchMin[1]) / 1440).toFixed(6));
+                            }
+                            const matchHr = clean.match(/(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hours)/i);
+                            if (matchHr && matchHr[1]) {
+                                return Number((parseFloat(matchHr[1]) / 24).toFixed(6));
+                            }
+                            const matchRange = clean.match(/Day\s*\d+\s*-\s*Day\s*(\d+)/i) || clean.match(/0\s*-\s*(\d+)\s*Days?/i);
+                            if (matchRange && matchRange[1]) {
+                                return parseFloat(matchRange[1]);
+                            }
+                            const matchDay = clean.match(/(\d+(?:\.\d+)?)\s*(?:d|day|days|working days)/i);
+                            if (matchDay && matchDay[1]) {
+                                return parseFloat(matchDay[1]);
+                            }
+                            const directVal = parseFloat(clean);
+                            if (!isNaN(directVal)) return directVal;
+
+                            return defaultDays;
+                        };
+
+                        try {
+                            for (const ticketType of Object.keys(body.flow_levels)) {
+                                const levelsArr = body.flow_levels[ticketType];
+                                if (Array.isArray(levelsArr) && levelsArr.length > 0) {
+                                    const catUpdates: any = {};
+                                    for (let lvlNum = 1; lvlNum <= 10; lvlNum++) {
+                                        if (lvlNum <= levelsArr.length) {
+                                            const lvl = levelsArr[lvlNum - 1];
+                                            const defaultDays = lvlNum === 1 ? 3 : lvlNum === 2 ? 7 : lvlNum === 3 ? 10 : 12;
+                                            catUpdates[`l${lvlNum}_sla_days`] = parseSlaTextToDays(lvl?.slaText, defaultDays);
+                                        } else {
+                                            catUpdates[`l${lvlNum}_sla_days`] = null;
+                                        }
+                                    }
+                                    if (Object.keys(catUpdates).length > 0) {
+                                        await supabaseAdmin
+                                            .from('hr_ticket_categories')
+                                            .update(catUpdates)
+                                            .eq('ticket_type', ticketType);
+                                    }
+                                }
+                            }
+                        } catch (catErr) {
+                            console.warn('Error updating category level SLAs:', catErr);
+                        }
+                    }
+                }
+            } catch (cfgErr) {
+                console.warn('Error saving hr_escalation_config to organization_settings:', cfgErr);
+            }
+        }
+
         return NextResponse.json({
             success: true,
-            message: 'Escalation Designated Authorities updated successfully'
+            message: 'Escalation Designated Authorities & Flow Assignees updated successfully'
         });
     } catch (err: any) {
         return NextResponse.json({ success: false, error: err.message }, { status: 500 });

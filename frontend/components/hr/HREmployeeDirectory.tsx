@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Search, UserCheck, Edit2, Check, AlertCircle, RefreshCw, UserPlus, Eye, ShieldCheck, AlertTriangle, Info, X, Trash2, ChevronDown } from 'lucide-react';
+import { formatAppRole } from '../../lib/accounts/roles';
 
 interface SearchableManagerDropdownProps {
     value: string;
@@ -214,10 +215,12 @@ function SearchableManagerDropdown({
 }
 
 interface HREmployeeDirectoryProps {
-    onRefresh: () => void;
+    orgId?: string;
+    organizationId?: string;
+    onRefresh?: () => void;
 }
 
-export default function HREmployeeDirectory({ onRefresh }: HREmployeeDirectoryProps) {
+export default function HREmployeeDirectory({ orgId, organizationId, onRefresh }: HREmployeeDirectoryProps) {
     const [employees, setEmployees] = useState<any[]>([]);
     const [allManagers, setAllManagers] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
@@ -304,7 +307,7 @@ export default function HREmployeeDirectory({ onRefresh }: HREmployeeDirectoryPr
                 // Reset search query so the UI re-fetches and displays all remaining employees
                 setSearchQuery('');
                 fetchEmployees();
-                onRefresh();
+                onRefresh?.();
             } else {
                 alert(`Failed to remove employee: ${data.error || 'Unknown error'}`);
             }
@@ -336,7 +339,7 @@ export default function HREmployeeDirectory({ onRefresh }: HREmployeeDirectoryPr
                 setSuccessMsg(`Manager updated successfully! ${data.synced_tickets_count > 0 ? `(${data.synced_tickets_count} open L1 tickets re-assigned)` : ''}`);
                 setEditingEmpId(null);
                 fetchEmployees();
-                onRefresh();
+                onRefresh?.();
             }
         } catch (err) {
             console.error('Error updating manager:', err);
@@ -396,7 +399,7 @@ export default function HREmployeeDirectory({ onRefresh }: HREmployeeDirectoryPr
                     role: 'staff'
                 });
                 fetchEmployees();
-                onRefresh();
+                onRefresh?.();
             } else {
                 alert(`Error: ${data.error}`);
             }
@@ -619,7 +622,7 @@ export default function HREmployeeDirectory({ onRefresh }: HREmployeeDirectoryPr
                                                             Linked in App
                                                         </span>
                                                         <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 font-mono">
-                                                            {emp.app_email || emp.user?.email || emp.email} • <span className="font-bold text-indigo-600 dark:text-indigo-400 uppercase">{emp.app_role || 'Staff'}</span>
+                                                            {emp.app_email || emp.user?.email || emp.email} • <span className="font-bold text-indigo-600 dark:text-indigo-400 uppercase">{formatAppRole(emp)}</span>
                                                         </div>
                                                     </div>
                                                 ) : (

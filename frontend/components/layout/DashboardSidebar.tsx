@@ -65,6 +65,7 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
         if (userRole === 'hr' || userRole === 'hr_head') {
             return [
                 { label: 'Requests & Grievances', href: `/${orgId}/hr-tickets?tab=tickets`, icon: Ticket, domain: 'tickets' as const },
+                { label: 'Org Reporting Tree', href: `/${orgId}/hr-tickets?tab=tree`, icon: GitMerge, domain: 'tickets' as const },
                 { label: 'Employee Directory', href: `/${orgId}/hr-tickets?tab=directory`, icon: Users, domain: 'tickets' as const },
                 { label: 'Identity Reconciliation', href: `/${orgId}/hr-tickets?tab=reconciliation`, icon: UserCheck, domain: 'tickets' as const },
                 { label: 'Admin Config', href: `/${orgId}/hr-tickets?tab=config`, icon: Settings, domain: 'tickets' as const },
@@ -235,43 +236,48 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
                             <div className="grid grid-cols-3 gap-2">
                                 <Link
                                     href={`/${orgId}/hr-tickets?action=create`}
-                                    className="flex flex-col items-center justify-center py-2.5 px-1 rounded-2xl bg-[#587e85] hover:bg-[#48686e] text-white transition-all text-[9.5px] font-extrabold text-center gap-1 shadow-sm active:scale-95 border border-[#48686e]/40"
+                                    className="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-[#587e85] hover:bg-[#48686e] text-white transition-all text-[10px] font-bold text-center gap-1 shadow-xs active:scale-95 border border-[#48686e]/40 h-13 min-w-0"
+                                    title="Raise HR Request / Grievance"
                                 >
                                     <Plus className="w-4 h-4 shrink-0" />
-                                    <span className="tracking-tight uppercase truncate max-w-full px-0.5 leading-none">Grievance</span>
+                                    <span className="tracking-tight whitespace-nowrap leading-none">Request</span>
                                 </Link>
                                 {(userRole === 'hr' || userRole === 'hr_head' || isOrgSuperAdmin) ? (
                                     <>
                                         <Link
                                             href={`/${orgId}/hr-tickets?tab=directory&action=add`}
-                                            className="flex flex-col items-center justify-center py-2.5 px-1 rounded-2xl bg-[#f6f2ec] dark:bg-[#aa895f]/20 hover:bg-[#ede5d8] dark:hover:bg-[#aa895f]/30 text-[#8f6d3d] dark:text-[#c4a479] transition-all text-[9.5px] font-extrabold text-center gap-1 border border-[#d8c4a5] dark:border-[#aa895f]/40 active:scale-95 shadow-sm"
+                                            className="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-[#f6f2ec] dark:bg-[#aa895f]/20 hover:bg-[#ede5d8] dark:hover:bg-[#aa895f]/30 text-[#8f6d3d] dark:text-[#c4a479] transition-all text-[10px] font-bold text-center gap-1 border border-[#d8c4a5] dark:border-[#aa895f]/40 active:scale-95 shadow-xs h-13 min-w-0"
+                                            title="Add Employee Member"
                                         >
                                             <Users className="w-4 h-4 shrink-0 text-[#aa895f] dark:text-[#c4a479]" />
-                                            <span className="tracking-tight uppercase truncate max-w-full px-0.5 leading-none">Member</span>
+                                            <span className="tracking-tight whitespace-nowrap leading-none">Member</span>
                                         </Link>
                                         <Link
                                             href={`/${orgId}/hr-tickets?tab=config`}
-                                            className="flex flex-col items-center justify-center py-2.5 px-1 rounded-2xl bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-all text-[9.5px] font-extrabold text-center gap-1 border border-slate-200 dark:border-slate-700 active:scale-95 shadow-sm"
+                                            className="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-all text-[10px] font-bold text-center gap-1 border border-slate-200 dark:border-slate-700 active:scale-95 shadow-xs h-13 min-w-0"
+                                            title="HR Admin Configuration"
                                         >
                                             <Settings className="w-4 h-4 shrink-0 text-slate-500 dark:text-slate-400" />
-                                            <span className="tracking-tight uppercase truncate max-w-full px-0.5 leading-none">Config</span>
+                                            <span className="tracking-tight whitespace-nowrap leading-none">Config</span>
                                         </Link>
                                     </>
                                 ) : (
                                     <>
                                         <Link
                                             href={`/${orgId}/hr-tickets?tab=tickets`}
-                                            className="flex flex-col items-center justify-center py-2.5 px-1 rounded-2xl bg-[#f6f2ec] dark:bg-[#aa895f]/20 hover:bg-[#ede5d8] dark:hover:bg-[#aa895f]/30 text-[#8f6d3d] dark:text-[#c4a479] transition-all text-[9.5px] font-extrabold text-center gap-1 border border-[#d8c4a5] dark:border-[#aa895f]/40 active:scale-95 shadow-sm"
+                                            className="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-[#f6f2ec] dark:bg-[#aa895f]/20 hover:bg-[#ede5d8] dark:hover:bg-[#aa895f]/30 text-[#8f6d3d] dark:text-[#c4a479] transition-all text-[10px] font-bold text-center gap-1 border border-[#d8c4a5] dark:border-[#aa895f]/40 active:scale-95 shadow-xs h-13 min-w-0"
+                                            title="My HR Tickets"
                                         >
                                             <Ticket className="w-4 h-4 shrink-0 text-[#aa895f] dark:text-[#c4a479]" />
-                                            <span className="tracking-tight uppercase truncate max-w-full px-0.5 leading-none">My Tickets</span>
+                                            <span className="tracking-tight whitespace-nowrap leading-none">Tickets</span>
                                         </Link>
                                         <Link
                                             href={`/${orgId}/settings?tab=profile`}
-                                            className="flex flex-col items-center justify-center py-2.5 px-1 rounded-2xl bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-all text-[9.5px] font-extrabold text-center gap-1 border border-slate-200 dark:border-slate-700 active:scale-95 shadow-sm"
+                                            className="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-all text-[10px] font-bold text-center gap-1 border border-slate-200 dark:border-slate-700 active:scale-95 shadow-xs h-13 min-w-0"
+                                            title="Profile Settings"
                                         >
                                             <UserCircle className="w-4 h-4 shrink-0 text-slate-500 dark:text-slate-400" />
-                                            <span className="tracking-tight uppercase truncate max-w-full px-0.5 leading-none">Profile</span>
+                                            <span className="tracking-tight whitespace-nowrap leading-none">Profile</span>
                                         </Link>
                                     </>
                                 )}
@@ -281,9 +287,9 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
                 </div>
 
                 {/* Navigation */}
-                <nav className="flex-1 px-4 space-y-1 overflow-y-auto custom-scrollbar touch-scroll min-h-0 pt-2">
+                <nav className="flex-1 px-3.5 space-y-0.5 overflow-y-auto custom-scrollbar touch-scroll min-h-0 pt-2">
                     {!isBDRole && (
-                        <div className="flex items-center gap-2 px-2 py-1 mb-2">
+                        <div className="flex items-center gap-2 px-2 py-1 mb-1">
                             <span className="w-0.5 h-3.5 bg-[#587e85] rounded-full" />
                             <p className="text-[10px] font-bold text-slate-400 dark:text-slate-400 tracking-wider font-mono uppercase">
                                 {(userRole === 'hr' || userRole === 'hr_head') ? 'CORE OPERATIONS' : 'CORE OPERATIONS'}
@@ -307,9 +313,9 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
                                     href={item.href}
                                     onClick={handleLinkClick}
                                     className={`
-                                        flex items-center gap-3.5 px-4 py-2.5 rounded-2xl transition-all font-semibold text-xs sm:text-sm group
+                                        flex items-center gap-3 px-3.5 py-2 rounded-xl transition-all font-semibold text-xs sm:text-sm group
                                         ${isActive
-                                            ? 'bg-[#587e85] text-white shadow-sm font-bold'
+                                            ? 'bg-[#587e85] text-white shadow-xs font-bold'
                                             : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
                                         }
                                     `}
@@ -334,9 +340,9 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
                             <Link
                                 href={`/${orgId}/hr-tickets?tab=tickets`}
                                 onClick={handleLinkClick}
-                                className={`flex items-center gap-3.5 px-4 py-2.5 rounded-2xl transition-all font-semibold text-xs sm:text-sm group ${
+                                className={`flex items-center gap-3 px-3.5 py-2 rounded-xl transition-all font-semibold text-xs sm:text-sm group ${
                                     pathname?.includes('/hr-tickets') && (!currentTab || currentTab === 'tickets')
-                                        ? 'bg-[#587e85] text-white shadow-sm font-bold'
+                                        ? 'bg-[#587e85] text-white shadow-xs font-bold'
                                         : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
                                 }`}
                             >
@@ -348,9 +354,9 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
                                 <Link
                                     href={`/${orgId}/dashboard?tab=ai_tickets`}
                                     onClick={handleLinkClick}
-                                    className={`flex items-center gap-3.5 px-4 py-2.5 rounded-2xl transition-all font-semibold text-xs sm:text-sm group ${
+                                    className={`flex items-center gap-3 px-3.5 py-2 rounded-xl transition-all font-semibold text-xs sm:text-sm group ${
                                         pathname?.includes('tab=ai_tickets')
-                                            ? 'bg-[#587e85] text-white shadow-sm font-bold'
+                                            ? 'bg-[#587e85] text-white shadow-xs font-bold'
                                             : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
                                     }`}
                                 >
@@ -365,7 +371,7 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
                                     setShowFeedbackModal(true);
                                     handleLinkClick();
                                 }}
-                                className="w-full flex items-center gap-3.5 px-4 py-2.5 rounded-2xl transition-all font-semibold text-xs sm:text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900 text-left group"
+                                className="w-full flex items-center gap-3 px-3.5 py-2 rounded-xl transition-all font-semibold text-xs sm:text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900 text-left group"
                             >
                                 <MessageSquarePlus className="w-4 h-4 shrink-0 transition-transform group-hover:scale-105" />
                                 <span className="truncate">Feedback / Bug</span>

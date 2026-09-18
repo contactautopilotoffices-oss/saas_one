@@ -265,6 +265,27 @@ export async function GET(request: NextRequest) {
 
         const users = Array.from(userMap.values()).sort((a, b) => a.full_name.localeCompare(b.full_name));
 
+        // Attach designation, employee_code, and department from employee_profiles
+        const userIds = users.map((u: any) => u.id).filter(Boolean);
+        if (userIds.length > 0) {
+            const { data: empProfiles } = await adminClient
+                .from('employee_profiles')
+                .select('user_id, designation, employee_code, department')
+                .in('user_id', userIds);
+
+            if (empProfiles && empProfiles.length > 0) {
+                const empMap = new Map(empProfiles.map((ep: any) => [ep.user_id, ep]));
+                users.forEach((u: any) => {
+                    const ep = empMap.get(u.id);
+                    if (ep) {
+                        u.designation = ep.designation;
+                        u.employee_code = u.employee_code || ep.employee_code;
+                        u.department = ep.department;
+                    }
+                });
+            }
+        }
+
         // Resolve approver names
         const approverIds = Array.from(new Set(users.map((u: any) => u.approved_by).filter(Boolean)));
         if (approverIds.length > 0) {

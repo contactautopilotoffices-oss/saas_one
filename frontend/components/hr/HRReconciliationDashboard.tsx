@@ -4,7 +4,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { CheckCircle2, UserCheck, AlertTriangle, UserPlus, RefreshCw, ShieldCheck, Search, ChevronDown, X, Loader2 } from 'lucide-react';
 
 interface HRReconciliationDashboardProps {
-    onRefresh: () => void;
+    orgId?: string;
+    organizationId?: string;
+    onRefresh?: () => void;
 }
 
 interface SearchableEmployeeSelectorProps {
@@ -139,7 +141,7 @@ function SearchableEmployeeSelector({
     );
 }
 
-export default function HRReconciliationDashboard({ onRefresh }: HRReconciliationDashboardProps) {
+export default function HRReconciliationDashboard({ orgId, organizationId, onRefresh }: HRReconciliationDashboardProps) {
     const [data, setData] = useState<any>(null);
     const [loading, setLoading] = useState(true);
     const [approvingId, setApprovingId] = useState<string | null>(null);
@@ -184,7 +186,7 @@ export default function HRReconciliationDashboard({ onRefresh }: HRReconciliatio
             if (result.success) {
                 setMsg('Employee onboarding approved and linked to HR profile!');
                 fetchReconciliation();
-                onRefresh();
+                onRefresh?.();
             }
         } catch (err) {
             console.error('Error approving onboarding:', err);
@@ -210,7 +212,7 @@ export default function HRReconciliationDashboard({ onRefresh }: HRReconciliatio
             if (result.success) {
                 setMsg(`Added ${userEmail} to HR Employee Directory successfully!`);
                 fetchReconciliation();
-                onRefresh();
+                onRefresh?.();
             } else {
                 alert(`Error: ${result.error || 'Failed to link profile'}`);
             }
@@ -334,7 +336,7 @@ export default function HRReconciliationDashboard({ onRefresh }: HRReconciliatio
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                            {unlinkedList.slice(0, 10).map((emp: any) => (
+                            {unlinkedList.map((emp: any) => (
                                 <tr key={emp.id} className="hover:bg-slate-50/50">
                                     <td className="p-3 font-mono font-bold text-indigo-600">{emp.employee_code}</td>
                                     <td className="p-3 font-semibold">{emp.first_name} {emp.last_name}</td>

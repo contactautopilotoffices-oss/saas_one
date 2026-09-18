@@ -2836,6 +2836,59 @@ export class NotificationService {
             console.error('[NotificationService] afterHrTicketCommentAdded error:', err);
         }
     }
+
+    static async afterHrTicketCreatedForReportee(ticketId: string, managerUserId: string) {
+        try {
+            const { data: ticket } = await supabaseAdmin
+                .from('hr_tickets')
+                .select('*, assigned_to:users!assigned_to_user_id(full_name)')
+                .eq('id', ticketId)
+                .maybeSingle();
+
+            if (!ticket || !managerUserId) return;
+
+            const assigneeName = ticket.assigned_to?.full_name || 'Reportee';
+            await this.send({
+                userId: managerUserId,
+                organizationId: ticket.organization_id,
+                type: 'HR_TICKET_REPORTEE_ASSIGNED',
+                title: `Department Alert: Ticket Assigned to Reportee #${ticket.ticket_number}`,
+                message: `Ticket "${ticket.subject}" has been assigned to your department reportee ${assigneeName}.`,
+                deepLink: `/hr-tickets?tab=tickets&id=${ticket.id}`
+            });
+        } catch (err) {
+            console.error('[NotificationService] afterHrTicketCreatedForReportee error:', err);
+        }
+    }
+
+    static async afterHrTicketAcknowledged(ticketId: string) {
+        try {
+            const { data: ticket } = await supabaseAdmin
+                .from('hr_tickets')
+                .select('*, submitter:users!raised_by_user_id(full_name)')
+                .eq('id', ticketId)
+                .maybeSingle();
+
+            if (!ticket) return;
+
+            const submitterName = ticket.employee_snapshot?.name || ticket.submitter?.full_name || 'Employee';
+            const recipientId = ticket.assigned_to_user_id;
+
+            if (recipientId) {
+                await this.send({
+                    userId: recipientId,
+                    organizationId: ticket.organization_id,
+                    type: 'HR_TICKET_ACKNOWLEDGED',
+                    title: `🎉 Ticket Closed & Acknowledged #${ticket.ticket_number}`,
+                    message: `${submitterName} reviewed and acknowledged resolution for "${ticket.subject}". Status is now CLOSED.`,
+                    deepLink: `/hr-tickets?tab=tickets&id=${ticket.id}`
+                });
+            }
+        } catch (err) {
+            console.error('[NotificationService] afterHrTicketAcknowledged error:', err);
+        }
+    }
 }
+
 
 

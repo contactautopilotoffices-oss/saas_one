@@ -8,7 +8,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
     User, Mail, Phone, Camera, Save, Loader2,
     Shield, Building, CheckCircle2, AlertCircle, Home, Store,
-    Bell, Video, ExternalLink, Info, X, MessageSquare, UserCheck, Hash
+    Bell, Video, ExternalLink, Info, X, MessageSquare, UserCheck, Hash, Briefcase
 } from 'lucide-react';
 import Image from 'next/image';
 import imageCompression from 'browser-image-compression';
@@ -200,7 +200,7 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
                 setVendorInfo(vendorData);
             }
 
-            // 5. Fetch assigned reporting manager name & employee code
+            // 5. Fetch assigned reporting manager name, employee code, designation, role
             try {
                 const res = await fetch('/api/users/profile');
                 if (res.ok) {
@@ -208,11 +208,14 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
                     setAssignedManager(pData.reporting_manager_name || null);
                     setProfile((prev: any) => ({
                         ...prev,
-                        employee_code: pData.employee_code || prev?.employee_code || ''
+                        employee_code: pData.employee_code || prev?.employee_code || '',
+                        designation: pData.designation || prev?.designation || '',
+                        department: pData.department || prev?.department || '',
+                        role: pData.role || prev?.role || ''
                     }));
                 }
             } catch (mErr) {
-                console.warn('Failed to fetch reporting manager:', mErr);
+                console.warn('Failed to fetch user profile details:', mErr);
             }
 
         } catch (err) {
@@ -329,7 +332,8 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
                 body: JSON.stringify({
                     full_name: profile.full_name,
                     phone: profile.phone,
-                    employee_code: profile.employee_code
+                    employee_code: profile.employee_code,
+                    designation: profile.designation
                 })
             }).catch(err => console.warn('Error syncing profile via API:', err));
 
@@ -515,7 +519,6 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
                                             />
                                         </div>
                                     </div>
-
                                     {!isTenantAccount && (
                                         <div className="space-y-2">
                                             <label className="text-sm font-semibold text-slate-700">Employee Code (ECode)</label>
@@ -531,6 +534,43 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
                                             </div>
                                         </div>
                                     )}
+
+                                    {/* Employee Role / Designation */}
+                                    {!isTenantAccount && (
+                                        <div className="space-y-2">
+                                            <label className="text-sm font-semibold text-slate-700">Employee Role (Designation)</label>
+                                            <div className="relative">
+                                                <Briefcase className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-indigo-600" />
+                                                <input
+                                                    type="text"
+                                                    value={profile?.designation || ''}
+                                                    onChange={(e) => setProfile({ ...profile, designation: e.target.value })}
+                                                    className="w-full pl-10 pr-32 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-bold text-slate-900"
+                                                    placeholder="e.g. Forward Deployed Engineer"
+                                                />
+                                                <div className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-indigo-700 bg-indigo-50 px-2 py-1 rounded-md border border-indigo-100">
+                                                    Employee Role
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* App Role / System Authority */}
+                                    <div className="space-y-2">
+                                        <label className="text-sm font-semibold text-slate-700">App Role (System Authority)</label>
+                                        <div className="relative">
+                                            <Shield className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-600" />
+                                            <input
+                                                type="text"
+                                                value={formatRole(profile?.role || session?.role || user?.user_metadata?.role || userRoles[0]?.role || 'staff')}
+                                                disabled
+                                                className="w-full pl-10 pr-32 py-2.5 rounded-xl border border-slate-200 bg-slate-50 font-bold text-slate-900 cursor-not-allowed uppercase text-xs"
+                                            />
+                                            <div className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-1 rounded-md border border-emerald-100">
+                                                App Authority
+                                            </div>
+                                        </div>
+                                    </div>
 
                                     {vendorInfo && (
                                         <div className="space-y-2">
@@ -616,6 +656,41 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
                             Account Roles & Memberships
                         </h2>
 
+                        {/* Top Summary Banner for Employee Role vs App Role */}
+                        <div className="mb-6 p-4 rounded-2xl bg-slate-50 border border-slate-200 grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="p-3 bg-white rounded-xl border border-indigo-100 flex items-center gap-3 shadow-xs">
+                                <div className="p-2.5 bg-indigo-50 border border-indigo-100 rounded-xl text-indigo-600">
+                                    <Briefcase className="w-5 h-5" />
+                                </div>
+                                <div className="min-w-0">
+                                    <div className="text-[10px] font-black uppercase tracking-wider text-indigo-600">Employee Role / Designation</div>
+                                    <div className="text-sm font-extrabold text-slate-900 truncate">
+                                        {profile?.designation || 'Forward Deployed Engineer'}
+                                    </div>
+                                    {profile?.department && (
+                                        <div className="text-[11px] font-medium text-slate-500">
+                                            Department: {profile.department}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="p-3 bg-white rounded-xl border border-emerald-100 flex items-center gap-3 shadow-xs">
+                                <div className="p-2.5 bg-emerald-50 border border-emerald-100 rounded-xl text-emerald-600">
+                                    <Shield className="w-5 h-5" />
+                                </div>
+                                <div className="min-w-0">
+                                    <div className="text-[10px] font-black uppercase tracking-wider text-emerald-700">App Role / System Authority</div>
+                                    <div className="text-sm font-extrabold text-slate-900 uppercase truncate">
+                                        {formatRole(profile?.role || session?.role || user?.user_metadata?.role || userRoles[0]?.role || 'ops_super_admin')}
+                                    </div>
+                                    <div className="text-[11px] font-medium text-emerald-600">
+                                        Platform Permissions Role
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
                         <div className="grid grid-cols-1 gap-4">
                             {userRoles.length > 0 ? (
                                 userRoles.map((role, idx) => (
@@ -628,13 +703,20 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
                                             )}
                                         </div>
                                         <div className="flex-1">
-                                            <div className="flex justify-between items-center">
+                                            <div className="flex justify-between items-center gap-2">
                                                 <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
                                                     {role.type}
                                                 </p>
-                                                <span className="text-[10px] bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full font-bold uppercase">
-                                                    {formatRole(role.role)}
-                                                </span>
+                                                <div className="flex items-center gap-1.5 flex-wrap">
+                                                    <span className="text-[10px] bg-emerald-100 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-full font-extrabold uppercase">
+                                                        App Role: {formatRole(role.role)}
+                                                    </span>
+                                                    {profile?.designation && (
+                                                        <span className="text-[10px] bg-indigo-100 text-indigo-800 border border-indigo-200 px-2 py-0.5 rounded-full font-extrabold">
+                                                            Employee: {profile.designation}
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </div>
                                             <p className="text-sm font-bold text-slate-900">
                                                 {role.entityName}

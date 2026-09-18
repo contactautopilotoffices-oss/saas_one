@@ -136,6 +136,70 @@ export async function GET(
             ticket.employee_snapshot.manager_name = l1Name;
         }
 
+        // Build dynamic escalation flow array for any category/ticket type level count
+        let flowAssigneesConfig: any = {};
+        let flowLevelsConfig: any = {};
+        try {
+            const { data: orgSettings } = await supabaseAdmin
+                .from('organization_settings')
+                .select('hr_escalation_config')
+                .limit(1)
+                .maybeSingle();
+            if (orgSettings?.hr_escalation_config) {
+                flowAssigneesConfig = orgSettings.hr_escalation_config.flow_assignees || {};
+                flowLevelsConfig = orgSettings.hr_escalation_config.flow_levels || {};
+            }
+        } catch (e) {
+            console.warn('Could not read hr_escalation_config in GET ticket detail:', e);
+        }
+
+        const tType = ticket.ticket_type || ticket.category?.ticket_type || 'grievance';
+        const customFlowLevels = flowLevelsConfig[tType] || flowLevelsConfig['grievance'] || [];
+        const totalLevelsCount = customFlowLevels.length > 0 ? customFlowLevels.length : 4;
+
+        const escalationFlow: Array<{ level: number; label: string; assignee: string }> = [];
+        for (let i = 1; i <= totalLevelsCount; i++) {
+            let assigneeName = '';
+            const stepAssignees = flowAssigneesConfig[tType]?.[String(i)] || flowAssigneesConfig[tType]?.[i];
+            
+            if (Array.isArray(stepAssignees) && stepAssignees.length > 0) {
+                const filterOr = stepAssignees.map(id => `id.eq.${id},user_id.eq.${id}`).join(',');
+                const { data: targetProfs } = await supabaseAdmin
+                    .from('employee_profiles')
+                    .select('user:users!employee_profiles_user_id_fkey(full_name, email), first_name, last_name')
+                    .or(filterOr);
+                
+                if (targetProfs && targetProfs.length > 0) {
+                    const names = targetProfs.map(tp => {
+                        return (tp.user as any)?.full_name || (tp.user as any)?.email || `${tp.first_name || ''} ${tp.last_name || ''}`.trim();
+                    }).filter(Boolean);
+                    if (names.length > 0) {
+                        assigneeName = names.join(' & ');
+                    }
+                }
+            }
+
+            if (!assigneeName) {
+                if (i === 1) assigneeName = l1Name;
+                else if (i === 2) assigneeName = l2Name;
+                else if (i === 3) assigneeName = l3Name;
+                else if (i === 4) assigneeName = l4Name;
+                else assigneeName = `Level ${i} Authority`;
+            }
+
+            if (ticket.current_level === i && ticket.assigned_to?.full_name) {
+                assigneeName = ticket.assigned_to.full_name;
+            }
+
+            escalationFlow.push({
+                level: i,
+                label: `Level ${i}`,
+                assignee: assigneeName || `Level ${i}`
+            });
+        }
+
+        ticket.escalation_flow = escalationFlow;
+
         return NextResponse.json({ success: true, data: ticket });
     } catch (err: any) {
         return NextResponse.json({ success: false, error: err.message }, { status: 500 });
@@ -149,7 +213,7 @@ export async function PATCH(
     try {
         const { id } = await params;
         const body = await request.json();
-        const { status, assigned_to_user_id, current_level, actor_user_id, priority, escalate, resolution_note, resolved_by_user_id } = body;
+        const { status, assigned_to_user_id, current_level, actor_user_id, priority, escalate, resolution_note, resolved_by_user_id, action, acknowledgement_note } = body;
 
         const { data: existing, error: fetchErr } = await supabaseAdmin
             .from('hr_tickets')
@@ -167,14 +231,27 @@ export async function PATCH(
         if (assigned_to_user_id) updates.assigned_to_user_id = assigned_to_user_id;
         if (resolution_note !== undefined) updates.resolution_note = resolution_note;
 
-        if (status === 'resolved') {
+        const currentSnapshot = existing.employee_snapshot || {};
+
+        if (status === 'resolved' || status === 'pending_acknowledgement' || action === 'resolve') {
+            updates.status = 'pending_acknowledgement';
             updates.resolved_at = new Date().toISOString();
             if (resolved_by_user_id || actor_user_id) {
                 updates.resolved_by_user_id = resolved_by_user_id || actor_user_id;
             }
         }
-        if (status === 'closed') updates.closed_at = new Date().toISOString();
-        if (status === 'reopened') updates.reopened_count = (existing.reopened_count || 0) + 1;
+        if (status === 'closed' || action === 'acknowledge') {
+            updates.status = 'closed';
+            updates.closed_at = new Date().toISOString();
+            currentSnapshot.acknowledged_at = new Date().toISOString();
+            currentSnapshot.acknowledged_by_user_id = actor_user_id || body.acknowledged_by_user_id || null;
+            currentSnapshot.acknowledgement_note = acknowledgement_note || 'Confirmed & Acknowledged by Submitter';
+            updates.employee_snapshot = currentSnapshot;
+        }
+        if (status === 'reopened' || action === 'reopen') {
+            updates.status = 'reopened';
+            updates.reopened_count = (existing.reopened_count || 0) + 1;
+        }
 
         // Dynamic Level Escalation (Level 1 -> 2 -> 3 -> 4)
         if (escalate) {
@@ -238,6 +315,21 @@ export async function PATCH(
             updates.current_level = current_level;
         }
 
+        // Maintain assigned_history array in employee_snapshot and root table
+        const targetAssignedId = updates.assigned_to_user_id || existing.assigned_to_user_id;
+        if (targetAssignedId) {
+            const updatedHistory = Array.from(new Set([
+                ...(existing.assigned_history || []),
+                ...(currentSnapshot.assigned_history || []),
+                existing.assigned_to_user_id,
+                targetAssignedId
+            ])).filter(Boolean);
+            currentSnapshot.assigned_history = updatedHistory;
+            updates.employee_snapshot = currentSnapshot;
+            updates.assigned_history = updatedHistory;
+            if (existing.manager_user_id) updates.manager_user_id = existing.manager_user_id;
+        }
+
         const { data: updated, error: updateErr } = await supabaseAdmin
             .from('hr_tickets')
             .update(updates)
@@ -251,6 +343,8 @@ export async function PATCH(
         let auditAction = 'STATUS_UPDATE';
         if (escalate) {
             auditAction = `ESCALATED_L${updates.current_level}`;
+        } else if (action === 'acknowledge' || (status === 'closed' && actor_user_id === existing.raised_by_user_id)) {
+            auditAction = 'ACKNOWLEDGED_BY_CREATOR';
         } else if (status === 'resolved' || status === 'closed') {
             auditAction = `RESOLVED_L${existing.current_level || 1}`;
         } else if (status === 'reopened') {
@@ -264,17 +358,6 @@ export async function PATCH(
             old_values: { status: existing.status, level: existing.current_level, assigned_to: existing.assigned_to_user_id },
             new_values: updates
         });
-
-        // Omnichannel WhatsApp & In-App Status Notification Hook
-        if (escalate) {
-            NotificationService.afterHrTicketEscalated(id, existing.current_level, updated.current_level, false, actor_user_id).catch(err => {
-                console.error('Failed to trigger HR ticket escalation notification:', err);
-            });
-        } else {
-            NotificationService.afterHrTicketStatusUpdated(id, existing.status, updated.status, actor_user_id).catch(err => {
-                console.error('Failed to trigger HR ticket status notification:', err);
-            });
-        }
 
         return NextResponse.json({ success: true, data: updated });
     } catch (err: any) {
