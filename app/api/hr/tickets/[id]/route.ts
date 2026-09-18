@@ -1,6 +1,13 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { NotificationService } from '@/backend/services/NotificationService';
+import {
+    loadHrEscalationConfig,
+    getMaxLevelForFlow,
+    resolveLevelAssignee,
+    resolveLevelSlaDays,
+    buildAssignedHistory
+} from '@/backend/lib/hr/slaEscalation';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -253,77 +260,56 @@ export async function PATCH(
             updates.reopened_count = (existing.reopened_count || 0) + 1;
         }
 
-        // Dynamic Level Escalation (Level 1 -> 2 -> 3 -> 4)
+        // Dynamic Level Escalation. The ladder length and the owner of each level come
+        // from the org escalation tree (hr_escalation_config), exactly as the SLA job
+        // resolves them, so a manual escalation and an auto escalation land on the
+        // same person. Levels beyond 4 are supported when the tree defines them.
         if (escalate) {
-            const nextLevel = Math.min((existing.current_level || 1) + 1, 4);
+            const ticketType = existing.ticket_type || 'grievance';
+            const escalationConfig = await loadHrEscalationConfig();
+            const maxLevel = getMaxLevelForFlow(escalationConfig, ticketType);
+            const nextLevel = Math.min((existing.current_level || 1) + 1, maxLevel);
+
+            if (nextLevel === (existing.current_level || 1)) {
+                return NextResponse.json({
+                    success: false,
+                    error: `Ticket is already at the final escalation level (Level ${maxLevel})`
+                }, { status: 400 });
+            }
+
             updates.current_level = nextLevel;
             updates.status = 'escalated';
 
-            // Resolve next level owner based on hierarchy
-            if (nextLevel === 2) {
-                // Level 2: Designated HR Manager / Operations Lead
-                const { data: hrMgrs } = await supabaseAdmin
-                    .from('employee_profiles')
-                    .select('user_id')
-                    .eq('is_hr_manager_authority', true)
-                    .not('user_id', 'is', null);
-                if (hrMgrs && hrMgrs.length > 0 && hrMgrs[0].user_id) {
-                    updates.assigned_to_user_id = hrMgrs[0].user_id;
-                } else {
-                    const { data: hrList } = await supabaseAdmin
-                        .from('employee_profiles')
-                        .select('user_id')
-                        .eq('is_hr_authority', true)
-                        .not('user_id', 'is', null);
-                    if (hrList && hrList.length > 0) updates.assigned_to_user_id = hrList[0].user_id;
-                }
-            } else if (nextLevel === 3) {
-                // Level 3: Designated HR Head
-                const { data: hrHead } = await supabaseAdmin
-                    .from('employee_profiles')
-                    .select('user_id')
-                    .eq('is_hr_authority', true)
-                    .not('user_id', 'is', null)
-                    .maybeSingle();
+            const nextAssigneeId = await resolveLevelAssignee(
+                escalationConfig,
+                ticketType,
+                nextLevel,
+                existing.assigned_to_user_id
+            );
+            if (nextAssigneeId) updates.assigned_to_user_id = nextAssigneeId;
 
-                if (hrHead?.user_id) {
-                    updates.assigned_to_user_id = hrHead.user_id;
-                }
-            } else if (nextLevel === 4) {
-                // Level 4: Designated Director
-                const { data: directors } = await supabaseAdmin
-                    .from('employee_profiles')
-                    .select('user_id')
-                    .eq('is_director_authority', true)
-                    .not('user_id', 'is', null)
-                    .maybeSingle();
-                if (directors?.user_id) updates.assigned_to_user_id = directors.user_id;
-            }
-
-            // Recalculate SLA due date for next level based on category configured SLA days
+            // Recalculate SLA due date for the level being escalated into
+            let category: any = null;
             if (existing.category_id) {
                 const { data: cat } = await supabaseAdmin
                     .from('hr_ticket_categories')
                     .select('*')
                     .eq('id', existing.category_id)
                     .maybeSingle();
-                const key = `l${nextLevel}_sla_days` as keyof typeof cat;
-                const slaDays = (cat && cat[key] !== undefined && !isNaN(Number(cat[key]))) ? Number(cat[key]) : (nextLevel === 2 ? 7 : nextLevel === 3 ? 10 : 12);
-                updates.sla_due_at = new Date(Date.now() + slaDays * 24 * 60 * 60 * 1000).toISOString();
+                category = cat;
             }
+            const slaDays = resolveLevelSlaDays(escalationConfig, ticketType, nextLevel, category);
+            updates.sla_due_at = new Date(Date.now() + slaDays * 24 * 60 * 60 * 1000).toISOString();
         } else if (current_level) {
             updates.current_level = current_level;
         }
 
-        // Maintain assigned_history array in employee_snapshot and root table
+        // Maintain assigned_history array in employee_snapshot and root table.
+        // Every past holder stays in the array: this is what lets a level-N owner keep
+        // seeing the ticket once it has moved to level N+1.
         const targetAssignedId = updates.assigned_to_user_id || existing.assigned_to_user_id;
         if (targetAssignedId) {
-            const updatedHistory = Array.from(new Set([
-                ...(existing.assigned_history || []),
-                ...(currentSnapshot.assigned_history || []),
-                existing.assigned_to_user_id,
-                targetAssignedId
-            ])).filter(Boolean);
+            const updatedHistory = buildAssignedHistory(existing, targetAssignedId);
             currentSnapshot.assigned_history = updatedHistory;
             updates.employee_snapshot = currentSnapshot;
             updates.assigned_history = updatedHistory;
@@ -356,7 +342,7 @@ export async function PATCH(
             actor_user_id: actor_user_id || resolved_by_user_id || null,
             action: auditAction,
             old_values: { status: existing.status, level: existing.current_level, assigned_to: existing.assigned_to_user_id },
-            new_values: updates
+            new_values: { ...updates, assigned_to: updates.assigned_to_user_id || existing.assigned_to_user_id }
         });
 
         return NextResponse.json({ success: true, data: updated });

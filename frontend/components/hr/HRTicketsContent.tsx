@@ -272,6 +272,9 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
             try { data = text ? JSON.parse(text) : {}; } catch {}
             if (data.success) {
                 setTickets(data.data || []);
+            } else {
+                // Surface scoping/filter failures instead of silently keeping a stale list
+                console.error('Error fetching tickets:', data.error || `HTTP ${res.status}`);
             }
         } catch (err) {
             console.error('Error fetching tickets:', err);

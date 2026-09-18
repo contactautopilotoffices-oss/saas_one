@@ -54,17 +54,31 @@ export async function GET(request: Request) {
         // Granular Role Scoping
         const normalizedRole = (role || '').toLowerCase();
         const hrRoles = ['hr', 'hr_head', 'hr_manager', 'hr_ops', 'org_super_admin', 'ops_super_admin', 'master_admin', 'org_admin'];
-        
+
+        // PostgREST treats , . ( ) and " as syntax inside an or() group. Any free-text
+        // value (a person's name) has to be double-quoted, and a name that carries a
+        // quote itself can never be made safe, so it is dropped rather than corrupting
+        // the whole filter (a malformed or() fails the entire request, not just one term).
+        const safeIlike = (column: string, value: string): string | null => {
+            const cleaned = (value || '').trim();
+            if (!cleaned || cleaned.includes('"')) return null;
+            return `${column}.ilike."*${cleaned}*"`;
+        };
+
         let isHrAuthorityUser = false;
+        let isDirectorAuthorityUser = false;
         if (userId) {
             // Check employee_profiles for HR authority flags (avoid .maybeSingle() error when multiple rows exist)
             const { data: hrEmps } = await supabaseAdmin
                 .from('employee_profiles')
-                .select('is_hr_authority, is_hr_manager_authority')
+                .select('is_hr_authority, is_hr_manager_authority, is_director_authority')
                 .eq('user_id', userId);
 
             if (hrEmps && hrEmps.some(e => e.is_hr_authority || e.is_hr_manager_authority)) {
                 isHrAuthorityUser = true;
+            }
+            if (hrEmps && hrEmps.some(e => e.is_director_authority)) {
+                isDirectorAuthorityUser = true;
             }
 
             // Check organization_memberships for App roles (hr, hr_head, org_super_admin, etc.)
@@ -82,16 +96,17 @@ export async function GET(request: Request) {
 
         if (isHrAuthorityUser || hrRoles.includes(normalizedRole)) {
             query = query.or('is_confidential.eq.false,is_confidential.is.null');
-        } else if (normalizedRole === 'director') {
-            query = query.or('is_confidential.eq.true,is_anonymous.eq.true,current_level.eq.4');
         } else if (userId) {
-            // Fetch manager's employee profile (if any) to resolve profile ID & employee code
-            const { data: mgrProfile } = await supabaseAdmin
+            // Fetch manager's employee profile (if any) to resolve profile ID & employee code.
+            // Duplicate profiles for one user are common here, so take the first row instead
+            // of .maybeSingle() (which errors out and blanks the whole ticket list).
+            const { data: mgrProfiles } = await supabaseAdmin
                 .from('employee_profiles')
                 .select('id, employee_code, user_id')
                 .eq('user_id', userId)
-                .maybeSingle();
+                .limit(1);
 
+            const mgrProfile = mgrProfiles?.[0];
             const mgrProfId = mgrProfile?.id;
             const mgrCode = mgrProfile?.employee_code;
 
@@ -102,6 +117,8 @@ export async function GET(request: Request) {
                 .eq('id', userId)
                 .maybeSingle();
 
+            const cleanName = (uProfile?.full_name || '').trim();
+
             // Dynamically check if user is a reporting manager for any employees (matching user_id, profile id, or manager name/code)
             const reporteeConditions: string[] = [
                 `reporting_manager_id.eq.${userId}`
@@ -109,19 +126,34 @@ export async function GET(request: Request) {
             if (mgrProfId) {
                 reporteeConditions.push(`reporting_manager_id.eq.${mgrProfId}`);
             }
-            if (uProfile?.full_name && uProfile.full_name.trim()) {
-                const cleanName = uProfile.full_name.trim();
-                reporteeConditions.push(`reporting_manager_code.ilike.*${cleanName}*`);
-            }
-            if (mgrCode) {
-                reporteeConditions.push(`reporting_manager_code.ilike.*${mgrCode}*`);
-            }
+            const reporteeNameCond = cleanName ? safeIlike('reporting_manager_code', cleanName) : null;
+            if (reporteeNameCond) reporteeConditions.push(reporteeNameCond);
+            const reporteeCodeCond = mgrCode ? safeIlike('reporting_manager_code', mgrCode) : null;
+            if (reporteeCodeCond) reporteeConditions.push(reporteeCodeCond);
 
             const { data: reportees } = await supabaseAdmin
                 .from('employee_profiles')
                 .select('user_id')
                 .or(reporteeConditions.join(','))
                 .not('user_id', 'is', null);
+
+            // Tickets this user has ever held. `assigned_history` is JSONB, and jsonb
+            // containment cannot be expressed inside an or() group, so it is resolved
+            // as its own query and folded back in as an id list. This is what keeps a
+            // level-N owner able to see a ticket after it escalates to level N+1.
+            const { data: historyTickets, error: historyErr } = await supabaseAdmin
+                .from('hr_tickets')
+                .select('id')
+                .filter('assigned_history', 'cs', JSON.stringify([userId]));
+
+            if (historyErr) {
+                console.error('[HR Tickets] assigned_history lookup failed:', historyErr);
+            }
+
+            const { data: snapshotTickets } = await supabaseAdmin
+                .from('hr_tickets')
+                .select('id')
+                .filter('employee_snapshot->assigned_history', 'cs', JSON.stringify([userId]));
 
             // Fetch any tickets where this user was involved via audit logs (actor or previous/new assigned manager)
             const { data: auditLogs } = await supabaseAdmin
@@ -130,32 +162,48 @@ export async function GET(request: Request) {
                 .or(`actor_user_id.eq.${userId},old_values->>assigned_to.eq.${userId},new_values->>assigned_to.eq.${userId}`);
 
             const reporteeUserIds = (reportees || []).map(r => r.user_id).filter(Boolean);
-            const auditTicketIds = (auditLogs || []).map(a => a.ticket_id).filter(Boolean);
             const allowedUserIds = Array.from(new Set([userId, ...reporteeUserIds]));
+
+            const participantTicketIds = Array.from(new Set([
+                ...(historyTickets || []).map(t => t.id),
+                ...(snapshotTickets || []).map(t => t.id),
+                ...(auditLogs || []).map(a => a.ticket_id)
+            ].filter(Boolean)));
 
             const filterConditions: string[] = [
                 `assigned_to_user_id.eq.${userId}`,
                 `manager_user_id.eq.${userId}`,
-                `assigned_history.cs.["${userId}"]`,
                 `employee_snapshot->>manager_user_id.eq.${userId}`
             ];
             if (allowedUserIds.length > 0) {
                 filterConditions.push(`raised_by_user_id.in.(${allowedUserIds.join(',')})`);
             }
-            if (uProfile?.full_name && uProfile.full_name.trim()) {
-                const cleanName = uProfile.full_name.trim();
-                filterConditions.push(`employee_snapshot->>manager_code.ilike.*${cleanName}*`);
-                filterConditions.push(`employee_snapshot->>manager_name.ilike.*${cleanName}*`);
-                filterConditions.push(`employee_snapshot->>reporting_manager_name.ilike.*${cleanName}*`);
+            if (cleanName) {
+                for (const col of ['employee_snapshot->>manager_code', 'employee_snapshot->>manager_name', 'employee_snapshot->>reporting_manager_name']) {
+                    const cond = safeIlike(col, cleanName);
+                    if (cond) filterConditions.push(cond);
+                }
             }
             if (mgrCode) {
-                filterConditions.push(`employee_snapshot->>manager_code.ilike.*${mgrCode}*`);
+                const cond = safeIlike('employee_snapshot->>manager_code', mgrCode);
+                if (cond) filterConditions.push(cond);
             }
-            if (auditTicketIds.length > 0) {
-                filterConditions.push(`id.in.(${Array.from(new Set(auditTicketIds)).join(',')})`);
+            if (participantTicketIds.length > 0) {
+                filterConditions.push(`id.in.(${participantTicketIds.join(',')})`);
+            }
+
+            // A director additionally sees the confidential / anonymous stream and anything
+            // sitting at the top of the ladder. These are ADDED to their own participation
+            // scope, never substituted for it.
+            if (isDirectorAuthorityUser || normalizedRole === 'director') {
+                filterConditions.push('is_confidential.eq.true');
+                filterConditions.push('is_anonymous.eq.true');
+                filterConditions.push('current_level.gte.4');
             }
 
             query = query.or(filterConditions.join(','));
+        } else if (normalizedRole === 'director') {
+            query = query.or('is_confidential.eq.true,is_anonymous.eq.true,current_level.gte.4');
         }
 
         if (type) query = query.eq('ticket_type', type);
