@@ -25,11 +25,21 @@
 --   SET lifecycle = 'standard'
 --   WHERE import_batch_id IS NULL AND lifecycle = 'legacy';
 
-UPDATE public.procurement_catalog
+-- Guarded so re-running is a no-op once an organisation has actually adopted the
+-- standard list. Without the guard, running this again later would sweep up every
+-- item procurement had since added by hand (those have no import_batch_id either)
+-- and quietly drop them off every property's sheet.
+UPDATE public.procurement_catalog pc
 SET lifecycle  = 'legacy',
     updated_at = timezone('utc'::text, now())
-WHERE import_batch_id IS NULL
-  AND lifecycle = 'standard';
+WHERE pc.import_batch_id IS NULL
+  AND pc.lifecycle = 'standard'
+  AND NOT EXISTS (
+      SELECT 1
+      FROM public.catalog_import_batches b
+      WHERE b.organization_id = pc.organization_id
+        AND b.status = 'committed'
+  );
 
 -- The requisition sheet's hot path: active standard items for an organisation.
 CREATE INDEX IF NOT EXISTS idx_procurement_catalog_standard_only
