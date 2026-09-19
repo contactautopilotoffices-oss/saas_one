@@ -160,18 +160,29 @@ export const PricingAndAliasService = {
             return [];
         }
 
-        // 2. If propertyId is provided, fetch all active site-specific prices for this property
-        let sitePricesMap: Record<string, number> = {};
+        // 2. If propertyId is provided, fetch this property's site-specific prices.
+        //
+        //    Overrides retired by the standardisation migration
+        //    (20260919000003_supersede_item_site_price_overrides) are skipped, so the
+        //    rate on the standard template is the only rate a property sees.
+        //
+        //    select('*') and a JS filter, deliberately: is_superseded does not exist
+        //    until that migration runs, and .eq('is_superseded', false) would turn the
+        //    whole requisition sheet into a 500 on a database that has not had it yet.
+        //    Absent column -> undefined -> not superseded -> previous behaviour.
+        const sitePricesMap: Record<string, number> = {};
         if (propertyId) {
             const { data: sitePrices } = await adminSupabase
                 .from('item_site_prices')
-                .select('item_id, unit_price')
+                .select('*')
                 .eq('organization_id', organizationId)
                 .eq('property_id', propertyId)
                 .eq('is_active', true);
 
             if (sitePrices) {
-                sitePrices.forEach((sp: any) => {
+                type SitePriceRow = { item_id: string; unit_price: number | string; is_superseded?: boolean };
+                (sitePrices as SitePriceRow[]).forEach(sp => {
+                    if (sp.is_superseded) return;
                     sitePricesMap[sp.item_id] = Number(sp.unit_price) || 0;
                 });
             }

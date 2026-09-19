@@ -311,16 +311,53 @@ helper that only existed for stock matching.
 `requisition_items` already snapshots `item_name`, `unit` and `unit_price` at submit time —
 keep that. A later catalog upload must never retroactively change a submitted requisition.
 
-### 5.1 Open: existing per-property rate overrides
+### 5.1 Per-property rate overrides — RETIRED
 
-Hiding the Site Pricing UI did not remove the `item_site_prices` rows. They are still applied
-on top of the standard rate, so **a property with an old override does not see the `final rate`
-from the uploaded template** — silently. One of these needs deciding:
+**Decision: one rate everywhere.** The rate on the standard template is the only rate a
+property sees. [20260919000003](supabase/migrations/20260919000003_supersede_item_site_price_overrides.sql) retires the
+31 overrides that were in force across 9 of the 23 properties.
 
-- deactivate the existing `item_site_prices` rows, making the template rate the only rate; or
-- keep them as genuine contracted rates that legitimately beat the standard.
+They are **superseded, not deleted and not deactivated**:
 
-This is live today: one override already exists on 3i Cresent.
+- `item_site_prices` carries `UNIQUE(item_id, property_id, is_active)`, so at most one
+  *inactive* row may exist per item/property. Flipping the active rows would collide with any
+  historical row already there, and clearing the way would mean deleting price history on a
+  production database. It would also break `POST /api/procurement/pricing`, whose upsert
+  targets that exact constraint.
+- So the rows get `is_superseded = true` plus `superseded_at` / `superseded_reason`. Nothing is
+  deleted, no constraint changes, and the reversal is one statement:
+
+  ```sql
+  UPDATE public.item_site_prices
+  SET is_superseded = false, superseded_at = NULL, superseded_reason = NULL
+  WHERE superseded_reason = 'STANDARD_CATALOG_ADOPTION';
+  ```
+
+`getCatalogWithSitePrices` skips superseded rows. It reads them with `select('*')` and filters
+in JS rather than `.eq('is_superseded', false)`, so the requisition sheet keeps working on a
+database where this migration has not run — absent column → undefined → not superseded →
+previous behaviour.
+
+**Sequence this after the first template upload.** Some overrides are far from the current
+catalog rate (AMR Altruist prices a Urinal Screen at ₹35 against a ₹415.41 catalog rate; its
+Toilet Roll is ₹12 against ₹51.65). Retiring the overrides before the standard rates are
+uploaded would expose those sites to whatever the old catalog happens to say. Upload the
+template first, then run this migration.
+
+The write endpoints (`POST /api/procurement/pricing`, `pricing/import-preview`) still exist but
+are only reachable from the Site Pricing UI, which is hidden behind
+`SHOW_LEGACY_PER_PROPERTY_CONTROLS`. No new override can be created through the app.
+
+### 5.2 Where items come from
+
+`procurement_catalog`, and nowhere else. Procurement maintains it from **Manage Items**:
+
+- **Upload Excel** — the standard template; adds new items and updates existing ones (§4).
+- **Add Item** — a single item by hand.
+- **Edit** — change an existing item; every property picks the change up on its next sheet.
+
+There is no per-property item list and no per-property rate. Every property sees the same
+names, units, brands and rates.
 
 ## 6. Phase 3 — how the standard items drive stock management
 
