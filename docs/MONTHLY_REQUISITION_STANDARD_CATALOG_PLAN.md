@@ -2,7 +2,8 @@
 
 **Branch:** `feat/monthly-requisition-standard-catalog`
 **Status:** Phase 1 built (template, procurement upload, safe production migration path).
-Phases 2–4 still planned.
+Phase 2 built (catalog-first requisition sheet, no stock join yet).
+Phases 3–4 still planned.
 Excel column spec was set by us — see §4.2; adjust if the stakeholder's sheet differs.
 
 ---
@@ -282,30 +283,44 @@ warning on the requisition sheet; they just can't be edited from the UI.
 
 ---
 
-## 5. Property-admin side: the requisition sheet
+## 5. Property-admin side: the requisition sheet — BUILT (catalog-only)
 
-Change [SiteRequisitionSheet.tsx](frontend/components/procurement/SiteRequisitionSheet.tsx) from stock-first to
-**catalog-first**:
+[SiteRequisitionSheet.tsx](frontend/components/procurement/SiteRequisitionSheet.tsx) is now **catalog-first and
+catalog-only**. It loads the org's standard list via `/api/procurement/pricing` and renders it
+identically for every property. Verified against two properties: same 90 rows, same order.
 
-1. Load the standard catalog for the org (active items, ordered by `sort_order`, then name),
-   grouped into the existing category tabs. **This is identical for every property.**
-2. Overlay the property's price from `item_site_prices` (existing behaviour, keep it).
-3. Overlay `available_stock_qty` by joining on `stock_items.catalog_item_id`, falling back to
-   the alias table, then to normalised name. If the property has no stock module, this column
-   shows blank/0 and stays manually editable exactly as today.
-4. Render **site-specific items** — stock rows with no `catalog_item_id` — in a separate,
-   clearly labelled block below the standard list, so they are visible but obviously not part
-   of the standard.
-5. "Add row" still works, and a manually added row gets flagged so procurement can later
-   promote it into the standard catalog (a nice feedback loop: what sites keep adding by hand
-   is what the standard is missing).
+What it does:
 
-`requisition_items` already snapshots `item_name`, `unit`, `unit_price` at submit time — keep
-that. A later catalog upload must never retroactively change a submitted requisition. Add
-`import_batch_id` to the snapshot so we can explain why last month's sheet differs from this
-month's.
+1. Standard list in **Sr. No.** order, legacy items last (ordered in
+   [pricingAndAliasService.ts](backend/lib/procurement/pricingAndAliasService.ts) — sorted in JS, not via `.order()`, so the
+   query still works before the `sort_order` column exists).
+2. Per-property price from `item_site_prices` still overlays the standard rate (see §5.1).
+3. Category tabs now include **General**, so items in that bucket are reachable.
+4. Legacy items carry an amber row marker and a tooltip; they stay requestable.
+5. Loading, "choose a property", and "no standard items yet" states instead of a blank grid.
 
----
+**Deliberately NOT done: no stock join.** "Avail. Qty" stays a manual column, exactly as on the
+paper sheet. `stock_items` is not read at all. There is no requisition history yet, so there is
+nothing to reconcile against — wiring the stock join before the per-property reconciliation in
+§6 would create the duplicate-row problem rather than solve it.
+
+Removed in the same pass: `DEFAULT_HK_ITEMS` / `DEFAULT_BEVERAGE_ITEMS`, the hardcoded lists
+that were a stale second definition of "standard items", and the now-unused name-normalisation
+helper that only existed for stock matching.
+
+`requisition_items` already snapshots `item_name`, `unit` and `unit_price` at submit time —
+keep that. A later catalog upload must never retroactively change a submitted requisition.
+
+### 5.1 Open: existing per-property rate overrides
+
+Hiding the Site Pricing UI did not remove the `item_site_prices` rows. They are still applied
+on top of the standard rate, so **a property with an old override does not see the `final rate`
+from the uploaded template** — silently. One of these needs deciding:
+
+- deactivate the existing `item_site_prices` rows, making the template rate the only rate; or
+- keep them as genuine contracted rates that legitimately beat the standard.
+
+This is live today: one override already exists on 3i Cresent.
 
 ## 6. Phase 3 — how the standard items drive stock management
 
@@ -440,7 +455,7 @@ it.
 | Phase | Scope | Ships |
 |---|---|---|
 | **1** ✅ | Schema (§3.1, §3.2), Excel template + preview/commit import, upload UI in the procurement Catalog tab | Procurement can upload and maintain the standard list |
-| **2** | Catalog-first requisition sheet, site-specific block, delete dead defaults | Every property fills the same sheet |
+| **2** ✅ | Catalog-first requisition sheet, General tab, dead defaults deleted. Stock join deliberately deferred. | Every property fills the same sheet |
 | **3** | `stock_items` columns, reconciliation wizard, merge flow, adoption rollout | Stock entries and requisition share one item list |
 | **4** | Retire `sync_all_catalog_to_stock.js` / `link_stock_to_catalog.js`; promote hand-added rows into the catalog | Cleanup + feedback loop |
 

@@ -178,7 +178,7 @@ export const PricingAndAliasService = {
         }
 
         // 3. Merge: Site price overrides base item price
-        return (items || []).map((item: any) => {
+        const merged = (items || []).map((item: any) => {
             const hasSitePrice = propertyId && sitePricesMap[item.id] !== undefined;
             const effectivePrice = hasSitePrice
                 ? sitePricesMap[item.id]
@@ -195,8 +195,29 @@ export const PricingAndAliasService = {
                 base_price: Number(item.unit_price) || Number(item.estimated_price) || 0,
                 unit_price: effectivePrice,
                 is_site_specific: hasSitePrice,
-                photo_url: item.photo_url || ''
+                photo_url: item.photo_url || '',
+                // Present only once the standard-items migration has run. Sorted in
+                // JS rather than via .order() so this query still works without it.
+                sort_order: Number(item.sort_order) || 0,
+                lifecycle: item.lifecycle || 'standard',
+                item_code: item.item_code || null
             };
+        });
+
+        // 4. Standard items first, then in the Sr. No. order procurement uploaded.
+        //    Legacy items sink to the bottom; they are still requestable, just
+        //    being phased out.
+        return merged.sort((a, b) => {
+            const aLegacy = a.lifecycle === 'legacy' ? 1 : 0;
+            const bLegacy = b.lifecycle === 'legacy' ? 1 : 0;
+            if (aLegacy !== bLegacy) return aLegacy - bLegacy;
+
+            // Items with no Sr. No. go after the ones that have one.
+            const aOrder = a.sort_order > 0 ? a.sort_order : Number.MAX_SAFE_INTEGER;
+            const bOrder = b.sort_order > 0 ? b.sort_order : Number.MAX_SAFE_INTEGER;
+            if (aOrder !== bOrder) return aOrder - bOrder;
+
+            return a.name.localeCompare(b.name);
         });
     }
 };

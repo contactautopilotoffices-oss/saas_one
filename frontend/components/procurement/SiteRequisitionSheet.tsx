@@ -19,6 +19,8 @@ export interface RequisitionRow {
     unit: string;
     unit_price: number;
     is_site_specific?: boolean;
+    /** Pre-standardisation item, still requestable but being phased out. */
+    is_legacy?: boolean;
     remarks?: string;
 }
 
@@ -51,41 +53,6 @@ const STANDARD_FLOOR_TAGS = [
     'Cafeteria'
 ];
 
-// Pre-populated default standard items matching the user's template photos
-const DEFAULT_HK_ITEMS: Omit<RequisitionRow, 'id'>[] = [
-    { category: 'HK', name: 'Toilet Roll', brand: 'NA', details: 'White', requested_qty: 60, available_stock_qty: 60, unit: 'pcs', unit_price: 45 },
-    { category: 'HK', name: 'M fold', brand: 'NA', details: 'White', requested_qty: 120, available_stock_qty: 80, unit: 'pcs', unit_price: 35 },
-    { category: 'HK', name: 'Tissue paper', brand: 'NA', details: 'White', requested_qty: 55, available_stock_qty: 20, unit: 'pcs', unit_price: 25 },
-    { category: 'HK', name: 'Disposel', brand: 'NA', details: 'White', requested_qty: 25, available_stock_qty: 10, unit: 'pkt', unit_price: 60 },
-    { category: 'HK', name: 'garbage Big 32x42', brand: 'NA', details: 'Black', requested_qty: 5, available_stock_qty: 0, unit: 'KG', unit_price: 110 },
-    { category: 'HK', name: 'garbage 19x21', brand: 'NA', details: 'Black', requested_qty: 7, available_stock_qty: 5, unit: 'Roll', unit_price: 75 },
-    { category: 'HK', name: 'Room Freshner', brand: 'NA', details: 'NA', requested_qty: 5, available_stock_qty: 3, unit: 'pcs', unit_price: 130 },
-    { category: 'HK', name: 'Odonil Zipper', brand: 'Odonil', details: 'NA', requested_qty: 4, available_stock_qty: 6, unit: 'pcs', unit_price: 55 },
-    { category: 'HK', name: 'Prill Liquid', brand: 'Prill', details: 'Yellow', requested_qty: 3, available_stock_qty: 0, unit: 'pcs', unit_price: 145 },
-    { category: 'HK', name: 'Black Hit', brand: 'Hit', details: 'Black', requested_qty: 3, available_stock_qty: 0, unit: 'pcs', unit_price: 180 },
-    { category: 'HK', name: 'Red hit', brand: 'Hit', details: 'Red', requested_qty: 1, available_stock_qty: 0, unit: 'pcs', unit_price: 190 },
-    { category: 'HK', name: 'Harpic', brand: 'Harpic', details: 'Blue', requested_qty: 1, available_stock_qty: 0, unit: 'can', unit_price: 195 },
-    { category: 'HK', name: 'Surf Excel', brand: 'Surf Excel', details: 'NA', requested_qty: 1, available_stock_qty: 1, unit: 'Kg', unit_price: 140 },
-    { category: 'HK', name: 'plastic Water bottle', brand: 'NA', details: '250ml', requested_qty: 6, available_stock_qty: 0, unit: 'pcs', unit_price: 10 },
-    { category: 'HK', name: 'Microfiber Duster', brand: 'NA', details: 'Yellow', requested_qty: 2, available_stock_qty: 0, unit: 'pcs', unit_price: 65 },
-    { category: 'HK', name: 'Hand Glubus', brand: 'NA', details: 'Pair', requested_qty: 2, available_stock_qty: 0, unit: 'pair', unit_price: 40 },
-    { category: 'HK', name: 'Scoth Brite', brand: 'Scotch Brite', details: 'Green', requested_qty: 5, available_stock_qty: 1, unit: 'pkt', unit_price: 30 },
-    { category: 'HK', name: 'Urinal Cube', brand: 'NA', details: 'White', requested_qty: 4, available_stock_qty: 0, unit: 'pkt', unit_price: 50 },
-    { category: 'HK', name: 'Urinal Ped Screen', brand: 'NA', details: 'Yellow', requested_qty: 2, available_stock_qty: 34, unit: 'pcs', unit_price: 120 },
-    { category: 'HK', name: 'Wiper Big', brand: 'NA', details: 'Big', requested_qty: 1, available_stock_qty: 5, unit: 'pcs', unit_price: 240 },
-    { category: 'HK', name: 'Wiper Small', brand: 'NA', details: 'Small', requested_qty: 1, available_stock_qty: 3, unit: 'pcs', unit_price: 160 },
-    { category: 'HK', name: 'Note Book', brand: 'NA', details: 'White', requested_qty: 2, available_stock_qty: 0, unit: 'pcs', unit_price: 70 },
-    { category: 'HK', name: 'cello tape 1inch', brand: 'Cello', details: 'white', requested_qty: 2, available_stock_qty: 0, unit: 'pcs', unit_price: 35 },
-];
-
-const DEFAULT_BEVERAGE_ITEMS: Omit<RequisitionRow, 'id'>[] = [
-    { category: 'Beverages', name: 'CCD coffe Beans', brand: 'CCD', details: 'Beans', requested_qty: 5, available_stock_qty: 3, unit: 'KG', unit_price: 850 },
-    { category: 'Beverages', name: 'CCD tetra Milk', brand: 'CCD', details: 'Litr', requested_qty: 24, available_stock_qty: 84, unit: 'Ltr', unit_price: 75 },
-    { category: 'Beverages', name: 'Sugar', brand: 'NA', details: 'KG', requested_qty: 5, available_stock_qty: 5, unit: 'KG', unit_price: 45 },
-    { category: 'Beverages', name: 'Disposel', brand: 'NA', details: 'PKT', requested_qty: 10, available_stock_qty: 1, unit: 'PKT', unit_price: 60 },
-    { category: 'Beverages', name: 'CCD Assam Tea', brand: 'CCD', details: 'PKT', requested_qty: 2, available_stock_qty: 1, unit: 'PKT', unit_price: 350 },
-];
-
 export default function SiteRequisitionSheet({
     user,
     organizationId,
@@ -104,8 +71,8 @@ export default function SiteRequisitionSheet({
     const [requisitionYear, setRequisitionYear] = useState<number>(new Date().getFullYear());
     const [siteNotes, setSiteNotes] = useState<string>('');
     const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
-    const [activeTab, setActiveTab] = useState<'all' | 'HK' | 'Beverages' | 'Technical'>('all');
-    const [catalogItems, setCatalogItems] = useState<any[]>([]);
+    const [activeTab, setActiveTab] = useState<'all' | 'HK' | 'Beverages' | 'Technical' | 'General'>('all');
+    const [isLoadingItems, setIsLoadingItems] = useState<boolean>(false);
 
     // Monthly Requisition Budget State
     const [allocatedBudget, setAllocatedBudget] = useState<{
@@ -154,15 +121,6 @@ export default function SiteRequisitionSheet({
         return properties.find(p => p.id === selectedPropertyId) || properties[0];
     }, [properties, selectedPropertyId]);
 
-    // Helper to normalize strings for robust item matching between catalog and stock items
-    const normalizeItemKey = (str: string): string => {
-        return (str || '')
-            .toLowerCase()
-            .replace(/[\-_,\.\(\)\[\]\/\|"']/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim();
-    };
-
     // Helper to clean UOM values
     const cleanUom = (val: any): string => {
         const s = String(val || '').trim();
@@ -210,94 +168,42 @@ export default function SiteRequisitionSheet({
         fetchBudget();
     }, [organizationId, selectedPropertyId, floorTag]);
 
-    // Fetch site-specific item pricing and on-site stock counts whenever property changes
+    // Load the standard item list for this property.
+    //
+    // Catalog-first and catalog-only: every property is shown the same standard
+    // list that procurement uploaded, in the same Sr. No. order. Stock is NOT
+    // consulted — "Avail. Qty" is entered by the site team, as it is on the paper
+    // sheet. Joining to stock_items comes later, once the standard list and the
+    // per-property stock rows have been reconciled (see
+    // docs/MONTHLY_REQUISITION_STANDARD_CATALOG_PLAN.md §6).
     useEffect(() => {
         const fetchSiteData = async () => {
             if (!organizationId || !selectedPropertyId) return;
+            setIsLoadingItems(true);
             try {
-                // 1. Fetch site prices & catalog
                 const res = await fetch(`/api/procurement/pricing?organization_id=${organizationId}&property_id=${selectedPropertyId}`);
                 const data = await res.json();
-                const siteCatalogList = data.items || [];
-                setCatalogItems(siteCatalogList);
+                const siteCatalogList: any[] = Array.isArray(data.items) ? data.items : [];
 
-                const priceLookup = new Map<string, any>();
-                siteCatalogList.forEach((item: any) => {
-                    priceLookup.set(normalizeItemKey(item.name), item);
-                });
+                const populatedRows: RequisitionRow[] = siteCatalogList.map((catItem: any, idx: number) => ({
+                    id: `cat-${catItem.id || idx + 1}`,
+                    category: catItem.category || 'HK',
+                    name: catItem.name,
+                    brand: catItem.brand || 'NA',
+                    details: catItem.details || catItem.color_size_details || '',
+                    requested_qty: 0,
+                    available_stock_qty: 0,
+                    unit: cleanUom(catItem.unit),
+                    unit_price: catItem.unit_price || catItem.estimated_price || 0,
+                    is_site_specific: !!catItem.is_site_specific,
+                    is_legacy: catItem.lifecycle === 'legacy'
+                }));
 
-                // 2. Fetch live physical on-site stock items for this property
-                let propertyStockItems: any[] = [];
-                const stockByIdLookup = new Map<string, number>();
-                const stockByNameLookup = new Map<string, number>();
-
-                try {
-                    const stockRes = await fetch(`/api/properties/${selectedPropertyId}/stock/items`);
-                    const stockData = await stockRes.json();
-                    if (stockData?.items && Array.isArray(stockData.items)) {
-                        propertyStockItems = stockData.items;
-                        propertyStockItems.forEach((si: any) => {
-                            if (si.catalog_item_id) {
-                                stockByIdLookup.set(si.catalog_item_id, Number(si.quantity) || 0);
-                            }
-                            const norm = normalizeItemKey(si.name);
-                            if (norm) stockByNameLookup.set(norm, Number(si.quantity) || 0);
-                        });
-                    }
-                } catch (stockErr) {
-                    console.warn('Failed to load physical stock items for property:', stockErr);
-                }
-
-                const populatedRows: RequisitionRow[] = [];
-                const seenKeys = new Set<string>();
-
-                if (propertyStockItems.length > 0) {
-                    propertyStockItems.forEach((si: any, idx: number) => {
-                        const norm = normalizeItemKey(si.name);
-                        seenKeys.add(norm);
-                        const matchedPrice = (si.catalog_item_id && siteCatalogList.find((c: any) => c.id === si.catalog_item_id)) 
-                            || priceLookup.get(norm);
-
-                        populatedRows.push({
-                            id: `stock-${si.id || idx + 1}`,
-                            category: si.category || matchedPrice?.category || 'HK',
-                            name: si.name,
-                            brand: matchedPrice?.brand || 'NA',
-                            details: matchedPrice?.color_size_details || '',
-                            requested_qty: 0,
-                            available_stock_qty: Number(si.quantity) || 0,
-                            unit: cleanUom(si.unit || matchedPrice?.unit),
-                            unit_price: matchedPrice?.unit_price || si.unit_price || 0,
-                            is_site_specific: !!matchedPrice?.is_site_specific
-                        });
-                    });
-                }
-
-                siteCatalogList.forEach((catItem: any, idx: number) => {
-                    const norm = normalizeItemKey(catItem.name);
-                    if (!seenKeys.has(norm)) {
-                        seenKeys.add(norm);
-                        const availStock = stockByIdLookup.get(catItem.id) ?? stockByNameLookup.get(norm) ?? 0;
-                        populatedRows.push({
-                            id: `cat-${catItem.id || idx + 1}`,
-                            category: catItem.category || 'HK',
-                            name: catItem.name,
-                            brand: catItem.brand || 'NA',
-                            details: catItem.color_size_details || '',
-                            requested_qty: 0,
-                            available_stock_qty: availStock,
-                            unit: cleanUom(catItem.unit),
-                            unit_price: catItem.unit_price || catItem.estimated_price || 0,
-                            is_site_specific: !!catItem.is_site_specific
-                        });
-                    }
-                });
-
-                if (populatedRows.length > 0) {
-                    setItems(populatedRows);
-                }
+                setItems(populatedRows);
             } catch (err) {
-                console.error('Failed to load site pricing:', err);
+                console.error('Failed to load the standard item list:', err);
+            } finally {
+                setIsLoadingItems(false);
             }
         };
         fetchSiteData();
@@ -392,6 +298,12 @@ export default function SiteRequisitionSheet({
             return items.filter(i => {
                 const cat = (i.category || '').toLowerCase();
                 return cat.includes('tech') || cat.includes('spare') || cat.includes('maint') || cat.includes('elect') || cat.includes('plumb');
+            });
+        }
+        if (activeTab === 'General') {
+            return items.filter(i => {
+                const cat = (i.category || '').toLowerCase();
+                return cat.includes('gen') || cat.includes('misc') || cat.includes('other');
             });
         }
         return items;
@@ -734,7 +646,8 @@ export default function SiteRequisitionSheet({
                             { id: 'all', label: 'All Items' },
                             { id: 'HK', label: 'HK / Stationery / Paper' },
                             { id: 'Beverages', label: 'Beverages / CCD' },
-                            { id: 'Technical', label: 'Spares / Maintenance' }
+                            { id: 'Technical', label: 'Spares / Maintenance' },
+                            { id: 'General', label: 'General' }
                         ].map(tab => (
                             <button
                                 key={tab.id}
@@ -796,9 +709,42 @@ export default function SiteRequisitionSheet({
                                 </tr>
                             </thead>
                             <tbody>
+                                {/* The standard list is the sheet. If it is empty, say so rather
+                                    than showing an empty grid the site team cannot explain. */}
+                                {filteredItems.length === 0 && (
+                                    <tr>
+                                        <td colSpan={14} className="py-14 text-center">
+                                            {isLoadingItems ? (
+                                                <span className="inline-flex items-center gap-2 text-slate-400 font-bold text-xs">
+                                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                                    Loading the standard item list…
+                                                </span>
+                                            ) : !selectedPropertyId ? (
+                                                <p className="text-xs text-slate-400 font-bold">
+                                                    Choose a property above to load the standard item list.
+                                                </p>
+                                            ) : items.length === 0 ? (
+                                                <div className="space-y-1">
+                                                    <p className="font-black text-slate-700 text-sm">No standard items yet</p>
+                                                    <p className="text-xs text-slate-400 font-bold">
+                                                        Procurement has not published the standard item list. Ask them to upload it,
+                                                        or add rows manually below.
+                                                    </p>
+                                                </div>
+                                            ) : (
+                                                <p className="text-xs text-slate-400 font-bold">
+                                                    No items in this category. Switch to <strong>All Items</strong> to see the full list.
+                                                </p>
+                                            )}
+                                        </td>
+                                    </tr>
+                                )}
                                 {filteredItems.map((row, idx) => (
                                     <tr key={row.id} className="hover:bg-slate-50/80 transition-colors">
-                                        <td className="py-1 px-2 text-center text-slate-500 font-semibold border border-slate-200 bg-slate-50">
+                                        <td
+                                            className={`py-1 px-2 text-center font-semibold border border-slate-200 ${row.is_legacy ? 'bg-amber-50 text-amber-600' : 'bg-slate-50 text-slate-500'}`}
+                                            title={row.is_legacy ? 'Legacy item — still available, but being phased out' : undefined}
+                                        >
                                             {idx + 1}
                                         </td>
                                         <td className="p-0 border border-slate-200 bg-[#00a2ed]/10">
