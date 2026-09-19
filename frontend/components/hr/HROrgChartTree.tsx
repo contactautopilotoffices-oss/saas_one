@@ -266,44 +266,100 @@ export default function HROrgChartTree({
         centerScroll();
     };
 
-    // Robust token-based reportees matching for a manager profile
+    // Normalize manager name variations for accurate hierarchy resolution
+    const normalizeManagerName = React.useCallback((str: string): string => {
+        if (!str) return '';
+        let s = str.trim().toLowerCase();
+        
+        if (s.includes('shailesh') && (s.includes('kashyap') || s === 'shailesh k')) return 'shailesh kumar kashyap';
+        if (s.includes('chavan meena') || s.includes('meena chavan')) return 'meena chavan';
+        if (s.includes('rajesh') && s.includes('kadam')) return 'rajesh kadam';
+        if (s.includes('mehul') && s.includes('kapadia')) return 'mehul kapadia';
+        if (s.includes('shrihari') || s.includes('gardas')) return 'shrihari gardas';
+        if (s.includes('roohi') && (s.includes('idirishi') || s.includes('idrishi'))) return 'roohi idirishi';
+        if (s.includes('siddhalingappa')) return 'siddhalingappa nagond';
+        if (s.includes('suraj') && (s.includes('nandavadekar') || s.includes('nandavadkar'))) return 'suraj nandavadekar';
+        if (s.includes('altamash')) return 'altamash chaugule';
+        if (s.includes('abhiram')) return 'abhiram k';
+        if (s.includes('kiran') && (s.includes('kumar') || s === 'kiran')) return 'kiran kumar';
+        
+        return s;
+    }, []);
+
+    // Direct reportees finder for a manager profile
     const getDirectReportees = React.useCallback((mgr: any): any[] => {
+        if (!mgr) return [];
         const mgrUid = mgr.user_id || mgr.id;
         const mgrCode = (mgr.employee_code || '').toLowerCase().trim();
-        const mgrFirstName = (mgr.first_name || '').toLowerCase().trim();
-        const mgrLastName = (mgr.last_name || '').toLowerCase().trim();
-        const mgrFullName = `${mgr.first_name || ''} ${mgr.last_name || ''}`.trim().toLowerCase();
+        const mgrFullName = `${mgr.first_name || ''} ${mgr.last_name || ''}`.trim();
+        const normMgrFullName = normalizeManagerName(mgrFullName);
 
         return employees.filter(e => {
             const eUid = e.user_id || e.id;
             if (mgrUid && eUid === mgrUid) return false;
 
             const rId = e.reporting_manager_id || '';
-            const rCode = (e.reporting_manager_code || '').toLowerCase().trim();
-            const rName = (e.reporting_manager_name || '').toLowerCase().trim();
-            const rStr = `${rCode} ${rName}`.trim();
+            const rCode = (e.reporting_manager_code || '').trim();
+            const rName = (e.reporting_manager_name || '').trim();
+            const rStr = (rName || rCode).trim();
+            const normRStr = normalizeManagerName(rStr);
 
             if (!rStr && !rId) return false;
 
-            // Direct ID match
+            // 1. Direct ID match
             if (mgrUid && rId && (rId === mgrUid || rId === mgr.id)) return true;
-            if (mgrCode && mgrCode.length > 1 && (rCode === mgrCode || rName === mgrCode)) return true;
-
-            // Token matching
-            if (mgrFullName && mgrFullName.length > 2 && rStr.includes(mgrFullName)) return true;
-            if (mgrFirstName && mgrFirstName.length >= 3 && rStr.includes(mgrFirstName)) return true;
+            // 2. Direct Code match
+            if (mgrCode && mgrCode.length > 1 && (rCode.toLowerCase() === mgrCode || rName.toLowerCase() === mgrCode)) return true;
+            // 3. Exact or Normalized Name match
+            if (normMgrFullName && normRStr && normRStr === normMgrFullName) return true;
+            if (mgrFullName && rStr && rStr.toLowerCase() === mgrFullName.toLowerCase()) return true;
 
             return false;
         });
-    }, [employees]);
+    }, [employees, normalizeManagerName]);
+
+    // Recursive calculation for all sub-tree reportees (Direct + Indirect)
+    const getAllSubTreeReportees = React.useCallback((mgr: any, visited = new Set<string>()): any[] => {
+        if (!mgr) return [];
+        const mgrKey = mgr.user_id || mgr.id || (mgr.employee_code || '').toLowerCase().trim() || `${mgr.first_name || ''} ${mgr.last_name || ''}`.trim().toLowerCase();
+        if (!mgrKey || visited.has(mgrKey)) return [];
+        const nextVisited = new Set(visited);
+        nextVisited.add(mgrKey);
+
+        const direct = getDirectReportees(mgr);
+        let all = [...direct];
+
+        for (const child of direct) {
+            const sub = getAllSubTreeReportees(child, nextVisited);
+            for (const s of sub) {
+                const sKey = s.user_id || s.id || (s.employee_code || '').toLowerCase().trim();
+                if (!all.some(item => (item.id === s.id || (sKey && (item.user_id || item.id || (item.employee_code || '').toLowerCase().trim()) === sKey)))) {
+                    all.push(s);
+                }
+            }
+        }
+        return all;
+    }, [getDirectReportees]);
+
+    // Calculate indirect reportees (All sub-tree reportees excluding direct)
+    const getIndirectReportees = React.useCallback((mgr: any): any[] => {
+        const direct = getDirectReportees(mgr);
+        const directKeys = new Set(direct.map(d => d.user_id || d.id || (d.employee_code || '').toLowerCase().trim()));
+        const allTree = getAllSubTreeReportees(mgr);
+        return allTree.filter(t => {
+            const tKey = t.user_id || t.id || (t.employee_code || '').toLowerCase().trim();
+            return !directKeys.has(tKey);
+        });
+    }, [getDirectReportees, getAllSubTreeReportees]);
 
     // Helper to resolve an employee's direct reporting manager profile
     const getManagerOfEmployee = React.useCallback((emp: any, allEmployees: any[]): any | null => {
         if (!emp) return null;
         const rId = emp.reporting_manager_id || '';
-        const rCode = (emp.reporting_manager_code || '').toLowerCase().trim();
-        const rName = (emp.reporting_manager_name || '').toLowerCase().trim();
-        const rStr = `${rCode} ${rName}`.trim();
+        const rCode = (emp.reporting_manager_code || '').trim();
+        const rName = (emp.reporting_manager_name || '').trim();
+        const rStr = (rName || rCode).trim();
+        const normRStr = normalizeManagerName(rStr);
 
         if (!rStr && !rId) return null;
 
@@ -314,22 +370,21 @@ export default function HROrgChartTree({
             if (mUid && mUid === empUid) continue; // skip self
 
             const mCode = (m.employee_code || '').toLowerCase().trim();
-            const mFirstName = (m.first_name || '').toLowerCase().trim();
-            const mLastName = (m.last_name || '').toLowerCase().trim();
-            const mFullName = `${m.first_name || ''} ${m.last_name || ''}`.trim().toLowerCase();
+            const mFullName = `${m.first_name || ''} ${m.last_name || ''}`.trim();
+            const normMFullName = normalizeManagerName(mFullName);
 
             // 1. Direct ID match
             if (rId && mUid && (rId === mUid || rId === m.id)) return m;
             // 2. Employee Code match
-            if (rCode && mCode && (rCode === mCode || rName === mCode)) return m;
-            if (mCode && mCode.length > 1 && (rCode === mCode || rName === mCode)) return m;
-            // 3. Name match
-            if (mFullName && mFullName.length > 2 && rStr.includes(mFullName)) return m;
-            if (mFirstName && mFirstName.length >= 3 && rStr.includes(mFirstName)) return m;
+            if (rCode && mCode && (rCode.toLowerCase() === mCode || rName.toLowerCase() === mCode)) return m;
+            // 3. Exact or Normalized Name match
+            if (normMFullName && normRStr && normRStr === normMFullName) return m;
+            if (mFullName && rStr && rStr.toLowerCase() === mFullName.toLowerCase()) return m;
         }
 
         return null;
-    }, []);
+    }, [normalizeManagerName]);
+
 
     // Live Path & Interactive Search Tracing
     const {
@@ -575,6 +630,8 @@ export default function HROrgChartTree({
         nextAncestors.add(nodeKey);
 
         const directReportees = getDirectReportees(emp);
+        const indirectReportees = getIndirectReportees(emp);
+        const totalReportees = getAllSubTreeReportees(emp);
         const hasChildren = directReportees.length > 0;
         const isExpanded = expandedNodes[empUid] ?? (depth < 2);
 
@@ -694,12 +751,19 @@ export default function HROrgChartTree({
                     </div>
 
                     {/* Footer Workload & Reportee Badges */}
-                    <div className="mt-3 pt-2.5 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between text-[11px]">
-                        <div className="flex items-center gap-1.5">
+                    <div className="mt-3 pt-2.5 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between gap-1 text-[11px]">
+                        <div className="flex items-center gap-1 flex-wrap">
                             {hasChildren ? (
-                                <span className="px-2 py-0.5 rounded-full font-extrabold text-[10.5px] bg-slate-100 dark:bg-slate-800 text-[#587e85]">
-                                    {directReportees.length} Reportees
-                                </span>
+                                <>
+                                    <span className="px-2 py-0.5 rounded-full font-extrabold text-[10px] bg-slate-100 dark:bg-slate-800 text-[#587e85]" title="Direct Reportees">
+                                        {directReportees.length} Direct
+                                    </span>
+                                    {indirectReportees.length > 0 && (
+                                        <span className="px-2 py-0.5 rounded-full font-bold text-[10px] bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300" title="Indirect Reportees">
+                                            {indirectReportees.length} Ind.
+                                        </span>
+                                    )}
+                                </>
                             ) : (
                                 <span className="text-[10px] text-slate-400 font-medium">
                                     Individual Contributor
@@ -1165,7 +1229,7 @@ export default function HROrgChartTree({
                                     }`}
                                 >
                                     <Users className="w-3.5 h-3.5" />
-                                    <span>Reportees ({directReps.length})</span>
+                                    <span>Reportees ({getAllSubTreeReportees(inspectingEmp).length})</span>
                                 </button>
                             </div>
 
@@ -1339,51 +1403,118 @@ export default function HROrgChartTree({
                                     </div>
                                 )}
 
-                                {/* TAB 4: DIRECT REPORTEES LIST */}
-                                {activeDetailTab === 'reportees' && (
-                                    <div className="space-y-3">
-                                        <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-wider">
-                                            Direct Reportees ({directReps.length})
-                                        </h4>
+                                {/* TAB 4: REPORTEES LIST (DIRECT & INDIRECT BREAKDOWN) */}
+                                {activeDetailTab === 'reportees' && (() => {
+                                    const directList = getDirectReportees(inspectingEmp);
+                                    const indirectList = getIndirectReportees(inspectingEmp);
+                                    const totalList = getAllSubTreeReportees(inspectingEmp);
 
-                                        {directReps.length === 0 ? (
-                                            <div className="p-8 text-center text-xs text-slate-400 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-200 dark:border-slate-800 font-medium">
-                                                {empName} has no direct reportees assigned.
+                                    return (
+                                        <div className="space-y-4">
+                                            {/* Reportees KPI Summary */}
+                                            <div className="grid grid-cols-3 gap-2">
+                                                <div className="p-3 rounded-2xl bg-[#587e85]/10 border border-[#587e85]/20 text-center">
+                                                    <p className="text-[10px] font-extrabold uppercase text-[#587e85] dark:text-teal-300">Direct</p>
+                                                    <p className="text-lg font-black text-slate-900 dark:text-white mt-0.5">{directList.length}</p>
+                                                </div>
+                                                <div className="p-3 rounded-2xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 text-center">
+                                                    <p className="text-[10px] font-extrabold uppercase text-indigo-700 dark:text-indigo-300">Indirect</p>
+                                                    <p className="text-lg font-black text-slate-900 dark:text-white mt-0.5">{indirectList.length}</p>
+                                                </div>
+                                                <div className="p-3 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-center">
+                                                    <p className="text-[10px] font-extrabold uppercase text-emerald-700 dark:text-emerald-300">Total Tree</p>
+                                                    <p className="text-lg font-black text-emerald-900 dark:text-emerald-200 mt-0.5">{totalList.length}</p>
+                                                </div>
                                             </div>
-                                        ) : (
+
+                                            {/* DIRECT REPORTEES SECTION */}
                                             <div className="space-y-2">
-                                                {directReps.map(rep => {
-                                                    const repUid = rep.user_id || rep.id;
-                                                    const repName = `${rep.first_name || ''} ${rep.last_name || ''}`.trim() || rep.full_name || rep.name;
-                                                    return (
-                                                        <div
-                                                            key={rep.id || repUid}
-                                                            onClick={() => handleEmpClick(rep)}
-                                                            className="p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer flex items-center justify-between gap-3"
-                                                        >
-                                                            <div className="flex items-center gap-3">
-                                                                <div className="w-8 h-8 rounded-xl bg-[#587e85] text-white font-bold flex items-center justify-center text-xs shrink-0">
-                                                                    {repName.slice(0, 2).toUpperCase()}
-                                                                </div>
-                                                                <div>
-                                                                    <p className="text-xs font-black text-slate-900 dark:text-white">{repName}</p>
-                                                                    <p className="text-[10.5px] text-slate-500">{rep.designation || 'Staff'} • {rep.department || 'Operations'}</p>
-                                                                </div>
-                                                            </div>
+                                                <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-wider flex items-center justify-between">
+                                                    <span>Direct Reportees ({directList.length})</span>
+                                                </h4>
 
-                                                            <button
-                                                                type="button"
-                                                                className="text-xs text-[#587e85] font-bold hover:underline"
-                                                            >
-                                                                Inspect
-                                                            </button>
-                                                        </div>
-                                                    );
-                                                })}
+                                                {directList.length === 0 ? (
+                                                    <div className="p-4 text-center text-xs text-slate-400 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-200 dark:border-slate-800 font-medium italic">
+                                                        No direct reportees assigned.
+                                                    </div>
+                                                ) : (
+                                                    <div className="space-y-2">
+                                                        {directList.map(rep => {
+                                                            const repUid = rep.user_id || rep.id;
+                                                            const repName = `${rep.first_name || ''} ${rep.last_name || ''}`.trim() || rep.full_name || rep.name;
+                                                            return (
+                                                                <div
+                                                                    key={rep.id || repUid}
+                                                                    onClick={() => handleEmpClick(rep)}
+                                                                    className="p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer flex items-center justify-between gap-3"
+                                                                >
+                                                                    <div className="flex items-center gap-3">
+                                                                        <div className="w-8 h-8 rounded-xl bg-[#587e85] text-white font-bold flex items-center justify-center text-xs shrink-0">
+                                                                            {repName.slice(0, 2).toUpperCase()}
+                                                                        </div>
+                                                                        <div>
+                                                                            <p className="text-xs font-black text-slate-900 dark:text-white">{repName}</p>
+                                                                            <p className="text-[10.5px] text-slate-500">{rep.designation || 'Staff'} • {rep.department || 'Operations'}</p>
+                                                                        </div>
+                                                                    </div>
+
+                                                                    <button
+                                                                        type="button"
+                                                                        className="text-xs text-[#587e85] font-bold hover:underline"
+                                                                    >
+                                                                        Inspect
+                                                                    </button>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                )}
                                             </div>
-                                        )}
-                                    </div>
-                                )}
+
+                                            {/* INDIRECT REPORTEES SECTION */}
+                                            {indirectList.length > 0 && (
+                                                <div className="space-y-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+                                                    <h4 className="text-xs font-black text-indigo-700 dark:text-indigo-300 uppercase tracking-wider">
+                                                        Indirect Reportees ({indirectList.length})
+                                                    </h4>
+
+                                                    <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                                                        {indirectList.map(rep => {
+                                                            const repUid = rep.user_id || rep.id;
+                                                            const repName = `${rep.first_name || ''} ${rep.last_name || ''}`.trim() || rep.full_name || rep.name;
+                                                            return (
+                                                                <div
+                                                                    key={rep.id || repUid}
+                                                                    onClick={() => handleEmpClick(rep)}
+                                                                    className="p-3 rounded-2xl border border-indigo-100 dark:border-indigo-950 bg-indigo-50/40 dark:bg-indigo-950/20 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-all cursor-pointer flex items-center justify-between gap-3"
+                                                                >
+                                                                    <div className="flex items-center gap-3">
+                                                                        <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white font-bold flex items-center justify-center text-xs shrink-0">
+                                                                            {repName.slice(0, 2).toUpperCase()}
+                                                                        </div>
+                                                                        <div>
+                                                                            <p className="text-xs font-black text-slate-900 dark:text-white">{repName}</p>
+                                                                            <p className="text-[10.5px] text-slate-500">
+                                                                                {rep.designation || 'Staff'} • Reports to: <span className="font-bold text-slate-700 dark:text-slate-300">{rep.reporting_manager_code || rep.reporting_manager_name}</span>
+                                                                            </p>
+                                                                        </div>
+                                                                    </div>
+
+                                                                    <button
+                                                                        type="button"
+                                                                        className="text-xs text-indigo-600 font-bold hover:underline"
+                                                                    >
+                                                                        Inspect
+                                                                    </button>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })()}
                             </div>
                         </div>
                     </div>

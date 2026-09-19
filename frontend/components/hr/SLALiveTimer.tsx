@@ -60,39 +60,47 @@ export default function SLALiveTimer({ slaDueAt, status, compact = false }: SLAL
 
     const { days, hours, minutes, seconds, isOverdue } = timeLeft;
 
-    const timeStr = `${days > 0 ? `${days}d ` : ''}${String(hours).padStart(2, '0')}h ${String(minutes).padStart(2, '0')}m ${String(seconds).padStart(2, '0')}s`;
+    const timeStr = days > 0 
+        ? `${days}d ${hours}h remaining`
+        : hours > 0 
+        ? `${hours}h ${minutes}m remaining`
+        : `${minutes}m ${seconds}s remaining`;
+
+    const overdueStr = days > 0
+        ? `${days}d ${hours}h overdue`
+        : `${hours}h ${minutes}m overdue`;
 
     if (isOverdue) {
         return (
-            <span className={`inline-flex items-center gap-1 font-bold text-[10px] px-2 py-0.5 rounded-lg border bg-red-50 dark:bg-red-950/60 border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 animate-pulse ${compact ? 'text-[10px]' : ''}`}>
-                <AlertTriangle className="w-3 h-3 shrink-0 text-red-600" />
-                <span>Overdue by {timeStr}</span>
+            <span className={`inline-flex items-center gap-1 font-bold text-[10px] px-2.5 py-1 rounded-lg border bg-rose-50 dark:bg-rose-950/60 border-rose-300 dark:border-rose-800 text-rose-700 dark:text-rose-300 animate-pulse whitespace-nowrap ${compact ? 'text-[10px]' : ''}`}>
+                <AlertTriangle className="w-3 h-3 shrink-0 text-rose-600" />
+                <span>{overdueStr}</span>
             </span>
         );
     }
 
     if (days === 0 && hours < 4) {
         return (
-            <span className="inline-flex items-center gap-1 font-bold text-[10px] px-2 py-0.5 rounded-lg border bg-red-50/80 dark:bg-red-950/40 border-red-200 dark:border-red-800 text-red-600 dark:text-red-400">
-                <Clock className="w-3 h-3 shrink-0 text-red-500 animate-spin" />
-                <span>{timeStr} left</span>
+            <span className="inline-flex items-center gap-1 font-bold text-[10px] px-2.5 py-1 rounded-lg border bg-rose-50/80 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 whitespace-nowrap">
+                <Clock className="w-3 h-3 shrink-0 text-rose-500 animate-spin" />
+                <span>{timeStr}</span>
             </span>
         );
     }
 
     if (days === 0) {
         return (
-            <span className="inline-flex items-center gap-1 font-semibold text-[10px] px-2 py-0.5 rounded-lg border bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300">
+            <span className="inline-flex items-center gap-1 font-semibold text-[10px] px-2.5 py-1 rounded-lg border bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 whitespace-nowrap">
                 <Clock className="w-3 h-3 shrink-0 text-amber-500" />
-                <span>{timeStr} left</span>
+                <span>{timeStr}</span>
             </span>
         );
     }
 
     return (
-        <span className="inline-flex items-center gap-1 font-medium text-[10px] px-2 py-0.5 rounded-lg border bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300">
-            <Clock className="w-3 h-3 shrink-0 text-indigo-500" />
-            <span>{timeStr} left</span>
+        <span className="inline-flex items-center gap-1 font-semibold text-[10px] px-2.5 py-1 rounded-lg border bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 whitespace-nowrap">
+            <Clock className="w-3 h-3 shrink-0 text-[#587e85]" />
+            <span>{timeStr}</span>
         </span>
     );
 }

@@ -86,9 +86,27 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         }
     };
 
+    // Helper to normalize manager name variations
+    const normalizeManagerName = (str: string): string => {
+        if (!str) return '';
+        let s = str.trim().toLowerCase();
+        if (s.includes('shailesh') && (s.includes('kashyap') || s === 'shailesh k')) return 'shailesh kumar kashyap';
+        if (s.includes('chavan meena') || s.includes('meena chavan')) return 'meena chavan';
+        if (s.includes('rajesh') && s.includes('kadam')) return 'rajesh kadam';
+        if (s.includes('mehul') && s.includes('kapadia')) return 'mehul kapadia';
+        if (s.includes('shrihari') || s.includes('gardas')) return 'shrihari gardas';
+        if (s.includes('roohi') && (s.includes('idirishi') || s.includes('idrishi'))) return 'roohi idirishi';
+        if (s.includes('siddhalingappa')) return 'siddhalingappa nagond';
+        if (s.includes('suraj') && (s.includes('nandavadekar') || s.includes('nandavadkar'))) return 'suraj nandavadekar';
+        if (s.includes('altamash')) return 'altamash chaugule';
+        if (s.includes('abhiram')) return 'abhiram k';
+        if (s.includes('kiran') && (s.includes('kumar') || s === 'kiran')) return 'kiran kumar';
+        return s;
+    };
+
     /**
      * Robust recursive reportees finder for a manager object.
-     * Matches reportees by manager's user_id, profile id, employee_code, full_name, or email.
+     * Matches reportees by manager's user_id, profile id, employee_code, full_name, or email with name normalization.
      */
     const getReporteesForManager = (
         mgrObj: { userId?: string; id?: string; code?: string; name?: string; email?: string },
@@ -99,10 +117,11 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
 
         const mgrUserId = mgrObj.userId || mgrObj.id || '';
         const mgrCode = (mgrObj.code || '').toLowerCase().trim();
-        const mgrName = (mgrObj.name || '').toLowerCase().trim();
+        const mgrName = (mgrObj.name || '').trim();
         const mgrEmail = (mgrObj.email || '').toLowerCase().trim();
+        const normMgrName = normalizeManagerName(mgrName);
 
-        const visitKey = mgrUserId || mgrCode || mgrName || mgrEmail;
+        const visitKey = mgrUserId || mgrCode || normMgrName || mgrEmail;
         if (!visitKey || visited.has(visitKey)) return [];
         const nextVisited = new Set(visited);
         nextVisited.add(visitKey);
@@ -112,16 +131,18 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
             if (mgrUserId && eUid === mgrUserId) return false;
 
             const rId = e.reporting_manager_id || '';
-            const rCode = (e.reporting_manager_code || '').toLowerCase().trim();
-            const rName = (e.reporting_manager_name || '').toLowerCase().trim();
+            const rCode = (e.reporting_manager_code || '').trim();
+            const rName = (e.reporting_manager_name || '').trim();
+            const rStr = (rName || rCode).trim();
+            const normRStr = normalizeManagerName(rStr);
 
             const matchUserId = Boolean(mgrUserId && rId && (rId === mgrUserId || (rCode && rCode === mgrUserId)));
-            const matchCode = Boolean(mgrCode && ((rCode && rCode === mgrCode) || (rId && rId === mgrCode)));
-            const matchName = Boolean(mgrName && mgrName.length > 1 && (
-                (rName && rName.length > 1 && (rName === mgrName || rName.includes(mgrName) || mgrName.includes(rName))) ||
-                (rCode && rCode.length > 1 && (rCode === mgrName || (rCode.length > 2 && (rCode.includes(mgrName) || mgrName.includes(rCode)))))
-            ));
-            const matchEmail = Boolean(mgrEmail && ((rCode && rCode === mgrEmail) || (rName && rName === mgrEmail)));
+            const matchCode = Boolean(mgrCode && ((rCode.toLowerCase() && rCode.toLowerCase() === mgrCode) || (rId && rId === mgrCode)));
+            const matchName = Boolean(
+                (normMgrName && normRStr && normRStr === normMgrName) ||
+                (mgrName && rStr && rStr.toLowerCase() === mgrName.toLowerCase())
+            );
+            const matchEmail = Boolean(mgrEmail && ((rCode.toLowerCase() === mgrEmail) || (rName.toLowerCase() === mgrEmail)));
 
             return Boolean(matchUserId || matchCode || matchName || matchEmail);
         });
@@ -780,11 +801,12 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
 
                 <div className="flex items-center gap-2.5">
                     <button
+                        type="button"
                         onClick={() => setIsCreateOpen(true)}
-                        className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-[#587e85] hover:bg-[#48686e] text-white rounded-2xl text-xs font-bold shadow-md shadow-[#587e85]/20 transition-all active:scale-95"
+                        className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-[#587e85] hover:bg-[#48686e] text-white rounded-xl text-xs font-bold shadow-xs shadow-[#587e85]/20 transition-all active:scale-95 min-h-[40px]"
                     >
                         <Plus className="w-4 h-4" />
-                        Raise HR Request / Grievance
+                        <span>Raise HR Request / Grievance</span>
                     </button>
                 </div>
             </div>
@@ -1152,90 +1174,114 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
                     <div
                         onClick={() => { setActiveTab('tickets'); setScopeFilter('assigned_to_me'); setTicketTypeFilter('all'); setStatusFilter('all'); }}
-                        className="p-4 bg-white dark:bg-slate-900 rounded-2xl border-2 border-amber-400 dark:border-amber-600 shadow-sm hover:shadow-md transition-all cursor-pointer group relative overflow-hidden"
+                        className={`p-4 bg-white dark:bg-slate-900 rounded-2xl border transition-all cursor-pointer group shadow-2xs hover:shadow-md ${
+                            scopeFilter === 'assigned_to_me'
+                                ? 'border-l-4 border-l-amber-500 border-slate-200 dark:border-slate-800 bg-amber-50/20 dark:bg-amber-950/10'
+                                : 'border-slate-200 dark:border-slate-800 hover:border-amber-400'
+                        }`}
                     >
-                        <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-black uppercase tracking-wider text-amber-700 dark:text-amber-400">Assigned To You</span>
-                            <div className="p-1.5 bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-400 rounded-lg">
+                        <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">Assigned To You</span>
+                            <div className="w-8 h-8 rounded-xl bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 border border-amber-200/60 dark:border-amber-900/60 flex items-center justify-center shrink-0">
                                 <ShieldCheck className="w-4 h-4" />
                             </div>
                         </div>
-                        <p className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white mt-2">{assignedToYouCount}</p>
-                        <p className="text-[10px] font-medium text-amber-600 dark:text-amber-400 mt-0.5">
+                        <p className="text-2xl font-black text-slate-900 dark:text-white mt-2 tracking-tight">{assignedToYouCount}</p>
+                        <p className="text-[11px] font-medium text-amber-600 dark:text-amber-400 mt-0.5">
                             {assignedPendingCount > 0 ? `${assignedPendingCount} pending action` : '0 pending action'}
                         </p>
                     </div>
 
                     <div
                         onClick={() => { setActiveTab('tickets'); setScopeFilter('all'); setTicketTypeFilter('all'); setStatusFilter('all'); }}
-                        className="p-4 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm hover:border-[#587e85] transition-all cursor-pointer group"
+                        className={`p-4 bg-white dark:bg-slate-900 rounded-2xl border transition-all cursor-pointer group shadow-2xs hover:shadow-md ${
+                            scopeFilter === 'all' && ticketTypeFilter === 'all' && statusFilter === 'all'
+                                ? 'border-l-4 border-l-[#587e85] border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/20'
+                                : 'border-slate-200 dark:border-slate-800 hover:border-[#587e85]'
+                        }`}
                     >
-                        <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">Total Requests</span>
-                            <div className="p-1.5 bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 rounded-lg">
+                        <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">Total Requests</span>
+                            <div className="w-8 h-8 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 border border-indigo-200/60 dark:border-indigo-900/60 flex items-center justify-center shrink-0">
                                 <Ticket className="w-4 h-4" />
                             </div>
                         </div>
-                        <p className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white mt-2">{totalCount}</p>
-                        <p className="text-[10px] font-medium text-slate-400 mt-0.5">Across selected properties</p>
+                        <p className="text-2xl font-black text-slate-900 dark:text-white mt-2 tracking-tight">{totalCount}</p>
+                        <p className="text-[11px] font-medium text-slate-400 mt-0.5">Across properties</p>
                     </div>
 
                     <div
                         onClick={() => { setActiveTab('tickets'); setTicketTypeFilter('grievance'); setStatusFilter('all'); }}
-                        className="p-4 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm hover:border-amber-400 transition-all cursor-pointer group"
+                        className={`p-4 bg-white dark:bg-slate-900 rounded-2xl border transition-all cursor-pointer group shadow-2xs hover:shadow-md ${
+                            ticketTypeFilter === 'grievance'
+                                ? 'border-l-4 border-l-amber-500 border-slate-200 dark:border-slate-800 bg-amber-50/20 dark:bg-amber-950/10'
+                                : 'border-slate-200 dark:border-slate-800 hover:border-amber-400'
+                        }`}
                     >
-                        <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-black uppercase tracking-wider text-amber-600 dark:text-amber-400">Grievances</span>
-                            <div className="p-1.5 bg-amber-50 dark:bg-amber-950 text-amber-600 dark:text-amber-400 rounded-lg">
+                        <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">Grievances</span>
+                            <div className="w-8 h-8 rounded-xl bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 border border-amber-200/60 dark:border-amber-900/60 flex items-center justify-center shrink-0">
                                 <ShieldCheck className="w-4 h-4" />
                             </div>
                         </div>
-                        <p className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white mt-2">{openGrievancesCount}</p>
-                        <p className="text-[10px] font-medium text-amber-600 dark:text-amber-400 mt-0.5">
-                            {pendingGrievancesCount > 0 ? `${pendingGrievancesCount} pending action` : 'All resolved'}
+                        <p className="text-2xl font-black text-slate-900 dark:text-white mt-2 tracking-tight">{openGrievancesCount}</p>
+                        <p className="text-[11px] font-medium text-amber-600 dark:text-amber-400 mt-0.5">
+                            {pendingGrievancesCount > 0 ? `${pendingGrievancesCount} pending` : 'All resolved'}
                         </p>
                     </div>
 
                     <div
                         onClick={() => { setActiveTab('tickets'); setTicketTypeFilter('hr_query'); setStatusFilter('all'); }}
-                        className="p-4 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm hover:border-blue-400 transition-all cursor-pointer group"
+                        className={`p-4 bg-white dark:bg-slate-900 rounded-2xl border transition-all cursor-pointer group shadow-2xs hover:shadow-md ${
+                            ticketTypeFilter === 'hr_query'
+                                ? 'border-l-4 border-l-blue-500 border-slate-200 dark:border-slate-800 bg-blue-50/20 dark:bg-blue-950/10'
+                                : 'border-slate-200 dark:border-slate-800 hover:border-blue-400'
+                        }`}
                     >
-                        <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-black uppercase tracking-wider text-blue-600 dark:text-blue-400">HR Queries</span>
-                            <div className="p-1.5 bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400 rounded-lg">
+                        <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">HR Queries</span>
+                            <div className="w-8 h-8 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200/60 dark:border-blue-900/60 flex items-center justify-center shrink-0">
                                 <HelpCircle className="w-4 h-4" />
                             </div>
                         </div>
-                        <p className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white mt-2">{hrQueriesCount}</p>
-                        <p className="text-[10px] font-medium text-blue-600 dark:text-blue-400 mt-0.5">Direct HR Support</p>
+                        <p className="text-2xl font-black text-slate-900 dark:text-white mt-2 tracking-tight">{hrQueriesCount}</p>
+                        <p className="text-[11px] font-medium text-blue-600 dark:text-blue-400 mt-0.5">Direct HR Support</p>
                     </div>
 
                     <div
                         onClick={() => { setActiveTab('tickets'); setTicketTypeFilter('confidential'); setStatusFilter('all'); }}
-                        className="p-4 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm hover:border-purple-400 transition-all cursor-pointer group"
+                        className={`p-4 bg-white dark:bg-slate-900 rounded-2xl border transition-all cursor-pointer group shadow-2xs hover:shadow-md ${
+                            ticketTypeFilter === 'confidential'
+                                ? 'border-l-4 border-l-purple-500 border-slate-200 dark:border-slate-800 bg-purple-50/20 dark:bg-purple-950/10'
+                                : 'border-slate-200 dark:border-slate-800 hover:border-purple-400'
+                        }`}
                     >
-                        <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-black uppercase tracking-wider text-purple-600 dark:text-purple-400">Confidential</span>
-                            <div className="p-1.5 bg-purple-50 dark:bg-purple-950 text-purple-600 dark:text-purple-400 rounded-lg">
+                        <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">Confidential</span>
+                            <div className="w-8 h-8 rounded-xl bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400 border border-purple-200/60 dark:border-purple-900/60 flex items-center justify-center shrink-0">
                                 <Lock className="w-4 h-4" />
                             </div>
                         </div>
-                        <p className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white mt-2">{confidentialCount}</p>
-                        <p className="text-[10px] font-medium text-purple-600 dark:text-purple-400 mt-0.5">Director / Masked</p>
+                        <p className="text-2xl font-black text-slate-900 dark:text-white mt-2 tracking-tight">{confidentialCount}</p>
+                        <p className="text-[11px] font-medium text-purple-600 dark:text-purple-400 mt-0.5">Director / Masked</p>
                     </div>
 
                     <div
                         onClick={() => { setActiveTab('tickets'); setStatusFilter('overdue'); }}
-                        className="p-4 bg-white dark:bg-slate-900 rounded-2xl border border-rose-200 dark:border-rose-900/60 shadow-sm hover:border-rose-500 transition-all cursor-pointer group"
+                        className={`p-4 bg-white dark:bg-slate-900 rounded-2xl border transition-all cursor-pointer group shadow-2xs hover:shadow-md ${
+                            statusFilter === 'overdue'
+                                ? 'border-l-4 border-l-rose-500 border-slate-200 dark:border-slate-800 bg-rose-50/20 dark:bg-rose-950/10'
+                                : 'border-slate-200 dark:border-slate-800 hover:border-rose-400'
+                        }`}
                     >
-                        <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-black uppercase tracking-wider text-rose-600 dark:text-rose-400">Overdue TAT</span>
-                            <div className="p-1.5 bg-rose-50 dark:bg-rose-950 text-rose-600 dark:text-rose-400 rounded-lg">
+                        <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">Overdue TAT</span>
+                            <div className="w-8 h-8 rounded-xl bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 border border-rose-200/60 dark:border-rose-900/60 flex items-center justify-center shrink-0">
                                 <AlertTriangle className="w-4 h-4" />
                             </div>
                         </div>
-                        <p className="text-xl sm:text-2xl font-black text-rose-600 dark:text-rose-400 mt-2">{overdueCount}</p>
-                        <p className="text-[10px] font-medium text-rose-500 mt-0.5">Requires Escalation</p>
+                        <p className="text-2xl font-black text-rose-600 dark:text-rose-400 mt-2 tracking-tight">{overdueCount}</p>
+                        <p className="text-[11px] font-medium text-rose-500 mt-0.5">Requires Escalation</p>
                     </div>
                 </div>
             )}
@@ -1335,23 +1381,23 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                     </div>
 
                     {/* Toolbar Filters: Search, Request Type, Status & View Mode */}
-                    <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 bg-white dark:bg-slate-900 p-4 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
-                        <div className="flex-1 min-w-0 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                    <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 bg-white dark:bg-slate-900 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs">
+                        <div className="flex-1 min-w-0 flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
                             <div className="relative flex-1">
-                                <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
+                                <Search className="w-4 h-4 absolute left-3.5 top-2.5 text-slate-400" />
                                 <input
                                     type="text"
                                     placeholder="Search by ticket #, employee, subject..."
                                     value={searchQuery}
                                     onChange={(e) => setSearchQuery(e.target.value)}
-                                    className="w-full pl-10 pr-4 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 text-xs font-medium text-slate-900 dark:text-white placeholder-slate-400 outline-none focus:ring-2 focus:ring-[#587e85]"
+                                    className="w-full pl-10 pr-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 text-xs font-medium text-slate-900 dark:text-white placeholder-slate-400 outline-none focus:ring-2 focus:ring-[#587e85]"
                                 />
                             </div>
 
                             <select
                                 value={ticketTypeFilter}
                                 onChange={(e) => setTicketTypeFilter(e.target.value)}
-                                className="px-3.5 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 outline-none focus:ring-2 focus:ring-[#587e85]"
+                                className="px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 outline-none focus:ring-2 focus:ring-[#587e85]"
                             >
                                 <option value="all">All Request Types</option>
                                 <option value="grievance">Grievances</option>
@@ -1362,7 +1408,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                             <select
                                 value={statusFilter}
                                 onChange={(e) => setStatusFilter(e.target.value)}
-                                className="px-3.5 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 outline-none focus:ring-2 focus:ring-[#587e85]"
+                                className="px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 outline-none focus:ring-2 focus:ring-[#587e85]"
                             >
                                 <option value="all">All Statuses</option>
                                 <option value="new">New</option>
@@ -1375,22 +1421,28 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                             </select>
                         </div>
 
-                        {/* View Mode Switcher */}
+                        {/* View Mode Segmented Switcher */}
                         {isHrAdmin && (
-                            <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 p-1 rounded-2xl border border-slate-200 dark:border-slate-700 shrink-0">
+                            <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/90 p-1 rounded-xl border border-slate-200 dark:border-slate-700/80 shrink-0">
                                 <button
+                                    type="button"
                                     onClick={() => setViewMode('table')}
-                                    className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
-                                        viewMode === 'table' ? 'bg-[#587e85] text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                                    className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
+                                        viewMode === 'table'
+                                            ? 'bg-white dark:bg-slate-900 text-[#587e85] shadow-xs border border-slate-200/80 dark:border-slate-700'
+                                            : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
                                     }`}
                                 >
                                     <FileText className="w-3.5 h-3.5" />
                                     <span>Table View</span>
                                 </button>
                                 <button
+                                    type="button"
                                     onClick={() => setViewMode('kanban')}
-                                    className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
-                                        viewMode === 'kanban' ? 'bg-[#587e85] text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                                    className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
+                                        viewMode === 'kanban'
+                                            ? 'bg-white dark:bg-slate-900 text-[#587e85] shadow-xs border border-slate-200/80 dark:border-slate-700'
+                                            : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
                                     }`}
                                 >
                                     <Kanban className="w-3.5 h-3.5" />
@@ -1413,22 +1465,22 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                             onUpdateStatus={handleUpdateStatus}
                         />
                     ) : (
-                        <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+                        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs overflow-hidden">
                             <div className="overflow-x-auto">
                                 <table className="w-full text-left text-xs">
                                     <thead>
-                                        <tr className="bg-slate-50 dark:bg-slate-800/80 text-slate-500 font-bold border-b border-slate-200 dark:border-slate-800">
-                                            <th className="p-4">Request ID</th>
-                                            <th className="p-4">Submitted By</th>
-                                            <th className="p-4">Category</th>
-                                            <th className="p-4">Subject</th>
-                                            <th className="p-4">Current Level & Owner</th>
-                                            <th className="p-4">Expected Resolution</th>
-                                            <th className="p-4">Status</th>
-                                            <th className="p-4 text-right">Actions</th>
+                                        <tr className="bg-slate-50/90 dark:bg-slate-800/80 text-[10px] font-black uppercase tracking-wider text-slate-500 border-b border-slate-200 dark:border-slate-800">
+                                            <th className="px-3.5 py-3">Request ID</th>
+                                            <th className="px-3.5 py-3">Submitted By</th>
+                                            <th className="px-3.5 py-3">Category</th>
+                                            <th className="px-3.5 py-3">Subject</th>
+                                            <th className="px-3.5 py-3">Current Level & Owner</th>
+                                            <th className="px-3.5 py-3">Expected Resolution</th>
+                                            <th className="px-3.5 py-3">Status</th>
+                                            <th className="px-3.5 py-3 text-right">Actions</th>
                                         </tr>
                                     </thead>
-                                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
+                                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80 font-medium">
                                         {filteredTickets.length === 0 ? (
                                             <tr>
                                                 <td colSpan={8} className="p-12 text-center text-slate-400 font-medium">
@@ -1438,26 +1490,26 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                                         ) : (
                                             filteredTickets.map((t) => (
                                                 <tr key={t.id} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors">
-                                                    <td className="p-4 font-black text-[#587e85]">
+                                                    <td className="px-3.5 py-3.5 font-mono font-bold text-[#587e85]">
                                                         #{t.ticket_number}
                                                     </td>
-                                                    <td className="p-4">
+                                                    <td className="px-3.5 py-3.5">
                                                         <div className="font-bold text-slate-900 dark:text-white">
                                                             {t.is_anonymous ? 'Anonymous Employee' : t.employee_snapshot?.name || t.raised_by?.full_name || 'Employee'}
                                                         </div>
-                                                        <div className="text-[11px] text-slate-400">
+                                                        <div className="text-[11px] text-slate-400 font-medium">
                                                             {t.employee_snapshot?.department || 'Operations'} ({t.employee_snapshot?.location || 'Site'})
                                                         </div>
                                                     </td>
-                                                    <td className="p-4">
-                                                        <span className="px-2.5 py-1 rounded-lg text-[10.5px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 whitespace-nowrap">
+                                                    <td className="px-3.5 py-3.5">
+                                                        <span className="px-2.5 py-1 rounded-lg text-[10.5px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 whitespace-nowrap">
                                                             {t.category?.category_name || t.category_name || 'Grievance'}
                                                         </span>
                                                     </td>
-                                                    <td className="p-4 font-bold text-slate-800 dark:text-slate-200 max-w-xs truncate">
+                                                    <td className="px-3.5 py-3.5 font-semibold text-slate-800 dark:text-slate-200 max-w-xs truncate">
                                                         {t.subject}
                                                     </td>
-                                                    <td className="p-4">
+                                                    <td className="px-3.5 py-3.5">
                                                         <div className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 flex items-center gap-1">
                                                             <span>Level {t.current_level}</span>
                                                             {t.status === 'escalated' && (
@@ -1466,33 +1518,34 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                                                                 </span>
                                                             )}
                                                         </div>
-                                                        <div className="text-[11px] font-medium text-slate-700 dark:text-slate-300 mt-0.5 max-w-[220px]" title={t.current_level_owner || getTicketAssigneeName(t)}>
+                                                        <div className="text-[11px] font-medium text-slate-600 dark:text-slate-300 mt-0.5 max-w-[200px] truncate" title={t.current_level_owner || getTicketAssigneeName(t)}>
                                                             {t.current_level_owner || getTicketAssigneeName(t)}
                                                         </div>
                                                     </td>
-                                                    <td className="p-4">
+                                                    <td className="px-3.5 py-3.5">
                                                         <SLALiveTimer slaDueAt={t.sla_due_at} status={t.status} />
                                                     </td>
-                                                    <td className="p-4">
-                                                        <span className={`px-2.5 py-1 rounded-full text-[10.5px] font-black uppercase tracking-wider inline-flex items-center gap-1.5 shadow-2xs whitespace-nowrap ${
+                                                    <td className="px-3.5 py-3.5">
+                                                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider inline-flex items-center gap-1.5 shadow-2xs whitespace-nowrap border ${
                                                             t.status === 'closed'
-                                                                ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800'
+                                                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800'
                                                                 : t.status === 'pending_acknowledgement' || t.status === 'resolved'
-                                                                ? 'bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800'
+                                                                ? 'bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800'
                                                                 : t.status === 'in_progress'
-                                                                ? 'bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 border border-blue-300 dark:border-blue-800'
+                                                                ? 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800'
                                                                 : t.status === 'escalated'
-                                                                ? 'bg-purple-100 dark:bg-purple-950/80 text-purple-800 dark:text-purple-200 border border-purple-300 dark:border-purple-700 font-extrabold'
-                                                                : 'bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800'
+                                                                ? 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/60 dark:text-purple-300 dark:border-purple-800'
+                                                                : 'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950/60 dark:text-indigo-300 dark:border-indigo-800'
                                                         }`}>
                                                             {t.status === 'escalated' && <span className="w-1.5 h-1.5 rounded-full bg-purple-600 dark:bg-purple-400 animate-pulse" />}
                                                             {t.status === 'pending_acknowledgement' ? 'PENDING ACKNOWLEDGEMENT' : t.status === 'escalated' ? `ESCALATED (L${t.current_level})` : t.status.replace(/_/g, ' ')}
                                                         </span>
                                                     </td>
-                                                    <td className="p-4 text-right">
+                                                    <td className="px-3.5 py-3.5 text-right">
                                                         <button
+                                                            type="button"
                                                             onClick={() => setSelectedTicketId(t.id)}
-                                                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#587e85] hover:bg-[#48686e] text-white rounded-xl text-xs font-bold shadow-2xs transition-all active:scale-95"
+                                                            className="inline-flex items-center gap-1 px-3 py-1.5 bg-slate-50 hover:bg-[#587e85] text-slate-700 hover:text-white dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-[#587e85] dark:hover:text-white rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-700 hover:border-[#587e85] dark:hover:border-[#587e85] shadow-2xs transition-all active:scale-95"
                                                         >
                                                             <span>View Details</span>
                                                             <ArrowUpRight className="w-3.5 h-3.5" />

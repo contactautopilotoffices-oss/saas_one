@@ -171,19 +171,20 @@ export const PricingAndAliasService = {
         }
 
         const items = (rawItems || []).filter(
-            (item: { lifecycle?: string }) => !item.lifecycle || item.lifecycle === 'standard'
+            (item: { lifecycle?: string; assigned_property_ids?: string[] }) => {
+                if (item.lifecycle && item.lifecycle !== 'standard') return false;
+                // If a propertyId is specified, check if item has property restrictions
+                if (propertyId && Array.isArray(item.assigned_property_ids) && item.assigned_property_ids.length > 0) {
+                    const hasAll = item.assigned_property_ids.includes('ALL');
+                    if (!hasAll && !item.assigned_property_ids.includes(propertyId)) {
+                        return false;
+                    }
+                }
+                return true;
+            }
         );
 
         // 2. If propertyId is provided, fetch this property's site-specific prices.
-        //
-        //    Overrides retired by the standardisation migration
-        //    (20260919000003_supersede_item_site_price_overrides) are skipped, so the
-        //    rate on the standard template is the only rate a property sees.
-        //
-        //    select('*') and a JS filter, deliberately: is_superseded does not exist
-        //    until that migration runs, and .eq('is_superseded', false) would turn the
-        //    whole requisition sheet into a 500 on a database that has not had it yet.
-        //    Absent column -> undefined -> not superseded -> previous behaviour.
         const sitePricesMap: Record<string, number> = {};
         if (propertyId) {
             const { data: sitePrices } = await adminSupabase
@@ -221,11 +222,10 @@ export const PricingAndAliasService = {
                 unit_price: effectivePrice,
                 is_site_specific: hasSitePrice,
                 photo_url: item.photo_url || '',
-                // Present only once the standard-items migration has run. Sorted in
-                // JS rather than via .order() so this query still works without it.
                 sort_order: Number(item.sort_order) || 0,
                 lifecycle: item.lifecycle || 'standard',
-                item_code: item.item_code || null
+                item_code: item.item_code || null,
+                assigned_property_ids: item.assigned_property_ids || []
             };
         });
 

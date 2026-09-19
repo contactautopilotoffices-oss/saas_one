@@ -83,14 +83,14 @@ export async function GET(request: NextRequest) {
             category: item.category,
             unit: item.unit,
             estimated_price: canSeePrice ? item.estimated_price : null,
-            // Template fields. Undefined before the migrations; normalised so the
-            // manager UI can render and edit them either way.
+            // Template & property assignment fields.
             item_code: item.item_code ?? null,
             brand: item.brand ?? null,
             color_size_details: item.color_size_details ?? null,
             unit_price: canSeePrice ? (item.unit_price ?? item.estimated_price ?? 0) : null,
             sort_order: Number(item.sort_order) || 0,
             lifecycle: item.lifecycle || 'standard',
+            assigned_property_ids: item.assigned_property_ids || []
         }));
 
         // Sr. No. order, unnumbered items last. Sorted here rather than in the query
@@ -121,6 +121,7 @@ export async function POST(request: NextRequest) {
             name, description, category, estimated_price, unit,
             brand, color_size_details, unit_price, sort_order,
             organization_id: providedOrgId, photo_base64, photo_url: existingPhotoUrl,
+            assigned_property_ids
         } = body;
 
         const organization_id = await resolveOrganizationId(user.id, providedOrgId);
@@ -178,8 +179,6 @@ export async function POST(request: NextRequest) {
         const price = parseFloat(String(unit_price ?? estimated_price ?? '')) || 0;
         const parsedSort = parseInt(String(sort_order ?? ''), 10);
 
-        // An item added by hand must be indistinguishable from one that arrived on
-        // the template — same fields, and on the standard list from the start.
         const insert: Record<string, unknown> = {
             organization_id,
             name,
@@ -193,6 +192,7 @@ export async function POST(request: NextRequest) {
             sort_order: Number.isFinite(parsedSort) ? parsedSort : 0,
             lifecycle: 'standard',
             photo_url: finalPhotoUrl,
+            assigned_property_ids: Array.isArray(assigned_property_ids) ? assigned_property_ids : [],
             is_active: true,
         };
 
@@ -225,12 +225,12 @@ export async function PATCH(request: NextRequest) {
         if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
         const body = await request.json();
-        const { id, name, organization_id: providedOrgId, photo_base64, photo_url: existingPhotoUrl } = body;
+        const { id, item_ids, name, organization_id: providedOrgId, photo_base64, photo_url: existingPhotoUrl } = body;
 
         const organization_id = await resolveOrganizationId(user.id, providedOrgId);
 
-        if (!id || !organization_id) {
-            return NextResponse.json({ error: 'Item ID and Valid Organization ID are required' }, { status: 400 });
+        if ((!id && (!Array.isArray(item_ids) || item_ids.length === 0)) || !organization_id) {
+            return NextResponse.json({ error: 'Item ID (or item_ids array) and Valid Organization ID are required' }, { status: 400 });
         }
 
         const adminSupabase = createAdminClient();
@@ -239,10 +239,8 @@ export async function PATCH(request: NextRequest) {
             return NextResponse.json({ error: 'Forbidden: procurement role required' }, { status: 403 });
         }
 
-        // ── Duplicate check, only when the name is actually being changed.
-        //    Inline edits send a single field, so an absent name must not be
-        //    treated as a rename to "undefined".
-        if (typeof name === 'string' && name.trim()) {
+        // ── Duplicate check for single item rename
+        if (id && typeof name === 'string' && name.trim()) {
             const { data: existing } = await adminSupabase
                 .from('procurement_catalog')
                 .select('id')
@@ -275,8 +273,6 @@ export async function PATCH(request: NextRequest) {
             }
         }
 
-        // ── Partial update: only the fields actually sent are written, so a
-        //    single-cell edit cannot blank out everything else on the row.
         const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
 
         if (typeof name === 'string' && name.trim()) patch.name = name.trim();
@@ -286,14 +282,15 @@ export async function PATCH(request: NextRequest) {
         if ('brand' in body) patch.brand = body.brand || null;
         if ('color_size_details' in body) patch.color_size_details = body.color_size_details || null;
         if ('lifecycle' in body && CATALOG_LIFECYCLES.includes(body.lifecycle)) patch.lifecycle = body.lifecycle;
+        if ('assigned_property_ids' in body && Array.isArray(body.assigned_property_ids)) {
+            patch.assigned_property_ids = body.assigned_property_ids;
+        }
 
         if ('sort_order' in body) {
             const parsed = parseInt(String(body.sort_order ?? ''), 10);
             patch.sort_order = Number.isFinite(parsed) ? parsed : 0;
         }
 
-        // The two price columns are kept in step: unit_price is what the template
-        // writes, estimated_price is what older screens still read.
         const rawPrice = 'unit_price' in body ? body.unit_price
             : ('estimated_price' in body ? body.estimated_price : undefined);
         if (rawPrice !== undefined) {
@@ -305,6 +302,23 @@ export async function PATCH(request: NextRequest) {
 
         if (finalPhotoUrl !== undefined) patch.photo_url = finalPhotoUrl;
 
+        // ── Bulk update for multiple item IDs
+        if (Array.isArray(item_ids) && item_ids.length > 0) {
+            const { data: bulkData, error: bulkError } = await adminSupabase
+                .from('procurement_catalog')
+                .update(patch)
+                .in('id', item_ids)
+                .eq('organization_id', organization_id)
+                .select();
+
+            if (bulkError) {
+                console.error('[Catalog PATCH Bulk] DB error:', bulkError);
+                return NextResponse.json({ error: 'Database error', details: bulkError.message }, { status: 500 });
+            }
+            return NextResponse.json({ success: true, count: bulkData?.length || 0, items: bulkData });
+        }
+
+        // ── Single item update
         const { data, error } = await adminSupabase
             .from('procurement_catalog')
             .update(patch)
