@@ -1,7 +1,8 @@
 # Standardised Monthly Requisition Items — Plan
 
 **Branch:** `feat/monthly-requisition-standard-catalog`
-**Status:** Phase 1 built (template + procurement upload). Phases 2–4 still planned.
+**Status:** Phase 1 built (template, procurement upload, safe production migration path).
+Phases 2–4 still planned.
 Excel column spec was set by us — see §4.2; adjust if the stakeholder's sheet differs.
 
 ---
@@ -195,6 +196,39 @@ header row carries per-column cell notes.
 "download with current items → edit → re-upload" round-trips without creating duplicates
 from day one. Renaming an item is then a safe update rather than a new row.
 
+### 4.5 Migrating a live production catalog — BUILT
+
+Adopting the standard list on a database real sites are using must not make an item
+disappear mid-month. Three things make that safe:
+
+**1. A three-state lifecycle** ([20260919000002](supabase/migrations/20260919000002_procurement_catalog_lifecycle.sql)).
+`is_active` stays the hard visibility gate the rest of the app already reads; `lifecycle`
+adds the distinction on top:
+
+| State | Requestable? | Meaning |
+|---|---|---|
+| `standard` | yes | On the current standard template |
+| `legacy` | **yes, fully** | Pre-standardisation item. Grouped separately and marked as being phased out, but nothing breaks for the sites still using it. |
+| `retired` | no | Hidden from new requisitions. Never deleted — past requisitions and stock rows keep resolving. |
+
+Every existing row defaults to `standard`, so the migration itself changes nothing a user
+can see.
+
+**2. Per-item decisions, defaulting to Keep.** Items absent from the uploaded template are
+never touched automatically. The preview lists each one with **how much stock sites are still
+holding of it** and offers Keep / Legacy / Retire. `legacy` is the migration setting: run the
+first standard upload, mark the old items legacy, and phase them out as stock runs down.
+
+**3. The whole import can be undone.** `POST /api/procurement/catalog/import/rollback` reverts
+updated fields to their recorded previous values, deactivates items the batch created, and
+restores anything it marked legacy or retired. Only the most recent committed batch can be
+rolled back — reverting underneath a newer import would silently clobber it.
+
+**Deploy order matters.** The import endpoints need the new columns. Run both migrations
+before (or with) the deploy; until then they return a 503 naming the migrations rather than a
+generic error. The shared catalog endpoints were deliberately left untouched so the existing
+screens keep working either way.
+
 ### 4.3 Upload semantics — BUILT
 
 - **Dry run first.** `POST .../catalog/import/preview` returns a per-row classification:
@@ -221,6 +255,25 @@ AI agent with no Agent Spec Block. Removing the agent removes the obligation; th
 model call anywhere in this feature.
 
 (`catalog/bulk` is a different, still-used route behind Site Pricing and is untouched.)
+
+### 4.6 Per-property controls removed from the requisitions screen — DONE
+
+With one standard list, the controls that existed because items and rates differed per
+property are hidden behind `SHOW_LEGACY_PER_PROPERTY_CONTROLS` in
+[procurementFeatureFlags.ts](frontend/components/procurement/procurementFeatureFlags.ts) — a flag rather than a deletion, so
+production rollback is one line:
+
+- **Site Prices** button + the **Site Pricing & Aliases** sidebar tab
+- **Property Budgets** button (already a dead link in the live shell — `onNavigateToBudgets`
+  was never passed and nothing opened the budget modal)
+- **Export Master (.xlsx)** button
+
+Kept: Upload Quote (Multi-Site), Feedback Reports, Create Requisition, Refresh.
+
+Deep links to the hidden tabs are filtered too, so a stale bookmark cannot resurface a tab
+that has no sidebar entry. Note that hiding the Budgets UI does **not** switch budget
+enforcement off — budgets already stored against a property still drive the over-budget
+warning on the requisition sheet; they just can't be edited from the UI.
 
 ---
 

@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
-import { isProcurementUser, resolveOrganizationId } from '@/backend/lib/procurement/catalogAccess';
+import {
+    isProcurementUser,
+    resolveOrganizationId,
+    isMissingSchemaError,
+    MISSING_SCHEMA_MESSAGE,
+} from '@/backend/lib/procurement/catalogAccess';
 import {
     generateCatalogTemplateWorkbook,
     TEMPLATE_VERSION,
@@ -50,6 +55,9 @@ export async function GET(request: NextRequest) {
 
             if (error) {
                 console.error('[Catalog Template] Failed to load current catalog:', error);
+                if (isMissingSchemaError(error)) {
+                    return NextResponse.json({ error: MISSING_SCHEMA_MESSAGE }, { status: 503 });
+                }
                 return NextResponse.json({ error: 'Database error' }, { status: 500 });
             }
             items = catalog || [];

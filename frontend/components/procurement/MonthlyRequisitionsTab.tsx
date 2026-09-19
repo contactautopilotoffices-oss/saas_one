@@ -15,6 +15,7 @@ import ApproverRequisitionModal from './ApproverRequisitionModal';
 import PropertyBudgetManagerModal from './PropertyBudgetManagerModal';
 import BulkApproverUploadModal from './BulkApproverUploadModal';
 import MonthlyFeedbackFormModal from './MonthlyFeedbackFormModal';
+import { SHOW_LEGACY_PER_PROPERTY_CONTROLS } from './procurementFeatureFlags';
 
 interface Property {
     id: string;
@@ -490,7 +491,12 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                 <Upload className="w-3.5 h-3.5 text-sky-600 shrink-0" />
                                 <span>Upload Quote (Multi-Site)</span>
                             </button>
+                        </>
+                    )}
 
+                    {/* Per-property price/budget/export controls — superseded by the standard item master */}
+                    {SHOW_LEGACY_PER_PROPERTY_CONTROLS && (isProcurementRole || isSuperAdmin) && (
+                        <>
                             <button
                                 onClick={handleDownloadAllPropertiesExcel}
                                 disabled={isExportingAll}

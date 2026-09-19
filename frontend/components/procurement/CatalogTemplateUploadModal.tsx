@@ -3,7 +3,7 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
     X, Download, Upload, FileSpreadsheet, Loader2, CheckCircle2, AlertTriangle,
-    ArrowLeft, ImageIcon, Plus, RefreshCw, Minus, Archive, Info,
+    ArrowLeft, ImageIcon, Plus, RefreshCw, Minus, Info, Undo2, Package,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -11,27 +11,32 @@ interface Props {
     isOpen: boolean;
     onClose: () => void;
     organizationId: string;
-    /** Fired after a successful commit so the caller can refresh its catalog list. */
+    /** Fired after a successful commit or undo so the caller can refresh its catalog list. */
     onCommitted?: () => void;
 }
 
 type RowAction = 'create' | 'update' | 'unchanged' | 'error';
+type AbsentDecision = 'keep' | 'legacy' | 'retire';
+type ScalarValue = string | number | boolean | null;
 
 interface PreviewRow {
     rowNumber: number;
     action: RowAction;
     item_code: string;
     name: string;
-    changes: Record<string, { from: string | number | boolean | null; to: string | number | boolean | null }>;
+    changes: Record<string, { from: ScalarValue; to: ScalarValue }>;
     photo_url: string | null;
     errors: string[];
 }
 
-interface DeactivationCandidate {
+interface AbsentItem {
     id: string;
     item_code: string | null;
     name: string;
     category: string | null;
+    lifecycle: 'standard' | 'legacy' | 'retired';
+    stock_property_count: number;
+    stock_total_qty: number;
 }
 
 interface PreviewResponse {
@@ -49,17 +54,27 @@ interface PreviewResponse {
     };
     rows: PreviewRow[];
     rows_returned: number;
-    deactivation_candidates: DeactivationCandidate[];
+    absent_items: AbsentItem[];
 }
 
 interface CommitResponse {
     success: boolean;
+    batch_id: string;
     created: number;
     updated: number;
     unchanged: number;
-    deactivated: number;
+    marked_legacy: number;
+    retired: number;
     skipped_errors: number;
     failures: Array<{ row: number; message: string }>;
+}
+
+interface RollbackResponse {
+    success: boolean;
+    reverted_updates: number;
+    deactivated_new_items: number;
+    restored_items: number;
+    failures: string[];
 }
 
 const ACTION_STYLES: Record<RowAction, { label: string; chip: string; Icon: typeof Plus }> = {
@@ -68,6 +83,27 @@ const ACTION_STYLES: Record<RowAction, { label: string; chip: string; Icon: type
     unchanged: { label: 'No change', chip: 'bg-slate-100 text-slate-400', Icon: Minus },
     error: { label: 'Error', chip: 'bg-rose-100 text-rose-700', Icon: AlertTriangle },
 };
+
+const DECISIONS: Array<{ value: AbsentDecision; label: string; hint: string; active: string }> = [
+    {
+        value: 'keep',
+        label: 'Keep',
+        hint: 'Nothing changes. The item stays exactly as it is today.',
+        active: 'bg-slate-900 text-white',
+    },
+    {
+        value: 'legacy',
+        label: 'Legacy',
+        hint: 'Still fully usable and requestable, but grouped separately and marked as being phased out.',
+        active: 'bg-amber-500 text-white',
+    },
+    {
+        value: 'retire',
+        label: 'Retire',
+        hint: 'Hidden from new requisitions. Never deleted — past requisitions and stock records keep working.',
+        active: 'bg-rose-500 text-white',
+    },
+];
 
 const FIELD_LABELS: Record<string, string> = {
     name: 'Item Name',
@@ -80,6 +116,7 @@ const FIELD_LABELS: Record<string, string> = {
     description: 'Description',
     photo_url: 'Photo',
     is_active: 'Status',
+    lifecycle: 'Lifecycle',
 };
 
 export default function CatalogTemplateUploadModal({ isOpen, onClose, organizationId, onCommitted }: Props) {
@@ -89,18 +126,21 @@ export default function CatalogTemplateUploadModal({ isOpen, onClose, organizati
     const [isDownloading, setIsDownloading] = useState<'blank' | 'current' | null>(null);
     const [isUploading, setIsUploading] = useState(false);
     const [isCommitting, setIsCommitting] = useState(false);
+    const [isRollingBack, setIsRollingBack] = useState(false);
     const [error, setError] = useState<string>('');
     const [preview, setPreview] = useState<PreviewResponse | null>(null);
     const [result, setResult] = useState<CommitResponse | null>(null);
-    const [deactivateIds, setDeactivateIds] = useState<Set<string>>(new Set());
+    const [rollback, setRollback] = useState<RollbackResponse | null>(null);
+    const [decisions, setDecisions] = useState<Record<string, AbsentDecision>>({});
     const [showOnlyChanges, setShowOnlyChanges] = useState(true);
 
     const reset = useCallback(() => {
         setFile(null);
         setPreview(null);
         setResult(null);
+        setRollback(null);
         setError('');
-        setDeactivateIds(new Set());
+        setDecisions({});
         setShowOnlyChanges(true);
     }, []);
 
@@ -155,6 +195,10 @@ export default function CatalogTemplateUploadModal({ isOpen, onClose, organizati
                 setError(data.error || 'Could not read this file');
                 return;
             }
+
+            // Everything absent from the template defaults to "keep" — no item
+            // disappears unless somebody explicitly says so.
+            setDecisions({});
             setPreview(data as PreviewResponse);
         } catch {
             setError('Network error while uploading the file');
@@ -182,7 +226,8 @@ export default function CatalogTemplateUploadModal({ isOpen, onClose, organizati
                 body: JSON.stringify({
                     batch_id: preview.batch_id,
                     organizationId,
-                    deactivate_ids: Array.from(deactivateIds),
+                    legacy_ids: Object.keys(decisions).filter(id => decisions[id] === 'legacy'),
+                    retire_ids: Object.keys(decisions).filter(id => decisions[id] === 'retire'),
                 }),
             });
             const data = await res.json();
@@ -200,23 +245,67 @@ export default function CatalogTemplateUploadModal({ isOpen, onClose, organizati
         }
     };
 
-    const toggleDeactivate = (id: string) => {
-        setDeactivateIds(prev => {
-            const next = new Set(prev);
-            if (next.has(id)) next.delete(id); else next.add(id);
+    // ─── Undo ─────────────────────────────────────────────────────────────────
+    const undoImport = async () => {
+        if (!result) return;
+        setIsRollingBack(true);
+        setError('');
+        try {
+            const res = await fetch('/api/procurement/catalog/import/rollback', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ batch_id: result.batch_id, organizationId }),
+            });
+            const data = await res.json();
+
+            if (!res.ok) {
+                setError(data.error || 'Could not undo this import');
+                return;
+            }
+            setRollback(data as RollbackResponse);
+            onCommitted?.();
+        } catch {
+            setError('Network error while undoing the import');
+        } finally {
+            setIsRollingBack(false);
+        }
+    };
+
+    const setDecision = (id: string, decision: AbsentDecision) => {
+        setDecisions(prev => {
+            const next = { ...prev };
+            if (decision === 'keep') delete next[id];
+            else next[id] = decision;
             return next;
         });
     };
 
+    const setAllDecisions = (decision: AbsentDecision) => {
+        if (!preview) return;
+        if (decision === 'keep') {
+            setDecisions({});
+            return;
+        }
+        const next: Record<string, AbsentDecision> = {};
+        for (const item of preview.absent_items) next[item.id] = decision;
+        setDecisions(next);
+    };
+
     const visibleRows = useMemo(() => {
         if (!preview) return [];
-        return showOnlyChanges
-            ? preview.rows.filter(r => r.action !== 'unchanged')
-            : preview.rows;
+        return showOnlyChanges ? preview.rows.filter(r => r.action !== 'unchanged') : preview.rows;
     }, [preview, showOnlyChanges]);
 
+    const decisionCounts = useMemo(() => {
+        const values = Object.values(decisions);
+        return {
+            legacy: values.filter(v => v === 'legacy').length,
+            retire: values.filter(v => v === 'retire').length,
+        };
+    }, [decisions]);
+
     const applicableCount = preview
-        ? preview.counts.created_count + preview.counts.updated_count + deactivateIds.size
+        ? preview.counts.created_count + preview.counts.updated_count + decisionCounts.legacy + decisionCounts.retire
         : 0;
 
     if (!isOpen) return null;
@@ -256,7 +345,7 @@ export default function CatalogTemplateUploadModal({ isOpen, onClose, organizati
                             <div>
                                 <h2 className="font-black text-slate-900 text-lg tracking-tight leading-none">Standard Items Template</h2>
                                 <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mt-1.5">
-                                    {result ? 'Import applied' : preview ? `Review · ${preview.file_name}` : 'Download · Fill · Upload'}
+                                    {rollback ? 'Import undone' : result ? 'Import applied' : preview ? `Review · ${preview.file_name}` : 'Download · Fill · Upload'}
                                 </p>
                             </div>
                         </div>
@@ -285,46 +374,78 @@ export default function CatalogTemplateUploadModal({ isOpen, onClose, organizati
                         {result ? (
                             <div className="max-w-xl mx-auto py-6 space-y-6">
                                 <div className="flex flex-col items-center text-center gap-4">
-                                    <div className={`w-16 h-16 rounded-3xl flex items-center justify-center text-white shadow-lg ${result.success ? 'bg-emerald-500 shadow-emerald-200' : 'bg-amber-500 shadow-amber-200'}`}>
-                                        {result.success ? <CheckCircle2 className="w-8 h-8" /> : <AlertTriangle className="w-8 h-8" />}
+                                    <div className={`w-16 h-16 rounded-3xl flex items-center justify-center text-white shadow-lg ${rollback ? 'bg-slate-500 shadow-slate-200' : result.success ? 'bg-emerald-500 shadow-emerald-200' : 'bg-amber-500 shadow-amber-200'}`}>
+                                        {rollback ? <Undo2 className="w-8 h-8" /> : result.success ? <CheckCircle2 className="w-8 h-8" /> : <AlertTriangle className="w-8 h-8" />}
                                     </div>
                                     <div>
                                         <h3 className="font-black text-slate-900 text-2xl tracking-tight">
-                                            {result.success ? 'Catalog updated' : 'Applied with problems'}
+                                            {rollback ? 'Import undone' : result.success ? 'Catalog updated' : 'Applied with problems'}
                                         </h3>
-                                        <p className="text-xs text-slate-400 font-bold mt-2">
-                                            Every property will now see this list on its monthly requisition.
+                                        <p className="text-xs text-slate-400 font-bold mt-2 leading-relaxed">
+                                            {rollback
+                                                ? `${rollback.reverted_updates} item${rollback.reverted_updates === 1 ? '' : 's'} put back, ${rollback.deactivated_new_items} newly added item${rollback.deactivated_new_items === 1 ? '' : 's'} deactivated, ${rollback.restored_items} restored.`
+                                                : 'Every property will now see this list on its monthly requisition.'}
                                         </p>
                                     </div>
                                 </div>
 
-                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                                    {[
-                                        { label: 'Added', value: result.created, tone: 'text-emerald-600' },
-                                        { label: 'Updated', value: result.updated, tone: 'text-amber-600' },
-                                        { label: 'Unchanged', value: result.unchanged, tone: 'text-slate-400' },
-                                        { label: 'Deactivated', value: result.deactivated, tone: 'text-slate-600' },
-                                    ].map(stat => (
-                                        <div key={stat.label} className="rounded-2xl bg-slate-50 border border-slate-100 p-4 text-center">
-                                            <p className={`text-2xl font-black ${stat.tone}`}>{stat.value}</p>
-                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">{stat.label}</p>
-                                        </div>
-                                    ))}
-                                </div>
+                                {!rollback && (
+                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                                        {[
+                                            { label: 'Added', value: result.created, tone: 'text-emerald-600' },
+                                            { label: 'Updated', value: result.updated, tone: 'text-amber-600' },
+                                            { label: 'Legacy', value: result.marked_legacy, tone: 'text-amber-500' },
+                                            { label: 'Retired', value: result.retired, tone: 'text-rose-500' },
+                                        ].map(stat => (
+                                            <div key={stat.label} className="rounded-2xl bg-slate-50 border border-slate-100 p-4 text-center">
+                                                <p className={`text-2xl font-black ${stat.tone}`}>{stat.value}</p>
+                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">{stat.label}</p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
 
-                                {result.skipped_errors > 0 && (
+                                {!rollback && result.skipped_errors > 0 && (
                                     <div className="rounded-2xl bg-amber-50 border border-amber-100 p-4 text-xs text-amber-700 font-bold">
                                         {result.skipped_errors} row{result.skipped_errors === 1 ? '' : 's'} had errors and {result.skipped_errors === 1 ? 'was' : 'were'} skipped. Fix them in the file and upload again.
                                     </div>
                                 )}
 
-                                {result.failures.length > 0 && (
+                                {!rollback && result.failures.length > 0 && (
                                     <div className="rounded-2xl bg-rose-50 border border-rose-100 p-4 space-y-1.5">
                                         {result.failures.map((failure, idx) => (
                                             <p key={idx} className="text-xs text-rose-600 font-bold">
                                                 {failure.row ? `Row ${failure.row}: ` : ''}{failure.message}
                                             </p>
                                         ))}
+                                    </div>
+                                )}
+
+                                {rollback && rollback.failures.length > 0 && (
+                                    <div className="rounded-2xl bg-rose-50 border border-rose-100 p-4 space-y-1.5">
+                                        {rollback.failures.map((failure, idx) => (
+                                            <p key={idx} className="text-xs text-rose-600 font-bold">{failure}</p>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {!rollback && (
+                                    <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4 flex items-start gap-3">
+                                        <Undo2 className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
+                                        <div className="flex-1">
+                                            <p className="text-xs font-black text-slate-700">Not what you expected?</p>
+                                            <p className="text-[11px] text-slate-400 font-bold mt-1 leading-relaxed">
+                                                This import can be undone exactly — updated fields go back to their previous values, newly added items are deactivated, and anything marked legacy or retired is restored. Only possible until another import is applied.
+                                            </p>
+                                            <button
+                                                onClick={undoImport}
+                                                disabled={isRollingBack}
+                                                className="mt-3 inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-700 text-[10px] font-black uppercase tracking-widest hover:bg-slate-100 transition-all disabled:opacity-50"
+                                            >
+                                                {isRollingBack ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Undo2 className="w-3.5 h-3.5" />}
+                                                {isRollingBack ? 'Undoing…' : 'Undo this import'}
+                                            </button>
+                                        </div>
                                     </div>
                                 )}
 
@@ -384,7 +505,7 @@ export default function CatalogTemplateUploadModal({ isOpen, onClose, organizati
                                         </button>
                                     </div>
 
-                                    <div className="rounded-2xl border border-slate-100 divide-y divide-slate-50 max-h-80 overflow-y-auto">
+                                    <div className="rounded-2xl border border-slate-100 divide-y divide-slate-50 max-h-72 overflow-y-auto">
                                         {visibleRows.length === 0 && (
                                             <p className="p-6 text-center text-xs text-slate-400 font-bold">
                                                 Nothing to change — this file matches the catalog exactly.
@@ -429,33 +550,86 @@ export default function CatalogTemplateUploadModal({ isOpen, onClose, organizati
                                     </div>
                                 </div>
 
-                                {/* Items absent from the file */}
-                                {preview.deactivation_candidates.length > 0 && (
+                                {/* Items absent from the file — the production-safety decision */}
+                                {preview.absent_items.length > 0 && (
                                     <div>
-                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">
-                                            In the catalog but not in this file ({preview.deactivation_candidates.length})
-                                        </p>
-                                        <p className="text-xs text-slate-400 font-bold mb-3 leading-relaxed">
-                                            These stay active unless you tick them. Deactivating hides an item from new requisitions — it is never deleted, so past requisitions and stock records keep working.
-                                        </p>
-                                        <div className="rounded-2xl border border-slate-100 divide-y divide-slate-50 max-h-56 overflow-y-auto">
-                                            {preview.deactivation_candidates.map(candidate => (
-                                                <label key={candidate.id} className="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-slate-50 transition-colors">
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={deactivateIds.has(candidate.id)}
-                                                        onChange={() => toggleDeactivate(candidate.id)}
-                                                        className="w-4 h-4 rounded accent-slate-900"
-                                                    />
-                                                    <span className="text-xs font-bold text-slate-700 truncate flex-1">{candidate.name}</span>
-                                                    <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest">{candidate.category || '—'}</span>
-                                                </label>
-                                            ))}
+                                        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                                                In the catalog but not in this file ({preview.absent_items.length})
+                                            </p>
+                                            <div className="flex items-center gap-1">
+                                                <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest mr-1">Set all</span>
+                                                {DECISIONS.map(d => (
+                                                    <button
+                                                        key={d.value}
+                                                        onClick={() => setAllDecisions(d.value)}
+                                                        className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-500 text-[9px] font-black uppercase tracking-widest hover:bg-slate-200 transition-all"
+                                                    >
+                                                        {d.label}
+                                                    </button>
+                                                ))}
+                                            </div>
                                         </div>
-                                        {deactivateIds.size > 0 && (
-                                            <p className="text-[11px] font-black text-amber-600 uppercase tracking-widest mt-2 flex items-center gap-1.5">
-                                                <Archive className="w-3 h-3" />
-                                                {deactivateIds.size} will be deactivated
+
+                                        <div className="rounded-2xl bg-amber-50 border border-amber-100 p-4 mb-3">
+                                            <p className="text-xs text-amber-800 font-bold leading-relaxed">
+                                                These default to <strong>Keep</strong> — nothing happens to them unless you say so.
+                                                <br />
+                                                <strong>Legacy</strong> is the safe middle step while migrating: the item stays fully
+                                                usable and requestable, just grouped separately and marked as being phased out.
+                                                <strong> Retire</strong> hides it from new requisitions. Neither ever deletes anything.
+                                            </p>
+                                        </div>
+
+                                        <div className="rounded-2xl border border-slate-100 divide-y divide-slate-50 max-h-72 overflow-y-auto">
+                                            {preview.absent_items.map(item => {
+                                                const current = decisions[item.id] || 'keep';
+                                                return (
+                                                    <div key={item.id} className="flex items-center gap-3 px-4 py-3">
+                                                        <div className="min-w-0 flex-1">
+                                                            <div className="flex items-center gap-2">
+                                                                <p className="text-xs font-black text-slate-800 truncate">{item.name}</p>
+                                                                {item.lifecycle === 'legacy' && (
+                                                                    <span className="shrink-0 px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[8px] font-black uppercase tracking-widest">
+                                                                        already legacy
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                            <div className="flex items-center gap-3 mt-1">
+                                                                <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest">{item.category || '—'}</span>
+                                                                {item.stock_property_count > 0 ? (
+                                                                    <span className="inline-flex items-center gap-1 text-[10px] font-black text-sky-600">
+                                                                        <Package className="w-3 h-3" />
+                                                                        {item.stock_total_qty} in stock across {item.stock_property_count} {item.stock_property_count === 1 ? 'site' : 'sites'}
+                                                                    </span>
+                                                                ) : (
+                                                                    <span className="text-[10px] font-bold text-slate-300">no stock on any site</span>
+                                                                )}
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="flex shrink-0 rounded-xl bg-slate-100 p-0.5">
+                                                            {DECISIONS.map(d => (
+                                                                <button
+                                                                    key={d.value}
+                                                                    onClick={() => setDecision(item.id, d.value)}
+                                                                    title={d.hint}
+                                                                    className={`px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${current === d.value ? d.active : 'text-slate-400 hover:text-slate-600'}`}
+                                                                >
+                                                                    {d.label}
+                                                                </button>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+
+                                        {(decisionCounts.legacy > 0 || decisionCounts.retire > 0) && (
+                                            <p className="text-[11px] font-black uppercase tracking-widest mt-2 text-slate-500">
+                                                {decisionCounts.legacy > 0 && <span className="text-amber-600">{decisionCounts.legacy} → legacy</span>}
+                                                {decisionCounts.legacy > 0 && decisionCounts.retire > 0 && ' · '}
+                                                {decisionCounts.retire > 0 && <span className="text-rose-600">{decisionCounts.retire} → retired</span>}
                                             </p>
                                         )}
                                     </div>
@@ -491,6 +665,11 @@ export default function CatalogTemplateUploadModal({ isOpen, onClose, organizati
                                             With current items
                                         </button>
                                     </div>
+                                    <p className="text-[11px] text-slate-400 font-bold mt-3 leading-relaxed">
+                                        Migrating an existing catalog? Start from <strong>With current items</strong> — it already
+                                        carries every item and its code, so editing and re-uploading updates them instead of
+                                        creating duplicates.
+                                    </p>
                                 </div>
 
                                 <div>
@@ -536,7 +715,9 @@ export default function CatalogTemplateUploadModal({ isOpen, onClose, organizati
                                     />
 
                                     <p className="text-[11px] text-slate-400 font-bold mt-4 leading-relaxed">
-                                        You will see exactly what changes before anything is saved. Blank cells leave existing values untouched, and items missing from the file are never removed automatically.
+                                        You will see exactly what changes before anything is saved, and the whole import can be
+                                        undone afterwards. Blank cells leave existing values untouched, and items missing from the
+                                        file are never removed automatically.
                                     </p>
                                 </div>
                             </div>

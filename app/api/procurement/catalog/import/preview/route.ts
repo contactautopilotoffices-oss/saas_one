@@ -6,7 +6,9 @@ import {
     isProcurementUser,
     resolveOrganizationId,
     ensureCatalogPhotoBucket,
+    isMissingSchemaError,
     CATALOG_PHOTO_BUCKET,
+    MISSING_SCHEMA_MESSAGE,
 } from '@/backend/lib/procurement/catalogAccess';
 import {
     parseCatalogTemplateWorkbook,
@@ -17,6 +19,7 @@ import {
     type ParsedPhoto,
 } from '@/backend/lib/procurement/catalogTemplate';
 import type {
+    AbsentCatalogItem,
     CellValue,
     ExistingCatalogRow,
     StagedCatalogRow,
@@ -99,7 +102,13 @@ export async function POST(request: NextRequest) {
         const { data: { user }, error: authError } = await supabase.auth.getUser();
         if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-        const formData = await request.formData();
+        let formData: FormData;
+        try {
+            formData = await request.formData();
+        } catch {
+            return NextResponse.json({ error: 'Expected a multipart upload containing the template file' }, { status: 400 });
+        }
+
         const file = formData.get('file') as File | null;
         const organizationId = await resolveOrganizationId(user.id, formData.get('organizationId') as string | null);
 
@@ -130,11 +139,14 @@ export async function POST(request: NextRequest) {
 
         const { data: existingRows, error: fetchErr } = await adminSupabase
             .from('procurement_catalog')
-            .select('id, item_code, name, category, brand, color_size_details, unit, unit_price, estimated_price, photo_url, sort_order, description, is_active')
+            .select('id, item_code, name, category, brand, color_size_details, unit, unit_price, estimated_price, photo_url, sort_order, description, is_active, lifecycle')
             .eq('organization_id', organizationId);
 
         if (fetchErr) {
             console.error('[Catalog Import] Failed to load existing catalog:', fetchErr);
+            if (isMissingSchemaError(fetchErr)) {
+                return NextResponse.json({ error: MISSING_SCHEMA_MESSAGE }, { status: 503 });
+            }
             return NextResponse.json({ error: 'Database error' }, { status: 500 });
         }
 
@@ -242,6 +254,7 @@ export async function POST(request: NextRequest) {
                     changes: {},
                     values: {
                         item_code: itemCode,
+                        lifecycle: 'standard',
                         name: row.name,
                         category: row.category,
                         brand: incoming.brand,
@@ -289,6 +302,11 @@ export async function POST(request: NextRequest) {
                 updateValues.is_active = true;
                 updateValues.deactivated_at = null;
             }
+            // Appearing on the template promotes an item back to standard.
+            if (existing.lifecycle !== 'standard') {
+                changes.lifecycle = { from: existing.lifecycle, to: 'standard' };
+                updateValues.lifecycle = 'standard';
+            }
             if (row.item_code.trim() && !existing.item_code) {
                 updateValues.item_code = row.item_code.trim();
             }
@@ -306,10 +324,46 @@ export async function POST(request: NextRequest) {
             });
         }
 
-        // ── Active items the file does not mention. Listed, never auto-deactivated.
-        const deactivationCandidates = (existingRows || [])
-            .filter(r => r.is_active && !touchedIds.has(r.id))
-            .map(r => ({ id: r.id, item_code: r.item_code, name: r.name, category: r.category }));
+        // ── Active items the file does not mention.
+        // Listed with their live stock footprint so the uploader can decide
+        // per item whether to keep, mark legacy, or retire. Nothing is automatic.
+        const absentRows = ((existingRows || []) as ExistingCatalogRow[])
+            .filter(r => r.is_active && !touchedIds.has(r.id));
+
+        const stockByCatalogItem = new Map<string, { properties: Set<string>; qty: number }>();
+        if (absentRows.length > 0) {
+            const { data: stockRows, error: stockErr } = await adminSupabase
+                .from('stock_items')
+                .select('catalog_item_id, property_id, quantity')
+                .in('catalog_item_id', absentRows.map(r => r.id));
+
+            if (stockErr) {
+                // Not fatal — the uploader just loses the "still held on site" hint.
+                console.warn('[Catalog Import] Could not load stock footprint:', stockErr);
+            }
+
+            for (const row of stockRows || []) {
+                if (!row.catalog_item_id) continue;
+                const entry = stockByCatalogItem.get(row.catalog_item_id)
+                    || { properties: new Set<string>(), qty: 0 };
+                if (row.property_id) entry.properties.add(row.property_id);
+                entry.qty += Number(row.quantity) || 0;
+                stockByCatalogItem.set(row.catalog_item_id, entry);
+            }
+        }
+
+        const absentItems: AbsentCatalogItem[] = absentRows.map(r => {
+            const stock = stockByCatalogItem.get(r.id);
+            return {
+                id: r.id,
+                item_code: r.item_code,
+                name: r.name,
+                category: r.category,
+                lifecycle: r.lifecycle || 'standard',
+                stock_property_count: stock?.properties.size || 0,
+                stock_total_qty: stock?.qty || 0,
+            };
+        });
 
         const counts = {
             row_count: staged.length,
@@ -337,6 +391,9 @@ export async function POST(request: NextRequest) {
 
         if (batchErr) {
             console.error('[Catalog Import] Failed to stage batch:', batchErr);
+            if (isMissingSchemaError(batchErr)) {
+                return NextResponse.json({ error: MISSING_SCHEMA_MESSAGE }, { status: 503 });
+            }
             return NextResponse.json({ error: 'Could not stage this import' }, { status: 500 });
         }
 
@@ -351,7 +408,7 @@ export async function POST(request: NextRequest) {
             // Full detail lives in the batch; the response carries enough to review.
             rows: staged.slice(0, 300),
             rows_returned: Math.min(staged.length, 300),
-            deactivation_candidates: deactivationCandidates,
+            absent_items: absentItems,
         });
     } catch (error) {
         console.error('[Catalog Import Preview] API Error:', error);

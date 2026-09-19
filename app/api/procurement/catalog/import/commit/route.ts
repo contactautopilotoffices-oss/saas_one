@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
-import { isProcurementUser, resolveOrganizationId } from '@/backend/lib/procurement/catalogAccess';
-import type { StagedCatalogRow } from '@/backend/lib/procurement/catalogImport';
+import {
+    isProcurementUser,
+    resolveOrganizationId,
+    isMissingSchemaError,
+    MISSING_SCHEMA_MESSAGE,
+} from '@/backend/lib/procurement/catalogAccess';
+import type { ExistingCatalogRow, LifecycleChange, StagedCatalogRow } from '@/backend/lib/procurement/catalogImport';
 
 export const maxDuration = 120;
 
@@ -12,10 +17,14 @@ const INSERT_CHUNK_SIZE = 200;
  * POST /api/procurement/catalog/import/commit
  *
  * Applies a previously previewed batch to procurement_catalog.
- * Body: { batch_id, organizationId?, deactivate_ids?: string[] }
+ * Body: { batch_id, organizationId?, legacy_ids?: string[], retire_ids?: string[] }
  *
- * Deactivation is opt-in per item and is a soft close (is_active = false) —
- * historic requisitions and stock rows must keep resolving their catalog item.
+ * Items the template did not mention are only touched if the uploader named
+ * them. `legacy_ids` keeps an item fully usable and requestable but marks it as
+ * being phased out; `retire_ids` hides it from new requisitions. Neither deletes
+ * anything — historic requisitions and stock rows must keep resolving their
+ * catalog item. Everything applied here is recorded in lifecycle_changes so the
+ * whole batch can be undone via /rollback.
  */
 export async function POST(request: NextRequest) {
     try {
@@ -25,7 +34,8 @@ export async function POST(request: NextRequest) {
 
         const body = await request.json();
         const batchId = body.batch_id as string | undefined;
-        const deactivateIds: string[] = Array.isArray(body.deactivate_ids) ? body.deactivate_ids : [];
+        const legacyIds: string[] = Array.isArray(body.legacy_ids) ? body.legacy_ids : [];
+        const retireIds: string[] = Array.isArray(body.retire_ids) ? body.retire_ids : [];
 
         if (!batchId) return NextResponse.json({ error: 'batch_id is required' }, { status: 400 });
 
@@ -45,6 +55,9 @@ export async function POST(request: NextRequest) {
             .eq('organization_id', organizationId)
             .maybeSingle();
 
+        if (isMissingSchemaError(batchErr)) {
+            return NextResponse.json({ error: MISSING_SCHEMA_MESSAGE }, { status: 503 });
+        }
         if (batchErr || !batch) {
             return NextResponse.json({ error: 'Import batch not found' }, { status: 404 });
         }
@@ -111,21 +124,57 @@ export async function POST(request: NextRequest) {
             updatedCount++;
         }
 
-        // ── Opt-in deactivations
-        let deactivatedCount = 0;
-        if (deactivateIds.length > 0) {
-            const { data, error } = await adminSupabase
-                .from('procurement_catalog')
-                .update({ is_active: false, deactivated_at: now, updated_at: now })
-                .eq('organization_id', organizationId)
-                .in('id', deactivateIds)
-                .select('id');
+        // ── Opt-in lifecycle changes for items absent from the template.
+        // Recorded before/after so /rollback can put them back exactly.
+        const lifecycleChanges: LifecycleChange[] = [];
+        let legacyCount = 0;
+        let retiredCount = 0;
 
-            if (error) {
-                console.error('[Catalog Commit] Deactivation failed:', error);
-                failures.push({ row: 0, message: `Deactivation failed: ${error.message}` });
+        // retire wins if an id were somehow passed in both lists
+        const retireSet = new Set(retireIds);
+        const legacySet = new Set(legacyIds.filter(id => !retireSet.has(id)));
+        const affectedIds = [...retireSet, ...legacySet];
+
+        if (affectedIds.length > 0) {
+            const { data: beforeRows, error: beforeErr } = await adminSupabase
+                .from('procurement_catalog')
+                .select('id, name, lifecycle, is_active')
+                .eq('organization_id', organizationId)
+                .in('id', affectedIds);
+
+            if (beforeErr) {
+                console.error('[Catalog Commit] Could not read items before lifecycle change:', beforeErr);
+                failures.push({ row: 0, message: `Could not apply lifecycle changes: ${beforeErr.message}` });
             } else {
-                deactivatedCount = data?.length || 0;
+                for (const before of (beforeRows || []) as Pick<ExistingCatalogRow, 'id' | 'name' | 'lifecycle' | 'is_active'>[]) {
+                    const retiring = retireSet.has(before.id);
+                    const patch = retiring
+                        ? { lifecycle: 'retired', is_active: false, deactivated_at: now, updated_at: now }
+                        : { lifecycle: 'legacy', updated_at: now };
+
+                    const { error } = await adminSupabase
+                        .from('procurement_catalog')
+                        .update(patch)
+                        .eq('id', before.id)
+                        .eq('organization_id', organizationId);
+
+                    if (error) {
+                        console.error(`[Catalog Commit] Lifecycle change failed for ${before.name}:`, error);
+                        failures.push({ row: 0, message: `${before.name}: ${error.message}` });
+                        continue;
+                    }
+
+                    lifecycleChanges.push({
+                        id: before.id,
+                        name: before.name,
+                        from_lifecycle: before.lifecycle || 'standard',
+                        from_is_active: before.is_active,
+                        to_lifecycle: retiring ? 'retired' : 'legacy',
+                        to_is_active: retiring ? false : before.is_active,
+                    });
+
+                    if (retiring) retiredCount++; else legacyCount++;
+                }
             }
         }
 
@@ -136,7 +185,9 @@ export async function POST(request: NextRequest) {
                 committed_at: now,
                 created_count: createdCount,
                 updated_count: updatedCount,
-                deactivated_count: deactivatedCount,
+                legacy_count: legacyCount,
+                deactivated_count: retiredCount,
+                lifecycle_changes: lifecycleChanges,
                 errors: [...(Array.isArray(batch.errors) ? batch.errors : []), ...failures.map(f => ({ row: f.row, errors: [f.message] }))],
             })
             .eq('id', batchId);
@@ -147,7 +198,8 @@ export async function POST(request: NextRequest) {
             created: createdCount,
             updated: updatedCount,
             unchanged: batch.unchanged_count || 0,
-            deactivated: deactivatedCount,
+            marked_legacy: legacyCount,
+            retired: retiredCount,
             skipped_errors: batch.error_count || 0,
             failures,
         });

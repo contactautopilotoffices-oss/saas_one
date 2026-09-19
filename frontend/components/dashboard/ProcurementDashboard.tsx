@@ -20,6 +20,7 @@ import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
 import ProcurementFeedbackTab from '../procurement/ProcurementFeedbackTab';
 import MonthlyRequisitionsTab from '../procurement/MonthlyRequisitionsTab';
 import SitePricingAdminTab from '../procurement/SitePricingAdminTab';
+import { SHOW_LEGACY_PER_PROPERTY_CONTROLS } from '../procurement/procurementFeatureFlags';
 import ProcurementVendorTicketsTab from '../procurement/ProcurementVendorTicketsTab';
 import { ProcurementSettingsTab } from '../procurement/ProcurementSettingsTab';
 import PaymentUrgencyTrackerTab from '../procurement/payment-urgency/PaymentUrgencyTrackerTab';
@@ -74,7 +75,9 @@ export default function ProcurementDashboard() {
 
     useEffect(() => {
         const tabParam = searchParams?.get('tab') as Tab | null;
-        if (tabParam && ['overview', 'urgency-tracker', 'task-sheet', 'requests', 'vendor_tickets', 'monthly-requisitions', 'monthly-feedback', 'site-pricing', 'history', 'manage-items', 'po-generator', 'settings', 'profile'].includes(tabParam)) {
+        const linkableTabs = ['overview', 'urgency-tracker', 'task-sheet', 'requests', 'vendor_tickets', 'monthly-requisitions', 'monthly-feedback', 'history', 'manage-items', 'po-generator', 'settings', 'profile'];
+        if (SHOW_LEGACY_PER_PROPERTY_CONTROLS) linkableTabs.push('site-pricing');
+        if (tabParam && linkableTabs.includes(tabParam)) {
             setActiveTab(tabParam);
         }
     }, [searchParams]);
@@ -593,12 +596,13 @@ export default function ProcurementDashboard() {
                                         icon: MessageSquarePlus, 
                                         label: 'Monthly Feedback Reports'
                                     },
-                                    { 
-                                        id: 'site-pricing', 
-                                        icon: DollarSign, 
+                                    // Per-property rates — superseded by the standard item master (see procurementFeatureFlags)
+                                    ...(SHOW_LEGACY_PER_PROPERTY_CONTROLS ? [{
+                                        id: 'site-pricing',
+                                        icon: DollarSign,
                                         label: 'Site Pricing & Aliases',
                                         count: sidebarCounts.sitePricing > 0 ? sidebarCounts.sitePricing : undefined
-                                    },
+                                    }] : []),
                                     { 
                                         id: 'history', 
                                         icon: CheckCircle2, 
@@ -828,7 +832,7 @@ export default function ProcurementDashboard() {
                                 properties={allProperties}
                             />
                         )}
-                        {activeTab === 'site-pricing' && (
+                        {activeTab === 'site-pricing' && SHOW_LEGACY_PER_PROPERTY_CONTROLS && (
                             <SitePricingAdminTab
                                 user={user}
                                 organizationId={user?.user_metadata?.organization_id}

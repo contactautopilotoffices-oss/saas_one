@@ -24,6 +24,18 @@ export interface StagedCatalogRow {
     errors: string[];
 }
 
+/**
+ * Item lifecycle.
+ *   standard — on the current standard template
+ *   legacy   — pre-standardisation item, still fully usable and requestable,
+ *              shown separately and marked as being phased out
+ *   retired  — hidden from new requisitions, never deleted
+ */
+export type CatalogLifecycle = 'standard' | 'legacy' | 'retired';
+
+/** What the uploader chose to do with an item that the template did not mention. */
+export type AbsentItemDecision = 'keep' | 'legacy' | 'retire';
+
 /** Existing procurement_catalog row, as loaded for matching during preview. */
 export interface ExistingCatalogRow {
     id: string;
@@ -39,4 +51,30 @@ export interface ExistingCatalogRow {
     sort_order: number | null;
     description: string | null;
     is_active: boolean;
+    lifecycle: CatalogLifecycle;
+}
+
+/**
+ * An active item the uploaded template did not mention.
+ * `stock_property_count` / `stock_total_qty` answer the question that actually
+ * decides its fate: is any site still holding this?
+ */
+export interface AbsentCatalogItem {
+    id: string;
+    item_code: string | null;
+    name: string;
+    category: string | null;
+    lifecycle: CatalogLifecycle;
+    stock_property_count: number;
+    stock_total_qty: number;
+}
+
+/** One lifecycle/visibility change applied by a commit, recorded so it can be undone. */
+export interface LifecycleChange {
+    id: string;
+    name: string;
+    from_lifecycle: CatalogLifecycle;
+    from_is_active: boolean;
+    to_lifecycle: CatalogLifecycle;
+    to_is_active: boolean;
 }
