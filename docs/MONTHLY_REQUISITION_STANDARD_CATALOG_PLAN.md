@@ -291,12 +291,14 @@ identically for every property. Verified against two properties: same 90 rows, s
 
 What it does:
 
-1. Standard list in **Sr. No.** order, legacy items last (ordered in
-   [pricingAndAliasService.ts](backend/lib/procurement/pricingAndAliasService.ts) — sorted in JS, not via `.order()`, so the
-   query still works before the `sort_order` column exists).
-2. Per-property price from `item_site_prices` still overlays the standard rate (see §5.1).
-3. Category tabs now include **General**, so items in that bucket are reachable.
-4. Legacy items carry an amber row marker and a tooltip; they stay requestable.
+1. **Only items on the current standard list are offered.** Anything predating
+   standardisation stays in `procurement_catalog` and in Manage Items, but is never put in
+   front of a property ([20260919000004](supabase/migrations/20260919000004_requisition_shows_standard_items_only.sql)).
+2. Standard list in **Sr. No.** order (ordered in
+   [pricingAndAliasService.ts](backend/lib/procurement/pricingAndAliasService.ts) — sorted and filtered in JS, not via
+   `.order()` / `.eq()`, so the query still works before the new columns exist).
+3. One rate everywhere — per-property overrides are retired (§5.1).
+4. Category tabs now include **General**, so items in that bucket are reachable.
 5. Loading, "choose a property", and "no standard items yet" states instead of a blank grid.
 
 **Deliberately NOT done: no stock join.** "Avail. Qty" stays a manual column, exactly as on the
@@ -338,15 +340,30 @@ in JS rather than `.eq('is_superseded', false)`, so the requisition sheet keeps 
 database where this migration has not run — absent column → undefined → not superseded →
 previous behaviour.
 
-**Sequence this after the first template upload.** Some overrides are far from the current
-catalog rate (AMR Altruist prices a Urinal Screen at ₹35 against a ₹415.41 catalog rate; its
-Toilet Roll is ₹12 against ₹51.65). Retiring the overrides before the standard rates are
-uploaded would expose those sites to whatever the old catalog happens to say. Upload the
-template first, then run this migration.
+The sequencing risk this originally carried is gone. Some overrides sit far from the current
+catalog rate (AMR Altruist prices a Urinal Screen at ₹35 against a ₹415.41 catalog rate), which
+would have mattered if those items stayed on the sheet. Under §5.1a they do not: every
+pre-standardisation item is `legacy` and is not offered at all, so the only rates a property
+can see are the ones on the uploaded template.
 
 The write endpoints (`POST /api/procurement/pricing`, `pricing/import-preview`) still exist but
 are only reachable from the Site Pricing UI, which is hidden behind
 `SHOW_LEGACY_PER_PROPERTY_CONTROLS`. No new override can be created through the app.
+
+### 5.1a Lifecycle, as it now stands
+
+`20260919000002` introduced the lifecycle while 'legacy' still meant "requestable". It does
+not any more — there is no requisition history to protect, so the sheet offers the standard
+list and nothing else:
+
+| State | On a new requisition? | In Manage Items? | Meaning |
+|---|---|---|---|
+| `standard` | **yes — the only thing offered** | yes | On the current standard template |
+| `legacy` | no | yes | Predates the standard list, or was dropped from a later template. Still resolves for anything already referencing it. |
+| `retired` | no | no | Deactivated (`is_active = false`). Never deleted. |
+
+`standard` is earned by appearing in an uploaded template, which is exactly what
+`import_batch_id` records. `20260919000004` marks everything without one as `legacy`.
 
 ### 5.2 Where items come from
 

@@ -147,8 +147,18 @@ export const PricingAndAliasService = {
     async getCatalogWithSitePrices(organizationId: string, propertyId?: string | null) {
         const adminSupabase = createAdminClient();
 
-        // 1. Fetch active master items
-        const { data: items, error: itemsErr } = await adminSupabase
+        // 1. Fetch active master items.
+        //
+        //    Only items on the current standard list are offered for requisition.
+        //    Items predating standardisation, or dropped from a later template, stay
+        //    in the catalog and in Manage Items but are not put in front of a
+        //    property (see 20260919000004).
+        //
+        //    Filtered in JS, not with .eq('lifecycle', 'standard'): the column does
+        //    not exist until 20260919000002 runs, and an eq() would turn the
+        //    requisition sheet into a 500 on a database that has not had it yet.
+        //    Absent column -> undefined -> everything shown, the previous behaviour.
+        const { data: rawItems, error: itemsErr } = await adminSupabase
             .from('procurement_catalog')
             .select('*')
             .eq('organization_id', organizationId)
@@ -159,6 +169,10 @@ export const PricingAndAliasService = {
             console.error('[PricingService] Error fetching catalog items:', itemsErr);
             return [];
         }
+
+        const items = (rawItems || []).filter(
+            (item: { lifecycle?: string }) => !item.lifecycle || item.lifecycle === 'standard'
+        );
 
         // 2. If propertyId is provided, fetch this property's site-specific prices.
         //
@@ -215,14 +229,8 @@ export const PricingAndAliasService = {
             };
         });
 
-        // 4. Standard items first, then in the Sr. No. order procurement uploaded.
-        //    Legacy items sink to the bottom; they are still requestable, just
-        //    being phased out.
+        // 4. In the Sr. No. order procurement uploaded.
         return merged.sort((a, b) => {
-            const aLegacy = a.lifecycle === 'legacy' ? 1 : 0;
-            const bLegacy = b.lifecycle === 'legacy' ? 1 : 0;
-            if (aLegacy !== bLegacy) return aLegacy - bLegacy;
-
             // Items with no Sr. No. go after the ones that have one.
             const aOrder = a.sort_order > 0 ? a.sort_order : Number.MAX_SAFE_INTEGER;
             const bOrder = b.sort_order > 0 ? b.sort_order : Number.MAX_SAFE_INTEGER;

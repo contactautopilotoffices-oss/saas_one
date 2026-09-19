@@ -26,10 +26,13 @@ export interface StagedCatalogRow {
 
 /**
  * Item lifecycle.
- *   standard — on the current standard template
- *   legacy   — pre-standardisation item, still fully usable and requestable,
- *              shown separately and marked as being phased out
- *   retired  — hidden from new requisitions, never deleted
+ *   standard — on the current standard template. The only thing a property is
+ *              offered on a new monthly requisition.
+ *   legacy   — predates the standard list, or was dropped from it. Stays in the
+ *              catalog and in Manage Items, stays resolvable by anything that
+ *              already references it, but is NOT offered on new requisitions.
+ *   retired  — deactivated (is_active = false). Gone from Manage Items too.
+ *              Never deleted, so history keeps resolving.
  */
 export type CatalogLifecycle = 'standard' | 'legacy' | 'retired';
 

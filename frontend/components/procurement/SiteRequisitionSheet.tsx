@@ -19,8 +19,6 @@ export interface RequisitionRow {
     unit: string;
     unit_price: number;
     is_site_specific?: boolean;
-    /** Pre-standardisation item, still requestable but being phased out. */
-    is_legacy?: boolean;
     remarks?: string;
 }
 
@@ -171,10 +169,13 @@ export default function SiteRequisitionSheet({
     // Load the standard item list for this property.
     //
     // Catalog-first and catalog-only: every property is shown the same standard
-    // list that procurement uploaded, in the same Sr. No. order. Stock is NOT
-    // consulted — "Avail. Qty" is entered by the site team, as it is on the paper
-    // sheet. Joining to stock_items comes later, once the standard list and the
-    // per-property stock rows have been reconciled (see
+    // list that procurement uploaded, in the same Sr. No. order, at the same rates.
+    // Only items on the current standard list are returned — anything predating
+    // standardisation stays in Manage Items and is never offered here.
+    //
+    // Stock is NOT consulted: "Avail. Qty" is entered by the site team, as it is on
+    // the paper sheet. Joining to stock_items comes later, once the standard list and
+    // the per-property stock rows have been reconciled (see
     // docs/MONTHLY_REQUISITION_STANDARD_CATALOG_PLAN.md §6).
     useEffect(() => {
         const fetchSiteData = async () => {
@@ -195,8 +196,7 @@ export default function SiteRequisitionSheet({
                     available_stock_qty: 0,
                     unit: cleanUom(catItem.unit),
                     unit_price: catItem.unit_price || catItem.estimated_price || 0,
-                    is_site_specific: !!catItem.is_site_specific,
-                    is_legacy: catItem.lifecycle === 'legacy'
+                    is_site_specific: !!catItem.is_site_specific
                 }));
 
                 setItems(populatedRows);
@@ -741,10 +741,7 @@ export default function SiteRequisitionSheet({
                                 )}
                                 {filteredItems.map((row, idx) => (
                                     <tr key={row.id} className="hover:bg-slate-50/80 transition-colors">
-                                        <td
-                                            className={`py-1 px-2 text-center font-semibold border border-slate-200 ${row.is_legacy ? 'bg-amber-50 text-amber-600' : 'bg-slate-50 text-slate-500'}`}
-                                            title={row.is_legacy ? 'Legacy item — still available, but being phased out' : undefined}
-                                        >
+                                        <td className="py-1 px-2 text-center text-slate-500 font-semibold border border-slate-200 bg-slate-50">
                                             {idx + 1}
                                         </td>
                                         <td className="p-0 border border-slate-200 bg-[#00a2ed]/10">

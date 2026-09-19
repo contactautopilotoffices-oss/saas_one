@@ -94,13 +94,13 @@ const DECISIONS: Array<{ value: AbsentDecision; label: string; hint: string; act
     {
         value: 'legacy',
         label: 'Legacy',
-        hint: 'Still fully usable and requestable, but grouped separately and marked as being phased out.',
+        hint: 'Stays in Manage Items and stays resolvable by anything that already references it, but is no longer offered on new requisitions.',
         active: 'bg-amber-500 text-white',
     },
     {
         value: 'retire',
         label: 'Retire',
-        hint: 'Hidden from new requisitions. Never deleted — past requisitions and stock records keep working.',
+        hint: 'Deactivated — gone from Manage Items too. Never deleted, so past requisitions and stock records keep working.',
         active: 'bg-rose-500 text-white',
     },
 ];
@@ -501,7 +501,7 @@ export default function CatalogTemplateUploadModal({ isOpen, onClose, organizati
                                             leaves out {preview.absent_items.length}. Items are matched on their description, so
                                             <strong> a renamed item looks like a new one</strong> — check the two lists below for the same
                                             product under two names. If you find one, either restore the old wording in the file, or
-                                            mark the old entry Retire so sites only see the new one.
+                                            mark the old entry Legacy so only the new one reaches sites.
                                         </p>
                                     </div>
                                 )}
@@ -590,9 +590,9 @@ export default function CatalogTemplateUploadModal({ isOpen, onClose, organizati
                                             <p className="text-xs text-amber-800 font-bold leading-relaxed">
                                                 These default to <strong>Keep</strong> — nothing happens to them unless you say so.
                                                 <br />
-                                                <strong>Legacy</strong> is the safe middle step while migrating: the item stays fully
-                                                usable and requestable, just grouped separately and marked as being phased out.
-                                                <strong> Retire</strong> hides it from new requisitions. Neither ever deletes anything.
+                                                <strong>Legacy</strong> takes the item off new requisitions but leaves it in Manage
+                                                Items, so anything already referencing it still resolves.
+                                                <strong> Retire</strong> deactivates it everywhere. Neither ever deletes anything.
                                             </p>
                                         </div>
 
