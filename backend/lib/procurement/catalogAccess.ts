@@ -48,8 +48,7 @@ export async function resolveOrganizationId(userId: string, providedId: string |
  */
 export const MISSING_SCHEMA_MESSAGE =
     'The standard items upgrade has not been applied to this database yet. '
-    + 'Run the pending migrations (20260919000001_procurement_catalog_standard_template, '
-    + '20260919000002_procurement_catalog_lifecycle) and try again.';
+    + 'Run the pending Supabase migrations dated 2026-09-19 (`npx supabase db push`) and try again.';
 
 /** Does this Postgres/PostgREST error mean the new schema is not there yet? */
 export function isMissingSchemaError(error: { code?: string; message?: string } | null | undefined): boolean {

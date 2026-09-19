@@ -11,6 +11,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { compressImage } from '@/frontend/utils/image-compression';
 import { useAuth } from '@/frontend/context/AuthContext';
 import CatalogTemplateUploadModal from './CatalogTemplateUploadModal';
+import CatalogManagerTable from './CatalogManagerTable';
 
 interface CatalogItem {
     id: string;
@@ -20,6 +21,14 @@ interface CatalogItem {
     category: string;
     estimated_price: number;
     unit: string;
+    // Template fields, returned by the catalog API once the standard-items
+    // migrations have run. Optional so this type is honest before then.
+    item_code?: string | null;
+    brand?: string | null;
+    color_size_details?: string | null;
+    unit_price?: number | null;
+    sort_order?: number;
+    lifecycle?: 'standard' | 'legacy' | 'retired';
 }
 
 interface CartItem extends Partial<CatalogItem> {
@@ -528,7 +537,33 @@ export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, pro
 
                     {/* Main Content Side */}
                     <div className="flex-1 flex flex-col overflow-hidden bg-white lg:bg-slate-50">
-                        {step === 'browse' ? (
+                        {step === 'browse' && isManagementMode ? (
+                            /* Manage Items: the catalog as procurement works with it —
+                               Standard / Legacy sections, every template column editable.
+                               The card grid below stays for the ticket "Buy Items" flow. */
+                            <div className="flex-1 overflow-y-auto p-4 lg:p-6 custom-scrollbar bg-white">
+                                <CatalogManagerTable
+                                    organizationId={organizationId}
+                                    items={safeItems}
+                                    isLoading={isLoading}
+                                    canManage={canManageCatalog}
+                                    onItemUpdated={updated => {
+                                        setItems(prev => prev.map(i => (i.id === updated.id ? { ...i, ...updated } as CatalogItem : i)));
+                                        const key = `${organizationId}-${propertyId}`;
+                                        if (catalogCache[key]) {
+                                            catalogCache[key] = catalogCache[key].map(i => (i.id === updated.id ? { ...i, ...updated } as CatalogItem : i));
+                                        }
+                                    }}
+                                    onItemDeleted={id => {
+                                        setItems(prev => prev.filter(i => i.id !== id));
+                                        const key = `${organizationId}-${propertyId}`;
+                                        if (catalogCache[key]) {
+                                            catalogCache[key] = catalogCache[key].filter(i => i.id !== id);
+                                        }
+                                    }}
+                                />
+                            </div>
+                        ) : step === 'browse' ? (
                             <>
                                 {/* Filters Bar */}
                                 <div className="p-4 lg:p-6 space-y-4 bg-white border-b border-slate-100 lg:border-none shadow-sm lg:shadow-none z-10">

@@ -57,6 +57,17 @@ Three things are actually wrong today:
 
 ## 3. Data model changes
 
+> **The live database was missing more than expected.** `procurement_catalog` there is still
+> `id, organization_id, name, description, category, unit, estimated_price, photo_url,
+> photo_data, stock_item_id, is_active, created_at, updated_at`. `brand`,
+> `color_size_details` and `unit_price` were introduced by
+> `backend/db/migrations/20260819_enhanced_monthly_requisitions.sql`, which is **not** what
+> `supabase db push` applies and never ran. The template maps `brands` → `brand` and
+> `final rate` → `unit_price`, so [20260919000005](supabase/migrations/20260919000005_procurement_catalog_required_columns.sql)
+> adds them idempotently, making the feature self-contained rather than dependent on a
+> migration that may or may not have been run. Found by an inline edit returning 503.
+
+
 ### 3.1 `procurement_catalog` hardening — SHIPPED
 
 [20260919000001_procurement_catalog_standard_template.sql](supabase/migrations/20260919000001_procurement_catalog_standard_template.sql)
@@ -365,7 +376,24 @@ list and nothing else:
 `standard` is earned by appearing in an uploaded template, which is exactly what
 `import_batch_id` records. `20260919000004` marks everything without one as `legacy`.
 
-### 5.2 Where items come from
+### 5.2 Manage Items — BUILT
+
+[CatalogManagerTable.tsx](frontend/components/procurement/CatalogManagerTable.tsx) replaces the shopping-card grid when
+Manage Items is opened from the procurement dashboard. (The card grid stays for the ticket
+"Buy Items" flow, which is a different job.)
+
+Two sections, because they mean different things:
+
+- **Standard Items** — exactly what every property is offered on its monthly requisition.
+- **Legacy Items** — predates the standard list, or dropped from a later template. Kept and
+  editable, not offered to anyone. One click moves a row either way.
+
+Every template column is shown and every one is editable in place — Sr. No., IMAGE, Item
+Description, Category, Unit, brands, final rate. Edits save on blur through the partial-update
+PATCH; a blank value stays blank and is rendered `—` rather than guessed at. The image cell
+opens a file picker and replaces the picture.
+
+### 5.3 Where items come from
 
 `procurement_catalog`, and nowhere else. Procurement maintains it from **Manage Items**:
 
