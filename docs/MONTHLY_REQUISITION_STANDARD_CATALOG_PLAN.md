@@ -1,7 +1,8 @@
 # Standardised Monthly Requisition Items — Plan
 
 **Branch:** `feat/monthly-requisition-standard-catalog`
-**Status:** Plan only. No code written yet. Excel column spec pending from stakeholder.
+**Status:** Phase 1 built (template + procurement upload). Phases 2–4 still planned.
+Excel column spec was set by us — see §4.2; adjust if the stakeholder's sheet differs.
 
 ---
 
@@ -22,7 +23,7 @@ We are much closer to this than it looks. The current state:
 | Piece | Where | State |
 |---|---|---|
 | Org-level item master | `procurement_catalog` table | **Exists.** Columns: `name`, `description`, `category`, `unit`, `estimated_price`, `brand`, `color_size_details`, `unit_price`, `photo_url`, `is_active`, `organization_id` |
-| Excel/CSV bulk upload into the master | [catalog/bulk-upload/route.ts](app/api/procurement/catalog/bulk-upload/route.ts) | **Exists but weak** — see §4 |
+| Excel upload into the master | `catalog/bulk-upload` (AI column guesser) | **Replaced** by the template import in §4 — route deleted |
 | Per-property price override | `item_site_prices` table | Exists |
 | Procurement UI for catalog + pricing | [ProcurementCatalogModal.tsx](frontend/components/procurement/ProcurementCatalogModal.tsx), [SitePricingAdminTab.tsx](frontend/components/procurement/SitePricingAdminTab.tsx) | Exists, role-gated to `procurement` / `org_super_admin` / `master_admin` |
 | Requisition sheet the property admin fills | [SiteRequisitionSheet.tsx](frontend/components/procurement/SiteRequisitionSheet.tsx) | Exists; already pulls catalog + site prices + live stock |
@@ -54,26 +55,19 @@ Three things are actually wrong today:
 
 ## 3. Data model changes
 
-### 3.1 New: `procurement_catalog` hardening
+### 3.1 `procurement_catalog` hardening — SHIPPED
 
-```sql
-ALTER TABLE procurement_catalog
-  ADD COLUMN IF NOT EXISTS item_code        text,        -- stable SKU, the upsert key
-  ADD COLUMN IF NOT EXISTS is_standard      boolean DEFAULT true,
-  ADD COLUMN IF NOT EXISTS sort_order       integer DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS import_batch_id  uuid,
-  ADD COLUMN IF NOT EXISTS deactivated_at   timestamptz;
-
-CREATE UNIQUE INDEX IF NOT EXISTS uq_catalog_org_item_code
-  ON procurement_catalog(organization_id, lower(item_code))
-  WHERE item_code IS NOT NULL;
-```
+[20260919000001_procurement_catalog_standard_template.sql](supabase/migrations/20260919000001_procurement_catalog_standard_template.sql)
+adds `item_code`, `sort_order`, `import_batch_id` and `deactivated_at`, a case-insensitive
+unique index on `(organization_id, item_code)`, and backfills a code onto every existing row.
 
 `item_code` matters more than it looks — see §4.2.
 
-### 3.2 New: `catalog_import_batches`
+### 3.2 `catalog_import_batches` — SHIPPED
 
 Every Excel upload becomes a batch record, so a bad upload is explainable and reversible.
+The shipped table also carries `staged_rows` (the previewed diff, applied on commit),
+`photo_count` and `expires_at` — a preview is good for 24 hours. As shipped:
 
 ```sql
 CREATE TABLE catalog_import_batches (
@@ -96,7 +90,7 @@ CREATE TABLE catalog_import_batches (
 );
 ```
 
-### 3.3 New: `procurement_item_aliases`
+### 3.3 `procurement_item_aliases` — PHASE 3, not yet migrated
 
 The key that makes legacy names survive standardisation. A property keeps calling it
 "Toilet Paper Roll"; procurement calls it "Toilet Roll"; both resolve to one `catalog_item_id`.
@@ -120,7 +114,7 @@ This mirrors the `property_aliases` pattern already in
 [pricingAndAliasService.ts](backend/lib/procurement/pricingAndAliasService.ts) — same idea, applied to items instead of sites.
 It also pays off later for PI/PO line-item matching.
 
-### 3.4 New: `property_catalog_adoption`
+### 3.4 `property_catalog_adoption` — PHASE 3, not yet migrated
 
 Lets us roll out property by property instead of all at once.
 
@@ -155,37 +149,53 @@ migration step.
 
 ## 4. Procurement-side Excel upload
 
-### 4.1 Where it goes
+### 4.1 Where it goes — BUILT
 
-New sub-view inside the existing **Catalog** tab of
-[ProcurementModule.tsx](frontend/components/procurement/ProcurementModule.tsx) (`activeTab === 'catalog'`), reusing the
-existing `canManageCatalogAndPricing` gate. Nothing new to add to the sidebar or role matrix.
+Procurement → **Catalog** tab → **Upload Excel**. The button replaces the old "Bulk Upload"
+entry in [ProcurementCatalogModal.tsx](frontend/components/procurement/ProcurementCatalogModal.tsx) and opens
+[CatalogTemplateUploadModal.tsx](frontend/components/procurement/CatalogTemplateUploadModal.tsx). Nothing new was added to
+the sidebar or the role matrix — it reuses the existing `canManageCatalogAndPricing` gate, and
+every endpoint re-checks `procurement` / `org_super_admin` / `master_admin` server-side.
 
-Flow: **Download template → Upload file → Preview diff → Commit**.
+Flow: **Download template → fill it → upload → review the diff → apply**.
 
-### 4.2 Columns
+Endpoints:
+- `GET  /api/procurement/catalog/template` — the .xlsx, blank or `?include=current`
+- `POST /api/procurement/catalog/import/preview` — parses, classifies, stages a batch; writes nothing to the catalog
+- `POST /api/procurement/catalog/import/commit` — applies a staged batch
 
-**Pending from you.** Placeholder mapping against the current schema:
+### 4.2 Columns — BUILT
 
-| Excel column (TBD) | Maps to | Notes |
-|---|---|---|
-| Item Code / SKU | `procurement_catalog.item_code` | **Please include this.** See below. |
-| Item Name | `name` | required |
-| Category | `category` | drives the HK / Beverages / Technical grouping on the sheet |
-| Brand | `brand` | |
-| Colour / Size / Specification | `color_size_details` | |
-| UOM | `unit` | |
-| Standard Rate | `estimated_price` / `unit_price` | per-property override still lives in `item_site_prices` |
-| Sort Order | `sort_order` | so every property's sheet is in the same order |
+Defined once in [catalogTemplate.ts](backend/lib/procurement/catalogTemplate.ts) (`CATALOG_TEMPLATE_COLUMNS`), which the
+download endpoint, the parser and the UI hints all read from.
 
-> **One strong recommendation on the Excel:** include an **Item Code** column and keep it
-> stable across uploads. Without it we must upsert on item *name*, and the moment somebody
-> retypes "Toilet Roll" as "Toilet roll " or "Tissue Roll", the next upload creates a
-> duplicate instead of updating the existing row. With a code, renaming an item is a safe
-> update. If the Excel genuinely cannot carry codes, we generate them on first import and
-> ship them back in the downloadable template.
+| # | Excel column | Maps to | Notes |
+|---|---|---|---|
+| 1 | Item Code | `item_code` | Stable upsert key. Blank on a new item generates one (HK-0001, BEV-0002…). |
+| 2 | **Item Name** | `name` | **Required.** |
+| 3 | Category | `category` | Dropdown-locked to HK / Beverages / Technical / General. Free text is mapped (Housekeeping→HK, Pantry→Beverages, Electrical→Technical), unrecognised→General. |
+| 4 | Brand | `brand` | |
+| 5 | Specification | `color_size_details` | Colour / size / spec |
+| 6 | UOM | `unit` | Defaults to `pcs` |
+| 7 | Standard Rate | `unit_price` + `estimated_price` | Currency symbols and separators stripped. Per-property overrides still live in `item_site_prices`. |
+| 8 | **Photo** | `photo_url` | Picture pasted into the cell, **or** a public image URL. See below. |
+| 9 | Sort Order | `sort_order` | Fixes the row order on every property's sheet |
+| 10 | Description | `description` | |
 
-### 4.3 Upload semantics
+**The Photo column.** Pictures pasted into the cell (Insert → Picture → Place in Cell) are
+read straight out of the .xlsx — ExcelJS exposes each picture's anchor, and a picture
+anchored at row *N* belongs to the item on row *N*. They are resized to 800px and converted
+to webp via `sharp`, then stored in the existing `procurement-items` bucket. A typed or
+hyperlinked image URL in the same cell works as an alternative. Cap is 5 MB per picture.
+
+The workbook also carries a second **Instructions** sheet documenting every column, and the
+header row carries per-column cell notes.
+
+**On Item Code:** the migration backfills a code onto every existing catalog row, so
+"download with current items → edit → re-upload" round-trips without creating duplicates
+from day one. Renaming an item is then a safe update rather than a new row.
+
+### 4.3 Upload semantics — BUILT
 
 - **Dry run first.** `POST .../catalog/import/preview` returns a per-row classification:
   `create` / `update` (with a field-level before→after diff) / `unchanged` / `error`, plus the
@@ -198,23 +208,19 @@ Flow: **Download template → Upload file → Preview diff → Commit**.
 - **Row cap raised** from the current 500, with chunked inserts.
 - **Idempotent**: re-uploading the same file yields all `unchanged`.
 
-### 4.4 On the existing AI column mapper
+### 4.4 The AI column mapper — REMOVED
 
-[catalog/bulk-upload/route.ts](app/api/procurement/catalog/bulk-upload/route.ts) currently calls Groq (`llama-3.3-70b-versatile`)
-to guess which spreadsheet column is which. Given that we are standardising on a **fixed
-column spec**, the primary path should be a deterministic header matcher — exact match on
-the template headers, then a small synonym table. Faster, free, and it cannot silently map
-the wrong column.
+The old `catalog/bulk-upload` route called Groq (`llama-3.3-70b-versatile`) to guess which
+spreadsheet column was which. With a fixed template that guess buys nothing and can silently
+map the wrong column, so the route is deleted and replaced by a deterministic matcher: exact
+canonical header first, then a fixed synonym table, with unmatched columns reported back to
+the uploader rather than guessed at.
 
-Keep the AI mapper only as an explicit **"my file doesn't match the template"** fallback, and
-if we keep it, per [CLAUDE.md](CLAUDE.md) / [AGENT_DOCTRINE.md](docs/AGENT_DOCTRINE.md) it ships with an Agent Spec Block
-and `[BAA p.N]` citations. The existing route has no spec block, so this is a pre-existing
-doctrine gap we either close or delete in this branch. Deleting the AI path is the cheaper
-option and my recommendation.
+This also closes a [CLAUDE.md](CLAUDE.md) / [AGENT_DOCTRINE.md](docs/AGENT_DOCTRINE.md) gap — that route was an
+AI agent with no Agent Spec Block. Removing the agent removes the obligation; there is now no
+model call anywhere in this feature.
 
-Also note the current route's limits, all of which the new one fixes: insert-only (no
-updates), skip-on-duplicate, no `brand` / `color_size_details` / `unit_price` mapping, no
-preview, no batch record.
+(`catalog/bulk` is a different, still-used route behind Site Pricing and is untouched.)
 
 ---
 
@@ -337,7 +343,7 @@ mapping never blocks anyone.
 
 | Phase | Scope | Ships |
 |---|---|---|
-| **1** | Schema (§3.1–3.4), Excel template + preview/commit import, catalog admin UI | Procurement can upload and maintain the standard list |
+| **1** ✅ | Schema (§3.1, §3.2), Excel template + preview/commit import, upload UI in the procurement Catalog tab | Procurement can upload and maintain the standard list |
 | **2** | Catalog-first requisition sheet, site-specific block, delete dead defaults | Every property fills the same sheet |
 | **3** | `stock_items` columns, reconciliation wizard, merge flow, adoption rollout | Stock entries and requisition share one item list |
 | **4** | Retire `sync_all_catalog_to_stock.js` / `link_stock_to_catalog.js`; promote hand-added rows into the catalog | Cleanup + feedback loop |
@@ -350,8 +356,10 @@ half-finished standard list is wasted effort.
 
 ## 8. Open questions
 
-1. **The Excel columns** — pending from you. Everything in §4.2 is provisional until then.
-2. **Is there an Item Code / SKU?** Strongly preferred (§4.2).
+1. **Do the columns in §4.2 match your sheet?** They are built and working; changing one is a
+   single edit to `CATALOG_TEMPLATE_COLUMNS`, but it is cheapest to settle now.
+2. **Aliases and adoption tables (§3.3, §3.4) are specified but not yet migrated** — they
+   belong to Phase 3 and are not needed to upload the standard list.
 3. **Is the standard list truly global, or per property group?** Current model is org-wide
    (`procurement_catalog.organization_id`). If some sites are pantry-only or Technical-only, we
    need either a `applies_to_property_types` field or a per-property include/exclude — cheap
