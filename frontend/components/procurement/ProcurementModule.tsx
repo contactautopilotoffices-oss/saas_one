@@ -17,6 +17,7 @@ import SitePricingAdminTab from './SitePricingAdminTab';
 import PropertyBudgetsTab from './PropertyBudgetsTab';
 import PaymentUrgencyTrackerTab from './payment-urgency/PaymentUrgencyTrackerTab';
 import ProcurementFeedbackTab from './ProcurementFeedbackTab';
+import { SHOW_LEGACY_PER_PROPERTY_CONTROLS } from './procurementFeatureFlags';
 import FinanceOverview from '../accounts/FinanceOverview';
 import { useAuth } from '@/frontend/context/AuthContext';
 
@@ -160,7 +161,9 @@ export default function ProcurementModule({
         if (typeof window !== 'undefined') {
             const urlParams = new URLSearchParams(window.location.search);
             const tabParam = urlParams.get('procurement_tab') || urlParams.get('subtab');
-            if (tabParam && ['orders', 'urgency-tracker', 'payment-tracker', 'requisitions', 'site-budgets', 'site-pricing', 'catalog', 'po-generator', 'settings'].includes(tabParam)) {
+            const linkableTabs = ['orders', 'urgency-tracker', 'payment-tracker', 'requisitions', 'catalog', 'po-generator', 'settings'];
+            if (SHOW_LEGACY_PER_PROPERTY_CONTROLS) linkableTabs.push('site-budgets', 'site-pricing');
+            if (tabParam && linkableTabs.includes(tabParam)) {
                 setActiveTab(tabParam as TabType);
             }
         }
@@ -172,8 +175,9 @@ export default function ProcurementModule({
         { id: 'payment-tracker', label: 'Payment Tracker', icon: IndianRupee, show: canViewPaymentTracker, count: 0 },
         { id: 'requisitions', label: 'Monthly Requisitions', icon: FileSpreadsheet, show: true, count: 0 },
         { id: 'monthly-feedback', label: 'Monthly Feedback', icon: FileText, show: true, count: 0 },
-        { id: 'site-budgets', label: 'Property Budgets', icon: IndianRupee, show: canManageCatalogAndPricing, count: 0 },
-        { id: 'site-pricing', label: 'Site Pricing & Aliases', icon: DollarSign, show: canManageCatalogAndPricing, count: 0 },
+        // Per-property budgets & rates — superseded by the standard item master (see procurementFeatureFlags)
+        { id: 'site-budgets', label: 'Property Budgets', icon: IndianRupee, show: SHOW_LEGACY_PER_PROPERTY_CONTROLS && canManageCatalogAndPricing, count: 0 },
+        { id: 'site-pricing', label: 'Site Pricing & Aliases', icon: DollarSign, show: SHOW_LEGACY_PER_PROPERTY_CONTROLS && canManageCatalogAndPricing, count: 0 },
         { id: 'catalog', label: 'Manage Items Master', icon: ShoppingCart, show: canManageCatalogAndPricing, count: 0 },
         { id: 'po-generator', label: 'PO Generator', icon: FileText, show: canManageCatalogAndPricing || userRole === 'org_admin', count: 0 },
         { id: 'settings', label: 'Settings', icon: Settings, show: isSuperAdmin, count: 0 },
@@ -265,11 +269,11 @@ export default function ProcurementModule({
                     />
                 )}
 
-                {activeTab === 'site-budgets' && canManageCatalogAndPricing && (
+                {activeTab === 'site-budgets' && SHOW_LEGACY_PER_PROPERTY_CONTROLS && canManageCatalogAndPricing && (
                     <PropertyBudgetsTab user={user} organizationId={orgId || ''} properties={properties} />
                 )}
 
-                {activeTab === 'site-pricing' && canManageCatalogAndPricing && (
+                {activeTab === 'site-pricing' && SHOW_LEGACY_PER_PROPERTY_CONTROLS && canManageCatalogAndPricing && (
                     <SitePricingAdminTab user={user} organizationId={orgId || ''} properties={properties} />
                 )}
 

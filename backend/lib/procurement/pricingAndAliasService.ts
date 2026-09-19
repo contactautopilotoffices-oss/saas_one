@@ -147,8 +147,18 @@ export const PricingAndAliasService = {
     async getCatalogWithSitePrices(organizationId: string, propertyId?: string | null) {
         const adminSupabase = createAdminClient();
 
-        // 1. Fetch active master items
-        const { data: items, error: itemsErr } = await adminSupabase
+        // 1. Fetch active master items.
+        //
+        //    Only items on the current standard list are offered for requisition.
+        //    Items predating standardisation, or dropped from a later template, stay
+        //    in the catalog and in Manage Items but are not put in front of a
+        //    property (see 20260919000004).
+        //
+        //    Filtered in JS, not with .eq('lifecycle', 'standard'): the column does
+        //    not exist until 20260919000002 runs, and an eq() would turn the
+        //    requisition sheet into a 500 on a database that has not had it yet.
+        //    Absent column -> undefined -> everything shown, the previous behaviour.
+        const { data: rawItems, error: itemsErr } = await adminSupabase
             .from('procurement_catalog')
             .select('*')
             .eq('organization_id', organizationId)
@@ -160,25 +170,40 @@ export const PricingAndAliasService = {
             return [];
         }
 
-        // 2. If propertyId is provided, fetch all active site-specific prices for this property
-        let sitePricesMap: Record<string, number> = {};
+        const items = (rawItems || []).filter(
+            (item: { lifecycle?: string }) => !item.lifecycle || item.lifecycle === 'standard'
+        );
+
+        // 2. If propertyId is provided, fetch this property's site-specific prices.
+        //
+        //    Overrides retired by the standardisation migration
+        //    (20260919000003_supersede_item_site_price_overrides) are skipped, so the
+        //    rate on the standard template is the only rate a property sees.
+        //
+        //    select('*') and a JS filter, deliberately: is_superseded does not exist
+        //    until that migration runs, and .eq('is_superseded', false) would turn the
+        //    whole requisition sheet into a 500 on a database that has not had it yet.
+        //    Absent column -> undefined -> not superseded -> previous behaviour.
+        const sitePricesMap: Record<string, number> = {};
         if (propertyId) {
             const { data: sitePrices } = await adminSupabase
                 .from('item_site_prices')
-                .select('item_id, unit_price')
+                .select('*')
                 .eq('organization_id', organizationId)
                 .eq('property_id', propertyId)
                 .eq('is_active', true);
 
             if (sitePrices) {
-                sitePrices.forEach((sp: any) => {
+                type SitePriceRow = { item_id: string; unit_price: number | string; is_superseded?: boolean };
+                (sitePrices as SitePriceRow[]).forEach(sp => {
+                    if (sp.is_superseded) return;
                     sitePricesMap[sp.item_id] = Number(sp.unit_price) || 0;
                 });
             }
         }
 
         // 3. Merge: Site price overrides base item price
-        return (items || []).map((item: any) => {
+        const merged = (items || []).map((item: any) => {
             const hasSitePrice = propertyId && sitePricesMap[item.id] !== undefined;
             const effectivePrice = hasSitePrice
                 ? sitePricesMap[item.id]
@@ -195,8 +220,23 @@ export const PricingAndAliasService = {
                 base_price: Number(item.unit_price) || Number(item.estimated_price) || 0,
                 unit_price: effectivePrice,
                 is_site_specific: hasSitePrice,
-                photo_url: item.photo_url || ''
+                photo_url: item.photo_url || '',
+                // Present only once the standard-items migration has run. Sorted in
+                // JS rather than via .order() so this query still works without it.
+                sort_order: Number(item.sort_order) || 0,
+                lifecycle: item.lifecycle || 'standard',
+                item_code: item.item_code || null
             };
+        });
+
+        // 4. In the Sr. No. order procurement uploaded.
+        return merged.sort((a, b) => {
+            // Items with no Sr. No. go after the ones that have one.
+            const aOrder = a.sort_order > 0 ? a.sort_order : Number.MAX_SAFE_INTEGER;
+            const bOrder = b.sort_order > 0 ? b.sort_order : Number.MAX_SAFE_INTEGER;
+            if (aOrder !== bOrder) return aOrder - bOrder;
+
+            return a.name.localeCompare(b.name);
         });
     }
 };

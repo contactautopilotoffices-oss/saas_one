@@ -5,11 +5,13 @@ import {
     X, Search, ShoppingCart, Plus, Minus, Trash2, 
     ChevronRight, Loader2, Package, Tag, Info, AlertTriangle,
     CheckCircle2, ShoppingBag, IndianRupee, Clock, User, ArrowLeft,
-    Upload, Camera, ImageIcon, Edit2, FileUp, Sparkles, Link2, Paperclip
+    Upload, Camera, ImageIcon, Edit2, FileUp, Link2, Paperclip
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { compressImage } from '@/frontend/utils/image-compression';
 import { useAuth } from '@/frontend/context/AuthContext';
+import CatalogTemplateUploadModal from './CatalogTemplateUploadModal';
+import CatalogManagerTable from './CatalogManagerTable';
 
 interface CatalogItem {
     id: string;
@@ -19,6 +21,14 @@ interface CatalogItem {
     category: string;
     estimated_price: number;
     unit: string;
+    // Template fields, returned by the catalog API once the standard-items
+    // migrations have run. Optional so this type is honest before then.
+    item_code?: string | null;
+    brand?: string | null;
+    color_size_details?: string | null;
+    unit_price?: number | null;
+    sort_order?: number;
+    lifecycle?: 'standard' | 'legacy' | 'retired';
 }
 
 interface CartItem extends Partial<CatalogItem> {
@@ -49,14 +59,6 @@ interface Props {
     isProcurementUser?: boolean; // Controls catalog management features & price visibility
 }
 
-interface BulkUploadResult {
-    inserted: number;
-    skipped: number;
-    mapping: Record<string, string | null>;
-    preview: any[];
-    error?: string;
-}
-
 // Simple session cache to speed up repeated opens
 let catalogCache: Record<string, CatalogItem[]> = {};
 let usersCache: any[] | null = null;
@@ -79,13 +81,9 @@ export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, pro
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isDeletingItemId, setIsDeletingItemId] = useState<string | null>(null);
     const [budgetType, setBudgetType] = useState<'rnm' | 'general'>('rnm');
-    const [step, setStep] = useState<'browse' | 'finalize' | 'add' | 'bulk'>('browse');
-    // Bulk upload state
-    const [bulkFile, setBulkFile] = useState<File | null>(null);
-    const [isBulkUploading, setIsBulkUploading] = useState(false);
-    const [bulkResult, setBulkResult] = useState<BulkUploadResult | null>(null);
-    const [bulkError, setBulkError] = useState<string>('');
-    const bulkFileRef = useRef<HTMLInputElement>(null);
+    const [step, setStep] = useState<'browse' | 'finalize' | 'add'>('browse');
+    // Standard items template import (download template -> fill -> upload -> preview -> apply)
+    const [showTemplateUpload, setShowTemplateUpload] = useState(false);
     const [procurementUsers, setProcurementUsers] = useState<any[]>([]);
     const [selectedProcurementId, setSelectedProcurementId] = useState<string>('');
     const [budgets, setBudgets] = useState<any[]>([]);
@@ -142,36 +140,17 @@ export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, pro
         }
     };
 
-    const handleBulkUpload = async () => {
-        if (!bulkFile) return;
-        setIsBulkUploading(true);
-        setBulkError('');
-        setBulkResult(null);
+    /** Pull the catalog again after a template import so the grid reflects the new standard list. */
+    const refreshCatalogAfterImport = async () => {
+        delete catalogCache[`${organizationId}-${propertyId}`];
         try {
-            const formData = new FormData();
-            formData.append('file', bulkFile);
-            formData.append('organizationId', organizationId);
-            const res = await fetch('/api/procurement/catalog/bulk-upload', {
-                method: 'POST',
-                body: formData
-            });
-            const data = await res.json();
-            if (!res.ok) {
-                setBulkError(data.error || 'Upload failed');
-            } else {
-                setBulkResult(data);
-                // Refresh catalog cache
-                delete catalogCache[`${organizationId}-${propertyId}`];
-                const fresh = await fetch(`/api/procurement/catalog?organizationId=${organizationId}${propertyId ? `&propertyId=${propertyId}` : ''}`).then(r => r.json());
-                if (Array.isArray(fresh)) {
-                    setItems(fresh);
-                    catalogCache[`${organizationId}-${propertyId}`] = fresh;
-                }
+            const fresh = await fetch(`/api/procurement/catalog?organizationId=${organizationId}${propertyId ? `&propertyId=${propertyId}` : ''}`).then(r => r.json());
+            if (Array.isArray(fresh)) {
+                setItems(fresh);
+                catalogCache[`${organizationId}-${propertyId}`] = fresh;
             }
         } catch (err) {
-            setBulkError('Network error during upload');
-        } finally {
-            setIsBulkUploading(false);
+            console.error('Failed to refresh catalog after template import:', err);
         }
     };
 
@@ -495,12 +474,12 @@ export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, pro
                     <div className="flex items-center gap-2 lg:gap-4">
                         {step === 'browse' && canManageCatalog && (
                             <>
-                                <button 
-                                    onClick={() => setStep('bulk')}
-                                    className="hidden lg:flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-500 text-white text-[10px] font-black uppercase tracking-widest hover:bg-violet-600 transition-all shadow-lg shadow-violet-500/20"
+                                <button
+                                    onClick={() => setShowTemplateUpload(true)}
+                                    className="flex items-center gap-2 px-3 lg:px-4 py-2 rounded-xl bg-violet-500 text-white text-[10px] font-black uppercase tracking-widest hover:bg-violet-600 transition-all shadow-lg shadow-violet-500/20"
                                 >
                                     <FileUp className="w-4 h-4" />
-                                    Bulk Upload
+                                    <span className="hidden sm:inline">Upload Excel</span>
                                 </button>
                                 <button 
                                     onClick={() => setStep('add')}
@@ -558,7 +537,33 @@ export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, pro
 
                     {/* Main Content Side */}
                     <div className="flex-1 flex flex-col overflow-hidden bg-white lg:bg-slate-50">
-                        {step === 'browse' ? (
+                        {step === 'browse' && isManagementMode ? (
+                            /* Manage Items: the catalog as procurement works with it —
+                               Standard / Legacy sections, every template column editable.
+                               The card grid below stays for the ticket "Buy Items" flow. */
+                            <div className="flex-1 overflow-y-auto p-4 lg:p-6 custom-scrollbar bg-white">
+                                <CatalogManagerTable
+                                    organizationId={organizationId}
+                                    items={safeItems}
+                                    isLoading={isLoading}
+                                    canManage={canManageCatalog}
+                                    onItemUpdated={updated => {
+                                        setItems(prev => prev.map(i => (i.id === updated.id ? { ...i, ...updated } as CatalogItem : i)));
+                                        const key = `${organizationId}-${propertyId}`;
+                                        if (catalogCache[key]) {
+                                            catalogCache[key] = catalogCache[key].map(i => (i.id === updated.id ? { ...i, ...updated } as CatalogItem : i));
+                                        }
+                                    }}
+                                    onItemDeleted={id => {
+                                        setItems(prev => prev.filter(i => i.id !== id));
+                                        const key = `${organizationId}-${propertyId}`;
+                                        if (catalogCache[key]) {
+                                            catalogCache[key] = catalogCache[key].filter(i => i.id !== id);
+                                        }
+                                    }}
+                                />
+                            </div>
+                        ) : step === 'browse' ? (
                             <>
                                 {/* Filters Bar */}
                                 <div className="p-4 lg:p-6 space-y-4 bg-white border-b border-slate-100 lg:border-none shadow-sm lg:shadow-none z-10">
@@ -928,132 +933,6 @@ export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, pro
                                     </button>
                                 </div>
                             </div>
-                        ) : step === 'bulk' ? (
-                            <div className="flex-1 flex flex-col bg-white animate-in slide-in-from-right duration-300 overflow-y-auto pb-20">
-                                <div className="max-w-2xl mx-auto w-full py-8 px-6 space-y-8">
-                                    {/* Header */}
-                                    <div className="flex items-center gap-4">
-                                        <button onClick={() => { setStep('browse'); setBulkFile(null); setBulkResult(null); setBulkError(''); }}
-                                            className="p-3 rounded-2xl bg-slate-50 text-slate-400 hover:bg-slate-100 transition-all">
-                                            <ArrowLeft className="w-6 h-6" />
-                                        </button>
-                                        <div>
-                                            <h3 className="font-black text-slate-900 text-2xl tracking-tight">Bulk Upload</h3>
-                                            <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mt-1">AI maps your CSV columns automatically</p>
-                                        </div>
-                                    </div>
-
-                                    {/* Success result */}
-                                    {bulkResult && !bulkError && (
-                                        <div className="rounded-3xl bg-emerald-50 border border-emerald-100 p-6 space-y-4">
-                                            <div className="flex items-center gap-3">
-                                                <div className="w-12 h-12 rounded-2xl bg-emerald-500 flex items-center justify-center text-white shadow-lg shadow-emerald-200">
-                                                    <CheckCircle2 className="w-6 h-6" />
-                                                </div>
-                                                <div>
-                                                    <p className="font-black text-emerald-800 text-lg">{bulkResult.inserted} items added</p>
-                                                    <div className="flex flex-col">
-                                                        {bulkResult.skipped > 0 && <p className="text-[10px] text-emerald-600 font-bold uppercase tracking-widest">{bulkResult.skipped} empty rows skipped</p>}
-                                                        {(bulkResult as any).duplicates > 0 && <p className="text-[10px] text-amber-600 font-bold uppercase tracking-widest">{(bulkResult as any).duplicates} duplicates skipped</p>}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            {/* Column mapping display */}
-                                            <div className="bg-white rounded-2xl border border-emerald-100 p-4">
-                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-1.5"><Sparkles className="w-3 h-3 text-violet-400" /> AI Column Mapping</p>
-                                                <div className="grid grid-cols-2 gap-2">
-                                                    {Object.entries(bulkResult.mapping).map(([field, col]) => (
-                                                        <div key={field} className="flex items-center justify-between text-[11px]">
-                                                            <span className="font-bold text-slate-500 uppercase tracking-wide">{field}</span>
-                                                            <span className={`font-black px-2 py-0.5 rounded-lg ${col ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}>{col || '—'}</span>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                            {bulkResult.preview?.length > 0 && (
-                                                <div>
-                                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">First {bulkResult.preview.length} Added</p>
-                                                    <div className="space-y-1.5">
-                                                        {bulkResult.preview.map((item: any, i: number) => (
-                                                            <div key={i} className="flex items-center justify-between bg-white rounded-xl border border-slate-100 px-3 py-2">
-                                                                <span className="text-xs font-bold text-slate-800">{item.name}</span>
-                                                                <span className="text-[10px] font-black text-slate-400">{item.category || '—'}</span>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                            )}
-                                            <button onClick={() => { setStep('browse'); setBulkFile(null); setBulkResult(null); }}
-                                                className="w-full bg-slate-900 text-white font-black py-4 rounded-[1.5rem] hover:bg-primary transition-all">
-                                                Back to Catalog
-                                            </button>
-                                        </div>
-                                    )}
-
-                                    {/* Error */}
-                                    {bulkError && (
-                                        <div className="rounded-2xl bg-rose-50 border border-rose-100 p-4 flex items-start gap-3">
-                                            <AlertTriangle className="w-5 h-5 text-rose-400 flex-shrink-0 mt-0.5" />
-                                            <div>
-                                                <p className="font-black text-rose-700 text-sm">Upload Failed</p>
-                                                <p className="text-xs text-rose-500 mt-1">{bulkError}</p>
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {/* Upload zone — only shown before success */}
-                                    {!bulkResult && (
-                                        <>
-                                            {/* Drop zone */}
-                                            <div
-                                                onClick={() => bulkFileRef.current?.click()}
-                                                className={`rounded-[2rem] border-2 border-dashed p-10 flex flex-col items-center justify-center cursor-pointer transition-all group
-                                                    ${bulkFile ? 'border-violet-400 bg-violet-50' : 'border-slate-200 bg-slate-50 hover:border-violet-300 hover:bg-violet-50/50'}`}
-                                            >
-                                                {bulkFile ? (
-                                                    <>
-                                                        <div className="w-14 h-14 rounded-2xl bg-violet-500 flex items-center justify-center mb-4 shadow-lg shadow-violet-200 text-white">
-                                                            <FileUp className="w-7 h-7" />
-                                                        </div>
-                                                        <p className="font-black text-violet-700 text-sm">{bulkFile.name}</p>
-                                                        <p className="text-xs text-violet-400 font-bold mt-1">{(bulkFile.size / 1024).toFixed(1)} KB · Click to change</p>
-                                                    </>
-                                                ) : (
-                                                    <>
-                                                        <div className="w-14 h-14 rounded-2xl bg-white shadow-sm flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                                                            <Upload className="w-7 h-7 text-slate-300" />
-                                                        </div>
-                                                        <p className="font-black text-slate-900 text-lg tracking-tight">Drop your file here</p>
-                                                        <p className="text-xs text-slate-400 font-bold mt-1">Excel, Google Sheets (XLSX) or CSV · Max 500 rows</p>
-                                                    </>
-                                                )}
-                                            </div>
-                                            <input ref={bulkFileRef} type="file" accept=".csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" className="hidden"
-                                                onChange={(e) => { const f = e.target.files?.[0]; if (f) { setBulkFile(f); setBulkError(''); } }} />
-
-                                            {/* AI info banner */}
-                                            <div className="flex items-start gap-3 p-4 bg-violet-50 rounded-2xl border border-violet-100">
-                                                <Sparkles className="w-4 h-4 text-violet-500 flex-shrink-0 mt-0.5" />
-                                                <p className="text-xs text-violet-700 font-bold leading-relaxed">
-                                                    AI will read your spreadsheet column headers and automatically map them to: <span className="font-black">name, description, category, unit, price</span>. It works with any column names.
-                                                </p>
-                                            </div>
-
-                                            <button
-                                                onClick={handleBulkUpload}
-                                                disabled={!bulkFile || isBulkUploading}
-                                                className="w-full bg-violet-600 text-white font-black py-5 rounded-[2rem] hover:bg-violet-700 transition-all shadow-xl shadow-violet-200 flex items-center justify-center gap-3 disabled:opacity-50"
-                                            >
-                                                {isBulkUploading ? (
-                                                    <><Loader2 className="w-6 h-6 animate-spin" /> Analysing with AI...</>
-                                                ) : (
-                                                    <><Sparkles className="w-6 h-6" /> Upload & Auto-Map</>
-                                                )}
-                                            </button>
-                                        </>
-                                    )}
-                                </div>
-                            </div>
         ) : (
                                     <div className="flex-1 overflow-y-auto w-full custom-scrollbar bg-white lg:bg-slate-50/50">
                                         <div className="max-w-2xl mx-auto w-full py-6 lg:py-10 lg:space-y-10 px-4 lg:px-0">
@@ -1402,7 +1281,7 @@ export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, pro
                     <div className="p-4 bg-white border-t border-slate-100">
                         <button 
                             onClick={() => {
-                                if (step === 'add' || step === 'bulk') {
+                                if (step === 'add') {
                                     setStep('browse');
                                     setEditingItemId(null);
                                 }
@@ -1412,7 +1291,7 @@ export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, pro
                             disabled={!isManagementMode && step !== 'browse' && cart.length === 0}
                             className={`w-full font-black py-4 rounded-2xl transition-all shadow-xl flex items-center justify-center gap-2 disabled:opacity-50
                                 ${step === 'browse' ? (isManagementMode ? 'bg-slate-900 text-white shadow-slate-900/20' : 'bg-primary text-white shadow-primary/20') : 
-                                  (step === 'add' || step === 'bulk') ? 'bg-slate-100 text-slate-400 shadow-none' : 
+                                  step === 'add' ? 'bg-slate-100 text-slate-400 shadow-none' : 
                                   'bg-slate-900 text-white shadow-slate-900/20'}`}
                         >
                             {step === 'browse' ? (
@@ -1427,7 +1306,7 @@ export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, pro
                                         {cart.length > 0 ? 'Checkout' : 'Checkout / Custom'}
                                     </>
                                 )
-                            ) : (step === 'add' || step === 'bulk') ? (
+                            ) : step === 'add' ? (
                                 <>
                                     <ArrowLeft className="w-5 h-5" />
                                     Cancel
@@ -1444,6 +1323,15 @@ export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, pro
                 )}
                 </div>
             </div>
+
+            {canManageCatalog && (
+                <CatalogTemplateUploadModal
+                    isOpen={showTemplateUpload}
+                    onClose={() => setShowTemplateUpload(false)}
+                    organizationId={organizationId}
+                    onCommitted={refreshCatalogAfterImport}
+                />
+            )}
         </div>
     );
 }
