@@ -29,6 +29,7 @@ interface CatalogItem {
     unit_price?: number | null;
     sort_order?: number;
     lifecycle?: 'standard' | 'legacy' | 'retired';
+    assigned_property_ids?: string[] | null;
 }
 
 interface CartItem extends Partial<CatalogItem> {
@@ -47,7 +48,11 @@ interface NewItem {
     category: string;
     estimated_price: string;
     unit: string;
+    brand: string;
+    item_code: string;
+    sort_order: string;
     photo_base64: string;
+    assigned_property_ids: string[];
 }
 
 interface Props {
@@ -89,6 +94,7 @@ export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, pro
     const [budgets, setBudgets] = useState<any[]>([]);
     const [isSuccess, setIsSuccess] = useState(false);
     const [editingItemId, setEditingItemId] = useState<string | null>(null);
+    const [orgProperties, setOrgProperties] = useState<Array<{ id: string; name: string; location?: string }>>([]);
     
     // Add Item State
     const [newItem, setNewItem] = useState<NewItem>({
@@ -97,7 +103,11 @@ export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, pro
         category: '',
         estimated_price: '',
         unit: 'pcs',
-        photo_base64: ''
+        brand: '',
+        item_code: '',
+        sort_order: '',
+        photo_base64: '',
+        assigned_property_ids: []
     });
     const [addError, setAddError] = useState<string>('');
     const [isCompressing, setIsCompressing] = useState(false);
@@ -167,7 +177,7 @@ export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, pro
         }
 
         try {
-            const [catalogData, usersData, budgetsData, settingsData] = await Promise.all([
+            const [catalogData, usersData, budgetsData, settingsData, propertiesData] = await Promise.all([
                 // Fetch catalog only if not cached for this property
                 catalogCache[`${organizationId}-${propertyId}`] 
                     ? Promise.resolve(catalogCache[`${organizationId}-${propertyId}`]) 
@@ -185,7 +195,12 @@ export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, pro
 
                 // Fetch visibility settings
                 fetch(`/api/procurement/settings?organizationId=${organizationId}${propertyId ? `&propertyId=${propertyId}` : ''}`)
-                    .then(res => res.json())
+                    .then(res => res.json()),
+
+                // Fetch organization properties
+                organizationId
+                    ? fetch(`/api/properties?organizationId=${organizationId}`).then(res => res.json()).catch(() => [])
+                    : Promise.resolve([])
             ]);
 
             if (Array.isArray(catalogData)) {
@@ -203,6 +218,14 @@ export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, pro
 
             if (Array.isArray(budgetsData)) {
                 setBudgets(budgetsData);
+            }
+
+            if (Array.isArray(propertiesData)) {
+                setOrgProperties(propertiesData.map((p: any) => ({
+                    id: p.id,
+                    name: p.name,
+                    location: p.location || p.address || p.city || null
+                })));
             }
 
             if (settingsData && (settingsData.price_visibility_roles || settingsData.price_visibility_users)) {
@@ -349,6 +372,7 @@ export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, pro
             const method = editingItemId ? 'PATCH' : 'POST';
             const body = {
                 ...newItem,
+                sort_order: newItem.sort_order ? parseInt(newItem.sort_order, 10) : 0,
                 organization_id: organizationId,
                 id: editingItemId
             };
@@ -380,7 +404,11 @@ export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, pro
                     category: '',
                     estimated_price: '',
                     unit: 'pcs',
-                    photo_base64: ''
+                    brand: '',
+                    item_code: '',
+                    sort_order: '',
+                    photo_base64: '',
+                    assigned_property_ids: []
                 });
                 setEditingItemId(null);
                 setStep('browse');
@@ -476,7 +504,7 @@ export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, pro
                             <>
                                 <button
                                     onClick={() => setShowTemplateUpload(true)}
-                                    className="flex items-center gap-2 px-3 lg:px-4 py-2 rounded-xl bg-violet-500 text-white text-[10px] font-black uppercase tracking-widest hover:bg-violet-600 transition-all shadow-lg shadow-violet-500/20"
+                                    className="flex items-center gap-2 px-3 lg:px-4 py-2 rounded-xl bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest hover:bg-primary transition-all shadow-md"
                                 >
                                     <FileUp className="w-4 h-4" />
                                     <span className="hidden sm:inline">Upload Excel</span>
@@ -547,6 +575,7 @@ export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, pro
                                     items={safeItems}
                                     isLoading={isLoading}
                                     canManage={canManageCatalog}
+                                    properties={orgProperties}
                                     onItemUpdated={updated => {
                                         setItems(prev => prev.map(i => (i.id === updated.id ? { ...i, ...updated } as CatalogItem : i)));
                                         const key = `${organizationId}-${propertyId}`;
@@ -667,7 +696,11 @@ export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, pro
                                                                             category: item.category || '',
                                                                             estimated_price: item.estimated_price?.toString() || '0',
                                                                             unit: item.unit || 'pcs',
-                                                                            photo_base64: item.photo_url || ''
+                                                                            brand: item.brand || '',
+                                                                            item_code: item.item_code || '',
+                                                                            sort_order: item.sort_order?.toString() || '',
+                                                                            photo_base64: item.photo_url || '',
+                                                                            assigned_property_ids: item.assigned_property_ids || []
                                                                         });
                                                                         setAddError('');
                                                                         setStep('add');
@@ -789,7 +822,11 @@ export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, pro
                                                     category: '',
                                                     estimated_price: '',
                                                     unit: 'pcs',
-                                                    photo_base64: ''
+                                                    brand: '',
+                                                    item_code: '',
+                                                    sort_order: '',
+                                                    photo_base64: '',
+                                                    assigned_property_ids: []
                                                 });
                                                 setAddError('');
                                             }}
@@ -847,23 +884,114 @@ export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, pro
                                                     className="hidden" 
                                                 />
                                             </div>
+
+                                            {/* Property Visibility Selector */}
+                                            <div className="space-y-3 pt-2">
+                                                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">
+                                                    Property Visibility
+                                                </label>
+                                                <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-2xl">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setNewItem({ ...newItem, assigned_property_ids: [] })}
+                                                        className={`py-2.5 px-3 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${
+                                                            newItem.assigned_property_ids.length === 0 || newItem.assigned_property_ids.includes('ALL')
+                                                                ? 'bg-white text-slate-900 shadow-sm'
+                                                                : 'text-slate-500 hover:text-slate-800'
+                                                        }`}
+                                                    >
+                                                        All Properties
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            if (newItem.assigned_property_ids.length === 0) {
+                                                                setNewItem({ ...newItem, assigned_property_ids: orgProperties.map(p => p.id) });
+                                                            }
+                                                        }}
+                                                        className={`py-2.5 px-3 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${
+                                                            newItem.assigned_property_ids.length > 0 && !newItem.assigned_property_ids.includes('ALL')
+                                                                ? 'bg-white text-slate-900 shadow-sm'
+                                                                : 'text-slate-500 hover:text-slate-800'
+                                                        }`}
+                                                    >
+                                                        Selected Properties
+                                                    </button>
+                                                </div>
+
+                                                {newItem.assigned_property_ids.length > 0 && !newItem.assigned_property_ids.includes('ALL') && (
+                                                    <div className="border border-slate-200 rounded-2xl p-3 bg-slate-50/60 max-h-48 overflow-y-auto space-y-2">
+                                                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-2">Select properties that can request this item:</p>
+                                                        {orgProperties.length === 0 ? (
+                                                            <p className="text-xs text-slate-400 font-bold text-center py-2">Loading properties…</p>
+                                                        ) : (
+                                                            orgProperties.map(prop => {
+                                                                const isChecked = newItem.assigned_property_ids.includes(prop.id);
+                                                                return (
+                                                                    <label key={prop.id} className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer p-1 hover:bg-white rounded-lg">
+                                                                        <input
+                                                                            type="checkbox"
+                                                                            checked={isChecked}
+                                                                            onChange={e => {
+                                                                                const set = new Set(newItem.assigned_property_ids);
+                                                                                if (e.target.checked) set.add(prop.id);
+                                                                                else set.delete(prop.id);
+                                                                                setNewItem({ ...newItem, assigned_property_ids: Array.from(set) });
+                                                                            }}
+                                                                            className="rounded border-slate-300 text-slate-900 focus:ring-slate-900 cursor-pointer"
+                                                                        />
+                                                                        <span>{prop.name}</span>
+                                                                        {prop.location && <span className="text-[10px] text-slate-400 font-normal">({prop.location})</span>}
+                                                                    </label>
+                                                                );
+                                                            })
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </div>
                                         </div>
 
-                                        <div className="space-y-6">
+                                        <div className="space-y-4">
+                                            {/* Item Name */}
                                             <div className="space-y-2">
-                                                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Item Name</label>
+                                                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Item Name *</label>
                                                 <input 
                                                     type="text"
                                                     placeholder="e.g. 20W LED Bulb"
                                                     value={newItem.name}
                                                     onChange={(e) => setNewItem({...newItem, name: e.target.value})}
-                                                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 px-5 text-sm font-bold focus:ring-2 focus:ring-primary/20 outline-none"
+                                                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3.5 px-5 text-sm font-bold focus:ring-2 focus:ring-primary/20 outline-none"
                                                 />
                                             </div>
 
+                                            {/* Sr. No. & Item Code */}
                                             <div className="grid grid-cols-2 gap-4">
                                                 <div className="space-y-2">
-                                                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Estimated Price</label>
+                                                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Sr. No.</label>
+                                                    <input 
+                                                        type="number"
+                                                        placeholder="e.g. 1"
+                                                        value={newItem.sort_order}
+                                                        onChange={(e) => setNewItem({...newItem, sort_order: e.target.value})}
+                                                        className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3.5 px-4 text-sm font-bold focus:ring-2 focus:ring-primary/20 outline-none"
+                                                    />
+                                                </div>
+                                                <div className="space-y-2">
+                                                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Item Code</label>
+                                                    <input 
+                                                        type="text"
+                                                        placeholder="e.g. ELE-001"
+                                                        value={newItem.item_code}
+                                                        onChange={(e) => setNewItem({...newItem, item_code: e.target.value})}
+                                                        className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3.5 px-4 text-sm font-bold focus:ring-2 focus:ring-primary/20 outline-none"
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            {/* Estimated Price & Unit */}
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <div className="space-y-2">
+                                                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Estimated Price *</label>
                                                     <div className="relative">
                                                         <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold">₹</span>
                                                         <input 
@@ -872,36 +1000,44 @@ export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, pro
                                                             value={newItem.estimated_price}
                                                             onChange={(e) => setNewItem({...newItem, estimated_price: e.target.value})}
                                                             onFocus={(e) => e.target.select()}
-                                                            className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 pl-8 pr-4 text-sm font-black focus:ring-2 focus:ring-primary/20 outline-none"
+                                                            className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3.5 pl-8 pr-4 text-sm font-black focus:ring-2 focus:ring-primary/20 outline-none"
                                                         />
                                                     </div>
                                                 </div>
                                                 <div className="space-y-2">
                                                     <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Unit</label>
-                                                    <select 
+                                                    <input 
+                                                        type="text"
+                                                        placeholder="e.g. pcs, pkt, ltr"
                                                         value={newItem.unit}
                                                         onChange={(e) => setNewItem({...newItem, unit: e.target.value})}
-                                                        className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 px-4 text-sm font-bold focus:ring-2 focus:ring-primary/20 outline-none appearance-none"
-                                                    >
-                                                        <option value="pcs">pcs</option>
-                                                        <option value="pkt">pkt</option>
-                                                        <option value="mtr">mtr</option>
-                                                        <option value="kg">kg</option>
-                                                        <option value="ltr">ltr</option>
-                                                        <option value="box">box</option>
-                                                    </select>
+                                                        className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3.5 px-4 text-sm font-bold focus:ring-2 focus:ring-primary/20 outline-none"
+                                                    />
                                                 </div>
                                             </div>
 
-                                            <div className="space-y-2">
-                                                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Category</label>
-                                                <input 
-                                                    type="text"
-                                                    placeholder="e.g. Electrical, Plumbing..."
-                                                    value={newItem.category}
-                                                    onChange={(e) => setNewItem({...newItem, category: e.target.value})}
-                                                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 px-5 text-sm font-bold focus:ring-2 focus:ring-primary/20 outline-none"
-                                                />
+                                            {/* Brand & Category */}
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <div className="space-y-2">
+                                                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Brand</label>
+                                                    <input 
+                                                        type="text"
+                                                        placeholder="e.g. Philips, Havells"
+                                                        value={newItem.brand}
+                                                        onChange={(e) => setNewItem({...newItem, brand: e.target.value})}
+                                                        className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3.5 px-4 text-sm font-bold focus:ring-2 focus:ring-primary/20 outline-none"
+                                                    />
+                                                </div>
+                                                <div className="space-y-2">
+                                                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Category</label>
+                                                    <input 
+                                                        type="text"
+                                                        placeholder="e.g. HK, Beverages..."
+                                                        value={newItem.category}
+                                                        onChange={(e) => setNewItem({...newItem, category: e.target.value})}
+                                                        className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3.5 px-4 text-sm font-bold focus:ring-2 focus:ring-primary/20 outline-none"
+                                                    />
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
@@ -912,7 +1048,7 @@ export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, pro
                                             placeholder="Add technical specifications or notes..."
                                             value={newItem.description}
                                             onChange={(e) => setNewItem({...newItem, description: e.target.value})}
-                                            className="w-full bg-slate-50 border border-slate-200 rounded-3xl py-4 px-5 text-sm font-medium focus:ring-2 focus:ring-primary/20 outline-none min-h-[120px] resize-none"
+                                            className="w-full bg-slate-50 border border-slate-200 rounded-3xl py-4 px-5 text-sm font-medium focus:ring-2 focus:ring-primary/20 outline-none min-h-[100px] resize-none"
                                         />
                                     </div>
 

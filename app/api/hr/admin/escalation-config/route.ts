@@ -417,6 +417,48 @@ export async function POST(request: Request) {
                         cleanAssignees = cleanAssignees.flow_assignees;
                     }
 
+                    if (cleanAssignees && typeof cleanAssignees === 'object') {
+                        const allRawIds: string[] = [];
+                        Object.keys(cleanAssignees).forEach(fKey => {
+                            const flowObj = cleanAssignees[fKey];
+                            if (flowObj && typeof flowObj === 'object') {
+                                Object.keys(flowObj).forEach(lvlKey => {
+                                    const arr = flowObj[lvlKey];
+                                    if (Array.isArray(arr)) {
+                                        arr.forEach((id: string) => { if (id) allRawIds.push(id); });
+                                    }
+                                });
+                            }
+                        });
+
+                        if (allRawIds.length > 0) {
+                            const { data: profs } = await supabaseAdmin
+                                .from('employee_profiles')
+                                .select('id, user_id')
+                                .or(`id.in.(${allRawIds.join(',')}),user_id.in.(${allRawIds.join(',')})`);
+
+                            const idToUserIdMap = new Map<string, string>();
+                            (profs || []).forEach(p => {
+                                if (p.user_id) {
+                                    idToUserIdMap.set(p.id, p.user_id);
+                                    idToUserIdMap.set(p.user_id, p.user_id);
+                                }
+                            });
+
+                            Object.keys(cleanAssignees).forEach(fKey => {
+                                const flowObj = cleanAssignees[fKey];
+                                if (flowObj && typeof flowObj === 'object') {
+                                    Object.keys(flowObj).forEach(lvlKey => {
+                                        const arr = flowObj[lvlKey];
+                                        if (Array.isArray(arr)) {
+                                            flowObj[lvlKey] = Array.from(new Set(arr.map((id: string) => idToUserIdMap.get(id) || id)));
+                                        }
+                                    });
+                                }
+                            });
+                        }
+                    }
+
                     const newEscalationConfig = {
                         ...currentEscalationConfig,
                         ...(cleanAssignees ? { flow_assignees: cleanAssignees } : {}),

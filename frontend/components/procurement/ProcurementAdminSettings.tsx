@@ -253,21 +253,21 @@ export default function ProcurementAdminSettings({ organizationId, properties }:
 
                             <div className="space-y-4">
                                 <div className="flex items-start gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
-                                    <div className="w-6 h-6 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center text-[10px] font-black shrink-0">1</div>
+                                    <div className="w-6 h-6 rounded-full bg-slate-200 text-slate-800 flex items-center justify-center text-[10px] font-black shrink-0">1</div>
                                     <div>
                                         <p className="text-xs font-black text-slate-700">Site Team Requests</p>
                                         <p className="text-[10px] text-slate-500 font-medium">Staff raises a request with service description and budget selection.</p>
                                     </div>
                                 </div>
                                 <div className="flex items-start gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
-                                    <div className="w-6 h-6 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-[10px] font-black shrink-0">2</div>
+                                    <div className="w-6 h-6 rounded-full bg-slate-200 text-slate-800 flex items-center justify-center text-[10px] font-black shrink-0">2</div>
                                     <div>
                                         <p className="text-xs font-black text-slate-700">Procurement Quotes</p>
                                         <p className="text-[10px] text-slate-500 font-medium">Procurement user adds vendor details, quotation items, and submits. Budget is deducted automatically.</p>
                                     </div>
                                 </div>
                                 <div className="flex items-start gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
-                                    <div className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-[10px] font-black shrink-0">3</div>
+                                    <div className="w-6 h-6 rounded-full bg-slate-200 text-slate-800 flex items-center justify-center text-[10px] font-black shrink-0">3</div>
                                     <div>
                                         <p className="text-xs font-black text-slate-700">Order & Deliver</p>
                                         <p className="text-[10px] text-slate-500 font-medium">Procurement marks ordered and then delivered when items reach site.</p>
@@ -562,17 +562,17 @@ export default function ProcurementAdminSettings({ organizationId, properties }:
                             <h3 className="font-black text-slate-800 uppercase tracking-wider text-sm">Zoho Books Integration</h3>
                         </div>
 
-                        <div className="bg-blue-50 p-6 rounded-2xl border border-blue-100 flex gap-4">
-                            <div className="w-12 h-12 rounded-xl bg-white flex items-center justify-center shrink-0">
-                                <ShoppingCart className="w-6 h-6 text-primary" />
+                        <div className="bg-slate-100 p-6 rounded-2xl border border-slate-200 flex gap-4">
+                            <div className="w-12 h-12 rounded-xl bg-white flex items-center justify-center shrink-0 border border-slate-200">
+                                <ShoppingCart className="w-6 h-6 text-slate-900" />
                             </div>
                             <div className="space-y-1">
-                                <h4 className="text-sm font-black text-blue-900">PO Generation Active</h4>
-                                <p className="text-xs text-blue-700 font-medium leading-relaxed">
+                                <h4 className="text-sm font-black text-slate-900">PO Generation Active</h4>
+                                <p className="text-xs text-slate-700 font-medium leading-relaxed">
                                     You can now generate Purchase Orders automatically in Zoho Books using AI. 
                                     Ensure your <strong>.env</strong> file contains:
                                 </p>
-                                <ul className="text-[10px] font-bold text-blue-800 space-y-1 pt-2">
+                                <ul className="text-[10px] font-bold text-slate-800 space-y-1 pt-2">
                                     <li className="flex items-center gap-2">• ZOHO_CLIENT_ID</li>
                                     <li className="flex items-center gap-2">• ZOHO_CLIENT_SECRET</li>
                                     <li className="flex items-center gap-2">• ZOHO_REFRESH_TOKEN</li>

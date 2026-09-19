@@ -171,7 +171,7 @@ export default function HRTicketDetailModal({ isOpen, ticketId, onClose, onRefre
         }
     }
 
-    const isTicketResolvedOrClosed = ticket?.status === 'resolved' || ticket?.status === 'closed';
+    const isTicketResolvedOrClosed = ticket?.status === 'resolved' || ticket?.status === 'closed' || ticket?.status === 'pending_acknowledgement';
 
     const getClosingDetails = () => {
         if (!ticket) return { levelNum: 1, levelLabel: 'Level 1', resolverName: 'HR Head' };

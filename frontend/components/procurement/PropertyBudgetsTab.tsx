@@ -391,7 +391,7 @@ export default function PropertyBudgetsTab({
             {toast && (
                 <div className={`p-4 rounded-2xl text-xs font-bold flex items-center gap-2 shadow-xs ${
                     toast.type === 'success' ? 'bg-emerald-500 text-white' :
-                    toast.type === 'error' ? 'bg-red-500 text-white' : 'bg-blue-500 text-white'
+                    toast.type === 'error' ? 'bg-rose-600 text-white' : 'bg-slate-900 text-white'
                 }`}>
                     {toast.type === 'success' ? <CheckCircle2 className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
                     <span>{toast.message}</span>

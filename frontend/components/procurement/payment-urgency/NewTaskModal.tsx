@@ -210,7 +210,7 @@ export default function NewTaskModal({
                                     {[
                                         { tier: 'P1' as const, label: 'P1 (Immediate)', color: 'text-rose-600 border-rose-200 bg-rose-50' },
                                         { tier: 'P2' as const, label: 'P2 (7 Days)', color: 'text-amber-600 border-amber-200 bg-amber-50' },
-                                        { tier: 'P3' as const, label: 'P3 (No SLA)', color: 'text-blue-600 border-blue-200 bg-blue-50' }
+                                        { tier: 'P3' as const, label: 'P3 (No SLA)', color: 'text-slate-700 border-slate-200 bg-slate-100' }
                                     ].map(item => (
                                         <button
                                             type="button"

@@ -630,7 +630,7 @@ export default function HREscalationTreeVisualizer({
             Object.keys(flowAssignees).forEach(fId => {
                 payloadAssignees[fId] = {};
                 Object.keys(flowAssignees[fId] || {}).forEach(lNum => {
-                    payloadAssignees[fId][lNum] = (flowAssignees[fId][lNum] || []).map(e => e.id || e.user_id).filter(Boolean);
+                    payloadAssignees[fId][lNum] = (flowAssignees[fId][lNum] || []).map(e => e.user_id || e.id).filter(Boolean);
                 });
             });
 

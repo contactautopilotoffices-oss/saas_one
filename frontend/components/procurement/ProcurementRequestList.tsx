@@ -228,12 +228,12 @@ export default function ProcurementRequestList({
     const getStatusBadgeClass = (status: string) => {
         switch (status) {
             case 'pending_quotation':
-            case 'pending_approval': return 'bg-amber-100 text-amber-600';
+            case 'pending_approval': return 'bg-amber-100 text-amber-700';
             case 'quoted':
-            case 'approved': return 'bg-blue-100 text-blue-600';
-            case 'ordered': return 'bg-indigo-100 text-indigo-600';
-            case 'delivered': return 'bg-green-100 text-green-600';
-            case 'rejected': return 'bg-red-100 text-red-600';
+            case 'approved': return 'bg-emerald-100 text-emerald-700';
+            case 'ordered': return 'bg-slate-900 text-white';
+            case 'delivered': return 'bg-green-100 text-green-700';
+            case 'rejected': return 'bg-rose-100 text-rose-700';
             case 'cancelled': return 'bg-slate-100 text-slate-600';
             default: return 'bg-slate-100 text-slate-600';
         }
@@ -242,11 +242,11 @@ export default function ProcurementRequestList({
     const getStatusIconClass = (status: string) => {
         switch (status) {
             case 'pending_quotation':
-            case 'pending_approval': return 'bg-amber-50 text-amber-500';
+            case 'pending_approval': return 'bg-amber-50 text-amber-600';
             case 'quoted':
-            case 'approved': return 'bg-blue-50 text-blue-500';
-            case 'ordered': return 'bg-indigo-50 text-indigo-500';
-            case 'delivered': return 'bg-green-50 text-green-500';
+            case 'approved': return 'bg-emerald-50 text-emerald-600';
+            case 'ordered': return 'bg-slate-100 text-slate-800';
+            case 'delivered': return 'bg-green-50 text-green-600';
             case 'rejected':
             case 'negotiating': return 'bg-red-50 text-red-500';
             default: return 'bg-slate-50 text-slate-500';
@@ -750,10 +750,10 @@ export default function ProcurementRequestList({
 
                                 {selectedRequest.vendor_name && (
                                     <div className="bg-slate-50/50 p-3.5 rounded-2xl border border-slate-100/50 flex flex-col justify-center min-w-0">
-                                        <p className="text-[9px] font-black text-blue-500 uppercase tracking-widest mb-1.5">Vendor</p>
+                                        <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest mb-1.5">Vendor</p>
                                         <div className="flex items-center gap-2 min-w-0">
-                                            <div className="w-6 h-6 rounded-full bg-blue-50 flex items-center justify-center shrink-0">
-                                                <Truck className="w-3 h-3 text-blue-500" />
+                                            <div className="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center shrink-0">
+                                                <Truck className="w-3 h-3 text-slate-700" />
                                             </div>
                                             <span className="text-xs font-black text-slate-800 break-words whitespace-normal leading-normal">
                                                 {selectedRequest.vendor_name}
@@ -890,7 +890,7 @@ export default function ProcurementRequestList({
                                                 <button
                                                     onClick={handleSubmitQuotation}
                                                     disabled={isSubmitting}
-                                                    className="flex-[2] py-2.5 rounded-xl bg-blue-500 text-white hover:bg-blue-600 transition-all font-black text-[10px] uppercase tracking-widest shadow-lg shadow-blue-200 flex items-center justify-center gap-2"
+                                                    className="flex-[2] py-2.5 rounded-xl bg-slate-900 text-white hover:bg-primary transition-all font-black text-[10px] uppercase tracking-widest shadow-md flex items-center justify-center gap-2"
                                                 >
                                                     {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardList className="w-4 h-4" />}
                                                     Submit Quotation & Deduct
@@ -1013,7 +1013,7 @@ export default function ProcurementRequestList({
                                         <button
                                             onClick={handleUploadComparative}
                                             disabled={isSubmitting || !comparativeFile || !comparativePrice}
-                                            className="w-full py-2.5 rounded-xl bg-blue-500 text-white hover:bg-blue-600 transition-all font-black text-[10px] uppercase tracking-widest shadow-lg shadow-blue-200 disabled:opacity-50"
+                                            className="w-full py-2.5 rounded-xl bg-slate-900 text-white hover:bg-primary transition-all font-black text-[10px] uppercase tracking-widest shadow-md disabled:opacity-50"
                                         >
                                         </button>
                                     </div>
@@ -1026,7 +1026,7 @@ export default function ProcurementRequestList({
                                 <button
                                     onClick={() => handleStatusChange(selectedRequest.id, 'ordered')}
                                     disabled={isSubmitting}
-                                    className="w-full py-3 rounded-xl bg-indigo-500 text-white hover:bg-indigo-600 transition-all font-black text-xs uppercase tracking-widest shadow-lg shadow-indigo-200 flex items-center justify-center gap-2"
+                                    className="w-full py-3 rounded-xl bg-slate-900 text-white hover:bg-primary transition-all font-black text-xs uppercase tracking-widest shadow-md flex items-center justify-center gap-2"
                                 >
                                     {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Truck className="w-4 h-4" />}
                                     Mark as Ordered

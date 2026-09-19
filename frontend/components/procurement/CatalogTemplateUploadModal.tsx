@@ -340,7 +340,7 @@ export default function CatalogTemplateUploadModal({ isOpen, onClose, organizati
                                     <ArrowLeft className="w-5 h-5" />
                                 </button>
                             )}
-                            <div className="w-11 h-11 rounded-2xl bg-violet-500 flex items-center justify-center text-white shadow-lg shadow-violet-500/20">
+                            <div className="w-11 h-11 rounded-2xl bg-slate-900 flex items-center justify-center text-white shadow-md">
                                 <FileSpreadsheet className="w-5 h-5" />
                             </div>
                             <div>
@@ -474,7 +474,7 @@ export default function CatalogTemplateUploadModal({ isOpen, onClose, organizati
                                         { label: 'Updates', value: preview.counts.updated_count, tone: 'text-amber-600' },
                                         { label: 'No change', value: preview.counts.unchanged_count, tone: 'text-slate-400' },
                                         { label: 'Errors', value: preview.counts.error_count, tone: 'text-rose-600' },
-                                        { label: 'Photos', value: preview.counts.photo_count, tone: 'text-violet-600' },
+                                        { label: 'Photos', value: preview.counts.photo_count, tone: 'text-slate-900' },
                                     ].map(stat => (
                                         <div key={stat.label} className="rounded-2xl bg-slate-50 border border-slate-100 p-4 text-center">
                                             <p className={`text-2xl font-black ${stat.tone}`}>{stat.value}</p>
@@ -514,7 +514,7 @@ export default function CatalogTemplateUploadModal({ isOpen, onClose, organizati
                                         </p>
                                         <button
                                             onClick={() => setShowOnlyChanges(v => !v)}
-                                            className="text-[10px] font-black uppercase tracking-widest text-violet-600 hover:text-violet-700 transition-colors"
+                                            className="text-[10px] font-black uppercase tracking-widest text-slate-900 hover:text-slate-700 transition-colors"
                                         >
                                             {showOnlyChanges ? 'Show all rows' : 'Show only changes'}
                                         </button>
@@ -540,7 +540,7 @@ export default function CatalogTemplateUploadModal({ isOpen, onClose, organizati
                                                             {row.item_code && (
                                                                 <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest shrink-0">{row.item_code}</span>
                                                             )}
-                                                            {row.photo_url && <ImageIcon className="w-3 h-3 text-violet-400 shrink-0" />}
+                                                            {row.photo_url && <ImageIcon className="w-3 h-3 text-slate-500 shrink-0" />}
                                                         </div>
                                                         {row.errors.length > 0 && (
                                                             <p className="text-[11px] text-rose-500 font-bold mt-1">{row.errors.join(' · ')}</p>
@@ -703,14 +703,14 @@ export default function CatalogTemplateUploadModal({ isOpen, onClose, organizati
                                         }}
                                         className={`rounded-[2rem] border-2 border-dashed p-10 flex flex-col items-center justify-center transition-all group
                                             ${isUploading
-                                                ? 'border-violet-300 bg-violet-50 cursor-wait'
-                                                : 'border-slate-200 bg-slate-50 hover:border-violet-300 hover:bg-violet-50/50 cursor-pointer'}`}
+                                                ? 'border-slate-400 bg-slate-100 cursor-wait'
+                                                : 'border-slate-200 bg-slate-50 hover:border-slate-400 hover:bg-slate-100/50 cursor-pointer'}`}
                                     >
                                         {isUploading ? (
                                             <>
-                                                <Loader2 className="w-10 h-10 text-violet-500 animate-spin mb-4" />
-                                                <p className="font-black text-violet-700 text-sm">Reading {file?.name}</p>
-                                                <p className="text-xs text-violet-400 font-bold mt-1">Extracting rows and photos…</p>
+                                                <Loader2 className="w-10 h-10 text-slate-900 animate-spin mb-4" />
+                                                <p className="font-black text-slate-900 text-sm">Reading {file?.name}</p>
+                                                <p className="text-xs text-slate-500 font-bold mt-1">Extracting rows and photos…</p>
                                             </>
                                         ) : (
                                             <>

@@ -245,7 +245,7 @@ export default function ProcurementFeedbackTab({
                 <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs">
                     <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 text-xs font-medium mb-1">
                         <span>Manpower Satisfaction</span>
-                        <ThumbsUp className="w-4 h-4 text-blue-500" />
+                        <ThumbsUp className="w-4 h-4 text-slate-700 dark:text-slate-300" />
                     </div>
                     <div className="text-2xl font-black text-slate-900 dark:text-white">
                         {stats.manpowerOkPercent}%
@@ -258,7 +258,7 @@ export default function ProcurementFeedbackTab({
                 <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs">
                     <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 text-xs font-medium mb-1">
                         <span>AMC Compliance</span>
-                        <Clock className="w-4 h-4 text-purple-500" />
+                        <Clock className="w-4 h-4 text-slate-700 dark:text-slate-300" />
                     </div>
                     <div className="text-2xl font-black text-slate-900 dark:text-white">
                         {stats.amcOkPercent}%
@@ -519,34 +519,34 @@ export default function ProcurementFeedbackTab({
                                 </div>
                             </div>
 
-                            <div className="p-4 rounded-2xl bg-blue-500/10 border border-blue-200/50 space-y-2">
-                                <h4 className="font-bold text-blue-800 dark:text-blue-300 uppercase text-[10px] tracking-wider mb-1">
+                            <div className="p-4 rounded-2xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-2">
+                                <h4 className="font-bold text-slate-900 dark:text-slate-100 uppercase text-[10px] tracking-wider mb-1">
                                     Manpower
                                 </h4>
                                 <div className="space-y-1.5">
                                     <div>
                                         <p className="text-slate-700 dark:text-slate-300">Quality Satisfaction: <strong className={selectedDetail.manpower_quality_satisfaction === 'Poor' ? 'text-rose-600 dark:text-rose-400 font-bold' : 'text-emerald-600 dark:text-emerald-400 font-bold'}>{selectedDetail.manpower_quality_satisfaction}</strong></p>
-                                        {selectedDetail.manpower_quality_remark && <p className="text-[11px] text-blue-800 dark:text-blue-300 italic mt-0.5">Remark: "{selectedDetail.manpower_quality_remark}"</p>}
+                                        {selectedDetail.manpower_quality_remark && <p className="text-[11px] text-slate-600 dark:text-slate-400 italic mt-0.5">Remark: "{selectedDetail.manpower_quality_remark}"</p>}
                                     </div>
-                                    <div className="pt-1.5 border-t border-blue-200/30">
+                                    <div className="pt-1.5 border-t border-slate-200 dark:border-slate-700">
                                         <p className="text-slate-700 dark:text-slate-300">Reliever On-Time: <strong className={selectedDetail.manpower_reliever_on_time === 'Yes' ? 'text-emerald-600 dark:text-emerald-400 font-bold' : 'text-rose-600 dark:text-rose-400 font-bold'}>{selectedDetail.manpower_reliever_on_time}</strong></p>
-                                        {selectedDetail.manpower_reliever_remark && <p className="text-[11px] text-blue-800 dark:text-blue-300 italic mt-0.5">Remark: "{selectedDetail.manpower_reliever_remark}"</p>}
+                                        {selectedDetail.manpower_reliever_remark && <p className="text-[11px] text-slate-600 dark:text-slate-400 italic mt-0.5">Remark: "{selectedDetail.manpower_reliever_remark}"</p>}
                                     </div>
                                 </div>
                             </div>
 
-                            <div className="p-4 rounded-2xl bg-purple-500/10 border border-purple-200/50 space-y-2">
-                                <h4 className="font-bold text-purple-800 dark:text-purple-300 uppercase text-[10px] tracking-wider mb-1">
+                            <div className="p-4 rounded-2xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-2">
+                                <h4 className="font-bold text-slate-900 dark:text-slate-100 uppercase text-[10px] tracking-wider mb-1">
                                     AMC (Annual Maintenance Contract)
                                 </h4>
                                 <div className="space-y-1.5">
                                     <div>
                                         <p className="text-slate-700 dark:text-slate-300">Service Report On-Time: <strong className={selectedDetail.amc_service_report_on_time === 'Yes' ? 'text-emerald-600 dark:text-emerald-400 font-bold' : 'text-rose-600 dark:text-rose-400 font-bold'}>{selectedDetail.amc_service_report_on_time}</strong></p>
-                                        {selectedDetail.amc_report_remark && <p className="text-[11px] text-purple-800 dark:text-purple-300 italic mt-0.5">Remark: "{selectedDetail.amc_report_remark}"</p>}
+                                        {selectedDetail.amc_report_remark && <p className="text-[11px] text-slate-600 dark:text-slate-400 italic mt-0.5">Remark: "{selectedDetail.amc_report_remark}"</p>}
                                     </div>
-                                    <div className="pt-1.5 border-t border-purple-200/30">
+                                    <div className="pt-1.5 border-t border-slate-200 dark:border-slate-700">
                                         <p className="text-slate-700 dark:text-slate-300">Services Within Scheduled Time: <strong className={selectedDetail.amc_services_on_schedule === 'Yes' ? 'text-emerald-600 dark:text-emerald-400 font-bold' : 'text-rose-600 dark:text-rose-400 font-bold'}>{selectedDetail.amc_services_on_schedule}</strong></p>
-                                        {selectedDetail.amc_schedule_remark && <p className="text-[11px] text-purple-800 dark:text-purple-300 italic mt-0.5">Remark: "{selectedDetail.amc_schedule_remark}"</p>}
+                                        {selectedDetail.amc_schedule_remark && <p className="text-[11px] text-slate-600 dark:text-slate-400 italic mt-0.5">Remark: "{selectedDetail.amc_schedule_remark}"</p>}
                                     </div>
                                 </div>
                             </div>

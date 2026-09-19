@@ -56,34 +56,46 @@ export async function GET(request: Request) {
         const hrRoles = ['hr', 'hr_head', 'hr_manager', 'hr_ops', 'org_super_admin', 'master_admin', 'org_admin'];
         
         let isHrAuthorityUser = false;
+        let isDirectorUser = normalizedRole === 'director';
+
         if (userId) {
-            // Check employee_profiles for HR authority flags (avoid .maybeSingle() error when multiple rows exist)
+            // Check employee_profiles for HR & Director authority flags
             const { data: hrEmps } = await supabaseAdmin
                 .from('employee_profiles')
-                .select('is_hr_authority, is_hr_manager_authority')
+                .select('is_hr_authority, is_hr_manager_authority, is_director_authority')
                 .eq('user_id', userId);
 
             if (hrEmps && hrEmps.some(e => e.is_hr_authority || e.is_hr_manager_authority)) {
                 isHrAuthorityUser = true;
             }
+            if (hrEmps && hrEmps.some(e => e.is_director_authority)) {
+                isDirectorUser = true;
+            }
 
-            // Check organization_memberships for App roles (hr, hr_head, org_super_admin, etc.)
-            if (!isHrAuthorityUser) {
-                const { data: mems } = await supabaseAdmin
-                    .from('organization_memberships')
-                    .select('role')
-                    .eq('user_id', userId);
+            // Check organization_memberships for App roles (hr, hr_head, org_super_admin, director, etc.)
+            const { data: mems } = await supabaseAdmin
+                .from('organization_memberships')
+                .select('role')
+                .eq('user_id', userId);
 
-                if (mems && mems.some(m => hrRoles.includes((m.role || '').toLowerCase()))) {
-                    isHrAuthorityUser = true;
-                }
+            if (mems && mems.some(m => hrRoles.includes((m.role || '').toLowerCase()))) {
+                isHrAuthorityUser = true;
+            }
+            if (mems && mems.some(m => (m.role || '').toLowerCase() === 'director')) {
+                isDirectorUser = true;
             }
         }
 
-        if (isHrAuthorityUser || hrRoles.includes(normalizedRole)) {
-            query = query.or('is_confidential.eq.false,is_confidential.is.null');
-        } else if (normalizedRole === 'director') {
-            query = query.or('is_confidential.eq.true,is_anonymous.eq.true,current_level.eq.4');
+        if (isDirectorUser) {
+            // Directors can view all confidential, anonymous, level 4+, or assigned tickets
+            query = query.or(`is_confidential.eq.true,is_anonymous.eq.true,current_level.gte.4${userId ? `,assigned_to_user_id.eq.${userId},assigned_history.cs.["${userId}"]` : ''}`);
+        } else if (isHrAuthorityUser || hrRoles.includes(normalizedRole)) {
+            // HR Authorities can view all non-confidential tickets, PLUS any confidential ticket specifically assigned to them
+            if (userId) {
+                query = query.or(`is_confidential.eq.false,is_confidential.is.null,assigned_to_user_id.eq.${userId},assigned_history.cs.["${userId}"]`);
+            } else {
+                query = query.or('is_confidential.eq.false,is_confidential.is.null');
+            }
         } else if (userId) {
             // Fetch manager's employee profile (if any) to resolve profile ID & employee code
             const { data: mgrProfile } = await supabaseAdmin
@@ -334,72 +346,121 @@ export async function POST(request: Request) {
 
         let firstLevelOwnerId: string | null = null;
         let isFallbackHrManager = false;
+        let configuredLevel1UserIds: string[] = [];
 
-        if (ticketType === 'confidential_feedback' || ticketType === 'anonymous_feedback' || category.first_level_owner_type === 'director') {
-            const { data: directors } = await supabaseAdmin
-                .from('employee_profiles')
-                .select('user_id')
-                .eq('is_director_authority', true)
-                .not('user_id', 'is', null)
-                .limit(1);
+        // Check organization_settings to see if specific Level 1 assigned users were configured in Admin Config for this ticketType
+        try {
+            const { data: orgSettings } = await supabaseAdmin
+                .from('organization_settings')
+                .select('hr_escalation_config, notification_matrix')
+                .limit(1)
+                .maybeSingle();
 
-            firstLevelOwnerId = directors?.[0]?.user_id || null;
-        } else if (category.first_level_owner_type === 'hr') {
-            firstLevelOwnerId = category.default_hr_owner_id;
-            if (!firstLevelOwnerId) {
-                const { data: hrStaff } = await supabaseAdmin
+            const configObj = orgSettings?.notification_matrix?.hr_escalation_config || orgSettings?.hr_escalation_config || {};
+            let flowAssigneesConfig = configObj.flow_assignees || {};
+            while (flowAssigneesConfig && flowAssigneesConfig.flow_assignees) {
+                flowAssigneesConfig = flowAssigneesConfig.flow_assignees;
+            }
+
+            const level1Assignees = flowAssigneesConfig[ticketType]?.[1] || flowAssigneesConfig[ticketType]?.['1'];
+            if (Array.isArray(level1Assignees) && level1Assignees.length > 0) {
+                const { data: matchedProfiles } = await supabaseAdmin
+                    .from('employee_profiles')
+                    .select('id, user_id')
+                    .or(`id.in.(${level1Assignees.join(',')}),user_id.in.(${level1Assignees.join(',')})`);
+
+                const resolvedUserIds: string[] = [];
+                for (const targetId of level1Assignees) {
+                    const profileMatch = (matchedProfiles || []).find(p => p.id === targetId || p.user_id === targetId);
+                    if (profileMatch?.user_id) {
+                        resolvedUserIds.push(profileMatch.user_id);
+                    } else {
+                        const { data: uRec } = await supabaseAdmin
+                            .from('users')
+                            .select('id')
+                            .eq('id', targetId)
+                            .maybeSingle();
+                        if (uRec?.id) resolvedUserIds.push(uRec.id);
+                    }
+                }
+
+                if (resolvedUserIds.length > 0) {
+                    firstLevelOwnerId = resolvedUserIds[0];
+                    configuredLevel1UserIds = resolvedUserIds;
+                }
+            }
+        } catch (cfgErr) {
+            console.warn('Could not read admin escalation config on POST ticket:', cfgErr);
+        }
+
+        // Fallback: If no custom level 1 assignees were defined in Admin Config, fallback to standard role/hierarchy lookup
+        if (!firstLevelOwnerId) {
+            if (ticketType === 'confidential_feedback' || ticketType === 'anonymous_feedback' || category.first_level_owner_type === 'director') {
+                const { data: directors } = await supabaseAdmin
                     .from('employee_profiles')
                     .select('user_id')
-                    .eq('is_hr_authority', true)
+                    .eq('is_director_authority', true)
                     .not('user_id', 'is', null)
                     .limit(1);
-                firstLevelOwnerId = hrStaff?.[0]?.user_id || null;
-            }
-        } else {
-            firstLevelOwnerId = empProfile?.reporting_manager_id || empProfile?.alternate_manager_id;
 
-            // If reporting_manager_id is null, try resolving manager user_id by reporting_manager_code / name
-            if (!firstLevelOwnerId && empProfile?.reporting_manager_code) {
-                const mgrCodeStr = empProfile.reporting_manager_code.trim();
-                // 1. Try matching employee_code
-                const { data: mgrEmpByCode } = await supabaseAdmin
-                    .from('employee_profiles')
-                    .select('user_id')
-                    .eq('employee_code', mgrCodeStr)
-                    .not('user_id', 'is', null)
-                    .maybeSingle();
+                firstLevelOwnerId = directors?.[0]?.user_id || null;
+            } else if (category.first_level_owner_type === 'hr') {
+                firstLevelOwnerId = category.default_hr_owner_id;
+                if (!firstLevelOwnerId) {
+                    const { data: hrStaff } = await supabaseAdmin
+                        .from('employee_profiles')
+                        .select('user_id')
+                        .eq('is_hr_authority', true)
+                        .not('user_id', 'is', null)
+                        .limit(1);
+                    firstLevelOwnerId = hrStaff?.[0]?.user_id || null;
+                }
+            } else {
+                firstLevelOwnerId = empProfile?.reporting_manager_id || empProfile?.alternate_manager_id;
 
-                if (mgrEmpByCode?.user_id) {
-                    firstLevelOwnerId = mgrEmpByCode.user_id;
-                } else {
-                    // 2. Try matching user full_name or email
-                    const { data: mgrUserByName } = await supabaseAdmin
-                        .from('users')
-                        .select('id')
-                        .or(`full_name.ilike.%${mgrCodeStr}%,email.ilike.%${mgrCodeStr}%`)
+                // If reporting_manager_id is null, try resolving manager user_id by reporting_manager_code / name
+                if (!firstLevelOwnerId && empProfile?.reporting_manager_code) {
+                    const mgrCodeStr = empProfile.reporting_manager_code.trim();
+                    // 1. Try matching employee_code
+                    const { data: mgrEmpByCode } = await supabaseAdmin
+                        .from('employee_profiles')
+                        .select('user_id')
+                        .eq('employee_code', mgrCodeStr)
+                        .not('user_id', 'is', null)
                         .maybeSingle();
 
-                    if (mgrUserByName?.id) {
-                        firstLevelOwnerId = mgrUserByName.id;
+                    if (mgrEmpByCode?.user_id) {
+                        firstLevelOwnerId = mgrEmpByCode.user_id;
+                    } else {
+                        // 2. Try matching user full_name or email
+                        const { data: mgrUserByName } = await supabaseAdmin
+                            .from('users')
+                            .select('id')
+                            .or(`full_name.ilike.%${mgrCodeStr}%,email.ilike.%${mgrCodeStr}%`)
+                            .maybeSingle();
+
+                        if (mgrUserByName?.id) {
+                            firstLevelOwnerId = mgrUserByName.id;
+                        }
                     }
+                }
+
+                if (!firstLevelOwnerId || firstLevelOwnerId === raised_by_user_id) {
+                    isFallbackHrManager = true;
+                    const { data: hrStaff } = await supabaseAdmin
+                        .from('employee_profiles')
+                        .select('user_id')
+                        .or('is_hr_authority.eq.true,is_hr_manager_authority.eq.true')
+                        .not('user_id', 'is', null)
+                        .limit(1);
+                    firstLevelOwnerId = hrStaff?.[0]?.user_id || category.default_hr_owner_id || null;
                 }
             }
 
-            if (!firstLevelOwnerId || firstLevelOwnerId === raised_by_user_id) {
-                isFallbackHrManager = true;
-                const { data: hrStaff } = await supabaseAdmin
-                    .from('employee_profiles')
-                    .select('user_id')
-                    .or('is_hr_authority.eq.true,is_hr_manager_authority.eq.true')
-                    .not('user_id', 'is', null)
-                    .limit(1);
-                firstLevelOwnerId = hrStaff?.[0]?.user_id || category.default_hr_owner_id || null;
+            // Final safety fallback: If still null, assign to category default owner or any HR authority
+            if (!firstLevelOwnerId && category.default_hr_owner_id) {
+                firstLevelOwnerId = category.default_hr_owner_id;
             }
-        }
-
-        // Final safety fallback: If still null, assign to category default owner or any HR authority
-        if (!firstLevelOwnerId && category.default_hr_owner_id) {
-            firstLevelOwnerId = category.default_hr_owner_id;
         }
 
         // Fetch resolved assigned owner name for snapshot
@@ -422,6 +483,8 @@ export async function POST(request: Request) {
         const submitterName = (empProfile?.first_name ? `${empProfile.first_name} ${empProfile.last_name || ''}`.trim() : null) || submitterUser?.full_name || submitterUser?.email || 'Employee';
         const managerUserId = empProfile?.reporting_manager?.id || firstLevelOwnerId;
 
+        const assignedHistory = Array.from(new Set([firstLevelOwnerId, ...configuredLevel1UserIds, managerUserId].filter(Boolean)));
+
         const snapshot = {
             name: submitterName,
             code: empProfile?.employee_code || 'N/A',
@@ -432,8 +495,8 @@ export async function POST(request: Request) {
             manager_name: managerName,
             manager_code: empProfile?.reporting_manager_code || null,
             manager_user_id: managerUserId,
-            assigned_history: [firstLevelOwnerId, managerUserId].filter(Boolean),
-            routing_mode: isFallbackHrManager ? 'hr_fallback_no_manager' : 'direct_reporting_manager'
+            assigned_history: assignedHistory,
+            routing_mode: configuredLevel1UserIds.length > 0 ? 'custom_admin_config' : (isFallbackHrManager ? 'hr_fallback_no_manager' : 'direct_reporting_manager')
         };
 
         // 7. Insert Ticket
@@ -448,7 +511,7 @@ export async function POST(request: Request) {
                 anonymous_token: is_anonymous ? `anon_${Math.random().toString(36).substring(2, 10)}` : null,
                 employee_snapshot: snapshot,
                 manager_user_id: managerUserId,
-                assigned_history: Array.from(new Set([firstLevelOwnerId, managerUserId].filter(Boolean))),
+                assigned_history: assignedHistory,
                 subject,
                 description,
                 attachment_urls,
