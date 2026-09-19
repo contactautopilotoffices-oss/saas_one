@@ -35,91 +35,81 @@ export interface TemplateColumnSpec {
     example: string;
 }
 
+/**
+ * The template, exactly as procurement's existing requisition sheet is laid out.
+ * Same seven columns, same header wording — Qty dropped (a master list has no
+ * quantity) and Category added in its place. Nothing else is added: a column the
+ * sheet does not have is a column somebody has to fill in.
+ */
 export const CATALOG_TEMPLATE_COLUMNS: TemplateColumnSpec[] = [
     {
-        key: 'item_code',
-        header: 'Item Code',
-        width: 16,
-        synonyms: ['sku', 'code', 'material code', 'product code', 'item id'],
-        help: 'Stable code for the item. Leave blank for a brand-new item and one will be generated. NEVER change an existing code — the code is what tells us to update an item instead of creating a duplicate.',
-        example: 'HK-0001',
+        key: 'sort_order',
+        header: 'Sr. No.',
+        width: 9,
+        synonyms: ['sr no', 'sr', 'serial', 'sno', 's no', 'no', 'order', 'display order'],
+        help: 'Row number. Controls the order items appear on every property requisition sheet. Leave blank to keep file order.',
+        example: '1',
     },
     {
         key: 'name',
-        header: 'Item Name',
-        width: 34,
+        header: 'Item Description',
+        width: 38,
         required: true,
-        synonyms: ['name', 'item', 'product name', 'product', 'material', 'particulars', 'item description'],
-        help: 'Required. The standard name every property will see on its requisition sheet.',
-        example: 'Toilet Roll',
+        synonyms: ['item description', 'description', 'item', 'item name', 'name', 'product', 'material', 'particulars'],
+        help: 'Required. The standard item name every property will see. Include the pack size here the way you already do ("Bleach Chemical 5 Ltr").',
+        example: 'Bleach Chemical 5 Ltr',
     },
     {
         key: 'category',
         header: 'Category',
         width: 14,
-        synonyms: ['group', 'type', 'section', 'class'],
+        synonyms: ['category', 'group', 'type', 'section', 'class'],
         help: `One of: ${CATALOG_CATEGORIES.join(', ')}. Common words are mapped automatically (Housekeeping to HK, Pantry to Beverages, Electrical to Technical). Anything unrecognised becomes General.`,
         example: 'HK',
     },
     {
-        key: 'brand',
-        header: 'Brand',
-        width: 16,
-        synonyms: ['make', 'company', 'manufacturer'],
-        help: 'Optional. Use NA where no brand is specified.',
-        example: 'NA',
-    },
-    {
-        key: 'color_size_details',
-        header: 'Specification',
-        width: 22,
-        synonyms: ['specification', 'spec', 'colour', 'color', 'size', 'colour size', 'color size', 'colour size details', 'details'],
-        help: 'Colour, size or any specification that distinguishes this item from a similar one.',
-        example: 'White, 2 ply',
-    },
-    {
         key: 'unit',
-        header: 'UOM',
-        width: 10,
-        synonyms: ['unit', 'unit of measure', 'uom', 'pack', 'measurement'],
-        help: 'Unit of measure. Defaults to pcs if blank. Keep this consistent — it is what stock entries will be counted in.',
-        example: 'pcs',
+        header: 'Unit',
+        width: 12,
+        synonyms: ['unit', 'uom', 'unit of measure', 'pack', 'measurement'],
+        help: 'Unit of issue, exactly as you buy it ("5 L Can", "pcs", "KG"). This is what stock will be counted in, so keep it consistent for the same item.',
+        example: '5 L Can',
+    },
+    {
+        key: 'brand',
+        header: 'brands',
+        width: 16,
+        synonyms: ['brand', 'brands', 'make', 'company', 'manufacturer'],
+        help: 'Approved brand. Use NA where no brand is specified.',
+        example: 'FOLEX',
     },
     {
         key: 'unit_price',
-        header: 'Standard Rate',
-        width: 14,
-        synonyms: ['rate', 'price', 'cost', 'unit price', 'amount', 'basic rate', 'estimated price'],
-        help: 'Indicative org-wide rate. A property with a negotiated rate still overrides this in Site Pricing.',
-        example: '45',
+        header: 'final rate',
+        width: 13,
+        synonyms: ['final rate', 'rate', 'price', 'cost', 'unit price', 'amount', 'basic rate', 'standard rate'],
+        help: 'Standard rate per unit. Currency symbols and commas are fine.',
+        example: '325',
     },
     {
         key: 'photo',
-        header: 'Photo',
-        width: 20,
-        synonyms: ['image', 'item photo', 'picture', 'photo url', 'image url', 'item image'],
-        help: 'Paste the picture directly into this cell (Insert > Picture > Place in Cell), or type a public image URL. Pasted pictures are read from the file automatically. Max 5 MB per image.',
+        header: 'IMAGE',
+        width: 22,
+        synonyms: ['image', 'photo', 'picture', 'item image', 'item photo', 'image url', 'photo url'],
+        help: 'Paste the product picture straight into this cell (Insert > Picture > Place in Cell), or type a public image URL. One picture per row, max 5 MB.',
         example: '(paste picture here)',
-    },
-    {
-        key: 'sort_order',
-        header: 'Sort Order',
-        width: 11,
-        synonyms: ['sr no', 'sr', 'serial', 'order', 's no', 'sno', 'display order'],
-        help: 'Optional. Controls the order items appear on every property requisition sheet. Blank uses file order.',
-        example: '1',
-    },
-    {
-        key: 'description',
-        header: 'Description',
-        width: 30,
-        synonyms: ['notes', 'remarks', 'about', 'comment'],
-        help: 'Optional free text shown to the property when it hovers the item.',
-        example: 'Standard 2-ply toilet roll',
     },
 ];
 
 const REQUIRED_KEYS = CATALOG_TEMPLATE_COLUMNS.filter(c => c.required).map(c => c.key);
+
+/** Header text for a field, so messages always name the column as the sheet labels it. */
+function headerFor(key: string): string {
+    return CATALOG_TEMPLATE_COLUMNS.find(c => c.key === key)?.header || key;
+}
+
+/** Columns that do not count as user-entered content when deciding if a row is blank. */
+const EMPTINESS_EXEMPT_KEYS = new Set(['photo', 'sort_order']);
 
 // ─── Normalisation helpers ────────────────────────────────────────────────────
 
@@ -224,6 +214,7 @@ function readPhotoUrl(cell: ExcelJS.Cell | undefined): string | null {
 const HEADER_FILL = 'FF0F172A';   // slate-900
 const REQUIRED_FILL = 'FF0891B2'; // cyan-600, marks the one required column
 const BANNER_FILL = 'FFF1F5F9';   // slate-100
+const GRID_LINE = 'FF94A3B8';     // slate-400, matches the bordered sheet procurement already uses
 
 export interface TemplateSeedItem {
     item_code?: string | null;
@@ -289,32 +280,49 @@ export async function generateCatalogTemplateWorkbook(options: GenerateTemplateO
     const categoryColIndex = CATALOG_TEMPLATE_COLUMNS.findIndex(c => c.key === 'category') + 1;
     const photoColIndex = CATALOG_TEMPLATE_COLUMNS.findIndex(c => c.key === 'photo') + 1;
 
-    // ── Seeded rows (current catalog), then blank rows for new entries
-    const writeRow = (rowNumber: number, item?: TemplateSeedItem) => {
+    // ── Seeded rows (current catalog), then blank rows for new entries.
+    // Laid out like the sheet procurement already uses: every cell bordered and
+    // centred, item description left-aligned and bold.
+    const writeRow = (rowNumber: number, serial: number, item?: TemplateSeedItem) => {
         const row = sheet.getRow(rowNumber);
-        row.height = 48; // tall enough that a pasted picture is visible
+        row.height = 54; // tall enough that a pasted picture is visible
 
         CATALOG_TEMPLATE_COLUMNS.forEach((col, idx) => {
             const cell = row.getCell(idx + 1);
-            cell.alignment = { vertical: 'middle', wrapText: col.key === 'description' };
 
-            if (!item) return;
+            cell.border = {
+                top: { style: 'thin', color: { argb: GRID_LINE } },
+                left: { style: 'thin', color: { argb: GRID_LINE } },
+                bottom: { style: 'thin', color: { argb: GRID_LINE } },
+                right: { style: 'thin', color: { argb: GRID_LINE } },
+            };
+            cell.alignment = col.key === 'name'
+                ? { vertical: 'middle', horizontal: 'left', wrapText: true }
+                : { vertical: 'middle', horizontal: 'center', wrapText: true };
+            if (col.key === 'name') cell.font = { bold: true, size: 10 };
+
             switch (col.key) {
+                case 'sort_order':
+                    // Sr. No. is always filled in, seeded or blank, so the sheet reads
+                    // like the one they already use.
+                    cell.value = item?.sort_order ?? serial;
+                    break;
                 case 'unit_price':
-                    cell.value = item.unit_price ?? item.estimated_price ?? null;
-                    cell.numFmt = '0.00';
+                    if (item) {
+                        cell.value = item.unit_price ?? item.estimated_price ?? null;
+                        cell.numFmt = '0.00';
+                    }
                     break;
                 case 'photo':
-                    if (item.photo_url) {
+                    if (item?.photo_url) {
                         cell.value = { text: 'View photo', hyperlink: item.photo_url };
                         cell.font = { color: { argb: 'FF0891B2' }, underline: true, size: 9 };
                     }
                     break;
-                case 'sort_order':
-                    cell.value = item.sort_order ?? null;
-                    break;
                 default:
-                    cell.value = (item as Record<string, string | number | null | undefined>)[col.key] ?? null;
+                    if (item) {
+                        cell.value = (item as Record<string, string | number | null | undefined>)[col.key] ?? null;
+                    }
             }
         });
 
@@ -330,8 +338,9 @@ export async function generateCatalogTemplateWorkbook(options: GenerateTemplateO
     };
 
     let rowNumber = 3;
-    for (const item of items) writeRow(rowNumber++, item);
-    for (let i = 0; i < blankRows; i++) writeRow(rowNumber++, undefined);
+    let serial = 1;
+    for (const item of items) writeRow(rowNumber++, serial++, item);
+    for (let i = 0; i < blankRows; i++) writeRow(rowNumber++, serial++, undefined);
 
     sheet.getColumn(photoColIndex).alignment = { vertical: 'middle', horizontal: 'center' };
 
@@ -370,11 +379,12 @@ export async function generateCatalogTemplateWorkbook(options: GenerateTemplateO
     const notesStart = CATALOG_TEMPLATE_COLUMNS.length + 4;
     [
         'Do not rename, reorder or delete the header row — the upload reads it by name.',
-        'Adding photos: select the Photo cell, then Insert > Picture > Place in Cell. One picture per row.',
-        'A photo URL typed into the Photo cell works too, as long as the link is publicly reachable.',
+        'Adding photos: select the IMAGE cell, then Insert > Picture > Place in Cell. One picture per row.',
+        'A photo URL typed into the IMAGE cell works too, as long as the link is publicly reachable.',
+        'Items are matched on Item Description. Editing a description is treated as a NEW item, so if you are renaming something, link it in the preview instead of letting it create a duplicate.',
         'Re-uploading the same file changes nothing. Upload is always previewed before anything is saved.',
         'A blank optional cell means "leave as it is" — it never wipes a value the item already has.',
-        'Items you remove from the file are never deleted automatically — you choose whether to deactivate them in the preview.',
+        'Items you remove from the file are never deleted automatically — you choose Keep, Legacy or Retire for each one in the preview.',
     ].forEach((note, idx) => {
         const row = guide.getRow(notesStart + idx);
         row.getCell(1).value = idx === 0 ? 'Notes' : '';
@@ -603,19 +613,22 @@ export async function parseCatalogTemplateWorkbook(fileBuffer: Buffer): Promise<
         const embedded = images.get(r) || null;
 
         // A row with no name and no other content is just template padding.
-        const hasAnyValue = CATALOG_TEMPLATE_COLUMNS.some(c => c.key !== 'photo' && get(row, c.key) !== '');
+        // Sr. No. is pre-filled on every blank row of the downloaded template, so it
+        // is never evidence that somebody entered something.
+        const hasAnyValue = CATALOG_TEMPLATE_COLUMNS
+            .some(c => !EMPTINESS_EXEMPT_KEYS.has(c.key) && get(row, c.key) !== '');
         if (!name && !hasAnyValue && !embedded) continue;
 
         const errors: string[] = [];
-        if (!name) errors.push('Item Name is blank');
+        if (!name) errors.push(`${headerFor('name')} is blank`);
 
         const rawCategory = get(row, 'category');
         const rawRate = index['unit_price'] !== undefined ? row.getCell(index['unit_price']).value : null;
         const unitPrice = parseRate(rawRate);
         if (rawRate !== null && rawRate !== undefined && String(rawRate).trim() !== '' && unitPrice === null) {
-            errors.push(`Standard Rate "${readCellText(row.getCell(index['unit_price']))}" is not a number`);
+            errors.push(`${headerFor('unit_price')} "${readCellText(row.getCell(index['unit_price']))}" is not a number`);
         }
-        if (unitPrice !== null && unitPrice < 0) errors.push('Standard Rate cannot be negative');
+        if (unitPrice !== null && unitPrice < 0) errors.push(`${headerFor('unit_price')} cannot be negative`);
 
         const rawSort = get(row, 'sort_order');
         const sortOrder = rawSort === '' ? null : parseInt(rawSort.replace(/[^0-9\-]/g, ''), 10);
@@ -623,7 +636,7 @@ export async function parseCatalogTemplateWorkbook(fileBuffer: Buffer): Promise<
         let photo: ParsedPhoto | null = null;
         if (embedded) {
             if (embedded.buffer.length > MAX_PHOTO_BYTES) {
-                errors.push(`Photo is ${(embedded.buffer.length / 1024 / 1024).toFixed(1)} MB — max is ${MAX_PHOTO_BYTES / 1024 / 1024} MB`);
+                errors.push(`${headerFor('photo')} is ${(embedded.buffer.length / 1024 / 1024).toFixed(1)} MB — max is ${MAX_PHOTO_BYTES / 1024 / 1024} MB`);
             } else {
                 photo = { kind: 'embedded', buffer: embedded.buffer, extension: embedded.extension };
             }
@@ -634,7 +647,9 @@ export async function parseCatalogTemplateWorkbook(fileBuffer: Buffer): Promise<
 
         rows.push({
             rowNumber: r,
-            item_code: get(row, 'item_code'),
+            // The sheet carries no code column — codes are assigned server-side
+            // and items are matched on their description.
+            item_code: '',
             name,
             category: normalizeCategory(rawCategory),
             rawCategory,

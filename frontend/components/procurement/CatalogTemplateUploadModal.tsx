@@ -105,16 +105,17 @@ const DECISIONS: Array<{ value: AbsentDecision; label: string; hint: string; act
     },
 ];
 
+/** Mirrors CATALOG_TEMPLATE_COLUMNS headers, so the diff names columns as the sheet does. */
 const FIELD_LABELS: Record<string, string> = {
-    name: 'Item Name',
+    sort_order: 'Sr. No.',
+    name: 'Item Description',
     category: 'Category',
-    brand: 'Brand',
-    color_size_details: 'Specification',
-    unit: 'UOM',
-    unit_price: 'Standard Rate',
-    sort_order: 'Sort Order',
+    unit: 'Unit',
+    brand: 'brands',
+    unit_price: 'final rate',
+    photo_url: 'IMAGE',
     description: 'Description',
-    photo_url: 'Photo',
+    color_size_details: 'Specification',
     is_active: 'Status',
     lifecycle: 'Lifecycle',
 };
@@ -491,6 +492,20 @@ export default function CatalogTemplateUploadModal({ isOpen, onClose, organizati
                                     </p>
                                 </div>
 
+                                {/* Items are matched on description, so an edited description reads as a new item. */}
+                                {preview.counts.created_count > 0 && preview.absent_items.length > 0 && (
+                                    <div className="rounded-2xl bg-rose-50 border border-rose-100 p-4 flex items-start gap-3">
+                                        <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                                        <p className="text-xs text-rose-700 font-bold leading-relaxed">
+                                            This file adds {preview.counts.created_count} item{preview.counts.created_count === 1 ? '' : 's'} and
+                                            leaves out {preview.absent_items.length}. Items are matched on their description, so
+                                            <strong> a renamed item looks like a new one</strong> — check the two lists below for the same
+                                            product under two names. If you find one, either restore the old wording in the file, or
+                                            mark the old entry Retire so sites only see the new one.
+                                        </p>
+                                    </div>
+                                )}
+
                                 {/* Row list */}
                                 <div>
                                     <div className="flex items-center justify-between mb-3">
@@ -644,8 +659,9 @@ export default function CatalogTemplateUploadModal({ isOpen, onClose, organizati
                                         <p className="font-black text-slate-900 text-sm tracking-tight">Get the template</p>
                                     </div>
                                     <p className="text-xs text-slate-400 font-bold mb-4 leading-relaxed">
-                                        One fixed format for every upload — item code, name, category, brand, specification, UOM, standard rate, photo, sort order and description.
-                                        Paste item pictures straight into the Photo column.
+                                        The same seven columns as your requisition sheet — Sr. No., Item Description,
+                                        Category, Unit, brands, final rate and IMAGE. Paste product pictures straight into
+                                        the IMAGE column.
                                     </p>
                                     <div className="grid sm:grid-cols-2 gap-3">
                                         <button
@@ -666,9 +682,9 @@ export default function CatalogTemplateUploadModal({ isOpen, onClose, organizati
                                         </button>
                                     </div>
                                     <p className="text-[11px] text-slate-400 font-bold mt-3 leading-relaxed">
-                                        Migrating an existing catalog? Start from <strong>With current items</strong> — it already
-                                        carries every item and its code, so editing and re-uploading updates them instead of
-                                        creating duplicates.
+                                        Migrating an existing catalog? Start from <strong>With current items</strong> — it comes
+                                        back filled with everything already in the catalog, so editing and re-uploading updates
+                                        those items instead of creating duplicates.
                                     </p>
                                 </div>
 

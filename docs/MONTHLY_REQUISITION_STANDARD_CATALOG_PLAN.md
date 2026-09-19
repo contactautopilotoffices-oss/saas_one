@@ -167,34 +167,39 @@ Endpoints:
 
 ### 4.2 Columns — BUILT
 
-Defined once in [catalogTemplate.ts](backend/lib/procurement/catalogTemplate.ts) (`CATALOG_TEMPLATE_COLUMNS`), which the
-download endpoint, the parser and the UI hints all read from.
+The template is procurement's existing requisition sheet, unchanged: same seven columns,
+same header wording. Qty is dropped (a master list has no quantity) and Category takes its
+place. Nothing else is added.
 
 | # | Excel column | Maps to | Notes |
 |---|---|---|---|
-| 1 | Item Code | `item_code` | Stable upsert key. Blank on a new item generates one (HK-0001, BEV-0002…). |
-| 2 | **Item Name** | `name` | **Required.** |
-| 3 | Category | `category` | Dropdown-locked to HK / Beverages / Technical / General. Free text is mapped (Housekeeping→HK, Pantry→Beverages, Electrical→Technical), unrecognised→General. |
-| 4 | Brand | `brand` | |
-| 5 | Specification | `color_size_details` | Colour / size / spec |
-| 6 | UOM | `unit` | Defaults to `pcs` |
-| 7 | Standard Rate | `unit_price` + `estimated_price` | Currency symbols and separators stripped. Per-property overrides still live in `item_site_prices`. |
-| 8 | **Photo** | `photo_url` | Picture pasted into the cell, **or** a public image URL. See below. |
-| 9 | Sort Order | `sort_order` | Fixes the row order on every property's sheet |
-| 10 | Description | `description` | |
+| 1 | Sr. No. | `sort_order` | Fixes the row order on every property's sheet. Pre-filled on the downloaded template. |
+| 2 | **Item Description** | `name` | **Required.** Pack size stays in the name, as today ("Bleach Chemical 5 Ltr"). |
+| 3 | Category | `category` | Dropdown-locked to HK / Beverages / Technical / General. Free text is mapped (Housekeeping→HK, Pantry→Beverages, Electrical→Technical); unrecognised→General. |
+| 4 | Unit | `unit` | Unit of issue as bought ("5 L Can", "KG", "pcs"). **This is what stock is counted in.** |
+| 5 | brands | `brand` | Approved brand, `NA` where none. |
+| 6 | final rate | `unit_price` + `estimated_price` | Currency symbols and separators stripped. |
+| 7 | IMAGE | `photo_url` | Picture pasted into the cell, or a public image URL. |
 
-**The Photo column.** Pictures pasted into the cell (Insert → Picture → Place in Cell) are
-read straight out of the .xlsx — ExcelJS exposes each picture's anchor, and a picture
-anchored at row *N* belongs to the item on row *N*. They are resized to 800px and converted
-to webp via `sharp`, then stored in the existing `procurement-items` bucket. A typed or
-hyperlinked image URL in the same cell works as an alternative. Cap is 5 MB per picture.
+Defined once in [catalogTemplate.ts](backend/lib/procurement/catalogTemplate.ts) (`CATALOG_TEMPLATE_COLUMNS`), which the
+download endpoint, the parser, the error messages and the UI diff labels all read from.
 
-The workbook also carries a second **Instructions** sheet documenting every column, and the
-header row carries per-column cell notes.
+**The IMAGE column.** Pictures pasted into the cell (Insert → Picture → Place in Cell) are read
+straight out of the .xlsx — ExcelJS exposes each picture's anchor, and a picture anchored at
+row *N* belongs to the item on row *N*. They are resized to 800px, converted to webp via
+`sharp`, and stored in the existing `procurement-items` bucket. Max 5 MB per picture.
 
-**On Item Code:** the migration backfills a code onto every existing catalog row, so
-"download with current items → edit → re-upload" round-trips without creating duplicates
-from day one. Renaming an item is then a safe update rather than a new row.
+A file that still has the old **Qty** column uploads fine — the column is reported as ignored
+rather than rejected.
+
+**Consequence of having no item-code column** (raised, and settled in favour of keeping the
+sheet as-is): items are matched on their **Item Description**. Editing a description is
+therefore indistinguishable from adding a new item, and would create a duplicate while the old
+entry becomes an orphan. Mitigation shipped: when an upload both adds items and leaves items
+out, the preview raises a warning naming both counts and telling the uploader to check for the
+same product under two names. `item_code` still exists in the database — generated
+server-side, backfilled onto existing rows — so switching to code-based matching later is a
+column addition, not a re-model.
 
 ### 4.5 Migrating a live production catalog — BUILT
 
@@ -302,95 +307,133 @@ month's.
 
 ---
 
-## 6. Phase 3 — stock management, and the migration problem
+## 6. Phase 3 — how the standard items drive stock management
 
-> *"For properties not using stock management we can directly show these items in their stock
-> management, but properties already using stock management with old items will cause a
-> problem, right?"*
+### 6.1 The shape of it
 
-Right. And the fix is: **link, don't seed.**
+Today the two lists are independent: `procurement_catalog` is what you can *request*,
+`stock_items` is what a site *counts*. They are joined only by `stock_items.catalog_item_id`,
+which exists but is mostly unset.
 
-### 6.1 The two populations
+The target is one identity:
 
-**Group A — no stock management yet.** Easy, but do not mass-seed them either. Let the
-requisition sheet render from the catalog regardless of whether stock rows exist. Create
-`stock_items` rows lazily — at the moment the property switches the stock module on, or on
-first goods receipt — all at `quantity = 0`, all with `catalog_item_id` set. Mass-seeding
-every property up front (what `sync_all_catalog_to_stock.js` does today) forces the stock
-module on properties that never asked for it and fills their dashboards with hundreds of
-zero-quantity rows.
+```
+procurement_catalog (org-wide, from the Excel)
+        │  catalog_item_id
+        ├──────────────► stock_items      (per property: quantity, barcode, location)
+        │                      │ item_id
+        │                      └────────► stock_movements  (every in/out, immutable)
+        └──────────────► requisition_items (what was asked for, price snapshotted)
+```
 
-**Group B — already running stock management on their own item list.** This is the real work.
-Their `stock_items` carry live quantities, barcodes, and `stock_movements` history. Those are
-the property's books. Standard items dropped in alongside would create a second "Toilet Roll"
-row, the site team would enter against whichever they happened to click, and both the stock
-report and the requisition's `available_stock_qty` would be wrong — quietly wrong, which is
-worse.
+**One rule makes the whole thing work: `catalog_item_id` is the item's identity.**
+`stock_items.name` becomes a per-site display label, not an identifier. A site team that calls
+it "Bleach 5L" and a template that calls it "Bleach Chemical 5 Ltr" are the same row in every
+report, because both carry the same `catalog_item_id`.
 
-### 6.2 The mechanism: a per-property reconciliation wizard, run once
+### 6.2 What each screen does after the change
 
-Not a script. A reviewed, one-time UI pass per property, driven by
-`property_catalog_adoption.status`: `not_started` → `mapping` → `active`.
+**Monthly requisition (property admin).** Renders the standard catalog in `Sr. No.` order,
+grouped by Category — identical for every property. `available_stock_qty` is no longer typed by
+hand: it is read from `stock_items` joined on `catalog_item_id`. Site-specific items appear in
+a separate labelled block below.
 
-The wizard shows the property's existing stock items against the standard catalog in three
-buckets:
+**Stock entry (site team).** The "add item" list stops being free text and becomes the standard
+catalog. A site team can only count things that exist on the standard list (plus that site's
+own site-specific items), which is what makes cross-property stock reporting meaningful for the
+first time.
 
-**Bucket 1 — Confident match** (normalised name equal, *and* unit equal). Pre-ticked.
-Confirming writes `stock_items.catalog_item_id`, copies the old name into `local_name`, and
-records the old name in `procurement_item_aliases`. Quantity, barcode, movements: untouched.
+**Goods receipt closes the loop.** When a requisition is approved and delivered, the received
+quantities post as `stock_movements` against the same `catalog_item_id`. Requested → ordered →
+received → counted becomes one chain per item, per site, per month. That chain is what makes
+consumption rate, and therefore next month's suggested quantity, computable.
 
-**Bucket 2 — Needs review.** Fuzzy candidates (token overlap / trigram), each with a
-confidence score and the unit shown next to both sides. The user picks the right standard
-item or "none of these". **Unit mismatch is the silent killer here** — legacy "Toilet Roll"
-measured in `Roll`, standard measured in `pcs`. The wizard must refuse a link across
-differing units until the user either supplies a `unit_conversion_factor` or explicitly
-acknowledges the units are equivalent.
+### 6.3 Unit is the thing that will bite
 
-**Bucket 3 — No standard equivalent.** Per item, choose:
-- *Keep as site-specific* → `is_site_specific = true`. Stays in stock, stays countable,
-  appears in the requisition's site-specific block. Never auto-deleted.
-- *Retire* → `is_retired = true`, quantity frozen, history kept, hidden from new entry.
+`Unit` in the template ("5 L Can") is the unit of *purchase*. Site teams often count in a
+different unit — litres, or loose pieces out of a box. If the two drift, every stock number is
+silently wrong.
 
-**Bucket 4 — Standard items the property has no row for.** Created at `quantity = 0` on
-confirm, with `catalog_item_id` set.
+Two decisions needed before Phase 3 starts:
 
-Two rules make this safe:
-- **Nothing is written until the whole sheet is confirmed**, and the confirmation writes an
-  audit row naming who mapped what — so a bad mapping session is traceable and reversible.
-- **No `DELETE`, ever.** No quantity is rewritten. No `stock_movements` row is edited.
+1. **Is the template's Unit also the stock-keeping unit?** Simplest answer is yes — you buy a
+   5 L Can, you count 5 L Cans. Recommended.
+2. If not, `stock_items` needs `stock_unit` + `units_per_purchase_unit` (e.g. 1 Box = 24 pcs),
+   and every movement records which unit it was entered in. This is real complexity; only take
+   it if sites genuinely cannot count in purchase units.
 
-### 6.3 The one genuinely destructive case: merges
+The reconciliation wizard (§6.5) refuses to link two items whose units differ until this is
+answered explicitly for that item.
 
-Two legacy rows mapping to one standard item — "Toilet Roll" (qty 40) and "Toilet roll big"
-(qty 12) both → standard "Toilet Roll". You cannot link both; you must merge.
+### 6.4 The two populations
 
-Handle it explicitly: pick a survivor, repoint `stock_movements.item_id` to the survivor, set
-`merged_into_id` on the loser, and write a `stock_movements` row with `action = 'merge'` and
-`quantity_change = +12` on the survivor so the ledger still adds up on paper. Gate it behind a
-confirmation that states the resulting quantity. This is the only operation in the whole plan
-that changes a number the site team owns, and it should look like it.
+**Group A — properties not using stock management.** Easy, but do **not** mass-seed them. The
+requisition sheet renders from the catalog whether or not stock rows exist. Create `stock_items`
+lazily — when the property turns the stock module on, or on first goods receipt — all at
+`quantity = 0` with `catalog_item_id` set. Mass-seeding every property up front (what
+`scripts/sync_all_catalog_to_stock.js` does today) forces the stock module onto sites that never
+asked for it and fills their dashboards with hundreds of zero rows.
 
-### 6.4 Why not the alternatives
+**Group B — properties already running stock management on their own item list.** Their
+`stock_items` carry live quantities, barcodes and movement history. Those are the property's
+books. Dropping standard items in alongside creates a second "Bleach Chemical 5 Ltr", the site
+team enters against whichever they clicked, and both the stock report and the requisition's
+`available_stock_qty` go *quietly* wrong — which is worse than loudly wrong.
 
-- **Hard reset** (archive all old stock items, seed standard ones at 0, ask sites to recount)
-  is tempting and genuinely cleaner. It costs every site a full physical count and throws away
-  consumption history right when we want to start using it for forecasting. Worth offering as
-  an *opt-in* per property — a site with genuinely messy data may prefer it — but it should not
-  be the default.
-- **Show standard items in requisition only, never touch stock** is the zero-risk option, but
-  it permanently leaves the two lists out of sync, which is the problem we set out to solve.
-- **Automatic fuzzy linking with no review** (what `link_stock_to_catalog.js` does today) will
-  mislink a meaningful fraction of items — and a mislink is invisible until a stock report is
+### 6.5 The mechanism: a one-time reconciliation wizard per property
+
+Not a script. A reviewed pass, driven by `property_catalog_adoption.status`
+(`not_started` → `mapping` → `active`), so rollout is per property rather than big bang. A
+property in `mapping` keeps today's behaviour until it flips to `active`.
+
+Four buckets:
+
+1. **Confident match** — normalised name equal *and* unit equal. Pre-ticked. Confirming writes
+   `catalog_item_id`, copies the old name into `stock_items.local_name`, and records it in
+   `procurement_item_aliases`. Quantity, barcode, movements: untouched.
+2. **Needs review** — fuzzy candidates with a confidence score and both units shown side by
+   side. A cross-unit link is refused until §6.3 is answered for that item.
+3. **No standard equivalent** — *Keep as site-specific* (`is_site_specific = true`; stays
+   countable, shows in the requisition's site-specific block) or *Retire* (frozen, history kept,
+   hidden from new entry).
+4. **Standard items the property has no row for** — created at `quantity = 0` on confirm.
+
+Two rules make it safe: nothing is written until the whole sheet is confirmed, and there is no
+`DELETE` anywhere — no quantity is rewritten, no `stock_movements` row is edited.
+
+### 6.6 The one destructive case: merges
+
+Two legacy rows mapping to one standard item — "Bleach 5L" (qty 40) and "Bleach Chemical 5 Ltr"
+(qty 12). You cannot link both; you must merge. Pick a survivor, repoint
+`stock_movements.item_id`, set `merged_into_id` on the loser, and write a `stock_movements` row
+with `action = 'merge'` and `quantity_change = +12` on the survivor so the ledger still adds up
+on paper. Gate it behind a confirmation stating the resulting quantity. This is the only
+operation in the whole plan that changes a number the site team owns, and it should look like
+it.
+
+### 6.7 Why not the alternatives
+
+- **Hard reset** (archive all old stock items, seed standard at 0, ask sites to recount) is
+  genuinely cleaner and worth offering as an *opt-in* per property — a site with messy data may
+  prefer it — but as a default it costs every site a full physical count and throws away the
+  consumption history right when we want it for forecasting.
+- **Requisition only, never touch stock** is zero-risk but permanently leaves the two lists out
+  of sync, which is the problem we set out to solve.
+- **Automatic fuzzy linking with no review** (what `scripts/link_stock_to_catalog.js` does
+  today) will mislink a meaningful fraction — and a mislink is invisible until a stock report is
   wrong. Do not ship it.
 
-### 6.5 Rollout order
+### 6.8 Order of work
 
-Group A first (low risk, proves the catalog-first sheet), then Group B one property at a time,
-starting with whichever site has the smallest / cleanest stock list. `property_catalog_adoption`
-means a property in `mapping` keeps its old behaviour until it flips to `active`, so a stalled
-mapping never blocks anyone.
-
----
+1. Catalog uploaded and reviewed (Phase 1, done) — mapping against a half-finished standard list
+   is wasted effort.
+2. Catalog-first requisition sheet (Phase 2).
+3. Answer §6.3 (is purchase unit = stock unit?).
+4. `stock_items` columns + `procurement_item_aliases` + `property_catalog_adoption` migrations.
+5. Wizard, on Group A first (low risk, proves the join), then Group B one property at a time,
+   starting with the smallest/cleanest stock list.
+6. Goods receipt → `stock_movements` posting, which is what finally makes consumption reporting
+   possible.
 
 ## 7. Phased delivery
 
