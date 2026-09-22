@@ -660,7 +660,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                 designation: emp?.designation || t.employee_snapshot?.designation || 'Staff',
                 email: t.raised_by?.email || emp?.email || 'N/A',
                 phone: t.raised_by?.phone || emp?.phone || 'N/A',
-                manager_name: emp?.reporting_manager_name || t.employee_snapshot?.manager_name || 'N/A',
+                manager_name: emp?.reporting_manager_name || emp?.reporting_manager_code || t.employee_snapshot?.manager_name || 'N/A',
                 photo_url: emp?.user_photo_url || emp?.photo_url || emp?.avatar_url || t.raised_by?.raw_user_meta_data?.user_photo_url || t.raised_by?.raw_user_meta_data?.avatar_url || null
             }
         });

@@ -223,12 +223,12 @@ export default function NotificationBell({ align = 'right' }: NotificationBellPr
                         });
                     }
 
-                    // STRICT PERMISSION: ONLY if ticket is strictly assigned to this user and active, show "Close Ticket"
-                    const canCloseTicket = isAssignedToUser && t.status !== 'closed' && t.status !== 'resolved' && t.status !== 'pending_acknowledgement';
+                    // STRICT PERMISSION: ONLY if ticket is strictly assigned to this user and active, show "Resolve Ticket"
+                    const canResolveTicket = isAssignedToUser && t.status !== 'closed' && t.status !== 'resolved' && t.status !== 'pending_acknowledgement';
 
-                    if (canCloseTicket) {
+                    if (canResolveTicket) {
                         actionButtons.push({
-                            label: 'Close Ticket',
+                            label: 'Resolve Ticket',
                             actionKey: 'open_close_form',
                             variant: 'success',
                             isQuickAction: true
@@ -548,11 +548,11 @@ export default function NotificationBell({ align = 'right' }: NotificationBellPr
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    status: 'closed',
-                    action: 'close',
+                    status: 'pending_acknowledgement',
+                    action: 'resolve',
                     actor_user_id: activeUserId,
                     resolved_by_user_id: activeUserId,
-                    resolution_note: note.trim() || 'Resolved and closed by assignee via Action Center'
+                    resolution_note: note.trim() || 'Resolved by assignee via Action Center'
                 })
             });
 
@@ -976,7 +976,7 @@ export default function NotificationBell({ align = 'right' }: NotificationBellPr
                                                             ) : (
                                                                 <Check className="w-3 h-3" />
                                                             )}
-                                                            <span>Confirm & Close</span>
+                                                            <span>Confirm & Resolve</span>
                                                         </button>
                                                     </div>
                                                 </div>
