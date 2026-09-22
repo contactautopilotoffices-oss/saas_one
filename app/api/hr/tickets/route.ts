@@ -641,9 +641,12 @@ export async function POST(request: Request) {
         const slaDueAt = new Date(Date.now() + slaDays * 24 * 60 * 60 * 1000);
 
         // 6. Employee Snapshot with manager_user_id & assigned_history
-        const managerName = assignedOwnerName || empProfile?.reporting_manager?.full_name || empProfile?.reporting_manager?.email || empProfile?.reporting_manager_code || 'HR Head';
+        const submitterManagerName = empProfile?.reporting_manager?.full_name 
+            || empProfile?.reporting_manager?.email 
+            || empProfile?.reporting_manager_code 
+            || 'N/A';
         const submitterName = (empProfile?.first_name ? `${empProfile.first_name} ${empProfile.last_name || ''}`.trim() : null) || submitterUser?.full_name || submitterUser?.email || 'Employee';
-        const managerUserId = empProfile?.reporting_manager?.id || firstLevelOwnerId;
+        const managerUserId = empProfile?.reporting_manager_id || empProfile?.alternate_manager_id || null;
 
         const assignedHistory = Array.from(new Set([firstLevelOwnerId, ...configuredLevel1UserIds, managerUserId].filter(Boolean)));
 
@@ -654,7 +657,7 @@ export async function POST(request: Request) {
             designation: empProfile?.designation || 'Staff',
             location: empLocation,
             property_id: property_id || empProfile?.property_id || null,
-            manager_name: managerName,
+            manager_name: submitterManagerName,
             manager_code: empProfile?.reporting_manager_code || null,
             manager_user_id: managerUserId,
             assigned_history: assignedHistory,

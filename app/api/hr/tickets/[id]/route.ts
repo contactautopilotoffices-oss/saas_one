@@ -93,8 +93,8 @@ export async function GET(
                     if (!ticket.employee_snapshot.code && emp?.employee_code) {
                         ticket.employee_snapshot.code = emp.employee_code;
                     }
-                    if (!ticket.employee_snapshot.manager_name) {
-                        ticket.employee_snapshot.manager_name = l1Name || emp?.reporting_manager_code;
+                    if (!ticket.employee_snapshot.manager_name || ticket.employee_snapshot.manager_name === 'N/A') {
+                        ticket.employee_snapshot.manager_name = (emp?.reporting_manager as any)?.full_name || (emp?.reporting_manager as any)?.email || emp?.reporting_manager_code || 'N/A';
                     }
                 }
             }
@@ -165,10 +165,6 @@ export async function GET(
             l3: l3Name,
             l4: l4Name
         };
-
-        if (ticket.employee_snapshot && !ticket.is_anonymous && !ticket.employee_snapshot.manager_name) {
-            ticket.employee_snapshot.manager_name = l1Name;
-        }
 
         // Build dynamic escalation flow array for any category/ticket type level count
         let flowAssigneesConfig: any = {};
@@ -334,6 +330,32 @@ export async function GET(
 
         // Attach structured submitter details
         if (!ticket.is_anonymous) {
+            let submitterManagerName = ticket.employee_snapshot?.manager_name || ticket.employee_snapshot?.reporting_manager_name;
+            if (ticket.raised_by_user_id) {
+                try {
+                    const { data: empProfile } = await supabaseAdmin
+                        .from('employee_profiles')
+                        .select('reporting_manager_code, reporting_manager_id, reporting_manager:users!reporting_manager_id(full_name, email)')
+                        .or(`user_id.eq.${ticket.raised_by_user_id},email.eq.${ticket.raised_by?.email || ''}`)
+                        .maybeSingle();
+
+                    if (empProfile) {
+                        const trueMgr = (empProfile.reporting_manager as any)?.full_name 
+                            || (empProfile.reporting_manager as any)?.email 
+                            || empProfile.reporting_manager_code;
+                        if (trueMgr) {
+                            submitterManagerName = trueMgr;
+                            if (ticket.employee_snapshot) {
+                                ticket.employee_snapshot.manager_name = trueMgr;
+                                ticket.employee_snapshot.manager_code = empProfile.reporting_manager_code;
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.warn('Error resolving true submitter manager:', e);
+                }
+            }
+
             const submitterPhoto = ticket.raised_by?.user_photo_url || null;
             ticket.submitter_details = {
                 id: ticket.raised_by_user_id,
@@ -346,7 +368,7 @@ export async function GET(
                 department: ticket.employee_snapshot?.department || 'Operations',
                 location: ticket.employee_snapshot?.location || 'Head Office',
                 designation: ticket.employee_snapshot?.designation || 'Staff',
-                manager_name: ticket.employee_snapshot?.manager_name || ticket.employee_snapshot?.reporting_manager_name || 'N/A',
+                manager_name: submitterManagerName || 'N/A',
                 is_anonymous: false
             };
         } else {
@@ -443,20 +465,33 @@ export async function PATCH(
 
         const currentSnapshot = existing.employee_snapshot || {};
 
+        const isSubmitter = Boolean(safeActorId && safeActorId === existing.raised_by_user_id);
+        const isAcknowledgeAction = action === 'acknowledge';
+
         if (status === 'resolved' || status === 'pending_acknowledgement' || action === 'resolve') {
             updates.status = 'pending_acknowledgement';
             updates.resolved_at = new Date().toISOString();
             if (safeResolvedById) {
                 updates.resolved_by_user_id = safeResolvedById;
             }
-        }
-        if (status === 'closed' || action === 'acknowledge') {
-            updates.status = 'closed';
-            updates.closed_at = new Date().toISOString();
-            currentSnapshot.acknowledged_at = new Date().toISOString();
-            currentSnapshot.acknowledged_by_user_id = safeActorId || cleanUuid(body.acknowledged_by_user_id);
-            currentSnapshot.acknowledgement_note = acknowledgement_note || 'Confirmed & Acknowledged by Submitter';
-            updates.employee_snapshot = currentSnapshot;
+        } else if (status === 'closed' || isAcknowledgeAction) {
+            // STRICT TWO-STEP CLOSING LIFECYCLE ENFORCEMENT:
+            // Handlers cannot directly jump to 'closed'. If the actor is NOT the submitter and action !== 'acknowledge':
+            // Route strictly to 'pending_acknowledgement' so submitter can review & confirm.
+            if (!isSubmitter && !isAcknowledgeAction) {
+                updates.status = 'pending_acknowledgement';
+                updates.resolved_at = new Date().toISOString();
+                if (safeResolvedById) {
+                    updates.resolved_by_user_id = safeResolvedById;
+                }
+            } else {
+                updates.status = 'closed';
+                updates.closed_at = new Date().toISOString();
+                currentSnapshot.acknowledged_at = new Date().toISOString();
+                currentSnapshot.acknowledged_by_user_id = safeActorId || cleanUuid(body.acknowledged_by_user_id);
+                currentSnapshot.acknowledgement_note = acknowledgement_note || 'Confirmed & Acknowledged by Submitter';
+                updates.employee_snapshot = currentSnapshot;
+            }
         }
         if (status === 'reopened' || action === 'reopen') {
             updates.status = 'reopened';
@@ -595,11 +630,11 @@ export async function PATCH(
         let auditAction = 'STATUS_UPDATE';
         if (escalate) {
             auditAction = `ESCALATED_L${updates.current_level}`;
-        } else if (action === 'acknowledge' || (status === 'closed' && safeActorId === existing.raised_by_user_id)) {
+        } else if (action === 'acknowledge' || (updates.status === 'closed' && safeActorId === existing.raised_by_user_id)) {
             auditAction = 'ACKNOWLEDGED_BY_CREATOR';
-        } else if (status === 'resolved' || status === 'closed') {
+        } else if (updates.status === 'pending_acknowledgement' || updates.status === 'resolved') {
             auditAction = `RESOLVED_L${existing.current_level || 1}`;
-        } else if (status === 'reopened') {
+        } else if (updates.status === 'reopened') {
             auditAction = 'REOPENED';
         }
 
@@ -616,12 +651,12 @@ export async function PATCH(
             NotificationService.afterHrTicketEscalated(id, existing.current_level, updates.current_level, false, safeActorId || undefined).catch(err => {
                 console.error('[HR Tickets API] afterHrTicketEscalated dispatch error:', err);
             });
-        } else if (action === 'acknowledge' || (status === 'closed' && safeActorId === existing.raised_by_user_id)) {
+        } else if (action === 'acknowledge' || (updates.status === 'closed' && safeActorId === existing.raised_by_user_id)) {
             NotificationService.afterHrTicketAcknowledged(id).catch(err => {
                 console.error('[HR Tickets API] afterHrTicketAcknowledged dispatch error:', err);
             });
-        } else if (status && status !== existing.status) {
-            NotificationService.afterHrTicketStatusUpdated(id, existing.status, status, safeActorId || undefined).catch(err => {
+        } else if (updates.status && updates.status !== existing.status) {
+            NotificationService.afterHrTicketStatusUpdated(id, existing.status, updates.status, safeActorId || undefined).catch(err => {
                 console.error('[HR Tickets API] afterHrTicketStatusUpdated dispatch error:', err);
             });
         }

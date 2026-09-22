@@ -626,7 +626,7 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
                             {(() => {
                                 const curLvl = ticket.current_level || 1;
                                 const steps: Array<{ level: number; label: string; assignee: string }> = ticket.escalation_flow || [
-                                    { level: 1, label: 'Level 1', assignee: ticket.employee_snapshot?.manager_name || ticket.level_owners?.l1 || 'Manager' },
+                                    { level: 1, label: 'Level 1', assignee: ticket.level_owners?.l1 || ticket.employee_snapshot?.manager_name || 'Manager' },
                                     { level: 2, label: 'Level 2', assignee: ticket.level_owners?.l2 || 'HR Ops' },
                                     { level: 3, label: 'Level 3', assignee: ticket.level_owners?.l3 || 'HR Head' },
                                     { level: 4, label: 'Level 4', assignee: ticket.level_owners?.l4 || (curLvl === 4 && ticket.assigned_to?.full_name ? ticket.assigned_to.full_name : 'Director') },
@@ -1421,14 +1421,14 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
                                                 </button>
                                             )}
 
-                                            {/* 2. Resolve & Close Ticket Button & Resolution Form */}
+                                            {/* 2. Resolve Ticket Button & Resolution Form */}
                                             <button
                                                 type="button"
                                                 onClick={() => setShowResolutionForm(!showResolutionForm)}
-                                                className="w-full py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-xs font-bold transition-all shadow-md shadow-emerald-600/20 flex items-center justify-center gap-1.5 active:scale-95"
+                                                className="w-full py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-xs font-bold transition-all shadow-md shadow-emerald-600/20 flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
                                             >
                                                 <CheckCircle className="w-4 h-4" />
-                                                {showResolutionForm ? 'Hide Resolution Form' : 'Resolve & Close Ticket'}
+                                                {showResolutionForm ? 'Hide Resolution Form' : 'Resolve Ticket'}
                                             </button>
 
                                             {showResolutionForm && (
@@ -1446,15 +1446,15 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
                                                     <div className="flex gap-2">
                                                         <button
                                                             type="button"
-                                                            onClick={() => handleUpdateStatus('resolved', false, resolutionNoteInput)}
-                                                            className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm"
+                                                            onClick={() => handleUpdateStatus('pending_acknowledgement', false, resolutionNoteInput, 'resolve')}
+                                                            className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm cursor-pointer"
                                                         >
-                                                            Confirm & Close Ticket
+                                                            Confirm Resolution (Request Acknowledgment)
                                                         </button>
                                                         <button
                                                             type="button"
                                                             onClick={() => setShowResolutionForm(false)}
-                                                            className="px-3 py-2 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold"
+                                                            className="px-3 py-2 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold cursor-pointer"
                                                         >
                                                             Cancel
                                                         </button>

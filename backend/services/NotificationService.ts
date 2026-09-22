@@ -2834,18 +2834,28 @@ export class NotificationService {
 
             if (!ticket) return;
 
-            const isResolved = newStatus === 'resolved' || newStatus === 'closed';
+            const isPendingAck = newStatus === 'pending_acknowledgement' || newStatus === 'resolved';
+            const isClosed = newStatus === 'closed';
             const resolverName = ticket.resolved_by?.full_name || 'HR Handler';
 
             if (ticket.raised_by_user_id) {
+                let notifTitle = `HR Ticket #${ticket.ticket_number} Status Updated`;
+                let notifMessage = `Status changed to ${newStatus.toUpperCase().replace(/_/g, ' ')}.`;
+
+                if (isPendingAck) {
+                    notifTitle = `✅ HR Ticket #${ticket.ticket_number} Resolved — Please Acknowledge`;
+                    notifMessage = `Your HR request "${ticket.subject}" has been marked RESOLVED at Level ${ticket.current_level} by ${resolverName}.${ticket.resolution_note ? ` Note: "${ticket.resolution_note}".` : ''} Please review and confirm acknowledgment.`;
+                } else if (isClosed) {
+                    notifTitle = `✅ HR Ticket #${ticket.ticket_number} Closed`;
+                    notifMessage = `Your HR request "${ticket.subject}" has been confirmed and closed.`;
+                }
+
                 await this.send({
                     userId: ticket.raised_by_user_id,
                     organizationId: ticket.organization_id,
-                    type: isResolved ? 'HR_TICKET_RESOLVED' : 'HR_TICKET_STATUS_UPDATED',
-                    title: isResolved ? `✅ HR Ticket #${ticket.ticket_number} Resolved & Closed` : `HR Ticket #${ticket.ticket_number} Status Updated`,
-                    message: isResolved
-                        ? `Your HR request "${ticket.subject}" has been RESOLVED & CLOSED at Level ${ticket.current_level} by ${resolverName}.${ticket.resolution_note ? ` Note: "${ticket.resolution_note}"` : ''}`
-                        : `Status changed to ${newStatus.toUpperCase().replace(/_/g, ' ')}.`,
+                    type: isPendingAck ? 'HR_TICKET_RESOLVED' : isClosed ? 'HR_TICKET_ACKNOWLEDGED' : 'HR_TICKET_STATUS_UPDATED',
+                    title: notifTitle,
+                    message: notifMessage,
                     deepLink: `/hr-tickets?tab=tickets&id=${ticket.id}`
                 });
             }
