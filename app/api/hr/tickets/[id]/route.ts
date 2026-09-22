@@ -170,9 +170,16 @@ export async function GET(
         let flowAssigneesConfig: any = {};
         let flowLevelsConfig: any = {};
         try {
-            const { data: orgSettings } = await supabaseAdmin
+            const effectiveOrgId = ticket.organization_id || '211e1330-ad83-446d-941f-dcea48396798';
+            let orgSettingsQuery = supabaseAdmin
                 .from('organization_settings')
-                .select('hr_escalation_config, notification_matrix')
+                .select('hr_escalation_config, notification_matrix');
+
+            if (effectiveOrgId) {
+                orgSettingsQuery = orgSettingsQuery.eq('organization_id', effectiveOrgId);
+            }
+
+            const { data: orgSettings } = await orgSettingsQuery
                 .limit(1)
                 .maybeSingle();
 
@@ -186,9 +193,19 @@ export async function GET(
             console.warn('Could not read hr_escalation_config in GET ticket detail:', e);
         }
 
+        const defaultFlowCounts: Record<string, number> = {
+            grievance: 4,
+            hr_query: 4,
+            confidential_feedback: 2,
+            anonymous_feedback: 2
+        };
         const tType = ticket.ticket_type || ticket.category?.ticket_type || 'grievance';
-        const customFlowLevels = flowLevelsConfig[tType] || flowLevelsConfig['grievance'] || [];
-        const totalLevelsCount = customFlowLevels.length > 0 ? customFlowLevels.length : 4;
+        const customFlowLevels = (flowLevelsConfig && Array.isArray(flowLevelsConfig[tType]) && flowLevelsConfig[tType].length > 0)
+            ? flowLevelsConfig[tType]
+            : (flowLevelsConfig && Array.isArray(flowLevelsConfig['grievance']) && tType === 'grievance')
+                ? flowLevelsConfig['grievance']
+                : [];
+        const totalLevelsCount = customFlowLevels.length > 0 ? customFlowLevels.length : (defaultFlowCounts[tType] || 4);
 
         const escalationFlow: Array<{ level: number; label: string; assignee: string }> = [];
         for (let i = 1; i <= totalLevelsCount; i++) {

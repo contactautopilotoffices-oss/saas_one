@@ -334,7 +334,8 @@ export default function HRAdminConfigPanel({ orgId }: HRAdminConfigPanelProps = 
 
     const fetchEscalationConfig = async () => {
         try {
-            const url = `/api/hr/admin/escalation-config${orgId ? `?orgId=${orgId}` : ''}`;
+            const effectiveOrgId = orgId || '211e1330-ad83-446d-941f-dcea48396798';
+            const url = `/api/hr/admin/escalation-config?orgId=${effectiveOrgId}`;
             const res = await fetch(url);
             const text = await res.text();
             let data: any = {};
@@ -440,7 +441,7 @@ export default function HRAdminConfigPanel({ orgId }: HRAdminConfigPanelProps = 
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    organization_id: orgId,
+                    organization_id: customData?.organization_id || orgId || '211e1330-ad83-446d-941f-dcea48396798',
                     hr_manager_profile_ids: selectedHrManagerIds,
                     hr_head_profile_ids: selectedHrHeadIds,
                     director_profile_ids: selectedDirectorIds,
@@ -714,6 +715,7 @@ export default function HRAdminConfigPanel({ orgId }: HRAdminConfigPanelProps = 
             {/* View 1: Graphical Escalation Tree */}
             {activeTab === 'tree' && (
                 <HREscalationTreeVisualizer
+                    orgId={orgId || '211e1330-ad83-446d-941f-dcea48396798'}
                     designatedHrManagers={designatedHrManagers}
                     designatedHrHeads={designatedHrHeads}
                     designatedDirectors={designatedDirectors}
