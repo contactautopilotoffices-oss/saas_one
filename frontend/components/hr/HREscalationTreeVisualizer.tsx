@@ -325,6 +325,7 @@ const reindexLevels = (levels: EscalationLevel[]): EscalationLevel[] => {
 };
 
 interface HREscalationTreeVisualizerProps {
+    orgId?: string;
     designatedHrManagers?: any[];
     designatedHrHeads?: any[];
     designatedDirectors?: any[];
@@ -350,6 +351,7 @@ interface HREscalationTreeVisualizerProps {
 }
 
 export default function HREscalationTreeVisualizer({
+    orgId,
     designatedHrManagers: initialHrManagers,
     designatedHrHeads: initialHrHeads,
     designatedDirectors: initialDirectors,
@@ -428,7 +430,8 @@ export default function HREscalationTreeVisualizer({
     }, [initialHrManagers, initialHrHeads, initialDirectors, initialHrHead, initialDirector]);
 
     React.useEffect(() => {
-        fetch('/api/hr/admin/escalation-config')
+        const url = `/api/hr/admin/escalation-config${orgId ? `?orgId=${orgId}` : ''}`;
+        fetch(url)
             .then(res => res.json())
             .then(data => {
                 if (data.success && data.data) {
@@ -458,7 +461,7 @@ export default function HREscalationTreeVisualizer({
                 }
             })
             .catch(err => console.error(err));
-    }, []);
+    }, [orgId]);
 
     const currentFlow = escalationFlows.find(f => f.id === selectedFlowId) || escalationFlows[0];
     const currentLevels = flowLevels[selectedFlowId] || currentFlow.levels;
@@ -634,9 +637,11 @@ export default function HREscalationTreeVisualizer({
                 });
             });
 
+            const flowsList = ['grievance', 'hr_query', 'confidential_feedback', 'anonymous_feedback'];
             const cleanFlowLevels: Record<string, any[]> = {};
-            Object.keys(flowLevels).forEach(fId => {
-                cleanFlowLevels[fId] = (flowLevels[fId] || []).map(lvl => ({
+            flowsList.forEach(fId => {
+                const list = flowLevels[fId] || (escalationFlows.find(f => f.id === fId)?.levels || []);
+                cleanFlowLevels[fId] = list.map(lvl => ({
                     level: lvl.level,
                     title: lvl.title,
                     ownerRole: lvl.ownerRole,
@@ -649,13 +654,14 @@ export default function HREscalationTreeVisualizer({
             });
 
             if (onSaveAuthorities) {
-                await onSaveAuthorities({ flow_assignees: payloadAssignees, flow_levels: cleanFlowLevels });
+                await onSaveAuthorities({ organization_id: orgId, flow_assignees: payloadAssignees, flow_levels: cleanFlowLevels });
                 setLocalSaveMsg('All escalation levels & step assignees saved successfully!');
             } else {
                 const res = await fetch('/api/hr/admin/escalation-config', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
+                        organization_id: orgId,
                         flow_assignees: payloadAssignees,
                         flow_levels: cleanFlowLevels
                     })

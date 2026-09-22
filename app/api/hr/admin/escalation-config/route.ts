@@ -8,7 +8,7 @@ const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
-        const orgId = searchParams.get('orgId') || searchParams.get('organization_id');
+        const orgId = searchParams.get('orgId') || searchParams.get('organization_id') || '211e1330-ad83-446d-941f-dcea48396798';
 
         // 1. Fetch employee_profiles
         let query = supabaseAdmin
@@ -161,13 +161,19 @@ export async function GET(request: Request) {
         const hrHeads = mergedEmployees.filter(p => p.is_hr_authority === true);
         const directors = mergedEmployees.filter(p => p.is_director_authority === true);
 
-        // 4. Fetch per-flow, per-level custom step assignees & custom flow levels from organization_settings
+        // 4. Fetch per-flow, per-level custom step assignees & custom flow levels from organization_settings for orgId
         let flowAssigneesRaw: any = {};
         let flowLevelsRaw: any = null;
         try {
-            const { data: settingsData } = await supabaseAdmin
+            let settingsQuery = supabaseAdmin
                 .from('organization_settings')
-                .select('*')
+                .select('*');
+
+            if (orgId) {
+                settingsQuery = settingsQuery.eq('organization_id', orgId);
+            }
+
+            const { data: settingsData } = await settingsQuery
                 .limit(1)
                 .maybeSingle();
 
@@ -231,6 +237,22 @@ export async function GET(request: Request) {
             ]
         };
 
+        // Guarantee all 4 flows are populated with their custom or default levels
+        const resolvedFlowLevels: Record<string, any[]> = {
+            grievance: (flowLevelsRaw?.grievance && Array.isArray(flowLevelsRaw.grievance) && flowLevelsRaw.grievance.length > 0)
+                ? flowLevelsRaw.grievance
+                : defaultFlowLevels.grievance,
+            hr_query: (flowLevelsRaw?.hr_query && Array.isArray(flowLevelsRaw.hr_query) && flowLevelsRaw.hr_query.length > 0)
+                ? flowLevelsRaw.hr_query
+                : defaultFlowLevels.hr_query,
+            confidential_feedback: (flowLevelsRaw?.confidential_feedback && Array.isArray(flowLevelsRaw.confidential_feedback) && flowLevelsRaw.confidential_feedback.length > 0)
+                ? flowLevelsRaw.confidential_feedback
+                : defaultFlowLevels.confidential_feedback,
+            anonymous_feedback: (flowLevelsRaw?.anonymous_feedback && Array.isArray(flowLevelsRaw.anonymous_feedback) && flowLevelsRaw.anonymous_feedback.length > 0)
+                ? flowLevelsRaw.anonymous_feedback
+                : defaultFlowLevels.anonymous_feedback
+        };
+
         return NextResponse.json({
             success: true,
             data: {
@@ -241,7 +263,7 @@ export async function GET(request: Request) {
                 designated_hr_head: hrHeads[0] || null,
                 designated_director: directors[0] || null,
                 flow_assignees: formattedFlowAssignees,
-                flow_levels: flowLevelsRaw && Object.keys(flowLevelsRaw).length > 0 ? flowLevelsRaw : defaultFlowLevels
+                flow_levels: resolvedFlowLevels
             }
         });
     } catch (err: any) {
@@ -398,19 +420,24 @@ export async function POST(request: Request) {
         // 4. Save per-flow, per-level custom step assignees & flow levels into organization_settings
         if (body.flow_assignees || body.flow_levels) {
             try {
-                // Fetch first org id or default
-                const { data: orgData } = await supabaseAdmin.from('organizations').select('id').limit(1).maybeSingle();
-                const orgId = body.organization_id || orgData?.id;
+                // Fetch org id: prioritize request body, then query DB, then default Autopilot Offices
+                let orgId = body.organization_id;
+                if (!orgId) {
+                    const { data: orgData } = await supabaseAdmin.from('organizations').select('id').order('created_at', { ascending: true }).limit(2);
+                    // Match Autopilot Offices or first available
+                    const matchedOrg = (orgData || []).find(o => o.id === '211e1330-ad83-446d-941f-dcea48396798') || orgData?.[0];
+                    orgId = matchedOrg?.id || '211e1330-ad83-446d-941f-dcea48396798';
+                }
 
                 if (orgId) {
                     const { data: existingSettings } = await supabaseAdmin
                         .from('organization_settings')
-                        .select('notification_matrix')
+                        .select('notification_matrix, hr_escalation_config')
                         .eq('organization_id', orgId)
                         .maybeSingle();
 
                     const currentMatrix = existingSettings?.notification_matrix || {};
-                    const currentEscalationConfig = currentMatrix.hr_escalation_config || {};
+                    const currentEscalationConfig = existingSettings?.hr_escalation_config || currentMatrix.hr_escalation_config || {};
 
                     let cleanAssignees = body.flow_assignees;
                     while (cleanAssignees && cleanAssignees.flow_assignees) {
@@ -459,10 +486,28 @@ export async function POST(request: Request) {
                         }
                     }
 
+                    // Deep merge flow_levels with existing config so saving one flow preserves all other flows
+                    const existingFlowLevels = currentEscalationConfig.flow_levels || {};
+                    const mergedFlowLevels = {
+                        ...existingFlowLevels,
+                        ...(body.flow_levels || {})
+                    };
+
+                    // Deep merge flow_assignees
+                    let existingFlowAssignees = currentEscalationConfig.flow_assignees || {};
+                    while (existingFlowAssignees && existingFlowAssignees.flow_assignees) {
+                        existingFlowAssignees = existingFlowAssignees.flow_assignees;
+                    }
+                    const mergedFlowAssignees = {
+                        ...existingFlowAssignees,
+                        ...(cleanAssignees || {})
+                    };
+
                     const newEscalationConfig = {
                         ...currentEscalationConfig,
-                        ...(cleanAssignees ? { flow_assignees: cleanAssignees } : {}),
-                        ...(body.flow_levels ? { flow_levels: body.flow_levels } : {})
+                        flow_assignees: mergedFlowAssignees,
+                        flow_levels: mergedFlowLevels,
+                        updated_at: new Date().toISOString()
                     };
 
                     const updatedMatrix = {
@@ -477,9 +522,14 @@ export async function POST(request: Request) {
                         updated_at: new Date().toISOString()
                     };
 
-                    await supabaseAdmin
+                    const { error: upsertErr } = await supabaseAdmin
                         .from('organization_settings')
                         .upsert(upsertData, { onConflict: 'organization_id' });
+
+                    if (upsertErr) {
+                        console.error('Error upserting organization_settings:', upsertErr);
+                        throw upsertErr;
+                    }
 
                     // Also sync updated flow_levels SLA days to hr_ticket_categories table
                     if (body.flow_levels && typeof body.flow_levels === 'object') {
@@ -523,10 +573,14 @@ export async function POST(request: Request) {
                                         }
                                     }
                                     if (Object.keys(catUpdates).length > 0) {
-                                        await supabaseAdmin
+                                        let catQuery = supabaseAdmin
                                             .from('hr_ticket_categories')
                                             .update(catUpdates)
                                             .eq('ticket_type', ticketType);
+                                        if (orgId) {
+                                            catQuery = catQuery.eq('organization_id', orgId);
+                                        }
+                                        await catQuery;
                                     }
                                 }
                             }

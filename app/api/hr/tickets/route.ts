@@ -286,9 +286,16 @@ export async function GET(request: Request) {
         // Load organization escalation config to dynamically attach current level owners for tickets
         let flowAssigneesConfig: any = {};
         try {
-            const { data: orgSettings } = await supabaseAdmin
+            const targetOrgId = orgId || '211e1330-ad83-446d-941f-dcea48396798';
+            let orgSettingsQuery = supabaseAdmin
                 .from('organization_settings')
-                .select('hr_escalation_config, notification_matrix')
+                .select('hr_escalation_config, notification_matrix');
+
+            if (targetOrgId) {
+                orgSettingsQuery = orgSettingsQuery.eq('organization_id', targetOrgId);
+            }
+
+            const { data: orgSettings } = await orgSettingsQuery
                 .limit(1)
                 .maybeSingle();
 
@@ -512,9 +519,15 @@ export async function POST(request: Request) {
 
         // Check organization_settings to see if specific Level 1 assigned users were configured in Admin Config for this ticketType
         try {
-            const { data: orgSettings } = await supabaseAdmin
+            let orgSettingsQuery = supabaseAdmin
                 .from('organization_settings')
-                .select('hr_escalation_config, notification_matrix')
+                .select('hr_escalation_config, notification_matrix');
+
+            if (effectiveOrgId) {
+                orgSettingsQuery = orgSettingsQuery.eq('organization_id', effectiveOrgId);
+            }
+
+            const { data: orgSettings } = await orgSettingsQuery
                 .limit(1)
                 .maybeSingle();
 
