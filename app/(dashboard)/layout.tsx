@@ -3,6 +3,7 @@
 import { useAuth } from "@/frontend/context/AuthContext";
 import { useRouter, useParams, usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import { Menu } from "lucide-react";
 import { ContextBar } from "@/frontend/components/layout/ContextBar";
 import DashboardSidebar, { MobileHeader } from "@/frontend/components/layout/DashboardSidebar";
 import Loader from "@/frontend/components/ui/Loader";
@@ -19,9 +20,29 @@ export default function DashboardLayout({
     const router = useRouter();
     const params = useParams();
     const pathname = usePathname();
+    const [isSidebarOpen, setIsSidebarOpen] = useState(true);
     const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
     const wallpaper = useWallpaper();
     const isDark = useIsDark();
+
+    useEffect(() => {
+        try {
+            const saved = localStorage.getItem('dashboard_sidebar_open');
+            if (saved !== null) {
+                setIsSidebarOpen(saved === 'true');
+            }
+        } catch {}
+    }, []);
+
+    const toggleSidebar = (openState?: boolean) => {
+        setIsSidebarOpen(prev => {
+            const next = openState !== undefined ? openState : !prev;
+            try {
+                localStorage.setItem('dashboard_sidebar_open', String(next));
+            } catch {}
+            return next;
+        });
+    };
     // Wallpaper + chameleon theming are gated to CRM routes for now (test here,
     // then go global). Non-CRM modules keep the standard chrome.
     const isCrmRoute = pathname?.split('/').includes('crm') ?? false;
@@ -95,16 +116,34 @@ export default function DashboardLayout({
 
             {/* Sidebar */}
             <DashboardSidebar
+                isOpen={isSidebarOpen}
+                onClose={() => toggleSidebar(false)}
                 isMobileOpen={isMobileSidebarOpen}
                 onMobileClose={() => setIsMobileSidebarOpen(false)}
             />
 
+            {/* Fallback Floating Open Sidebar button if ContextBar is hidden on desktop */}
+            {!isSidebarOpen && hideContextBar && (
+                <button
+                    type="button"
+                    onClick={() => toggleSidebar(true)}
+                    className="hidden lg:flex fixed top-3 left-4 z-50 items-center justify-center p-2.5 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:text-[#587e85] border border-slate-200 dark:border-slate-800 rounded-xl shadow-md transition-all group active:scale-95 cursor-pointer"
+                    title="Open Sidebar"
+                    aria-label="Open Sidebar"
+                >
+                    <Menu className="w-4 h-4 text-[#587e85] group-hover:scale-110 transition-transform" />
+                </button>
+            )}
+
             {/* Main Content */}
-            <div className={`flex-1 flex flex-col min-w-0 pt-[56px] lg:pt-0 lg:pl-72 border-l border-slate-300 shadow-[-4px_0_12px_-4px_rgba(0,0,0,0.05)] relative z-10 ${wallpaperActive ? 'bg-transparent crm-chameleon' : 'bg-background'}`}>
+            <div className={`flex-1 flex flex-col min-w-0 pt-[56px] lg:pt-0 ${isSidebarOpen ? 'lg:pl-72' : 'lg:pl-0'} transition-[padding] duration-300 ease-in-out border-l border-slate-300 shadow-[-4px_0_12px_-4px_rgba(0,0,0,0.05)] relative z-10 ${wallpaperActive ? 'bg-transparent crm-chameleon' : 'bg-background'}`}>
                 {/* Context Bar - Hidden on mobile, shown on desktop */}
                 {!hideContextBar && (
                     <div className="hidden lg:block">
-                        <ContextBar />
+                        <ContextBar
+                            isSidebarOpen={isSidebarOpen}
+                            onToggleSidebar={() => toggleSidebar(true)}
+                        />
                     </div>
                 )}
 

@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname, useParams, useSearchParams } from 'next/navigation';
 import {
     LayoutDashboard, Users, Ticket, Package, Settings, LogOut,
-    Menu, X, GitMerge, Calendar, ShoppingCart, UsersRound, BarChart3,
+    Menu, X, ChevronLeft, GitMerge, Calendar, ShoppingCart, UsersRound, BarChart3,
     FileUp, Bot, Building2, Send, CalendarDays, Droplets, Coffee,
     Sparkles, DollarSign, ClipboardList, Target, TrendingUp,
     BellRing, HelpCircle, Megaphone, Radio, BookOpen, Smartphone, MessageSquarePlus,
@@ -18,15 +18,22 @@ import { useAuth } from '@/frontend/context/AuthContext';
 import FeedbackModal from '../ui/FeedbackModal';
 import { isBdSuperAdmin as checkBdSuperAdmin } from '@/frontend/constants/bdSuperAdmins';
 import SignOutModal from '../ui/SignOutModal';
-import ThemeToggle from '../ui/ThemeToggle';
 import { motion, AnimatePresence } from 'framer-motion';
+import NotificationBell from '@/frontend/components/dashboard/NotificationBell';
 
 interface DashboardSidebarProps {
+    isOpen?: boolean;
+    onClose?: () => void;
     isMobileOpen?: boolean;
     onMobileClose?: () => void;
 }
 
-export default function DashboardSidebar({ isMobileOpen, onMobileClose }: DashboardSidebarProps) {
+export default function DashboardSidebar({
+    isOpen = true,
+    onClose,
+    isMobileOpen,
+    onMobileClose
+}: DashboardSidebarProps) {
     const pathname = usePathname();
     const params = useParams();
     const searchParams = useSearchParams();
@@ -53,6 +60,14 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
     // because the label had only three branches and staff was the fallback. Their console
     // has a name; use it.
     const isOrgSuperAdmin = userRole === 'org_super_admin' || membership?.org_role === 'org_super_admin';
+    // External parties (tenants, external vendors) must not see employee HR grievance options.
+    const isExternalRole = Boolean(
+        rawRole && (
+            rawRole.includes('tenant') ||
+            rawRole.includes('vendor') ||
+            ['tenant', 'super_tenant', 'tenant_admin', 'vendor', 'maintenance_vendor', 'food_vendor', 'pantry_vendor', 'cafeteria_vendor', 'external_vendor'].includes(rawRole)
+        )
+    );
 
     // Finance (Petty Cash + Payment Tracker) now lives in its own Accounts
     // workspace chrome — it is no longer injected into this shared sidebar.
@@ -65,6 +80,7 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
         if (userRole === 'hr' || userRole === 'hr_head') {
             return [
                 { label: 'Requests & Grievances', href: `/${orgId}/hr-tickets?tab=tickets`, icon: Ticket, domain: 'tickets' as const },
+                { label: 'Notes Tracker', href: `/${orgId}/hr-tickets?tab=notes`, icon: FileText, domain: 'tickets' as const },
                 { label: 'Org Reporting Tree', href: `/${orgId}/hr-tickets?tab=tree`, icon: GitMerge, domain: 'tickets' as const },
                 { label: 'Employee Directory', href: `/${orgId}/hr-tickets?tab=directory`, icon: Users, domain: 'tickets' as const },
                 { label: 'Identity Reconciliation', href: `/${orgId}/hr-tickets?tab=reconciliation`, icon: UserCheck, domain: 'tickets' as const },
@@ -192,16 +208,23 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
 
             {/* Sidebar */}
             <aside className={`
-                fixed inset-y-0 left-0 z-40 w-72 h-screen bg-surface border-r border-border transform transition-transform duration-300 ease-in-out lg:translate-x-0
+                fixed inset-y-0 left-0 z-40 w-72 h-screen bg-surface border-r border-border transform transition-transform duration-300 ease-in-out
+                ${isOpen ? 'lg:translate-x-0' : 'lg:-translate-x-full'}
                 ${isMobileOpen ? 'translate-x-0' : '-translate-x-full'}
-                flex flex-col overflow-hidden
+                flex flex-col overflow-hidden shadow-xl lg:shadow-none
             `}>
-                {/* Mobile Close Button */}
+                {/* Collapse / Close Button (Desktop & Mobile) */}
                 <button
-                    onClick={onMobileClose}
-                    className="lg:hidden absolute top-4 right-4 p-2 rounded-xl bg-slate-50 text-slate-500 hover:bg-slate-100 transition-colors z-50 border border-slate-200"
+                    type="button"
+                    onClick={() => {
+                        onClose?.();
+                        onMobileClose?.();
+                    }}
+                    className="absolute top-4 right-3.5 p-1.5 rounded-xl bg-slate-100/90 hover:bg-slate-200 dark:bg-slate-800/90 dark:hover:bg-slate-700 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white transition-all z-50 border border-slate-200/80 dark:border-slate-700/80 shadow-2xs cursor-pointer group"
+                    title="Collapse Sidebar"
+                    aria-label="Collapse Sidebar"
                 >
-                    <X className="w-5 h-5" />
+                    <ChevronLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
                 </button>
 
                 <div className="p-6 pb-2 shrink-0">
@@ -225,7 +248,7 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
                         </p>
                     </div>
 
-                    {!isBDRole && (
+                    {!isExternalRole && (
                         <div className="mt-3 space-y-2">
                             <div className="flex items-center gap-1.5 px-1">
                                 <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
@@ -235,7 +258,7 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
                             </div>
                             <div className="grid grid-cols-3 gap-2">
                                 <Link
-                                    href={`/${orgId}/hr-tickets?action=create`}
+                                    href={isOrgSuperAdmin ? `/${orgId}/dashboard?tab=grievance&action=create` : `/${orgId}/hr-tickets?action=create`}
                                     className="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-[#587e85] hover:bg-[#48686e] text-white transition-all text-[10px] font-bold text-center gap-1 shadow-xs active:scale-95 border border-[#48686e]/40 h-13 min-w-0"
                                     title="Raise HR Request / Grievance"
                                 >
@@ -245,7 +268,7 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
                                 {(userRole === 'hr' || userRole === 'hr_head' || isOrgSuperAdmin) ? (
                                     <>
                                         <Link
-                                            href={`/${orgId}/hr-tickets?tab=directory&action=add`}
+                                            href={isOrgSuperAdmin ? `/${orgId}/dashboard?tab=grievance&subtab=directory&action=add` : `/${orgId}/hr-tickets?tab=directory&action=add`}
                                             className="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-[#f6f2ec] dark:bg-[#aa895f]/20 hover:bg-[#ede5d8] dark:hover:bg-[#aa895f]/30 text-[#8f6d3d] dark:text-[#c4a479] transition-all text-[10px] font-bold text-center gap-1 border border-[#d8c4a5] dark:border-[#aa895f]/40 active:scale-95 shadow-xs h-13 min-w-0"
                                             title="Add Employee Member"
                                         >
@@ -253,12 +276,31 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
                                             <span className="tracking-tight whitespace-nowrap leading-none">Member</span>
                                         </Link>
                                         <Link
-                                            href={`/${orgId}/hr-tickets?tab=config`}
+                                            href={isOrgSuperAdmin ? `/${orgId}/dashboard?tab=grievance&subtab=config` : `/${orgId}/hr-tickets?tab=config`}
                                             className="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-all text-[10px] font-bold text-center gap-1 border border-slate-200 dark:border-slate-700 active:scale-95 shadow-xs h-13 min-w-0"
                                             title="HR Admin Configuration"
                                         >
                                             <Settings className="w-4 h-4 shrink-0 text-slate-500 dark:text-slate-400" />
                                             <span className="tracking-tight whitespace-nowrap leading-none">Config</span>
+                                        </Link>
+                                    </>
+                                ) : isBDRole ? (
+                                    <>
+                                        <Link
+                                            href={`/${orgId}/hr-tickets?tab=tickets`}
+                                            className="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-[#f6f2ec] dark:bg-[#aa895f]/20 hover:bg-[#ede5d8] dark:hover:bg-[#aa895f]/30 text-[#8f6d3d] dark:text-[#c4a479] transition-all text-[10px] font-bold text-center gap-1 border border-[#d8c4a5] dark:border-[#aa895f]/40 active:scale-95 shadow-xs h-13 min-w-0"
+                                            title="My Grievances"
+                                        >
+                                            <ShieldCheck className="w-4 h-4 shrink-0 text-[#aa895f] dark:text-[#c4a479]" />
+                                            <span className="tracking-tight whitespace-nowrap leading-none">Grievance</span>
+                                        </Link>
+                                        <Link
+                                            href={`/${orgId}/crm/leads`}
+                                            className="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-all text-[10px] font-bold text-center gap-1 border border-slate-200 dark:border-slate-700 active:scale-95 shadow-xs h-13 min-w-0"
+                                            title="View Leads"
+                                        >
+                                            <UsersRound className="w-4 h-4 shrink-0 text-slate-500 dark:text-slate-400" />
+                                            <span className="tracking-tight whitespace-nowrap leading-none">Leads</span>
                                         </Link>
                                     </>
                                 ) : (
@@ -328,7 +370,7 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
                     })}
 
                     {/* SYSTEM & PERSONAL Section */}
-                    {!isBDRole && (
+                    {!isExternalRole && (
                         <div className="pt-3 mt-3 border-t border-slate-200/60 dark:border-slate-800 space-y-1">
                             <div className="flex items-center gap-2 px-2 py-1 mb-2">
                                 <span className="w-0.5 h-3.5 bg-[#587e85] rounded-full" />
@@ -338,16 +380,16 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
                             </div>
 
                             <Link
-                                href={`/${orgId}/hr-tickets?tab=tickets`}
+                                href={isOrgSuperAdmin ? `/${orgId}/dashboard?tab=grievance` : `/${orgId}/hr-tickets?tab=tickets`}
                                 onClick={handleLinkClick}
                                 className={`flex items-center gap-3 px-3.5 py-2 rounded-xl transition-all font-semibold text-xs sm:text-sm group ${
-                                    pathname?.includes('/hr-tickets') && (!currentTab || currentTab === 'tickets')
+                                    (isOrgSuperAdmin ? (pathname?.endsWith('/dashboard') && currentTab === 'grievance') : (pathname?.includes('/hr-tickets') && (!currentTab || currentTab === 'tickets')))
                                         ? 'bg-[#587e85] text-white shadow-xs font-bold'
                                         : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
                                 }`}
                             >
                                 <ShieldCheck className="w-4 h-4 shrink-0 transition-transform group-hover:scale-105" />
-                                <span className="truncate">My Grievances</span>
+                                <span className="truncate">{isOrgSuperAdmin ? 'HR & Grievances' : 'My Grievances'}</span>
                             </Link>
 
                             {(userRole !== 'hr' && userRole !== 'hr_head' && (isOrgSuperAdmin || userRole === 'property_admin')) && (
@@ -477,24 +519,24 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
                 </nav>
 
                 {/* Bottom Section */}
-                <div className="p-4 space-y-2 border-t border-slate-200/60 dark:border-slate-800 shrink-0 bg-surface mt-auto">
+                <div className="p-2.5 space-y-1.5 border-t border-slate-200/60 dark:border-slate-800 shrink-0 bg-surface mt-auto">
                     {/* User Profile */}
                     {!showBdChrome && (
-                        <div className="px-2 py-1">
-                            <div className="flex items-center gap-3">
+                        <div className="px-1.5 py-1">
+                            <div className="flex items-center gap-2.5">
                                 {user?.user_metadata?.user_photo_url || user?.user_metadata?.avatar_url ? (
                                     <img
                                         src={user.user_metadata.user_photo_url || user.user_metadata.avatar_url}
                                         alt="Profile"
-                                        className="w-10 h-10 rounded-full object-cover shrink-0 border border-slate-200"
+                                        className="w-8 h-8 rounded-full object-cover shrink-0 border border-slate-200"
                                     />
                                 ) : (
-                                    <div className="w-10 h-10 rounded-full bg-[#587e85] flex items-center justify-center text-white font-bold text-sm shrink-0 shadow-sm">
+                                    <div className="w-8 h-8 rounded-full bg-[#587e85] flex items-center justify-center text-white font-bold text-xs shrink-0 shadow-sm">
                                         {getUserInitials(user?.email || 'User')}
                                     </div>
                                 )}
                                 <div className="flex flex-col flex-1 min-w-0">
-                                    <span className="text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-200 truncate">
+                                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">
                                         {user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'User'}
                                     </span>
                                     <span className="text-[10px] text-slate-400 font-medium truncate">
@@ -505,15 +547,14 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
                         </div>
                     )}
 
-                    <div className="flex items-center justify-between pt-1">
+                    <div className="flex items-center justify-between pt-0.5">
                         <button
                             onClick={() => setShowSignOutModal(true)}
-                            className="flex items-center gap-2 px-2 py-1 text-slate-500 hover:text-red-600 transition-colors text-xs font-bold"
+                            className="flex items-center gap-1.5 px-1.5 py-1 text-slate-500 hover:text-red-600 transition-colors text-xs font-bold rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30"
                         >
-                            <LogOut className="w-4 h-4 shrink-0" />
+                            <LogOut className="w-3.5 h-3.5 shrink-0" />
                             <span>Sign Out</span>
                         </button>
-                        <ThemeToggle />
                     </div>
                 </div>
             </aside >
@@ -548,7 +589,9 @@ export function MobileHeader({ onMenuToggle }: { onMenuToggle: () => void }) {
                 <img src="/autopilot-logo-new.png" alt="Autopilot" className="h-7 w-auto object-contain" />
             </div>
 
-            <div className="w-11" /> {/* Spacer for centering */}
+            <div className="flex items-center justify-end">
+                <NotificationBell align="right" />
+            </div>
         </div>
     );
 }

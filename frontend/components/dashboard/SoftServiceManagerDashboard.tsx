@@ -69,7 +69,7 @@ const SoftServiceManagerDashboard: React.FC<SoftServiceManagerDashboardProps> = 
     // Sync tab with URL
     useEffect(() => {
         const tab = searchParams?.get('tab') as Tab;
-        if (tab && tab !== activeTab && ['stock', 'scanner', 'checklist', 'guest_experience', 'settings', 'profile'].includes(tab)) {
+        if (tab && tab !== activeTab && ['stock', 'scanner', 'checklist', 'guest_experience', 'settings', 'profile', 'grievance'].includes(tab)) {
             setActiveTab(tab);
         }
     }, [searchParams]);
@@ -200,6 +200,16 @@ const SoftServiceManagerDashboard: React.FC<SoftServiceManagerDashboardProps> = 
                             System & Personal
                         </p>
                         <div className="space-y-1">
+                            <button
+                                onClick={() => handleTabChange('grievance')}
+                                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'grievance'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                    }`}
+                            >
+                                <ShieldCheck className="w-4 h-4" />
+                                <span className="flex-1 text-left">My Grievances</span>
+                            </button>
                             <button
                                 onClick={() => handleTabChange('settings')}
                                 className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'settings'

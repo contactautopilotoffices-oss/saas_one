@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { NotificationService } from '@/backend/services/NotificationService';
-import { EmailService } from '@/backend/services/EmailService';
 import { getBookingDateTimeIST } from '@/backend/utils/timezone';
 
 /**
@@ -228,57 +227,14 @@ export async function POST(request: NextRequest) {
             }
         }
 
-        // Send email notification to attendee/guest if attendeeEmail was provided
-        if (attendeeEmail?.trim()) {
-            const attendeeEmails = attendeeEmail
-                .split(/[,;]+/)
-                .map((e: string) => e.trim())
-                .filter((e: string) => e && e.includes('@'));
-
-            if (attendeeEmails.length > 0) {
-                (async () => {
-                    try {
-                        const { data: roomData } = await supabaseAdmin
-                            .from('meeting_rooms')
-                            .select('name')
-                            .eq('id', meetingRoomId)
-                            .single();
-
-                        const { data: userData } = await supabaseAdmin
-                            .from('users')
-                            .select('full_name, email')
-                            .eq('id', user.id)
-                            .single();
-
-                        for (const emailTo of attendeeEmails) {
-                            await EmailService.sendMeetingRoomEmail({
-                                emailTo,
-                                roomName: roomData?.name || 'Meeting Room',
-                                date: cleanDate,
-                                startTime,
-                                endTime,
-                                propertyName: property?.name || 'Your Property',
-                                requesterName: userData?.full_name || 'Meeting Host',
-                                requesterEmail: userData?.email || user.email || 'N/A',
-                                isCancellation: false,
-                                comment: comment || null
-                            });
-                            console.log(`[Booking API] Meeting room booking notification email sent to attendee: ${emailTo}`);
-                        }
-                    } catch (emailErr) {
-                        console.error('[Booking API] Failed to send attendee notification email:', emailErr);
-                    }
-                })();
-            }
-        }
-
         // Trigger notification asynchronously
         NotificationService.afterRoomBooked(booking.id).catch(err => {
             console.error('[Booking API] Notification trigger error:', err);
         });
 
-        // Note: Email to Property Admins is now handled asynchronously via the Event Outbox 
-        // (Supabase Database Trigger -> webhook -> EventProcessor)
+        // Note: Email dispatch to attendees, booker, and property admins is handled asynchronously
+        // via the Event Outbox pattern (tr_meeting_room_booking_outbox_insert_update_delete -> EventProcessor)
+        // to prevent duplicate emails and reduce API request latency.
 
         return NextResponse.json({ success: true, booking }, { status: 201 });
     } catch (error) {

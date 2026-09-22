@@ -87,33 +87,21 @@ export async function POST(req: NextRequest) {
         // ── 4. Extract Payload Details ───────────────────────────────────────
         const dataObj = body.data || body.payload || body;
 
-        const rawPhone: string = 
-            dataObj.phone || 
-            dataObj.sender?.phone || 
-            dataObj.from || 
-            body.phone || 
-            '';
-
-        const senderPhone = rawPhone.replace(/\D/g, '');
+        const senderPhone = extractSenderPhone(dataObj, body);
 
         if (!senderPhone || senderPhone.length < 10) {
-            console.warn('[AISENSY WEBHOOK] Payload missing valid sender phone number');
-            return NextResponse.json({ ok: true, warning: 'No valid phone number found' });
+            console.warn('[AISENSY WEBHOOK] Payload missing valid sender phone number. Data:', JSON.stringify(dataObj));
+            return NextResponse.json({ ok: true, warning: 'No valid phone number found', receivedData: dataObj });
         }
 
-        const messageText: string = 
-            dataObj.message || 
-            dataObj.text || 
-            dataObj.caption || 
-            dataObj.message?.text || 
-            body.message || 
-            body.text || 
-            '';
+        const messageText: string = extractMessageText(dataObj, body);
 
         const rawType: string = (
             dataObj.messageType || 
+            dataObj.message_type || 
             dataObj.type || 
             dataObj.message?.type || 
+            dataObj.messages?.[0]?.type || 
             body.messageType || 
             body.type || 
             'text'
@@ -121,24 +109,33 @@ export async function POST(req: NextRequest) {
 
         const mediaUrl: string | null = 
             dataObj.mediaUrl || 
+            dataObj.media_url || 
             dataObj.media?.url || 
             dataObj.url || 
+            dataObj.message?.mediaUrl || 
             dataObj.message?.url || 
+            dataObj.messages?.[0]?.image?.url || 
+            dataObj.messages?.[0]?.document?.url || 
+            dataObj.messages?.[0]?.video?.url || 
             body.mediaUrl || 
             null;
 
         const messageId: string | null = 
             dataObj.messageId || 
+            dataObj.message_id || 
             dataObj.id || 
             dataObj.wamid || 
+            dataObj.message?.id || 
+            dataObj.messages?.[0]?.id || 
             body.messageId || 
+            body.id || 
             null;
 
         const isImage = rawType === 'image' || rawType === 'photo' || (!!mediaUrl && !rawType.includes('video'));
         const isVideo = rawType === 'video';
 
         if (!messageText && !mediaUrl) {
-            console.log('[AISENSY WEBHOOK] Empty message text and media - skipping');
+            console.log('[AISENSY WEBHOOK] Empty message text and media - skipping. Data:', JSON.stringify(dataObj));
             return NextResponse.json({ ok: true });
         }
 
@@ -187,3 +184,94 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'Internal server error', details: err?.message }, { status: 500 });
     }
 }
+
+// ── Helper Extractors ────────────────────────────────────────────────────────
+function extractSenderPhone(dataObj: any, body: any): string {
+    const candidate = 
+        dataObj?.phone || 
+        dataObj?.mobile || 
+        dataObj?.mobileNumber || 
+        dataObj?.mobile_number || 
+        dataObj?.phoneNumber || 
+        dataObj?.phone_number || 
+        dataObj?.userPhone || 
+        dataObj?.user_phone || 
+        dataObj?.customerPhone || 
+        dataObj?.customer_phone || 
+        dataObj?.senderPhone || 
+        dataObj?.sender_phone || 
+        dataObj?.waId || 
+        dataObj?.wa_id || 
+        dataObj?.from || 
+        dataObj?.sender?.phone || 
+        dataObj?.sender?.mobile || 
+        dataObj?.sender?.phone_number || 
+        dataObj?.sender?.mobileNumber || 
+        dataObj?.user?.phone || 
+        dataObj?.user?.mobile || 
+        dataObj?.contact?.phone || 
+        dataObj?.contacts?.[0]?.wa_id || 
+        dataObj?.contacts?.[0]?.phone || 
+        dataObj?.messages?.[0]?.from || 
+        body?.phone || 
+        body?.mobile || 
+        body?.from || 
+        body?.wa_id || 
+        '';
+
+    let cleaned = String(candidate || '').replace(/\D/g, '');
+    if (cleaned.length >= 10 && cleaned.length <= 15) {
+        return cleaned;
+    }
+
+    const recursivePhone = findPhoneInObject(dataObj) || findPhoneInObject(body);
+    if (recursivePhone) {
+        return recursivePhone.replace(/\D/g, '');
+    }
+
+    return '';
+}
+
+function findPhoneInObject(obj: any, depth = 0): string | null {
+    if (!obj || typeof obj !== 'object' || depth > 4) return null;
+    
+    for (const key of Object.keys(obj)) {
+        const val = obj[key];
+        const lowerKey = key.toLowerCase();
+        
+        if (typeof val === 'string' || typeof val === 'number') {
+            const digits = String(val).replace(/\D/g, '');
+            if (
+                (lowerKey.includes('phone') || lowerKey.includes('mobile') || lowerKey.includes('wa_id') || lowerKey.includes('from') || lowerKey.includes('sender')) &&
+                digits.length >= 10 && digits.length <= 15
+            ) {
+                return digits;
+            }
+        } else if (typeof val === 'object' && val !== null) {
+            const nested = findPhoneInObject(val, depth + 1);
+            if (nested) return nested;
+        }
+    }
+    return null;
+}
+
+function extractMessageText(dataObj: any, body: any): string {
+    return (
+        dataObj?.message || 
+        dataObj?.text || 
+        dataObj?.caption || 
+        dataObj?.messageText || 
+        dataObj?.message_text || 
+        dataObj?.body || 
+        dataObj?.content || 
+        dataObj?.message?.text || 
+        dataObj?.message?.body || 
+        dataObj?.message?.caption || 
+        dataObj?.messages?.[0]?.text?.body || 
+        dataObj?.messages?.[0]?.caption || 
+        body?.message || 
+        body?.text || 
+        ''
+    );
+}
+

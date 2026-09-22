@@ -1195,7 +1195,7 @@ export class NotificationService {
                 if (anyProp?.id) propertyId = anyProp.id;
             }
 
-            const { data: notification, error: notifError } = await supabaseAdmin
+            const { data: initialNotif, error: notifError } = await supabaseAdmin
                 .from('notifications')
                 .insert({
                     user_id: payload.userId,
@@ -1212,9 +1212,35 @@ export class NotificationService {
                 .select()
                 .single();
 
+            let notification = initialNotif;
             if (notifError) {
-                console.error('[NS] DB insert failed:', notifError.message);
-                return;
+                if (notifError.message?.includes('notifications_ticket_id_fkey') || notifError.code === '23503') {
+                    console.warn('[NS] FK constraint violation on ticket_id, retrying insert with ticket_id: null');
+                    const { data: retryNotif, error: retryErr } = await supabaseAdmin
+                        .from('notifications')
+                        .insert({
+                            user_id: payload.userId,
+                            ticket_id: null,
+                            booking_id: (payload.bookingId && payload.bookingId.trim()) ? payload.bookingId.trim() : null,
+                            property_id: propertyId,
+                            organization_id: (payload.organizationId && payload.organizationId.trim()) ? payload.organizationId.trim() : null,
+                            notification_type: payload.type,
+                            title: payload.title,
+                            message: payload.message,
+                            deep_link: payload.deepLink,
+                            is_read: false
+                        })
+                        .select()
+                        .single();
+                    if (retryErr) {
+                        console.error('[NS] DB insert fallback failed:', retryErr.message);
+                        return;
+                    }
+                    notification = retryNotif;
+                } else {
+                    console.error('[NS] DB insert failed:', notifError.message);
+                    return;
+                }
             }
 
             const { data: tokenRows } = await supabaseAdmin
@@ -1309,14 +1335,29 @@ export class NotificationService {
             is_read: false,
         }));
 
-        const { data: inserted, error: insertErr } = await supabaseAdmin
+        const { data: initialInserted, error: insertErr } = await supabaseAdmin
             .from('notifications')
             .insert(rows)
             .select();
 
+        let inserted = initialInserted;
         if (insertErr) {
-            console.error('[NS] sendToMany DB insert failed:', insertErr.message);
-            return;
+            if (insertErr.message?.includes('notifications_ticket_id_fkey') || insertErr.code === '23503') {
+                console.warn('[NS] sendToMany FK constraint violation on ticket_id, retrying insert with ticket_id: null');
+                const nullTicketRows = rows.map(r => ({ ...r, ticket_id: null }));
+                const { data: retryInserted, error: retryErr } = await supabaseAdmin
+                    .from('notifications')
+                    .insert(nullTicketRows)
+                    .select();
+                if (retryErr) {
+                    console.error('[NS] sendToMany DB insert fallback failed:', retryErr.message);
+                    return;
+                }
+                inserted = retryInserted;
+            } else {
+                console.error('[NS] sendToMany DB insert failed:', insertErr.message);
+                return;
+            }
         }
 
         const { data: tokenRows } = await supabaseAdmin
@@ -2730,12 +2771,15 @@ export class NotificationService {
                     deepLink: `/hr-tickets?tab=tickets&id=${ticket.id}`
                 });
             }
+
+            // Note: WhatsApp & Email dispatch are handled asynchronously via PostgreSQL database trigger
+            // (trg_hr_tickets_outbox -> public.event_outbox -> webhook/sweep-outbox -> WhatsAppEventProcessor)
         } catch (err) {
             console.error('[NotificationService] afterHrTicketCreated error:', err);
         }
     }
 
-    static async afterHrTicketEscalated(ticketId: string, fromLevel: number, toLevel: number, isSlaBreach: boolean = false, actorUserId?: string) {
+    static async afterHrTicketEscalated(ticketId: string, fromLevel: number, toLevel: number, isSlaBreach: boolean = false, actorUserId?: string | null) {
         try {
             const { data: ticket } = await supabaseAdmin
                 .from('hr_tickets')
@@ -2772,12 +2816,15 @@ export class NotificationService {
                     deepLink: `/hr-tickets?tab=tickets&id=${ticket.id}`
                 });
             }
+
+            // Note: WhatsApp Escalation dispatch is handled asynchronously via PostgreSQL database trigger
+            // (trg_hr_tickets_outbox -> public.event_outbox -> webhook/sweep-outbox -> WhatsAppEventProcessor)
         } catch (err) {
             console.error('[NotificationService] afterHrTicketEscalated error:', err);
         }
     }
 
-    static async afterHrTicketStatusUpdated(ticketId: string, oldStatus: string, newStatus: string, actorUserId?: string) {
+    static async afterHrTicketStatusUpdated(ticketId: string, oldStatus: string, newStatus: string, actorUserId?: string | null) {
         try {
             const { data: ticket } = await supabaseAdmin
                 .from('hr_tickets')
@@ -2802,6 +2849,9 @@ export class NotificationService {
                     deepLink: `/hr-tickets?tab=tickets&id=${ticket.id}`
                 });
             }
+
+            // Note: WhatsApp & Email resolution dispatch are handled asynchronously via PostgreSQL database trigger
+            // (trg_hr_tickets_outbox -> public.event_outbox -> webhook/sweep-outbox -> WhatsAppEventProcessor)
         } catch (err) {
             console.error('[NotificationService] afterHrTicketStatusUpdated error:', err);
         }
@@ -2816,22 +2866,99 @@ export class NotificationService {
                 .maybeSingle();
 
             if (!comment || !comment.ticket) return;
-            if (comment.is_internal) return; // Do not notify submitter on internal handler notes
 
             const ticket = comment.ticket;
-            const isSenderSubmitter = comment.sender_user_id === ticket.raised_by_user_id;
-            const recipientUserId = isSenderSubmitter ? ticket.assigned_to_user_id : ticket.raised_by_user_id;
+            const orgId = ticket.organization_id;
+            const deepLink = orgId ? `/${orgId}/hr-tickets?ticketId=${ticket.id}` : `/hr-tickets?ticketId=${ticket.id}`;
+            const snippet = comment.content.substring(0, 75) + (comment.content.length > 75 ? '...' : '');
 
-            if (recipientUserId) {
-                await this.send({
-                    userId: recipientUserId,
-                    organizationId: ticket.organization_id,
-                    type: 'HR_TICKET_COMMENT_ADDED',
-                    title: `New Reply on HR Ticket #${ticket.ticket_number}`,
-                    message: `Reply from ${comment.sender_name || 'User'}: "${comment.content.substring(0, 60)}${comment.content.length > 60 ? '...' : ''}"`,
-                    deepLink: `/hr-tickets?tab=tickets&id=${ticket.id}`
-                });
+            // 1. If INTERNAL NOTE: notify the assigned handler + HR authorities in the organization
+            // Strictly exclude internal notes from external WhatsApp / Email channels
+            if (comment.is_internal) {
+                const recipients = new Set<string>();
+                if (ticket.assigned_to_user_id && ticket.assigned_to_user_id !== comment.sender_user_id) {
+                    recipients.add(ticket.assigned_to_user_id);
+                }
+
+                if (orgId) {
+                    const { data: hrMembers } = await supabaseAdmin
+                        .from('organization_memberships')
+                        .select('user_id, org_role')
+                        .eq('organization_id', orgId)
+                        .in('org_role', ['hr', 'hr_head', 'hr_manager', 'org_admin', 'org_super_admin']);
+
+                    (hrMembers || []).forEach(m => {
+                        if (m.user_id && m.user_id !== comment.sender_user_id) {
+                            recipients.add(m.user_id);
+                        }
+                    });
+                }
+
+                for (const recipientId of Array.from(recipients)) {
+                    await this.send({
+                        userId: recipientId,
+                        organizationId: orgId,
+                        ticketId: ticket.id,
+                        type: 'HR_TICKET_INTERNAL_NOTE',
+                        title: `🔒 Internal Note: Ticket #${ticket.ticket_number}`,
+                        message: `${comment.sender_name || 'HR Handler'}: "${snippet}"`,
+                        deepLink
+                    });
+                }
+                return;
             }
+
+            // 2. If PUBLIC REPLY / COMMENT
+            const isSenderSubmitter = comment.sender_user_id === ticket.raised_by_user_id;
+
+            if (isSenderSubmitter) {
+                // Submitter replied -> notify assigned handler and HR authorities
+                const recipients = new Set<string>();
+                if (ticket.assigned_to_user_id && ticket.assigned_to_user_id !== comment.sender_user_id) {
+                    recipients.add(ticket.assigned_to_user_id);
+                }
+                if ((ticket.current_level >= 2 || !ticket.assigned_to_user_id) && orgId) {
+                    const { data: hrMembers } = await supabaseAdmin
+                        .from('organization_memberships')
+                        .select('user_id')
+                        .eq('organization_id', orgId)
+                        .in('org_role', ['hr', 'hr_head', 'hr_manager']);
+
+                    (hrMembers || []).forEach(m => {
+                        if (m.user_id && m.user_id !== comment.sender_user_id) {
+                            recipients.add(m.user_id);
+                        }
+                    });
+                }
+
+                for (const recipientId of Array.from(recipients)) {
+                    await this.send({
+                        userId: recipientId,
+                        organizationId: orgId,
+                        ticketId: ticket.id,
+                        type: 'HR_TICKET_COMMENT_ADDED',
+                        title: `💬 New Reply on #${ticket.ticket_number}`,
+                        message: `${comment.sender_name || 'Employee'}: "${snippet}"`,
+                        deepLink
+                    });
+                }
+            } else {
+                // Support / Handler replied -> notify the submitter
+                if (ticket.raised_by_user_id && ticket.raised_by_user_id !== comment.sender_user_id) {
+                    await this.send({
+                        userId: ticket.raised_by_user_id,
+                        organizationId: orgId,
+                        ticketId: ticket.id,
+                        type: 'HR_TICKET_COMMENT_ADDED',
+                        title: `💬 Reply from HR on #${ticket.ticket_number}`,
+                        message: `${comment.sender_name || 'HR Team'}: "${snippet}"`,
+                        deepLink
+                    });
+                }
+            }
+
+            // Note: WhatsApp dispatch for comments is handled asynchronously via PostgreSQL database trigger
+            // (trg_hr_ticket_discussion_outbox -> public.event_outbox -> webhook/sweep-outbox -> WhatsAppEventProcessor)
         } catch (err) {
             console.error('[NotificationService] afterHrTicketCommentAdded error:', err);
         }
@@ -2856,6 +2983,17 @@ export class NotificationService {
                 message: `Ticket "${ticket.subject}" has been assigned to your department reportee ${assigneeName}.`,
                 deepLink: `/hr-tickets?tab=tickets&id=${ticket.id}`
             });
+
+            // Dispatch WhatsApp Reportee Alert
+            const { WhatsAppEventProcessor } = await import('./WhatsAppEventProcessor');
+            WhatsAppEventProcessor.processEvent({
+                event_type: 'HR_TICKET_REPORTEE_ALERT',
+                payload: {
+                    ...ticket,
+                    manager_user_id: managerUserId,
+                    reportee_name: assigneeName
+                }
+            }).catch(e => console.error('[NotificationService] WhatsApp HR reportee alert error:', e));
         } catch (err) {
             console.error('[NotificationService] afterHrTicketCreatedForReportee error:', err);
         }
@@ -2884,6 +3022,13 @@ export class NotificationService {
                     deepLink: `/hr-tickets?tab=tickets&id=${ticket.id}`
                 });
             }
+
+            // Dispatch WhatsApp Acknowledged Closed
+            const { WhatsAppEventProcessor } = await import('./WhatsAppEventProcessor');
+            WhatsAppEventProcessor.processEvent({
+                event_type: 'HR_TICKET_ACKNOWLEDGED',
+                payload: ticket
+            }).catch(e => console.error('[NotificationService] WhatsApp HR ticket acknowledged error:', e));
         } catch (err) {
             console.error('[NotificationService] afterHrTicketAcknowledged error:', err);
         }

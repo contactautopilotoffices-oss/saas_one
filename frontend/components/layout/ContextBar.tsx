@@ -1,11 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useSearchParams, useRouter, usePathname } from 'next/navigation';
 import { useGlobalContext } from "@/frontend/context/GlobalContext";
-import { ChevronRight, Home, Building2, Layers, Search, ChevronDown, Check, X } from "lucide-react";
+import { ChevronRight, Home, Building2, Layers, Search, ChevronDown, Check, X, Menu } from "lucide-react";
 import { cn } from "@/backend/lib/utils";
 import { UniversalSearch } from "@/frontend/components/shared";
+import NotificationBell from "@/frontend/components/dashboard/NotificationBell";
 
-export function ContextBar() {
+interface ContextBarProps {
+    isSidebarOpen?: boolean;
+    onToggleSidebar?: () => void;
+}
+
+export function ContextBar({ isSidebarOpen = true, onToggleSidebar }: ContextBarProps = {}) {
     const { context, navigateUp, selectProperty, selectBuilding } = useGlobalContext();
     const params = useParams();
     const searchParams = useSearchParams();
@@ -100,6 +106,18 @@ export function ContextBar() {
     return (
         <div className="w-full h-12 md:h-14 border-b border-border bg-white/50 backdrop-blur-sm flex items-center px-4 md:px-8 z-40 sticky top-0">
             <div className="flex items-center min-w-0 overflow-x-auto hide-scrollbar">
+                {!isSidebarOpen && onToggleSidebar && (
+                    <button
+                        type="button"
+                        onClick={onToggleSidebar}
+                        className="mr-3 p-2 bg-slate-100 hover:bg-[#587e85] text-slate-700 hover:text-white dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-[#587e85] dark:hover:text-white rounded-xl border border-slate-200 dark:border-slate-700 transition-all shadow-2xs cursor-pointer group shrink-0"
+                        title="Open Sidebar"
+                        aria-label="Open Sidebar"
+                    >
+                        <Menu className="w-4 h-4 text-[#587e85] group-hover:text-white transition-colors shrink-0" />
+                    </button>
+                )}
+
                 {/* Organization (Always present) */}
                 <BreadcrumbItem
                     icon={Home}
@@ -251,8 +269,11 @@ export function ContextBar() {
                     </div>
                 )}
 
+                {/* Notification Bell */}
+                <NotificationBell align="right" />
+
                 {/* Status Indicator - Hidden on small mobile */}
-                <div className="hidden sm:flex items-center space-x-2">
+                <div className="hidden sm:flex items-center space-x-2 pl-2 border-l border-slate-200 dark:border-slate-800">
                     <span className="h-2 w-2 rounded-full bg-success"></span>
                     <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-widest">
                         <span className="hidden md:inline">System </span>Operational

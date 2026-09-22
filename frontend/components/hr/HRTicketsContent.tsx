@@ -19,12 +19,14 @@ import HRAdminConfigPanel from '@/frontend/components/hr/HRAdminConfigPanel';
 import HRAnalyticsDashboard from '@/frontend/components/hr/HRAnalyticsDashboard';
 import SLALiveTimer from '@/frontend/components/hr/SLALiveTimer';
 import HROrgChartTree from '@/frontend/components/hr/HROrgChartTree';
+import EmployeeQuickProfileModal, { EmployeeProfileModalData } from '@/frontend/components/hr/EmployeeQuickProfileModal';
+import HRNotesTrackerTab from '@/frontend/components/hr/HRNotesTrackerTab';
 
 export function HRTicketsContent({ orgId }: { orgId: string }) {
     const { user, membership } = useAuth();
     const searchParams = useSearchParams();
 
-    const [activeTab, setActiveTab] = useState<'tickets' | 'tree' | 'directory' | 'reconciliation' | 'config' | 'analytics'>('tickets');
+    const [activeTab, setActiveTab] = useState<'tickets' | 'notes' | 'tree' | 'directory' | 'reconciliation' | 'config' | 'analytics'>('tickets');
     const [viewMode, setViewMode] = useState<'kanban' | 'table' | 'properties'>('table');
 
     const [tickets, setTickets] = useState<any[]>([]);
@@ -48,6 +50,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
 
     const [isCreateOpen, setIsCreateOpen] = useState(false);
     const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
+    const [profileModalData, setProfileModalData] = useState<EmployeeProfileModalData | null>(null);
 
     // Searchable Property Dropdown state
     const [isPropertyDropdownOpen, setIsPropertyDropdownOpen] = useState(false);
@@ -55,14 +58,20 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
     const dropdownRef = useRef<HTMLDivElement>(null);
 
     const userRole = (user?.user_metadata?.role || membership?.org_role || membership?.properties?.[0]?.role || 'employee').toLowerCase();
-    const isHrAdmin = ['hr', 'hr_head', 'hr_manager', 'org_admin', 'org_super_admin', 'director'].includes(userRole);
+    const isOrgSuperAdmin = ['org_super_admin', 'master_admin', 'super_admin', 'ops_super_admin'].includes(userRole);
+    const isHrRole = ['hr', 'hr_head', 'hr_manager', 'hr_ops'].includes(userRole);
+    const isPropertyAdmin = userRole === 'property_admin';
+    const isOpsSuperAdmin = userRole === 'ops_super_admin';
+    const isScopedRole = !isOrgSuperAdmin && !isHrRole;
+    const canViewOrgWide = isOrgSuperAdmin || isHrRole;
+    const isHrAdmin = canViewOrgWide;
     const isManager = ['manager', 'reporting_manager', 'soft_service_manager', 'soft_service_supervisor', 'property_admin', 'building_admin', 'mst_manager', 'supervisor', 'ops_super_admin', 'org_admin'].includes(userRole);
 
     useEffect(() => {
-        if (!isHrAdmin && (viewMode === 'kanban' || viewMode === 'properties')) {
+        if (!canViewOrgWide && (viewMode === 'kanban' || viewMode === 'properties')) {
             setViewMode('table');
         }
-    }, [isHrAdmin, viewMode]);
+    }, [canViewOrgWide, viewMode]);
 
     useEffect(() => {
         fetchEmployeesList();
@@ -196,37 +205,58 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
 
     // Handle URL search params on mount
     useEffect(() => {
-        const tabParam = searchParams.get('tab');
+        const tabParam = searchParams.get('subtab') || searchParams.get('tab');
         const actionParam = searchParams.get('action');
         const propertyParam = searchParams.get('propertyId');
         const filterParam = searchParams.get('filter');
+        const ticketIdParam = searchParams.get('ticketId');
 
-        if (tabParam && ['tickets', 'tree', 'directory', 'reconciliation', 'config', 'analytics'].includes(tabParam)) {
+        if (tabParam && ['tickets', 'notes', 'tree', 'directory', 'reconciliation', 'config', 'analytics'].includes(tabParam)) {
             setActiveTab(tabParam as any);
         }
         if (actionParam === 'create') {
             setIsCreateOpen(true);
         }
-        if (filterParam && ['all', 'my_raised', 'assigned_to_me', 'department'].includes(filterParam)) {
+        if (ticketIdParam) {
+            setSelectedTicketId(ticketIdParam);
+        }
+        if (filterParam && ['all', 'my_raised', 'assigned_to_me', 'department', 'my_team_assigned'].includes(filterParam)) {
             setScopeFilter(filterParam as any);
-        } else if (isHrAdmin) {
-            setScopeFilter('all');
         } else {
-            setScopeFilter('assigned_to_me');
+            setScopeFilter('all');
         }
         setSelectedPropertyId(propertyParam || 'all');
-    }, [searchParams, isHrAdmin, isManager]);
+    }, [searchParams, canViewOrgWide, isManager]);
+
+    const handleNavigationTabSwitch = React.useCallback((newTab: 'tickets' | 'notes' | 'tree' | 'directory' | 'reconciliation' | 'config' | 'analytics') => {
+        setActiveTab(newTab);
+        if (typeof window !== 'undefined') {
+            const currentPath = window.location.pathname;
+            const params = new URLSearchParams(window.location.search);
+            if (currentPath.includes('/hr-tickets')) {
+                params.set('tab', newTab);
+                window.history.replaceState(null, '', `${currentPath}?${params.toString()}`);
+            } else {
+                // We are inside /dashboard?tab=grievance or other dashboard host
+                // NEVER change pathname so the Super Admin Console sidebar remains 100% stable
+                params.set('subtab', newTab);
+                window.history.replaceState(null, '', `${currentPath}?${params.toString()}`);
+            }
+        }
+    }, []);
 
     useEffect(() => {
         fetchProperties();
     }, [orgId]);
 
     useEffect(() => {
+        if (!user?.id) return;
         fetchTickets();
     }, [orgId, user?.id, userRole, selectedPropertyId]);
 
     // Real-time automatic background data refresh (every 10s & on window focus)
     useEffect(() => {
+        if (!user?.id) return;
         const interval = setInterval(() => {
             fetchTickets(true);
         }, 10000);
@@ -238,7 +268,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
             clearInterval(interval);
             window.removeEventListener('focus', handleFocus);
         };
-    }, [orgId, user?.id, selectedPropertyId]);
+    }, [orgId, user?.id, userRole, selectedPropertyId]);
 
     const fetchProperties = async () => {
         try {
@@ -277,11 +307,15 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
     };
 
     const fetchTickets = async (isBackground = false) => {
+        if (!user?.id) {
+            setLoading(false);
+            return;
+        }
         if (!isBackground && tickets.length === 0) setLoading(true);
         try {
             const url = new URL('/api/hr/tickets', window.location.origin);
             url.searchParams.append('orgId', orgId);
-            if (user?.id) url.searchParams.append('userId', user.id);
+            url.searchParams.append('userId', user.id);
             url.searchParams.append('role', userRole);
             if (selectedPropertyId !== 'all') {
                 url.searchParams.append('propertyId', selectedPropertyId);
@@ -417,7 +451,9 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         pendingGrievancesCount,
         hrQueriesCount,
         confidentialCount,
-        overdueCount
+        overdueCount,
+        myRaisedCount,
+        teamTicketsCount
     } = useMemo(() => {
         const total = tickets.length;
         const assignedToYou = tickets.filter(t => isDirectlyAssignedToMe(t)).length;
@@ -429,6 +465,27 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         const confidential = tickets.filter(t => isConfidential(t)).length;
         const overdue = tickets.filter(t => t.sla_due_at && new Date(t.sla_due_at) < new Date() && !['resolved', 'closed'].includes(t.status)).length;
 
+        const myRaised = tickets.filter(t => 
+            t.raised_by_user_id === user?.id || 
+            t.raised_by?.email === user?.email ||
+            (userEmpProfile && (t.raised_by_user_id === userEmpProfile.id || (userEmpProfile.employee_code && t.employee_snapshot?.code === userEmpProfile.employee_code)))
+        ).length;
+
+        const teamTickets = tickets.filter(t => 
+            !t.is_anonymous && !t.is_confidential && t.ticket_type !== 'confidential_feedback' && t.ticket_type !== 'confidential' && (
+                Array.from(reporteeUserIds).some(rid => {
+                    const profileObj = employeesList.find(e => (e.user_id || e.id) === rid || e.employee_code === rid);
+                    return isTicketAssignedToUser(t, rid, profileObj?.email, profileObj) ||
+                           t.raised_by_user_id === rid ||
+                           (profileObj?.user_id && t.raised_by_user_id === profileObj.user_id) ||
+                           (profileObj?.email && t.raised_by?.email?.toLowerCase() === profileObj.email.toLowerCase()) ||
+                           (profileObj?.employee_code && t.employee_snapshot?.code === profileObj.employee_code);
+                }) ||
+                reporteeUserIds.has(t.assigned_to_user_id) || 
+                reporteeUserIds.has(t.raised_by_user_id)
+            )
+        ).length;
+
         return {
             totalCount: total,
             assignedToYouCount: assignedToYou,
@@ -437,13 +494,20 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
             pendingGrievancesCount: pendingGrievances,
             hrQueriesCount: queries,
             confidentialCount: confidential,
-            overdueCount: overdue
+            overdueCount: overdue,
+            myRaisedCount: myRaised,
+            teamTicketsCount: teamTickets
         };
-    }, [tickets, isDirectlyAssignedToMe, isGrievance, isHRQuery, isConfidential]);
+    }, [tickets, isDirectlyAssignedToMe, isCurrentlyAssignedToMe, isGrievance, isHRQuery, isConfidential, user, userEmpProfile, reporteeUserIds, employeesList, isTicketAssignedToUser]);
 
     // Filter tickets based on UI search, scope, type, and status filters
     const filteredTickets = tickets.filter(t => {
-        if (scopeFilter === 'my_raised' && t.raised_by_user_id !== user?.id && t.raised_by?.email !== user?.email) return false;
+        if (scopeFilter === 'my_raised') {
+            const isMyRaised = t.raised_by_user_id === user?.id || 
+                               t.raised_by?.email === user?.email ||
+                               (userEmpProfile && (t.raised_by_user_id === userEmpProfile.id || (userEmpProfile.employee_code && t.employee_snapshot?.code === userEmpProfile.employee_code)));
+            if (!isMyRaised) return false;
+        }
         if (scopeFilter === 'assigned_to_me' && !isDirectlyAssignedToMe(t)) return false;
         if (scopeFilter === 'department' || scopeFilter === 'my_team_assigned') {
             if (selectedReporteeId !== 'all') {
@@ -470,11 +534,15 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                 const uid = selectedDepartmentUserId;
                 if (!isTicketAssignedToUser(t, uid, '', null)) return false;
             } else {
-                const isReporteeAssigned = Array.from(reporteeUserIds).some(rid => {
-                    const profileObj = employeesList.find(e => (e.user_id || e.id) === rid);
-                    return isTicketAssignedToUser(t, rid, profileObj?.email, profileObj);
+                const isReporteeInvolved = Array.from(reporteeUserIds).some(rid => {
+                    const profileObj = employeesList.find(e => (e.user_id || e.id) === rid || e.employee_code === rid);
+                    return isTicketAssignedToUser(t, rid, profileObj?.email, profileObj) ||
+                           t.raised_by_user_id === rid ||
+                           (profileObj?.user_id && t.raised_by_user_id === profileObj.user_id) ||
+                           (profileObj?.email && t.raised_by?.email?.toLowerCase() === profileObj.email.toLowerCase()) ||
+                           (profileObj?.employee_code && t.employee_snapshot?.code === profileObj.employee_code);
                 });
-                if (!isReporteeAssigned && !reporteeUserIds.has(t.assigned_to_user_id)) return false;
+                if (!isReporteeInvolved && !reporteeUserIds.has(t.assigned_to_user_id) && !reporteeUserIds.has(t.raised_by_user_id)) return false;
             }
         }
         if (scopeFilter === 'all' && selectedAssigneeFilter !== 'all') {
@@ -493,10 +561,12 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
             return false;
         }
 
-        // Status Filter from KPI Cards / Dropdown
+        // Status Filter from KPI Cards / Dropdown / Scope Pills
         if (statusFilter === 'overdue') {
             const isOverdue = Boolean(t.sla_due_at && new Date(t.sla_due_at) < new Date() && !['resolved', 'closed'].includes(t.status));
             if (!isOverdue) return false;
+        } else if (statusFilter === 'pending') {
+            if (['resolved', 'closed'].includes(t.status)) return false;
         } else if (statusFilter !== 'all' && t.status !== statusFilter) {
             return false;
         }
@@ -542,6 +612,87 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         
         return 'Manager / HR';
     }, [employeesList]);
+
+    const getInitials = (name: string) => {
+        if (!name) return 'U';
+        const parts = name.trim().split(/\s+/);
+        if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+        return name.slice(0, 2).toUpperCase();
+    };
+
+    const openSubmitterProfile = (t: any) => {
+        if (t.is_anonymous) {
+            setProfileModalData({
+                isOpen: true,
+                type: 'submitter',
+                ticket: t,
+                employee: {
+                    is_anonymous: true,
+                    name: 'Anonymous Employee',
+                    employee_code: 'Hidden',
+                    department: 'Confidential',
+                    location: 'Hidden',
+                    designation: 'Masked Identity',
+                    email: 'anonymous@hidden.local',
+                    phone: 'Hidden',
+                    manager_name: 'Hidden'
+                }
+            });
+            return;
+        }
+        const emp = employeesList.find(e => 
+            (e.user_id && e.user_id === t.raised_by_user_id) || 
+            (e.id && e.id === t.raised_by_user_id) || 
+            (e.email && e.email.toLowerCase() === t.raised_by?.email?.toLowerCase()) ||
+            (e.employee_code && e.employee_code === t.employee_snapshot?.code)
+        );
+        const sName = t.employee_snapshot?.name || (emp ? `${emp.first_name || ''} ${emp.last_name || ''}`.trim() || emp.full_name || emp.name : t.raised_by?.full_name || 'Employee');
+        setProfileModalData({
+            isOpen: true,
+            type: 'submitter',
+            ticket: t,
+            employee: {
+                is_anonymous: false,
+                name: sName,
+                employee_code: emp?.employee_code || t.employee_snapshot?.code || 'N/A',
+                department: emp?.department || t.employee_snapshot?.department || 'Operations',
+                location: emp?.property_name || emp?.location || t.employee_snapshot?.location || 'Site',
+                designation: emp?.designation || t.employee_snapshot?.designation || 'Staff',
+                email: t.raised_by?.email || emp?.email || 'N/A',
+                phone: t.raised_by?.phone || emp?.phone || 'N/A',
+                manager_name: emp?.reporting_manager_name || t.employee_snapshot?.manager_name || 'N/A',
+                photo_url: emp?.user_photo_url || emp?.photo_url || emp?.avatar_url || t.raised_by?.raw_user_meta_data?.user_photo_url || t.raised_by?.raw_user_meta_data?.avatar_url || null
+            }
+        });
+    };
+
+    const openHandlerProfile = (t: any) => {
+        const handlerUserId = t.assigned_to_user_id || t.assigned_to_id;
+        const emp = employeesList.find(e => 
+            (handlerUserId && (e.user_id === handlerUserId || e.id === handlerUserId)) ||
+            (t.assigned_to?.email && e.email?.toLowerCase() === t.assigned_to.email.toLowerCase())
+        );
+        const handlerName = t.current_level_owner || t.assigned_to_details?.full_name || t.assigned_to?.full_name || (emp ? `${emp.first_name || ''} ${emp.last_name || ''}`.trim() || emp.full_name || emp.name : 'Manager / HR');
+
+        setProfileModalData({
+            isOpen: true,
+            type: 'handler',
+            ticket: t,
+            employee: {
+                name: handlerName,
+                employee_code: emp?.employee_code || t.assigned_to_details?.code || 'N/A',
+                level: t.current_level,
+                level_status: t.status === 'escalated' ? 'Escalated Active' : 'Active Owner',
+                department: t.assigned_to_details?.department || emp?.department || 'HR & Operations',
+                location: t.assigned_to_details?.location || emp?.property_name || emp?.location || 'Head Office',
+                app_role: t.assigned_to_details?.app_role || emp?.role || 'hr_head',
+                designation: t.assigned_to_details?.employee_role || emp?.designation || 'Designated Authority',
+                email: t.assigned_to_details?.email || t.assigned_to?.email || emp?.email || 'N/A',
+                phone: t.assigned_to_details?.phone || t.assigned_to?.phone || emp?.phone || 'N/A',
+                photo_url: t.assigned_to_details?.photo_url || emp?.user_photo_url || emp?.photo_url || emp?.avatar_url || t.assigned_to?.raw_user_meta_data?.user_photo_url || null
+            }
+        });
+    };
 
     // Memoized Dropdown Options for Searchable Interactive Select Dropdowns
     const reporteeDropdownOptions = useMemo(() => {
@@ -617,24 +768,68 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
             totalCount: tickets.length
         };
 
-        const empOpts = employeesList.map(emp => {
+        // Dynamically collect all potential assignees from tickets as well as employeesList
+        const assigneeMap = new Map<string, { id: string; name: string; email?: string; code?: string; role?: string; department?: string }>();
+
+        // 1. Add employees (for Org Super Admin & HR: whole org; for scoped users: self & team reportees)
+        const sourceEmps = canViewOrgWide ? employeesList : [userEmpProfile, ...myDepartmentReportees].filter(Boolean);
+        sourceEmps.forEach((emp: any) => {
             const uid = emp.user_id || emp.id;
+            if (!uid) return;
+            const name = `${emp.first_name || ''} ${emp.last_name || ''}`.trim() || emp.full_name || emp.name || emp.email;
+            assigneeMap.set(uid, {
+                id: uid,
+                name,
+                email: emp.email,
+                code: emp.employee_code,
+                role: emp.designation || 'Staff',
+                department: emp.department || 'Operations'
+            });
+        });
+
+        // 2. Dynamically add any assignee referenced in tickets
+        tickets.forEach(t => {
+            const uid = t.assigned_to_user_id || t.assigned_to_id;
+            if (uid && !assigneeMap.has(uid)) {
+                const name = getTicketAssigneeName(t);
+                assigneeMap.set(uid, {
+                    id: uid,
+                    name,
+                    email: t.assigned_to?.email,
+                    role: t.assigned_to_details?.app_role || t.assigned_to_details?.employee_role || 'Assignee',
+                    department: t.assigned_to_details?.department || 'Operations'
+                });
+            }
+        });
+
+        const empOpts = Array.from(assigneeMap.values()).map(emp => {
+            const uid = emp.id;
             const empTickets = tickets.filter(t => isTicketAssignedToUser(t, uid, emp.email, emp));
             const empPendingTickets = empTickets.filter(t => !['resolved', 'closed'].includes(t.status));
             const empPendingAssignees = Array.from(
                 new Set(empPendingTickets.map(t => getTicketAssigneeName(t)).filter(Boolean))
             );
-            const empName = `${emp.first_name || ''} ${emp.last_name || ''}`.trim() || emp.full_name || emp.name || emp.email;
 
             return {
                 id: uid,
-                label: empName,
-                subLabel: `${emp.designation || 'Staff'} • ${emp.department || 'Operations'}`,
-                code: emp.employee_code,
+                label: emp.name,
+                subLabel: `${emp.role || 'Staff'} • ${emp.department || 'Operations'}`,
+                code: emp.code,
                 pendingCount: empPendingTickets.length,
                 pendingAssignees: empPendingAssignees,
                 totalCount: empTickets.length
             };
+        });
+
+        // Sort dynamically: Assignees with pending actions first (descending), then with any tickets, then rest alphabetically
+        empOpts.sort((a, b) => {
+            if (b.pendingCount !== a.pendingCount) {
+                return b.pendingCount - a.pendingCount;
+            }
+            if (b.totalCount !== a.totalCount) {
+                return b.totalCount - a.totalCount;
+            }
+            return a.label.localeCompare(b.label);
         });
 
         return [allOpt, ...empOpts];
@@ -794,7 +989,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                             <ShieldCheck className="w-5 h-5" />
                         </div>
                         <h1 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white tracking-tight">
-                            {activeTab === 'tree' ? 'Organization Reporting Tree & Workload Inspector' : isHrAdmin ? 'HR Helpdesk & Grievances' : isManager ? 'Team Grievance Requests' : 'My Requests & Grievances'}
+                            {activeTab === 'notes' ? 'HR Notes & Remarks Ledger' : activeTab === 'tree' ? 'Organization Reporting Tree & Workload Inspector' : isHrAdmin ? 'HR Helpdesk & Grievances' : isManager ? 'Team Grievance Requests' : 'My Requests & Grievances'}
                         </h1>
                     </div>
                 </div>
@@ -810,6 +1005,102 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                     </button>
                 </div>
             </div>
+
+            {/* HR Console Navigation Tabs (Visible for Org Super Admin and HR Team) */}
+            {canViewOrgWide && (
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none border-b border-slate-200 dark:border-slate-800">
+                    <button
+                        type="button"
+                        onClick={() => handleNavigationTabSwitch('tickets')}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all shrink-0 ${
+                            activeTab === 'tickets'
+                                ? 'bg-[#587e85] text-white shadow-xs'
+                                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                        }`}
+                    >
+                        <Ticket className="w-3.5 h-3.5" />
+                        <span>Requests & Grievances</span>
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={() => handleNavigationTabSwitch('notes')}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all shrink-0 ${
+                            activeTab === 'notes'
+                                ? 'bg-[#587e85] text-white shadow-xs'
+                                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                        }`}
+                    >
+                        <FileText className="w-3.5 h-3.5" />
+                        <span>Notes Tracker</span>
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={() => handleNavigationTabSwitch('tree')}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all shrink-0 ${
+                            activeTab === 'tree'
+                                ? 'bg-[#587e85] text-white shadow-xs'
+                                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                        }`}
+                    >
+                        <GitFork className="w-3.5 h-3.5" />
+                        <span>Org Reporting Tree</span>
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={() => handleNavigationTabSwitch('directory')}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all shrink-0 ${
+                            activeTab === 'directory'
+                                ? 'bg-[#587e85] text-white shadow-xs'
+                                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                        }`}
+                    >
+                        <Users className="w-3.5 h-3.5" />
+                        <span>Employee Directory</span>
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={() => handleNavigationTabSwitch('reconciliation')}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all shrink-0 ${
+                            activeTab === 'reconciliation'
+                                ? 'bg-[#587e85] text-white shadow-xs'
+                                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                        }`}
+                    >
+                        <UserCheck className="w-3.5 h-3.5" />
+                        <span>Identity Reconciliation</span>
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={() => handleNavigationTabSwitch('config')}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all shrink-0 ${
+                            activeTab === 'config'
+                                ? 'bg-[#587e85] text-white shadow-xs'
+                                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                        }`}
+                    >
+                        <Settings className="w-3.5 h-3.5" />
+                        <span>Admin Config</span>
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={() => handleNavigationTabSwitch('analytics')}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all shrink-0 ${
+                            activeTab === 'analytics'
+                                ? 'bg-[#587e85] text-white shadow-xs'
+                                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                        }`}
+                    >
+                        <Layers className="w-3.5 h-3.5" />
+                        <span>Analytics</span>
+                    </button>
+                </div>
+            )}
 
             {/* TAB 1: ORGANIZATION REPORTING TREE & WORKLOAD INSPECTOR */}
             {activeTab === 'tree' && (
@@ -1169,157 +1460,171 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                 </div>
             )}
 
-            {/* TAB 2: HR ADMIN KPI STAT CARDS (Shown ONLY to HR Admins on tickets tab) */}
-            {activeTab === 'tickets' && isHrAdmin && (
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
-                    <div
-                        onClick={() => { setActiveTab('tickets'); setScopeFilter('assigned_to_me'); setTicketTypeFilter('all'); setStatusFilter('all'); }}
-                        className={`p-4 bg-white dark:bg-slate-900 rounded-2xl border transition-all cursor-pointer group shadow-2xs hover:shadow-md ${
-                            scopeFilter === 'assigned_to_me'
-                                ? 'border-l-4 border-l-amber-500 border-slate-200 dark:border-slate-800 bg-amber-50/20 dark:bg-amber-950/10'
-                                : 'border-slate-200 dark:border-slate-800 hover:border-amber-400'
-                        }`}
-                    >
-                        <div className="flex items-center justify-between gap-2">
-                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">Assigned To You</span>
-                            <div className="w-8 h-8 rounded-xl bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 border border-amber-200/60 dark:border-amber-900/60 flex items-center justify-center shrink-0">
-                                <ShieldCheck className="w-4 h-4" />
-                            </div>
-                        </div>
-                        <p className="text-2xl font-black text-slate-900 dark:text-white mt-2 tracking-tight">{assignedToYouCount}</p>
-                        <p className="text-[11px] font-medium text-amber-600 dark:text-amber-400 mt-0.5">
-                            {assignedPendingCount > 0 ? `${assignedPendingCount} pending action` : '0 pending action'}
-                        </p>
-                    </div>
+            {/* TAB 2: HR ADMIN, OPS SUPER ADMIN & PROPERTY ADMIN KPI STAT CARDS */}
+            {activeTab === 'tickets' && (canViewOrgWide || isManager || isScopedRole) && (() => {
+                const isStrictOrgSuperAdmin = ['org_super_admin', 'master_admin', 'super_admin'].includes(userRole);
+                const showHrQueries = isStrictOrgSuperAdmin || isHrRole || hrQueriesCount > 0;
+                const showConfidential = isStrictOrgSuperAdmin || confidentialCount > 0;
+                const totalKpiCards = 4 + (showHrQueries ? 1 : 0) + (showConfidential ? 1 : 0);
+                const gridColsClass = totalKpiCards === 6 ? 'lg:grid-cols-6' : totalKpiCards === 5 ? 'lg:grid-cols-5' : 'lg:grid-cols-4';
 
-                    <div
-                        onClick={() => { setActiveTab('tickets'); setScopeFilter('all'); setTicketTypeFilter('all'); setStatusFilter('all'); }}
-                        className={`p-4 bg-white dark:bg-slate-900 rounded-2xl border transition-all cursor-pointer group shadow-2xs hover:shadow-md ${
-                            scopeFilter === 'all' && ticketTypeFilter === 'all' && statusFilter === 'all'
-                                ? 'border-l-4 border-l-[#587e85] border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/20'
-                                : 'border-slate-200 dark:border-slate-800 hover:border-[#587e85]'
-                        }`}
-                    >
-                        <div className="flex items-center justify-between gap-2">
-                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">Total Requests</span>
-                            <div className="w-8 h-8 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 border border-indigo-200/60 dark:border-indigo-900/60 flex items-center justify-center shrink-0">
-                                <Ticket className="w-4 h-4" />
+                return (
+                    <div className={`grid grid-cols-2 sm:grid-cols-3 ${gridColsClass} gap-3 sm:gap-4`}>
+                        <div
+                            onClick={() => { setActiveTab('tickets'); setScopeFilter('assigned_to_me'); setTicketTypeFilter('all'); setStatusFilter('all'); }}
+                            className={`p-4 bg-white dark:bg-slate-900 rounded-2xl border transition-all cursor-pointer group shadow-2xs hover:shadow-md ${
+                                scopeFilter === 'assigned_to_me'
+                                    ? 'border-l-4 border-l-amber-500 border-slate-200 dark:border-slate-800 bg-amber-50/20 dark:bg-amber-950/10'
+                                    : 'border-slate-200 dark:border-slate-800 hover:border-amber-400'
+                            }`}
+                        >
+                            <div className="flex items-center justify-between gap-2">
+                                <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">Assigned To You</span>
+                                <div className="w-8 h-8 rounded-xl bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 border border-amber-200/60 dark:border-amber-900/60 flex items-center justify-center shrink-0">
+                                    <ShieldCheck className="w-4 h-4" />
+                                </div>
                             </div>
+                            <p className="text-2xl font-black text-slate-900 dark:text-white mt-2 tracking-tight">{assignedToYouCount}</p>
+                            <p className="text-[11px] font-medium text-amber-600 dark:text-amber-400 mt-0.5">
+                                {assignedPendingCount > 0 ? `${assignedPendingCount} pending action` : '0 pending action'}
+                            </p>
                         </div>
-                        <p className="text-2xl font-black text-slate-900 dark:text-white mt-2 tracking-tight">{totalCount}</p>
-                        <p className="text-[11px] font-medium text-slate-400 mt-0.5">Across properties</p>
-                    </div>
 
-                    <div
-                        onClick={() => { setActiveTab('tickets'); setTicketTypeFilter('grievance'); setStatusFilter('all'); }}
-                        className={`p-4 bg-white dark:bg-slate-900 rounded-2xl border transition-all cursor-pointer group shadow-2xs hover:shadow-md ${
-                            ticketTypeFilter === 'grievance'
-                                ? 'border-l-4 border-l-amber-500 border-slate-200 dark:border-slate-800 bg-amber-50/20 dark:bg-amber-950/10'
-                                : 'border-slate-200 dark:border-slate-800 hover:border-amber-400'
-                        }`}
-                    >
-                        <div className="flex items-center justify-between gap-2">
-                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">Grievances</span>
-                            <div className="w-8 h-8 rounded-xl bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 border border-amber-200/60 dark:border-amber-900/60 flex items-center justify-center shrink-0">
-                                <ShieldCheck className="w-4 h-4" />
+                        <div
+                            onClick={() => { setActiveTab('tickets'); setScopeFilter('all'); setTicketTypeFilter('all'); setStatusFilter('all'); }}
+                            className={`p-4 bg-white dark:bg-slate-900 rounded-2xl border transition-all cursor-pointer group shadow-2xs hover:shadow-md ${
+                                (scopeFilter === 'all' || (!canViewOrgWide && scopeFilter === 'assigned_to_me')) && ticketTypeFilter === 'all' && statusFilter === 'all'
+                                    ? 'border-l-4 border-l-[#587e85] border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/20'
+                                    : 'border-slate-200 dark:border-slate-800 hover:border-[#587e85]'
+                            }`}
+                        >
+                            <div className="flex items-center justify-between gap-2">
+                                <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">Total Requests</span>
+                                <div className="w-8 h-8 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 border border-indigo-200/60 dark:border-indigo-900/60 flex items-center justify-center shrink-0">
+                                    <Ticket className="w-4 h-4" />
+                                </div>
                             </div>
+                            <p className="text-2xl font-black text-slate-900 dark:text-white mt-2 tracking-tight">{totalCount}</p>
+                            <p className="text-[11px] font-medium text-slate-400 mt-0.5">{canViewOrgWide ? 'Across organization' : 'Team & Assigned Workload'}</p>
                         </div>
-                        <p className="text-2xl font-black text-slate-900 dark:text-white mt-2 tracking-tight">{openGrievancesCount}</p>
-                        <p className="text-[11px] font-medium text-amber-600 dark:text-amber-400 mt-0.5">
-                            {pendingGrievancesCount > 0 ? `${pendingGrievancesCount} pending` : 'All resolved'}
-                        </p>
-                    </div>
 
-                    <div
-                        onClick={() => { setActiveTab('tickets'); setTicketTypeFilter('hr_query'); setStatusFilter('all'); }}
-                        className={`p-4 bg-white dark:bg-slate-900 rounded-2xl border transition-all cursor-pointer group shadow-2xs hover:shadow-md ${
-                            ticketTypeFilter === 'hr_query'
-                                ? 'border-l-4 border-l-blue-500 border-slate-200 dark:border-slate-800 bg-blue-50/20 dark:bg-blue-950/10'
-                                : 'border-slate-200 dark:border-slate-800 hover:border-blue-400'
-                        }`}
-                    >
-                        <div className="flex items-center justify-between gap-2">
-                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">HR Queries</span>
-                            <div className="w-8 h-8 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200/60 dark:border-blue-900/60 flex items-center justify-center shrink-0">
-                                <HelpCircle className="w-4 h-4" />
+                        <div
+                            onClick={() => { setActiveTab('tickets'); setTicketTypeFilter('grievance'); setStatusFilter('all'); }}
+                            className={`p-4 bg-white dark:bg-slate-900 rounded-2xl border transition-all cursor-pointer group shadow-2xs hover:shadow-md ${
+                                ticketTypeFilter === 'grievance'
+                                    ? 'border-l-4 border-l-amber-500 border-slate-200 dark:border-slate-800 bg-amber-50/20 dark:bg-amber-950/10'
+                                    : 'border-slate-200 dark:border-slate-800 hover:border-amber-400'
+                            }`}
+                        >
+                            <div className="flex items-center justify-between gap-2">
+                                <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">Grievances</span>
+                                <div className="w-8 h-8 rounded-xl bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 border border-amber-200/60 dark:border-amber-900/60 flex items-center justify-center shrink-0">
+                                    <ShieldCheck className="w-4 h-4" />
+                                </div>
                             </div>
+                            <p className="text-2xl font-black text-slate-900 dark:text-white mt-2 tracking-tight">{openGrievancesCount}</p>
+                            <p className="text-[11px] font-medium text-amber-600 dark:text-amber-400 mt-0.5">
+                                {pendingGrievancesCount > 0 ? `${pendingGrievancesCount} pending` : 'All resolved'}
+                            </p>
                         </div>
-                        <p className="text-2xl font-black text-slate-900 dark:text-white mt-2 tracking-tight">{hrQueriesCount}</p>
-                        <p className="text-[11px] font-medium text-blue-600 dark:text-blue-400 mt-0.5">Direct HR Support</p>
-                    </div>
 
-                    <div
-                        onClick={() => { setActiveTab('tickets'); setTicketTypeFilter('confidential'); setStatusFilter('all'); }}
-                        className={`p-4 bg-white dark:bg-slate-900 rounded-2xl border transition-all cursor-pointer group shadow-2xs hover:shadow-md ${
-                            ticketTypeFilter === 'confidential'
-                                ? 'border-l-4 border-l-purple-500 border-slate-200 dark:border-slate-800 bg-purple-50/20 dark:bg-purple-950/10'
-                                : 'border-slate-200 dark:border-slate-800 hover:border-purple-400'
-                        }`}
-                    >
-                        <div className="flex items-center justify-between gap-2">
-                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">Confidential</span>
-                            <div className="w-8 h-8 rounded-xl bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400 border border-purple-200/60 dark:border-purple-900/60 flex items-center justify-center shrink-0">
-                                <Lock className="w-4 h-4" />
+                        {showHrQueries && (
+                            <div
+                                onClick={() => { setActiveTab('tickets'); setTicketTypeFilter('hr_query'); setStatusFilter('all'); }}
+                                className={`p-4 bg-white dark:bg-slate-900 rounded-2xl border transition-all cursor-pointer group shadow-2xs hover:shadow-md ${
+                                    ticketTypeFilter === 'hr_query'
+                                        ? 'border-l-4 border-l-blue-500 border-slate-200 dark:border-slate-800 bg-blue-50/20 dark:bg-blue-950/10'
+                                        : 'border-slate-200 dark:border-slate-800 hover:border-blue-400'
+                                }`}
+                            >
+                                <div className="flex items-center justify-between gap-2">
+                                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">HR Queries</span>
+                                    <div className="w-8 h-8 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200/60 dark:border-blue-900/60 flex items-center justify-center shrink-0">
+                                        <HelpCircle className="w-4 h-4" />
+                                    </div>
+                                </div>
+                                <p className="text-2xl font-black text-slate-900 dark:text-white mt-2 tracking-tight">{hrQueriesCount}</p>
+                                <p className="text-[11px] font-medium text-blue-600 dark:text-blue-400 mt-0.5">Direct HR Support</p>
                             </div>
-                        </div>
-                        <p className="text-2xl font-black text-slate-900 dark:text-white mt-2 tracking-tight">{confidentialCount}</p>
-                        <p className="text-[11px] font-medium text-purple-600 dark:text-purple-400 mt-0.5">Director / Masked</p>
-                    </div>
+                        )}
 
-                    <div
-                        onClick={() => { setActiveTab('tickets'); setStatusFilter('overdue'); }}
-                        className={`p-4 bg-white dark:bg-slate-900 rounded-2xl border transition-all cursor-pointer group shadow-2xs hover:shadow-md ${
-                            statusFilter === 'overdue'
-                                ? 'border-l-4 border-l-rose-500 border-slate-200 dark:border-slate-800 bg-rose-50/20 dark:bg-rose-950/10'
-                                : 'border-slate-200 dark:border-slate-800 hover:border-rose-400'
-                        }`}
-                    >
-                        <div className="flex items-center justify-between gap-2">
-                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">Overdue TAT</span>
-                            <div className="w-8 h-8 rounded-xl bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 border border-rose-200/60 dark:border-rose-900/60 flex items-center justify-center shrink-0">
-                                <AlertTriangle className="w-4 h-4" />
+                        {showConfidential && (
+                            <div
+                                onClick={() => { setActiveTab('tickets'); setTicketTypeFilter('confidential'); setStatusFilter('all'); }}
+                                className={`p-4 bg-white dark:bg-slate-900 rounded-2xl border transition-all cursor-pointer group shadow-2xs hover:shadow-md ${
+                                    ticketTypeFilter === 'confidential'
+                                        ? 'border-l-4 border-l-purple-500 border-slate-200 dark:border-slate-800 bg-purple-50/20 dark:bg-purple-950/10'
+                                        : 'border-slate-200 dark:border-slate-800 hover:border-purple-400'
+                                }`}
+                            >
+                                <div className="flex items-center justify-between gap-2">
+                                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                                        {isStrictOrgSuperAdmin ? 'Confidential & Anon' : 'Confidential'}
+                                    </span>
+                                    <div className="w-8 h-8 rounded-xl bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400 border border-purple-200/60 dark:border-purple-900/60 flex items-center justify-center shrink-0">
+                                        <Lock className="w-4 h-4" />
+                                    </div>
+                                </div>
+                                <p className="text-2xl font-black text-slate-900 dark:text-white mt-2 tracking-tight">{confidentialCount}</p>
+                                <p className="text-[11px] font-medium text-purple-600 dark:text-purple-400 mt-0.5">
+                                    {isStrictOrgSuperAdmin ? 'Director / Anonymous' : 'Assigned to You'}
+                                </p>
                             </div>
+                        )}
+
+                        <div
+                            onClick={() => { setActiveTab('tickets'); setStatusFilter('overdue'); }}
+                            className={`p-4 bg-white dark:bg-slate-900 rounded-2xl border transition-all cursor-pointer group shadow-2xs hover:shadow-md ${
+                                statusFilter === 'overdue'
+                                    ? 'border-l-4 border-l-rose-500 border-slate-200 dark:border-slate-800 bg-rose-50/20 dark:bg-rose-950/10'
+                                    : 'border-slate-200 dark:border-slate-800 hover:border-rose-400'
+                            }`}
+                        >
+                            <div className="flex items-center justify-between gap-2">
+                                <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">Overdue TAT</span>
+                                <div className="w-8 h-8 rounded-xl bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 border border-rose-200/60 dark:border-rose-900/60 flex items-center justify-center shrink-0">
+                                    <AlertTriangle className="w-4 h-4" />
+                                </div>
+                            </div>
+                            <p className="text-2xl font-black text-rose-600 dark:text-rose-400 mt-2 tracking-tight">{overdueCount}</p>
+                            <p className="text-[11px] font-medium text-rose-500 mt-0.5">Requires Escalation</p>
                         </div>
-                        <p className="text-2xl font-black text-rose-600 dark:text-rose-400 mt-2 tracking-tight">{overdueCount}</p>
-                        <p className="text-[11px] font-medium text-rose-500 mt-0.5">Requires Escalation</p>
                     </div>
-                </div>
-            )}
+                );
+            })()}
 
             {/* MAIN TICKETS TAB */}
             {activeTab === 'tickets' && (
                 <div className="space-y-4">
                     {/* Non-HR Scope Filter Pills & Assignee Inspector Dropdown */}
                     <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3 bg-white dark:bg-slate-900 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs">
-                        <div className="flex flex-wrap items-center gap-1.5 bg-slate-100 dark:bg-slate-800/80 p-1 rounded-xl">
-                            {isHrAdmin && (
-                                <button
-                                    type="button"
-                                    onClick={() => { setScopeFilter('all'); setSelectedAssigneeFilter('all'); setTicketTypeFilter('all'); setStatusFilter('all'); }}
-                                    className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
-                                        scopeFilter === 'all' && ticketTypeFilter === 'all' ? 'bg-[#587e85] text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'
-                                    }`}
-                                >
-                                    <Ticket className="w-3.5 h-3.5" />
-                                    <span>All Viewable ({tickets.length})</span>
-                                </button>
-                            )}
-
+                        <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800/80 p-1 rounded-xl overflow-x-auto no-scrollbar whitespace-nowrap">
                             <button
                                 type="button"
-                                onClick={() => setScopeFilter('my_team_assigned')}
-                                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
-                                    scopeFilter === 'my_team_assigned' || scopeFilter === 'department' ? 'bg-[#587e85] text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                                onClick={() => { setScopeFilter('all'); setSelectedAssigneeFilter('all'); setTicketTypeFilter('all'); setStatusFilter('all'); }}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shrink-0 ${
+                                    scopeFilter === 'all' && ticketTypeFilter === 'all' ? 'bg-[#587e85] text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'
                                 }`}
                             >
-                                <Users className="w-3.5 h-3.5" />
-                                <span>Team & Reportees ({tickets.filter(t => Array.from(reporteeUserIds).some(rid => { const p = employeesList.find(e => (e.user_id || e.id) === rid); return isTicketAssignedToUser(t, rid, p?.email, p); })).length})</span>
+                                <Ticket className="w-3.5 h-3.5" />
+                                <span>All ({tickets.length})</span>
                             </button>
 
                             <button
                                 type="button"
-                                onClick={() => setScopeFilter('assigned_to_me')}
-                                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
+                                onClick={() => setScopeFilter('my_team_assigned')}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shrink-0 ${
+                                    scopeFilter === 'my_team_assigned' || scopeFilter === 'department' ? 'bg-[#587e85] text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                                }`}
+                            >
+                                <Users className="w-3.5 h-3.5" />
+                                <span>Team & Reportees ({teamTicketsCount})</span>
+                            </button>
+
+                            <button
+                                type="button"
+                                onClick={() => { setScopeFilter('assigned_to_me'); setStatusFilter('all'); }}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shrink-0 ${
                                     scopeFilter === 'assigned_to_me' ? 'bg-[#587e85] text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'
                                 }`}
                             >
@@ -1329,13 +1634,13 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
 
                             <button
                                 type="button"
-                                onClick={() => setScopeFilter('my_raised')}
-                                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
+                                onClick={() => { setScopeFilter('my_raised'); setStatusFilter('all'); }}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shrink-0 ${
                                     scopeFilter === 'my_raised' ? 'bg-[#587e85] text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'
                                 }`}
                             >
                                 <User className="w-3.5 h-3.5" />
-                                <span>My Raised ({tickets.filter(t => t.raised_by_user_id === user?.id || t.raised_by?.email === user?.email).length})</span>
+                                <span>My Raised ({myRaisedCount})</span>
                             </button>
                         </div>
 
@@ -1359,8 +1664,8 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                                 </div>
                             )}
 
-                            {/* HR Head / Admin Global Assignee Inspection Dropdown */}
-                            {isHrAdmin && (
+                            {/* HR Head / Org Super Admin Global Assignee Inspection Dropdown - Only on All Viewable scope */}
+                            {canViewOrgWide && scopeFilter === 'all' && (
                                 <div className="flex items-center gap-2 bg-slate-50 dark:bg-slate-800/80 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700">
                                     <span className="text-[11px] font-bold text-slate-500 shrink-0">Inspect Assignee:</span>
                                     <SearchableInteractiveDropdown
@@ -1380,7 +1685,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                         </div>
                     </div>
 
-                    {/* Toolbar Filters: Search, Request Type, Status & View Mode */}
+                    {/* Toolbar Filters: Search, Request Type, Status */}
                     <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 bg-white dark:bg-slate-900 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs">
                         <div className="flex-1 min-w-0 flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
                             <div className="relative flex-1">
@@ -1390,7 +1695,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                                     placeholder="Search by ticket #, employee, subject..."
                                     value={searchQuery}
                                     onChange={(e) => setSearchQuery(e.target.value)}
-                                    className="w-full pl-10 pr-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 text-xs font-medium text-slate-900 dark:text-white placeholder-slate-400 outline-none focus:ring-2 focus:ring-[#587e85]"
+                                    className="w-full pl-9 pr-3.5 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-[#587e85] font-medium"
                                 />
                             </div>
 
@@ -1399,10 +1704,11 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                                 onChange={(e) => setTicketTypeFilter(e.target.value)}
                                 className="px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 outline-none focus:ring-2 focus:ring-[#587e85]"
                             >
-                                <option value="all">All Request Types</option>
+                                <option value="all">{isPropertyAdmin ? 'All Property Grievances' : 'All Request Types'}</option>
                                 <option value="grievance">Grievances</option>
-                                <option value="hr_query">HR Queries</option>
-                                <option value="confidential">Confidential / Masked</option>
+                                {!isPropertyAdmin && <option value="hr_query">HR Queries</option>}
+                                {isOrgSuperAdmin && <option value="confidential">Confidential & Anonymous</option>}
+                                {(!isOrgSuperAdmin && !isPropertyAdmin && confidentialCount > 0) && <option value="confidential">Confidential (Assigned to You)</option>}
                             </select>
 
                             <select
@@ -1411,59 +1717,22 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                                 className="px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 outline-none focus:ring-2 focus:ring-[#587e85]"
                             >
                                 <option value="all">All Statuses</option>
+                                <option value="pending">⏳ Pending Action Tickets (Active)</option>
                                 <option value="new">New</option>
-                                <option value="assigned">Assigned</option>
-                                <option value="in_progress">In Progress</option>
                                 <option value="pending_acknowledgement">Pending Acknowledgement</option>
                                 <option value="resolved">Resolved</option>
                                 <option value="closed">Closed</option>
                                 <option value="overdue">Overdue TAT</option>
                             </select>
                         </div>
-
-                        {/* View Mode Segmented Switcher */}
-                        {isHrAdmin && (
-                            <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/90 p-1 rounded-xl border border-slate-200 dark:border-slate-700/80 shrink-0">
-                                <button
-                                    type="button"
-                                    onClick={() => setViewMode('table')}
-                                    className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
-                                        viewMode === 'table'
-                                            ? 'bg-white dark:bg-slate-900 text-[#587e85] shadow-xs border border-slate-200/80 dark:border-slate-700'
-                                            : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
-                                    }`}
-                                >
-                                    <FileText className="w-3.5 h-3.5" />
-                                    <span>Table View</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setViewMode('kanban')}
-                                    className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
-                                        viewMode === 'kanban'
-                                            ? 'bg-white dark:bg-slate-900 text-[#587e85] shadow-xs border border-slate-200/80 dark:border-slate-700'
-                                            : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
-                                    }`}
-                                >
-                                    <Kanban className="w-3.5 h-3.5" />
-                                    <span>Kanban Board</span>
-                                </button>
-                            </div>
-                        )}
                     </div>
 
-                    {/* Content Section: Table / Kanban */}
+                    {/* Content Section: Table */}
                     {loading ? (
                         <div className="p-12 text-center bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800">
                             <div className="w-8 h-8 border-3 border-[#587e85] border-t-transparent rounded-full animate-spin mx-auto" />
                             <p className="text-xs font-bold text-slate-500 mt-3">Loading tickets data...</p>
                         </div>
-                    ) : viewMode === 'kanban' ? (
-                        <HRKanbanBoard
-                            tickets={filteredTickets}
-                            onSelectTicket={(id) => setSelectedTicketId(id)}
-                            onUpdateStatus={handleUpdateStatus}
-                        />
                     ) : (
                         <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs overflow-hidden">
                             <div className="overflow-x-auto">
@@ -1483,8 +1752,49 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80 font-medium">
                                         {filteredTickets.length === 0 ? (
                                             <tr>
-                                                <td colSpan={8} className="p-12 text-center text-slate-400 font-medium">
-                                                    No HR requests or grievances found matching your filter criteria.
+                                                <td colSpan={8} className="py-16 px-6 text-center">
+                                                    <div className="max-w-md mx-auto flex flex-col items-center justify-center text-center">
+                                                        <div className="w-12 h-12 rounded-2xl bg-[#587e85]/10 text-[#587e85] flex items-center justify-center mb-3">
+                                                            {scopeFilter === 'my_team_assigned' ? <Users className="w-6 h-6" /> : <Ticket className="w-6 h-6" />}
+                                                        </div>
+                                                        <h3 className="text-sm font-extrabold text-slate-800 dark:text-slate-200">
+                                                            {scopeFilter === 'my_team_assigned'
+                                                                ? (myDepartmentReportees.length === 0 ? "No Direct Reportees Mapped" : "No Active Tickets in Team Hierarchy")
+                                                                : "No Tickets Found"}
+                                                        </h3>
+                                                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-sm">
+                                                            {scopeFilter === 'my_team_assigned'
+                                                                ? (myDepartmentReportees.length === 0
+                                                                    ? "You currently have no reporting team members assigned to you in the organization directory."
+                                                                    : "All tickets across your team and reporting tree are currently resolved or clear.")
+                                                                : "No HR requests or grievances matched your current filter criteria."}
+                                                        </p>
+                                                        {scopeFilter === 'my_team_assigned' && myDepartmentReportees.length === 0 ? (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleNavigationTabSwitch('tree')}
+                                                                className="mt-3.5 px-3.5 py-1.5 rounded-xl bg-[#587e85] text-white text-xs font-bold hover:bg-[#47686e] transition-all shadow-xs flex items-center gap-1.5"
+                                                            >
+                                                                <GitFork className="w-3.5 h-3.5" />
+                                                                <span>View Org Reporting Tree</span>
+                                                            </button>
+                                                        ) : (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    setScopeFilter(canViewOrgWide ? 'all' : 'assigned_to_me');
+                                                                    setSelectedAssigneeFilter('all');
+                                                                    setSelectedReporteeId('all');
+                                                                    setTicketTypeFilter('all');
+                                                                    setStatusFilter('all');
+                                                                    setSearchQuery('');
+                                                                }}
+                                                                className="mt-3.5 px-3.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold hover:bg-slate-100 transition-all shadow-2xs"
+                                                            >
+                                                                {canViewOrgWide ? 'Reset Filters to All Viewable' : 'Reset Filters to Assigned'}
+                                                            </button>
+                                                        )}
+                                                    </div>
                                                 </td>
                                             </tr>
                                         ) : (
@@ -1493,14 +1803,73 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                                                     <td className="px-3.5 py-3.5 font-mono font-bold text-[#587e85]">
                                                         #{t.ticket_number}
                                                     </td>
-                                                    <td className="px-3.5 py-3.5">
-                                                        <div className="font-bold text-slate-900 dark:text-white">
-                                                            {t.is_anonymous ? 'Anonymous Employee' : t.employee_snapshot?.name || t.raised_by?.full_name || 'Employee'}
-                                                        </div>
-                                                        <div className="text-[11px] text-slate-400 font-medium">
-                                                            {t.employee_snapshot?.department || 'Operations'} ({t.employee_snapshot?.location || 'Site'})
-                                                        </div>
-                                                    </td>
+                                                    {/* Column 2: SUBMITTED BY with Circular Profile Avatar & Click Trigger */}
+                                                    {(() => {
+                                                        const isAnon = Boolean(t.is_anonymous);
+                                                        const emp = !isAnon ? employeesList.find(e => 
+                                                            (e.user_id && e.user_id === t.raised_by_user_id) || 
+                                                            (e.id && e.id === t.raised_by_user_id) || 
+                                                            (e.email && e.email.toLowerCase() === t.raised_by?.email?.toLowerCase()) ||
+                                                            (e.employee_code && e.employee_code === t.employee_snapshot?.code)
+                                                        ) : null;
+                                                        const sName = isAnon ? 'Anonymous Employee' : (t.employee_snapshot?.name || (emp ? `${emp.first_name || ''} ${emp.last_name || ''}`.trim() || emp.full_name || emp.name : t.raised_by?.full_name || 'Employee'));
+                                                        const sPhoto = !isAnon ? (t.raised_by?.user_photo_url || t.raised_by?.raw_user_meta_data?.user_photo_url || t.raised_by?.raw_user_meta_data?.avatar_url || emp?.user_photo_url || emp?.photo_url || emp?.avatar_url || emp?.user?.user_photo_url || emp?.user?.raw_user_meta_data?.user_photo_url || null) : null;
+
+                                                        return (
+                                                            <td className="px-3.5 py-3">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        openSubmitterProfile(t);
+                                                                    }}
+                                                                    className="group text-left flex items-center gap-2.5 p-1 -ml-1 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-all max-w-[210px]"
+                                                                    title="Click to view employee information"
+                                                                >
+                                                                    <div className="relative shrink-0">
+                                                                        {isAnon ? (
+                                                                            <div className="w-8 h-8 rounded-full bg-amber-100 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-300 flex items-center justify-center shadow-2xs">
+                                                                                <Lock className="w-3.5 h-3.5" />
+                                                                            </div>
+                                                                        ) : sPhoto ? (
+                                                                            <>
+                                                                                <div className="w-8 h-8 rounded-full p-[1.5px] bg-gradient-to-tr from-teal-500 via-[#587e85] to-emerald-400 shrink-0 group-hover:scale-105 transition-transform shadow-2xs">
+                                                                                    <img
+                                                                                        src={sPhoto}
+                                                                                        alt=""
+                                                                                        referrerPolicy="no-referrer"
+                                                                                        onError={(e) => {
+                                                                                            e.currentTarget.parentElement?.classList.add('!hidden');
+                                                                                            const fallbackEl = e.currentTarget.parentElement?.nextElementSibling as HTMLElement;
+                                                                                            if (fallbackEl) fallbackEl.classList.remove('!hidden');
+                                                                                        }}
+                                                                                        className="w-full h-full rounded-full object-cover bg-white dark:bg-slate-800"
+                                                                                    />
+                                                                                </div>
+                                                                                <div className="!hidden w-8 h-8 rounded-full bg-[#587e85]/10 dark:bg-[#587e85]/20 border border-[#587e85]/30 text-[#587e85] dark:text-[#7ba9b1] flex items-center justify-center font-bold text-xs shrink-0 group-hover:scale-105 transition-transform shadow-2xs">
+                                                                                    {getInitials(sName)}
+                                                                                </div>
+                                                                            </>
+                                                                        ) : (
+                                                                            <div className="w-8 h-8 rounded-full bg-[#587e85]/10 dark:bg-[#587e85]/20 border border-[#587e85]/30 text-[#587e85] dark:text-[#7ba9b1] flex items-center justify-center font-bold text-xs shrink-0 group-hover:scale-105 transition-transform shadow-2xs">
+                                                                                {getInitials(sName)}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                    <div className="min-w-0 flex-1">
+                                                                        <div className="font-bold text-slate-900 dark:text-white truncate group-hover:text-[#587e85] transition-colors flex items-center gap-1">
+                                                                            <span className="truncate">{sName}</span>
+                                                                            <span className="text-[10px] text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">ℹ️</span>
+                                                                        </div>
+                                                                        <div className="text-[11px] text-slate-400 font-medium truncate">
+                                                                            {t.employee_snapshot?.department || 'Operations'} ({t.employee_snapshot?.location || 'Site'})
+                                                                        </div>
+                                                                    </div>
+                                                                </button>
+                                                            </td>
+                                                        );
+                                                    })()}
+
                                                     <td className="px-3.5 py-3.5">
                                                         <span className="px-2.5 py-1 rounded-lg text-[10.5px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 whitespace-nowrap">
                                                             {t.category?.category_name || t.category_name || 'Grievance'}
@@ -1509,19 +1878,74 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                                                     <td className="px-3.5 py-3.5 font-semibold text-slate-800 dark:text-slate-200 max-w-xs truncate">
                                                         {t.subject}
                                                     </td>
-                                                    <td className="px-3.5 py-3.5">
-                                                        <div className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 flex items-center gap-1">
-                                                            <span>Level {t.current_level}</span>
-                                                            {t.status === 'escalated' && (
-                                                                <span className="text-[9px] font-black px-1.5 py-0.2 rounded bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 border border-purple-200">
-                                                                    Active
-                                                                </span>
-                                                            )}
-                                                        </div>
-                                                        <div className="text-[11px] font-medium text-slate-600 dark:text-slate-300 mt-0.5 max-w-[200px] truncate" title={t.current_level_owner || getTicketAssigneeName(t)}>
-                                                            {t.current_level_owner || getTicketAssigneeName(t)}
-                                                        </div>
-                                                    </td>
+
+                                                    {/* Column 5: CURRENT LEVEL & OWNER with Circular Profile Avatar & Click Trigger */}
+                                                    {(() => {
+                                                        const handlerUserId = t.assigned_to_user_id || t.assigned_to_id;
+                                                        const emp = employeesList.find(e => 
+                                                            (handlerUserId && (e.user_id === handlerUserId || e.id === handlerUserId)) ||
+                                                            (t.assigned_to?.email && e.email?.toLowerCase() === t.assigned_to.email.toLowerCase())
+                                                        );
+                                                        const hName = t.current_level_owner || t.assigned_to_details?.full_name || t.assigned_to?.full_name || (emp ? `${emp.first_name || ''} ${emp.last_name || ''}`.trim() || emp.full_name || emp.name : 'Manager / HR');
+                                                        const hPhoto = t.assigned_to_details?.photo_url || t.assigned_to?.user_photo_url || t.assigned_to?.raw_user_meta_data?.user_photo_url || t.assigned_to?.raw_user_meta_data?.avatar_url || emp?.user_photo_url || emp?.photo_url || emp?.avatar_url || emp?.user?.user_photo_url || emp?.user?.raw_user_meta_data?.user_photo_url || null;
+
+                                                        return (
+                                                            <td className="px-3.5 py-3">
+                                                                <div className="flex items-center gap-1.5">
+                                                                    <span className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400">Level {t.current_level}</span>
+                                                                    {t.status === 'escalated' && (
+                                                                        <span className="text-[9px] font-black px-1.5 py-0.2 rounded bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 border border-purple-200">
+                                                                            Active
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        openHandlerProfile(t);
+                                                                    }}
+                                                                    className="group text-left flex items-center gap-2 mt-1 p-1 -ml-1 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-all max-w-[210px]"
+                                                                    title="Click to view assigned handler information"
+                                                                >
+                                                                    <div className="relative shrink-0">
+                                                                        {hPhoto ? (
+                                                                            <>
+                                                                                <div className="w-7 h-7 rounded-full p-[1.5px] bg-gradient-to-tr from-indigo-500 via-[#587e85] to-teal-400 shrink-0 group-hover:scale-105 transition-transform shadow-2xs">
+                                                                                    <img
+                                                                                        src={hPhoto}
+                                                                                        alt=""
+                                                                                        referrerPolicy="no-referrer"
+                                                                                        onError={(e) => {
+                                                                                            e.currentTarget.parentElement?.classList.add('!hidden');
+                                                                                            const fallbackEl = e.currentTarget.parentElement?.nextElementSibling as HTMLElement;
+                                                                                            if (fallbackEl) fallbackEl.classList.remove('!hidden');
+                                                                                        }}
+                                                                                        className="w-full h-full rounded-full object-cover bg-white dark:bg-slate-800"
+                                                                                    />
+                                                                                </div>
+                                                                                <div className="!hidden w-7 h-7 rounded-full bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold text-[10px] shrink-0 group-hover:scale-105 transition-transform shadow-2xs">
+                                                                                    {getInitials(hName)}
+                                                                                </div>
+                                                                            </>
+                                                                        ) : (
+                                                                            <div className="w-7 h-7 rounded-full bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold text-[10px] shrink-0 group-hover:scale-105 transition-transform shadow-2xs">
+                                                                                {getInitials(hName)}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+
+                                                                    <div className="min-w-0 flex-1">
+                                                                        <div className="text-[11px] font-bold text-slate-700 dark:text-slate-200 group-hover:text-[#587e85] transition-colors truncate flex items-center gap-1" title={hName}>
+                                                                            <span className="truncate">{hName}</span>
+                                                                            <span className="text-[10px] text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">ℹ️</span>
+                                                                        </div>
+                                                                    </div>
+                                                                </button>
+                                                            </td>
+                                                        );
+                                                    })()}
                                                     <td className="px-3.5 py-3.5">
                                                         <SLALiveTimer slaDueAt={t.sla_due_at} status={t.status} />
                                                     </td>
@@ -1563,6 +1987,14 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
             )}
 
             {/* TAB 3: OTHER HR MODULE TABS */}
+            {activeTab === 'notes' && (
+                <HRNotesTrackerTab
+                    orgId={orgId}
+                    currentUserId={user?.id}
+                    currentUserRole={userRole}
+                    onOpenTicket={(ticketId) => setSelectedTicketId(ticketId)}
+                />
+            )}
             {activeTab === 'directory' && <HREmployeeDirectory orgId={orgId} />}
             {activeTab === 'reconciliation' && <HRReconciliationDashboard orgId={orgId} />}
             {activeTab === 'config' && <HRAdminConfigPanel orgId={orgId} />}
@@ -1580,10 +2012,17 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
             <HRTicketDetailModal
                 isOpen={Boolean(selectedTicketId)}
                 ticketId={selectedTicketId}
+                initialTicket={tickets.find(t => t.id === selectedTicketId)}
                 onClose={() => setSelectedTicketId(null)}
                 onRefresh={() => fetchTickets(true)}
                 currentUserId={user?.id || ''}
                 currentUserRole={userRole}
+            />
+
+            <EmployeeQuickProfileModal
+                data={profileModalData}
+                onClose={() => setProfileModalData(null)}
+                onViewTicketDetails={(ticketId) => setSelectedTicketId(ticketId)}
             />
         </div>
     );
@@ -1656,12 +2095,6 @@ function SearchableInteractiveDropdown({
 
     const alignClass = align === 'right' ? 'right-0 left-auto' : 'left-0 right-auto';
 
-    const formatAssigneesText = (names?: string[]) => {
-        if (!names || names.length === 0) return '';
-        if (names.length <= 2) return names.join(', ');
-        return `${names.slice(0, 2).join(', ')} +${names.length - 2}`;
-    };
-
     return (
         <div ref={dropdownRef} className="relative inline-block text-left w-full sm:w-auto">
             <button
@@ -1685,16 +2118,12 @@ function SearchableInteractiveDropdown({
 
                 <div className="flex items-center gap-1.5 shrink-0 ml-1">
                     {selectedOption?.pendingCount !== undefined && selectedOption.pendingCount > 0 && (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 flex items-center gap-1">
+                        <span 
+                            className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 flex items-center gap-1 shrink-0"
+                            title={`${selectedOption.pendingCount} pending actions`}
+                        >
                             <Clock className="w-3 h-3 shrink-0 text-amber-600" />
-                            <span>
-                                {selectedOption.pendingCount} pending
-                                {selectedOption.pendingAssignees && selectedOption.pendingAssignees.length > 0 && (
-                                    <span className="font-bold ml-1">
-                                        ({formatAssigneesText(selectedOption.pendingAssignees)})
-                                    </span>
-                                )}
-                            </span>
+                            <span>{selectedOption.pendingCount}</span>
                         </span>
                     )}
                     <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 ${isOpen ? 'rotate-180 text-[#587e85]' : ''}`} />
@@ -1703,6 +2132,29 @@ function SearchableInteractiveDropdown({
 
             {isOpen && (
                 <div className={`absolute ${alignClass} mt-2 w-80 sm:w-96 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150`}>
+                    {/* Top of Dropdown: Active Assignees with Pending Actions */}
+                    {selectedOption?.pendingAssignees && selectedOption.pendingAssignees.length > 0 && (
+                        <div className="p-3 bg-amber-50/90 dark:bg-amber-950/40 border-b border-amber-200/80 dark:border-amber-900/40">
+                            <div className="flex items-center justify-between gap-1 text-[11px] font-extrabold text-amber-900 dark:text-amber-300">
+                                <span className="flex items-center gap-1.5">
+                                    <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                                    <span>Pending Actions ({selectedOption.pendingCount}):</span>
+                                </span>
+                            </div>
+                            <div className="flex flex-wrap gap-1.5 mt-2">
+                                {selectedOption.pendingAssignees.map((name, idx) => (
+                                    <span
+                                        key={idx}
+                                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-white dark:bg-slate-800 text-amber-950 dark:text-amber-200 border border-amber-200 dark:border-amber-800 shadow-2xs"
+                                    >
+                                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
+                                        <span>{name}</span>
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
                     {/* Search Bar */}
                     <div className="p-2.5 border-b border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/50">
                         <div className="relative">
@@ -1773,12 +2225,7 @@ function SearchableInteractiveDropdown({
                                                         {opt.subLabel}
                                                     </p>
                                                 )}
-                                                {opt.pendingAssignees && opt.pendingAssignees.length > 0 && (
-                                                    <p className="text-[10px] font-extrabold text-amber-600 dark:text-amber-400 truncate mt-0.5 flex items-center gap-1">
-                                                        <Clock className="w-3 h-3 shrink-0 text-amber-500" />
-                                                        <span>Pending with: {formatAssigneesText(opt.pendingAssignees)}</span>
-                                                    </p>
-                                                )}
+
                                             </div>
                                         </div>
 

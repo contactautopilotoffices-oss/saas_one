@@ -16,6 +16,9 @@ const transporter = nodemailer.createTransport({
     } : undefined,
 });
 
+// In-memory deduplication cache to prevent concurrent/rapid duplicate emails (e.g. within 45s)
+const recentlySentEmails = new Map<string, number>();
+
 export const EmailService = {
     // Generic sender — supports Resend API (RESEND_API_KEY) and SMTP credentials.
     async sendEmail({ to, subject, html, attachments }: {
@@ -24,6 +27,24 @@ export const EmailService = {
         html: string;
         attachments?: { filename: string; content: Buffer; contentType?: string }[];
     }) {
+        // Deduplication guard
+        const recipientKey = Array.isArray(to) ? to.slice().sort().join(',') : (to || '');
+        const dedupeKey = `${recipientKey.toLowerCase().trim()}:::${(subject || '').trim()}`;
+        const now = Date.now();
+        const lastSent = recentlySentEmails.get(dedupeKey);
+        if (lastSent && now - lastSent < 45_000) {
+            console.log(`[EmailService] Suppressing duplicate email send to ${recipientKey} for subject "${subject}" (sent ${Math.round((now - lastSent) / 1000)}s ago)`);
+            return true;
+        }
+        recentlySentEmails.set(dedupeKey, now);
+
+        // Prune stale cache entries
+        if (recentlySentEmails.size > 1000) {
+            recentlySentEmails.forEach((ts, key) => {
+                if (now - ts > 120_000) recentlySentEmails.delete(key);
+            });
+        }
+
         const apiKey = process.env.RESEND_API_KEY;
         const sender = process.env.RESEND_FROM_EMAIL || process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER || 'onboarding@resend.dev';
 
@@ -1162,5 +1183,235 @@ export const EmailService = {
             console.error('[EmailService] Failed to send lead assigned email:', error);
             return false;
         }
+    },
+
+    // ============================================================================
+    // HR Tickets & Grievances Email Templates
+    // ============================================================================
+    async sendHrTicketCreatedEmail({
+        emailTo,
+        ticket,
+        submitterName,
+        assignedOwnerName,
+        categoryName
+    }: {
+        emailTo: string | string[];
+        ticket: any;
+        submitterName: string;
+        assignedOwnerName: string;
+        categoryName: string;
+    }) {
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fms.autopilotoffices.com';
+        const subject = `[HR Ticket #${ticket.ticket_number}] ${ticket.subject || 'Request Submitted'}`;
+        const html = `
+            <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; background-color: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
+                <div style="text-align: center; margin-bottom: 20px;">
+                    <h2 style="color: #587e85; margin: 0; font-size: 20px;">📋 HR Ticket Created</h2>
+                    <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Your request has been successfully submitted</p>
+                </div>
+                <div style="background-color: #f8fafc; border-left: 4px solid #587e85; padding: 16px; border-radius: 6px; margin: 18px 0;">
+                    <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                        <tr><td style="padding: 4px 0; color: #64748b; width: 130px;"><b>Ticket #:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: bold;">#${ticket.ticket_number}</td></tr>
+                        <tr><td style="padding: 4px 0; color: #64748b;"><b>Category:</b></td><td style="padding: 4px 0; color: #0f172a;">${categoryName}</td></tr>
+                        <tr><td style="padding: 4px 0; color: #64748b;"><b>Subject:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: 600;">${ticket.subject}</td></tr>
+                        <tr><td style="padding: 4px 0; color: #64748b;"><b>Raised By:</b></td><td style="padding: 4px 0; color: #0f172a;">${submitterName}</td></tr>
+                        <tr><td style="padding: 4px 0; color: #64748b;"><b>Assigned To:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: 600;">${assignedOwnerName} (Level ${ticket.current_level || 1})</td></tr>
+                    </table>
+                </div>
+                ${ticket.description ? `
+                <div style="background-color: #f1f5f9; padding: 12px 16px; border-radius: 6px; font-size: 13px; color: #334155; margin-bottom: 20px;">
+                    ${ticket.description}
+                </div>` : ''}
+                <div style="text-align: center; margin-top: 24px;">
+                    <a href="${appUrl}/hr-tickets?tab=tickets&id=${ticket.id}" style="display: inline-block; background-color: #587e85; color: #ffffff; text-decoration: none; font-weight: bold; padding: 12px 28px; border-radius: 8px; font-size: 14px;">View Ticket in Portal</a>
+                </div>
+            </div>
+        `;
+        return EmailService.sendEmail({ to: emailTo, subject, html });
+    },
+
+    async sendHrTicketAssignedEmail({
+        emailTo,
+        ticket,
+        assigneeName,
+        submitterName,
+        categoryName
+    }: {
+        emailTo: string | string[];
+        ticket: any;
+        assigneeName: string;
+        submitterName: string;
+        categoryName: string;
+    }) {
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fms.autopilotoffices.com';
+        const subject = `[Assigned] [HR Ticket #${ticket.ticket_number}] ${ticket.subject}`;
+        const html = `
+            <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; background-color: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
+                <div style="text-align: center; margin-bottom: 20px;">
+                    <h2 style="color: #2563eb; margin: 0; font-size: 20px;">📌 HR Ticket Assigned To You</h2>
+                    <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Level ${ticket.current_level || 1} Action Required</p>
+                </div>
+                <div style="background-color: #eff6ff; border-left: 4px solid #2563eb; padding: 16px; border-radius: 6px; margin: 18px 0;">
+                    <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                        <tr><td style="padding: 4px 0; color: #64748b; width: 130px;"><b>Ticket #:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: bold;">#${ticket.ticket_number}</td></tr>
+                        <tr><td style="padding: 4px 0; color: #64748b;"><b>Category:</b></td><td style="padding: 4px 0; color: #0f172a;">${categoryName}</td></tr>
+                        <tr><td style="padding: 4px 0; color: #64748b;"><b>Submitter:</b></td><td style="padding: 4px 0; color: #0f172a;">${submitterName}</td></tr>
+                        <tr><td style="padding: 4px 0; color: #64748b;"><b>Subject:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: 600;">${ticket.subject}</td></tr>
+                        <tr><td style="padding: 4px 0; color: #64748b;"><b>Current Level:</b></td><td style="padding: 4px 0; color: #2563eb; font-weight: bold;">Level ${ticket.current_level || 1}</td></tr>
+                    </table>
+                </div>
+                <div style="text-align: center; margin-top: 24px;">
+                    <a href="${appUrl}/hr-tickets?tab=tickets&id=${ticket.id}" style="display: inline-block; background-color: #2563eb; color: #ffffff; text-decoration: none; font-weight: bold; padding: 12px 28px; border-radius: 8px; font-size: 14px;">Open & Respond to Ticket</a>
+                </div>
+            </div>
+        `;
+        return EmailService.sendEmail({ to: emailTo, subject, html });
+    },
+
+    async sendHrTicketEscalatedEmail({
+        emailTo,
+        ticket,
+        assigneeName,
+        level,
+        reason,
+        submitterName
+    }: {
+        emailTo: string | string[];
+        ticket: any;
+        assigneeName: string;
+        level: number;
+        reason: string;
+        submitterName: string;
+    }) {
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fms.autopilotoffices.com';
+        const subject = `[⚠️ Escalated to Level ${level}] [HR Ticket #${ticket.ticket_number}] ${ticket.subject}`;
+        const html = `
+            <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; background-color: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
+                <div style="text-align: center; margin-bottom: 20px;">
+                    <h2 style="color: #dc2626; margin: 0; font-size: 20px;">⚠️ HR Ticket Escalated to Level ${level}</h2>
+                    <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Ticket escalated ${reason}</p>
+                </div>
+                <div style="background-color: #fef2f2; border-left: 4px solid #dc2626; padding: 16px; border-radius: 6px; margin: 18px 0;">
+                    <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                        <tr><td style="padding: 4px 0; color: #64748b; width: 130px;"><b>Ticket #:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: bold;">#${ticket.ticket_number}</td></tr>
+                        <tr><td style="padding: 4px 0; color: #64748b;"><b>Subject:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: 600;">${ticket.subject}</td></tr>
+                        <tr><td style="padding: 4px 0; color: #64748b;"><b>Submitter:</b></td><td style="padding: 4px 0; color: #0f172a;">${submitterName}</td></tr>
+                        <tr><td style="padding: 4px 0; color: #64748b;"><b>New Level:</b></td><td style="padding: 4px 0; color: #dc2626; font-weight: bold;">Level ${level} (${assigneeName})</td></tr>
+                        <tr><td style="padding: 4px 0; color: #64748b;"><b>Reason:</b></td><td style="padding: 4px 0; color: #0f172a;">${reason}</td></tr>
+                    </table>
+                </div>
+                <div style="text-align: center; margin-top: 24px;">
+                    <a href="${appUrl}/hr-tickets?tab=tickets&id=${ticket.id}" style="display: inline-block; background-color: #dc2626; color: #ffffff; text-decoration: none; font-weight: bold; padding: 12px 28px; border-radius: 8px; font-size: 14px;">Review Escalated Ticket</a>
+                </div>
+            </div>
+        `;
+        return EmailService.sendEmail({ to: emailTo, subject, html });
+    },
+
+    async sendHrTicketResolvedEmail({
+        emailTo,
+        ticket,
+        submitterName,
+        resolverName,
+        resolutionNote
+    }: {
+        emailTo: string | string[];
+        ticket: any;
+        submitterName: string;
+        resolverName: string;
+        resolutionNote: string;
+    }) {
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fms.autopilotoffices.com';
+        const subject = `[Resolved] [HR Ticket #${ticket.ticket_number}] ${ticket.subject}`;
+        const html = `
+            <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; background-color: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
+                <div style="text-align: center; margin-bottom: 20px;">
+                    <h2 style="color: #059669; margin: 0; font-size: 20px;">✅ HR Ticket Resolved</h2>
+                    <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Please review the resolution and acknowledge</p>
+                </div>
+                <div style="background-color: #f0fdf4; border-left: 4px solid #059669; padding: 16px; border-radius: 6px; margin: 18px 0;">
+                    <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                        <tr><td style="padding: 4px 0; color: #64748b; width: 130px;"><b>Ticket #:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: bold;">#${ticket.ticket_number}</td></tr>
+                        <tr><td style="padding: 4px 0; color: #64748b;"><b>Subject:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: 600;">${ticket.subject}</td></tr>
+                        <tr><td style="padding: 4px 0; color: #64748b;"><b>Resolved By:</b></td><td style="padding: 4px 0; color: #0f172a;">${resolverName}</td></tr>
+                        <tr><td style="padding: 4px 0; color: #64748b;"><b>Resolution Note:</b></td><td style="padding: 4px 0; color: #0f172a;">${resolutionNote}</td></tr>
+                    </table>
+                </div>
+                <div style="text-align: center; margin-top: 24px;">
+                    <a href="${appUrl}/hr-tickets?tab=tickets&id=${ticket.id}" style="display: inline-block; background-color: #059669; color: #ffffff; text-decoration: none; font-weight: bold; padding: 12px 28px; border-radius: 8px; font-size: 14px;">Confirm & Acknowledge Resolution</a>
+                </div>
+            </div>
+        `;
+        return EmailService.sendEmail({ to: emailTo, subject, html });
+    },
+
+    async sendHrTicketCommentAddedEmail({
+        emailTo,
+        ticket,
+        recipientName,
+        senderName,
+        commentSnippet
+    }: {
+        emailTo: string | string[];
+        ticket: any;
+        recipientName: string;
+        senderName: string;
+        commentSnippet: string;
+    }) {
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fms.autopilotoffices.com';
+        const subject = `[New Reply] [HR Ticket #${ticket.ticket_number}] ${ticket.subject}`;
+        const html = `
+            <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; background-color: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
+                <div style="text-align: center; margin-bottom: 20px;">
+                    <h2 style="color: #6366f1; margin: 0; font-size: 20px;">💬 New Reply on HR Ticket</h2>
+                    <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Ticket #${ticket.ticket_number}</p>
+                </div>
+                <div style="background-color: #eef2ff; border-left: 4px solid #6366f1; padding: 16px; border-radius: 6px; margin: 18px 0;">
+                    <p style="margin: 0 0 8px 0; font-size: 14px; color: #475569;"><strong>${senderName}</strong> posted a new reply:</p>
+                    <div style="background-color: #ffffff; padding: 12px; border-radius: 6px; border: 1px solid #c7d2fe; font-size: 13.5px; color: #1e293b; font-style: italic;">
+                        "${commentSnippet}"
+                    </div>
+                </div>
+                <div style="text-align: center; margin-top: 24px;">
+                    <a href="${appUrl}/hr-tickets?tab=tickets&id=${ticket.id}" style="display: inline-block; background-color: #6366f1; color: #ffffff; text-decoration: none; font-weight: bold; padding: 12px 28px; border-radius: 8px; font-size: 14px;">Reply in Discussion</a>
+                </div>
+            </div>
+        `;
+        return EmailService.sendEmail({ to: emailTo, subject, html });
+    },
+
+    async sendHrTicketAcknowledgedEmail({
+        emailTo,
+        ticket,
+        handlerName,
+        submitterName
+    }: {
+        emailTo: string | string[];
+        ticket: any;
+        handlerName: string;
+        submitterName: string;
+    }) {
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fms.autopilotoffices.com';
+        const subject = `[Closed] [HR Ticket #${ticket.ticket_number}] Acknowledged by ${submitterName}`;
+        const html = `
+            <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; background-color: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
+                <div style="text-align: center; margin-bottom: 20px;">
+                    <h2 style="color: #0d9488; margin: 0; font-size: 20px;">🎉 HR Ticket Closed & Acknowledged</h2>
+                    <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Resolution confirmed by employee</p>
+                </div>
+                <div style="background-color: #f0fdfa; border-left: 4px solid #0d9488; padding: 16px; border-radius: 6px; margin: 18px 0;">
+                    <p style="margin: 0; font-size: 14px; color: #0f172a;">
+                        <strong>${submitterName}</strong> has acknowledged and confirmed the resolution of HR Ticket <strong>#${ticket.ticket_number}</strong> ("${ticket.subject}").
+                    </p>
+                    <p style="margin: 8px 0 0 0; font-size: 13px; color: #64748b;">
+                        The ticket is now officially closed.
+                    </p>
+                </div>
+                <div style="text-align: center; margin-top: 24px;">
+                    <a href="${appUrl}/hr-tickets?tab=tickets&id=${ticket.id}" style="display: inline-block; background-color: #0d9488; color: #ffffff; text-decoration: none; font-weight: bold; padding: 12px 28px; border-radius: 8px; font-size: 14px;">View Closed Ticket</a>
+                </div>
+            </div>
+        `;
+        return EmailService.sendEmail({ to: emailTo, subject, html });
     }
 };
