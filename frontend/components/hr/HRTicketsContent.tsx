@@ -19,12 +19,13 @@ import HRAdminConfigPanel from '@/frontend/components/hr/HRAdminConfigPanel';
 import HRAnalyticsDashboard from '@/frontend/components/hr/HRAnalyticsDashboard';
 import SLALiveTimer from '@/frontend/components/hr/SLALiveTimer';
 import HROrgChartTree from '@/frontend/components/hr/HROrgChartTree';
+import ProctorHub from '@/frontend/components/proctor/ProctorHub';
 
 export function HRTicketsContent({ orgId }: { orgId: string }) {
     const { user, membership } = useAuth();
     const searchParams = useSearchParams();
 
-    const [activeTab, setActiveTab] = useState<'tickets' | 'tree' | 'directory' | 'reconciliation' | 'config' | 'analytics'>('tickets');
+    const [activeTab, setActiveTab] = useState<'tickets' | 'tree' | 'directory' | 'reconciliation' | 'config' | 'analytics' | 'assessments'>('tickets');
     const [viewMode, setViewMode] = useState<'kanban' | 'table' | 'properties'>('table');
 
     const [tickets, setTickets] = useState<any[]>([]);
@@ -201,7 +202,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         const propertyParam = searchParams.get('propertyId');
         const filterParam = searchParams.get('filter');
 
-        if (tabParam && ['tickets', 'tree', 'directory', 'reconciliation', 'config', 'analytics'].includes(tabParam)) {
+        if (tabParam && ['tickets', 'tree', 'directory', 'reconciliation', 'config', 'analytics', 'assessments'].includes(tabParam)) {
             setActiveTab(tabParam as any);
         }
         if (actionParam === 'create') {
@@ -794,7 +795,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                             <ShieldCheck className="w-5 h-5" />
                         </div>
                         <h1 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white tracking-tight">
-                            {activeTab === 'tree' ? 'Organization Reporting Tree & Workload Inspector' : isHrAdmin ? 'HR Helpdesk & Grievances' : isManager ? 'Team Grievance Requests' : 'My Requests & Grievances'}
+                            {activeTab === 'assessments' ? 'Assessments' : activeTab === 'tree' ? 'Organization Reporting Tree & Workload Inspector' : isHrAdmin ? 'HR Helpdesk & Grievances' : isManager ? 'Team Grievance Requests' : 'My Requests & Grievances'}
                         </h1>
                     </div>
                 </div>
@@ -1567,6 +1568,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
             {activeTab === 'reconciliation' && <HRReconciliationDashboard orgId={orgId} />}
             {activeTab === 'config' && <HRAdminConfigPanel orgId={orgId} />}
             {activeTab === 'analytics' && <HRAnalyticsDashboard orgId={orgId} tickets={tickets} />}
+            {activeTab === 'assessments' && <ProctorHub orgId={orgId} embedded />}
 
             {/* Modals */}
             <TicketCreateModal

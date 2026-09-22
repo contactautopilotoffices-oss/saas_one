@@ -7,13 +7,14 @@ import { supabaseAdmin } from '@/backend/lib/supabase/admin';
  * pattern as assets / petty cash).
  *
  *   - Take a test:              any active member whose role is not tenant-like.
- *   - Write tests, see results: org admins, property admins, HR.
+ *   - Write tests, see results: org admins, property admins, HR (same HR roles
+ *     the HR module treats as admins).
  */
 
 const TENANT_LIKE_ROLES = ['tenant', 'tenant_user', 'super_tenant', 'vendor'];
 const AUTHOR_ROLES = [
     'org_super_admin', 'org_admin', 'master_admin', 'ops_super_admin', 'owner',
-    'property_admin', 'hr', 'hr_head',
+    'property_admin', 'hr', 'hr_head', 'hr_manager', 'director',
 ];
 
 export interface ProctorAccess {
@@ -72,20 +73,21 @@ export async function loadOwnAttempt(attemptId: string) {
 
     const { data: attempt } = await supabaseAdmin
         .from('proctor_attempts')
-        .select('id, test_id, user_id, status, started_at, test:proctor_tests(id, questions, duration_minutes, ai_monitoring)')
+        .select('id, test_id, user_id, status, started_at, attempt_no, test:proctor_tests(id, questions, duration_minutes, ai_monitoring, max_attempts)')
         .eq('id', attemptId)
         .maybeSingle();
     if (!attempt || attempt.user_id !== user.id) {
         return { error: NextResponse.json({ error: 'Attempt not found' }, { status: 404 }) };
     }
     const test = (Array.isArray(attempt.test) ? attempt.test[0] : attempt.test) as {
-        id: string; questions: ProctorQuestion[]; duration_minutes: number; ai_monitoring: boolean;
+        id: string; questions: ProctorQuestion[]; duration_minutes: number; ai_monitoring: boolean; max_attempts: number;
     };
     return { attempt, test };
 }
 
 export interface ProctorQuestion {
     id: string;
+    section?: string;
     text: string;
     options: string[];
     answer_index: number;
@@ -93,11 +95,14 @@ export interface ProctorQuestion {
 
 /** What the test taker is allowed to see — the answer key stripped out. */
 export function stripAnswers(questions: ProctorQuestion[]) {
-    return (questions || []).map(({ id, text, options }) => ({ id, text, options }));
+    return (questions || []).map(({ id, section, text, options }) => ({ id, section: section || 'general', text, options }));
 }
 
 /** Grace on top of the test duration for network lag before an attempt counts as expired. */
 export const EXPIRY_GRACE_MS = 60_000;
+
+/** An attempt that finished the test (on time or late) — no further chances after this. */
+export const COMPLETED_STATUSES = ['submitted', 'expired'];
 
 export function isPastDeadline(startedAt: string, durationMinutes: number) {
     return Date.now() > new Date(startedAt).getTime() + durationMinutes * 60_000 + EXPIRY_GRACE_MS;

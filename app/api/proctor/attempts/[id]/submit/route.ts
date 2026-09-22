@@ -5,7 +5,8 @@ import { loadOwnAttempt, isPastDeadline } from '@/backend/lib/proctor/access';
 /**
  * POST /api/proctor/attempts/[id]/submit — grade and close the attempt.
  * A submit that arrives after the time limit (plus a minute of grace) is still
- * graded but recorded as "expired", so the reviewer can decide.
+ * graded but recorded as "expired", so the reviewer can decide. The score is
+ * also stored per section (cognitive / aptitude / culture / situational).
  * Body: { answers: { [questionId]: optionIndex } }
  */
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -22,19 +23,26 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const given = (body.answers && typeof body.answers === 'object') ? body.answers as Record<string, unknown> : {};
 
     const answers: Record<string, number> = {};
+    const sectionScores: Record<string, { score: number; total: number }> = {};
     let score = 0;
     for (const q of test.questions || []) {
+        const section = q.section || 'general';
+        sectionScores[section] ??= { score: 0, total: 0 };
+        sectionScores[section].total++;
         const pick = Number(given[q.id]);
         if (Number.isInteger(pick) && pick >= 0 && pick < q.options.length) {
             answers[q.id] = pick;
-            if (pick === q.answer_index) score++;
+            if (pick === q.answer_index) {
+                score++;
+                sectionScores[section].score++;
+            }
         }
     }
 
     const status = isPastDeadline(attempt.started_at, test.duration_minutes) ? 'expired' : 'submitted';
     const { data: updated, error } = await supabaseAdmin
         .from('proctor_attempts')
-        .update({ status, answers, score, total: (test.questions || []).length, ended_at: new Date().toISOString() })
+        .update({ status, answers, score, total: (test.questions || []).length, section_scores: sectionScores, ended_at: new Date().toISOString() })
         .eq('id', id)
         .eq('status', 'in_progress')
         .select('id')

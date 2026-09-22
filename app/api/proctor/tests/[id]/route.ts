@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
-import { resolveProctorAccess, isProctorAccessError, isPastDeadline, type ProctorQuestion } from '@/backend/lib/proctor/access';
+import { resolveProctorAccess, isProctorAccessError, isPastDeadline, COMPLETED_STATUSES, type ProctorQuestion } from '@/backend/lib/proctor/access';
 
 /**
  * GET /api/proctor/tests/[id]
- *   - taker:            the test without the answer key, plus their own attempt status.
+ *   - taker:            the test without the answer key, plus their own attempts and chances left.
  *   - author ?view=results: the test with answers, every attempt, and each attempt's event log.
  */
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -12,7 +12,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
     const { data: test } = await supabaseAdmin
         .from('proctor_tests')
-        .select('id, organization_id, title, instructions, duration_minutes, ai_monitoring, is_active, questions, created_at')
+        .select('id, organization_id, title, instructions, duration_minutes, ai_monitoring, is_active, max_attempts, questions, created_at')
         .eq('id', id)
         .maybeSingle();
     if (!test) return NextResponse.json({ error: 'Test not found' }, { status: 404 });
@@ -28,7 +28,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
         const { data: attempts } = await supabaseAdmin
             .from('proctor_attempts')
-            .select('id, user_id, status, started_at, ended_at, termination_reason, score, total, ai_checks, ai_flags')
+            .select('id, user_id, attempt_no, status, started_at, ended_at, termination_reason, score, total, section_scores, ai_checks, ai_flags')
             .eq('test_id', id)
             .order('started_at', { ascending: false });
 
@@ -62,12 +62,14 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
     if (!test.is_active && !access.canAuthor) return NextResponse.json({ error: 'This test is closed' }, { status: 404 });
 
-    const { data: mine } = await supabaseAdmin
+    const { data: mineRows } = await supabaseAdmin
         .from('proctor_attempts')
-        .select('id, status, termination_reason')
+        .select('attempt_no, status, termination_reason')
         .eq('test_id', id)
         .eq('user_id', access.userId)
-        .maybeSingle();
+        .order('attempt_no');
+    const mine = mineRows || [];
+    const maxAttempts = test.max_attempts || 1;
 
     return NextResponse.json({
         test: {
@@ -76,9 +78,14 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
             instructions: test.instructions,
             duration_minutes: test.duration_minutes,
             ai_monitoring: test.ai_monitoring,
+            max_attempts: maxAttempts,
             question_count: questions.length,
+            sections: [...new Set(questions.map((q) => q.section || 'general'))],
         },
-        my_attempt: mine || null,
+        my_attempts: mine,
+        completed: mine.some((a) => COMPLETED_STATUSES.includes(a.status)),
+        // An in-progress attempt will be closed as "reopened" on start, so it already counts.
+        chances_left: Math.max(0, maxAttempts - mine.length),
     });
 }
 

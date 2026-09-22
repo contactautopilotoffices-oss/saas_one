@@ -9,7 +9,7 @@ import {
     FileUp, Bot, Building2, Send, CalendarDays, Droplets, Coffee,
     Sparkles, DollarSign, ClipboardList, Target, TrendingUp,
     BellRing, HelpCircle, Megaphone, Radio, BookOpen, Smartphone, MessageSquarePlus,
-    ShieldCheck, Wallet, Zap, Gauge, UserCheck, Plus, UserCircle, FileText
+    ShieldCheck, Wallet, Zap, Gauge, UserCheck, Plus, UserCircle, FileText, ClipboardCheck
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { CapabilityDomain } from '@/frontend/types/rbac';
@@ -70,6 +70,7 @@ export default function DashboardSidebar({ isMobileOpen, onMobileClose }: Dashbo
                 { label: 'Identity Reconciliation', href: `/${orgId}/hr-tickets?tab=reconciliation`, icon: UserCheck, domain: 'tickets' as const },
                 { label: 'Admin Config', href: `/${orgId}/hr-tickets?tab=config`, icon: Settings, domain: 'tickets' as const },
                 { label: 'Analytics', href: `/${orgId}/hr-tickets?tab=analytics`, icon: BarChart3, domain: 'tickets' as const },
+                { label: 'Assessments', href: `/${orgId}/hr-tickets?tab=assessments`, icon: ClipboardCheck, domain: 'tickets' as const },
             ];
         }
 

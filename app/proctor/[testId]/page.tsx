@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { AlertTriangle, Camera, CheckCircle2, Clock, Lock, ShieldAlert, XCircle } from 'lucide-react';
 import { useAuth } from '@/frontend/context/AuthContext';
 import Loader from '@/frontend/components/ui/Loader';
+import { groupBySection } from '@/frontend/lib/proctor/sections';
 
 /**
  * The locked test page: /proctor/<testId>.
@@ -17,11 +18,17 @@ import Loader from '@/frontend/components/ui/Loader';
  *
  * Every ~20s a small webcam frame goes to the vision model. Its verdict only
  * warns the taker and flags the attempt for the reviewer — it never ends the test.
+ *
+ * A test has a number of chances (default 2). Leaving uses one; submitting ends it.
  */
 
 type Phase = 'loading' | 'blocked' | 'setup' | 'ready' | 'running' | 'terminated' | 'submitted';
-type Question = { id: string; text: string; options: string[] };
-type TestInfo = { id: string; title: string; instructions: string | null; duration_minutes: number; ai_monitoring: boolean; question_count: number };
+type Question = { id: string; section?: string; text: string; options: string[] };
+type TestInfo = {
+    id: string; title: string; instructions: string | null; duration_minutes: number; ai_monitoring: boolean;
+    max_attempts: number; question_count: number;
+};
+type MyAttempt = { attempt_no: number; status: string; termination_reason: string | null };
 
 const SNAPSHOT_EVERY_MS = 20_000;
 
@@ -31,7 +38,10 @@ const REASON_LABEL: Record<string, string> = {
     fullscreen_exit: 'You left fullscreen.',
     page_unload: 'The page was closed or refreshed.',
     camera_lost: 'Your camera was turned off.',
+    reopened: 'The test was opened again before it was finished.',
 };
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 export default function ProctoredTestPage({ params }: { params: Promise<{ testId: string }> }) {
     const { testId } = use(params);
@@ -48,6 +58,9 @@ export default function ProctoredTestPage({ params }: { params: Promise<{ testId
     const [remaining, setRemaining] = useState(0);
     const [aiWarning, setAiWarning] = useState<string | null>(null);
     const [endReason, setEndReason] = useState<string | null>(null);
+    const [previousNote, setPreviousNote] = useState<string | null>(null);
+    const [chancesLeft, setChancesLeft] = useState(0);
+    const [attemptNo, setAttemptNo] = useState(0);
 
     const videoRef = useRef<HTMLVideoElement>(null);
     const streamRef = useRef<MediaStream | null>(null);
@@ -69,16 +82,24 @@ export default function ProctoredTestPage({ params }: { params: Promise<{ testId
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error || 'Could not load this test');
                 setTest(data.test);
-                if (data.my_attempt) {
-                    const a = data.my_attempt;
-                    setMessage(a.status === 'terminated'
-                        ? `You have already attempted this test. It was closed because: ${REASON_LABEL[a.termination_reason] || 'you left the test window.'}`
-                        : 'You have already taken this test.');
+                const mine: MyAttempt[] = data.my_attempts || [];
+                const last = mine[mine.length - 1];
+                const lastReason = last?.termination_reason ? REASON_LABEL[last.termination_reason] || 'You left the test window.' : null;
+                setChancesLeft(data.chances_left ?? 0);
+                if (data.completed) {
+                    setMessage('You have already completed this test. Your answers are with your reviewer.');
+                    setPhase('blocked');
+                } else if ((data.chances_left ?? 0) === 0) {
+                    setMessage(`You have used all your chances at this test.${lastReason ? ` Your last attempt was closed: ${lastReason}` : ''}`);
                     setPhase('blocked');
                 } else if (typeof document !== 'undefined' && !document.documentElement.requestFullscreen) {
                     setMessage('This browser cannot lock the screen. Open the link on a laptop or desktop in Chrome, Edge or Firefox.');
                     setPhase('blocked');
                 } else {
+                    if (last) {
+                        setPreviousNote(`Your previous attempt was closed: ${lastReason || 'it was not finished.'} ` +
+                            (data.chances_left === 1 ? 'This is your last chance.' : `You have ${plural(data.chances_left, 'chance')} left.`));
+                    }
                     setPhase('setup');
                 }
             } catch (err) {
@@ -259,6 +280,8 @@ export default function ProctoredTestPage({ params }: { params: Promise<{ testId
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Could not start the test');
             attemptIdRef.current = data.attempt_id;
+            setAttemptNo(data.attempt_no);
+            setChancesLeft(Math.max(0, data.max_attempts - data.attempt_no));
             deadlineRef.current = Date.now() + data.duration_minutes * 60_000;
             setQuestions(data.questions || []);
             endedRef.current = false;
@@ -309,8 +332,13 @@ export default function ProctoredTestPage({ params }: { params: Promise<{ testId
                 <XCircle className="w-12 h-12 text-rose-500" />
                 <h1 className="text-xl font-black text-slate-900">Test closed</h1>
                 <p className="text-sm text-slate-600 max-w-md">
-                    {endReason ? REASON_LABEL[endReason] : 'This attempt had already ended.'} Leaving the test window ends the test.
-                    Your attempt and the reason have been recorded for your reviewer.
+                    {endReason ? REASON_LABEL[endReason] : 'This attempt had already ended.'} Leaving the test window ends the attempt,
+                    and the reason has been recorded for your reviewer.
+                </p>
+                <p className="text-sm font-bold text-slate-900 max-w-md">
+                    {chancesLeft > 0
+                        ? `You have ${plural(chancesLeft, 'chance')} left. Open the test link again when you are ready.`
+                        : 'That was your last chance at this test.'}
                 </p>
                 <Link href="/proctor" className="text-sm font-bold text-slate-900 underline">Back to tests</Link>
             </Centered>
@@ -338,6 +366,7 @@ export default function ProctoredTestPage({ params }: { params: Promise<{ testId
                         <p className="mt-1 text-sm text-slate-500">
                             {test?.question_count} questions · {test?.duration_minutes} minutes{test?.ai_monitoring ? ' · AI camera monitoring' : ''}
                         </p>
+                        {previousNote && <p className="mt-3 rounded-xl bg-amber-50 p-3 text-sm font-bold text-amber-900">{previousNote}</p>}
                         {test?.instructions && <p className="mt-3 text-sm text-slate-700 whitespace-pre-wrap">{test.instructions}</p>}
                     </div>
 
@@ -345,7 +374,9 @@ export default function ProctoredTestPage({ params }: { params: Promise<{ testId
                         <p className="flex items-center gap-2 text-sm font-black text-rose-900"><Lock className="w-4 h-4" /> Once you start, the test is locked to this screen</p>
                         <ul className="mt-2 list-disc pl-5 text-sm text-rose-900/80 space-y-1">
                             <li>Switching tabs, switching apps, pressing <b>Esc</b>, leaving fullscreen, or closing/refreshing the page <b>ends the test immediately</b>.</li>
-                            <li>You get one attempt. It cannot be restarted.</li>
+                            <li>
+                                You have {plural(chancesLeft, 'chance')}. Leaving the page uses one up; once you submit, the test is finished.
+                            </li>
                             <li>Keep your face in view of the camera. Checks are recorded for your reviewer.</li>
                             <li>Close other apps and turn off notifications before you begin.</li>
                         </ul>
@@ -385,7 +416,10 @@ export default function ProctoredTestPage({ params }: { params: Promise<{ testId
         <div className="min-h-screen bg-white select-none">
             <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur">
                 <Lock className="w-4 h-4 text-rose-600" />
-                <p className="flex-1 truncate text-sm font-black text-slate-900">{test?.title}</p>
+                <p className="flex-1 truncate text-sm font-black text-slate-900">
+                    {test?.title}
+                    {test && test.max_attempts > 1 && <span className="ml-2 text-xs font-bold text-slate-400">Attempt {attemptNo} of {test.max_attempts}</span>}
+                </p>
                 <span className="text-xs font-bold text-slate-500">{answeredCount}/{questions.length} answered</span>
                 <span className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-sm font-black tabular-nums ${remaining < 60 ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-900'}`}>
                     <Clock className="w-4 h-4" /> {mm}:{ss}
@@ -399,9 +433,17 @@ export default function ProctoredTestPage({ params }: { params: Promise<{ testId
             )}
 
             <main className="mx-auto max-w-2xl space-y-6 px-4 py-6 pb-40">
-                {questions.map((q, i) => (
+                {groupBySection(questions).map((group) => (
+                    <section key={group.key} className="space-y-4">
+                        {groupBySection(questions).length > 1 && (
+                            <div className="border-b border-slate-200 pb-1">
+                                <h2 className="text-base font-black text-slate-900">{group.label}</h2>
+                                <p className="text-xs text-slate-500">{group.hint} · {plural(group.questions.length, 'question')}</p>
+                            </div>
+                        )}
+                        {group.questions.map((q) => (
                     <fieldset key={q.id} className="rounded-2xl border border-slate-200 p-4">
-                        <legend className="px-1 text-sm font-black text-slate-900">Q{i + 1}. {q.text}</legend>
+                        <legend className="px-1 text-sm font-black text-slate-900">Q{questions.indexOf(q) + 1}. {q.text}</legend>
                         <div className="mt-2 space-y-2">
                             {q.options.map((opt, oi) => (
                                 <label key={oi} className={`flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2 text-sm ${answers[q.id] === oi ? 'border-slate-900 bg-slate-50 font-bold' : 'border-slate-200'}`}>
@@ -416,6 +458,8 @@ export default function ProctoredTestPage({ params }: { params: Promise<{ testId
                             ))}
                         </div>
                     </fieldset>
+                        ))}
+                    </section>
                 ))}
 
                 {error && <p className="text-sm font-medium text-rose-600">{error}</p>}
