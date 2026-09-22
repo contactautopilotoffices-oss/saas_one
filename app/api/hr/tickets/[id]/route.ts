@@ -17,13 +17,16 @@ export async function GET(
             .select(`
                 *,
                 category:hr_ticket_categories(*),
-                raised_by:users!raised_by_user_id(id, email, full_name, phone),
-                assigned_to:users!assigned_to_user_id(id, email, full_name, phone),
-                resolved_by:users!resolved_by_user_id(id, email, full_name, phone),
-                comments:hr_ticket_comments(*),
+                raised_by:users!raised_by_user_id(id, email, full_name, phone, user_photo_url),
+                assigned_to:users!assigned_to_user_id(id, email, full_name, phone, user_photo_url),
+                resolved_by:users!resolved_by_user_id(id, email, full_name, phone, user_photo_url),
+                comments:hr_ticket_comments(
+                    *,
+                    sender:users!sender_user_id(id, full_name, email, user_photo_url)
+                ),
                 audit_logs:hr_ticket_audit_logs(
                     *,
-                    actor:users!actor_user_id(id, email, full_name, phone)
+                    actor:users!actor_user_id(id, email, full_name, phone, user_photo_url)
                 )
             `)
             .eq('id', id)
@@ -34,9 +37,40 @@ export async function GET(
             return NextResponse.json({ success: false, error: 'Ticket not found' }, { status: 404 });
         }
 
+        const { searchParams } = new URL(request.url);
+        const reqRole = (searchParams.get('role') || '').toLowerCase();
+        const reqUserId = searchParams.get('userId');
+        const hrRoles = ['hr', 'hr_head', 'hr_manager', 'hr_ops'];
+        const orgSuperAdminRoles = ['org_super_admin', 'master_admin', 'super_admin'];
+
+        const isSuperAdmin = orgSuperAdminRoles.includes(reqRole);
+        const isHrRole = hrRoles.includes(reqRole);
+        const isConfidential = Boolean(ticket.is_confidential) || ticket.ticket_type === 'confidential_feedback' || ticket.ticket_type === 'confidential';
+
         if (ticket.is_anonymous) {
+            if (hrRoles.includes(reqRole)) {
+                return NextResponse.json({ success: false, error: 'Anonymous feedback tickets are not accessible to HR roles.' }, { status: 403 });
+            }
+            if (!isSuperAdmin && reqUserId && ticket.assigned_to_user_id !== reqUserId && !(Array.isArray(ticket.assigned_history) && ticket.assigned_history.includes(reqUserId))) {
+                return NextResponse.json({ success: false, error: 'Anonymous feedback tickets are restricted to Org Super Admin and assigned users.' }, { status: 403 });
+            }
             ticket.raised_by = { id: null, email: 'anonymous@hidden.local', full_name: 'Anonymous Employee' };
-            ticket.employee_snapshot = { name: 'Anonymous Employee', department: 'Confidential', location: 'Hidden' };
+            ticket.employee_snapshot = {
+                name: 'Anonymous Employee',
+                department: 'Confidential',
+                location: 'Hidden',
+                manager_name: 'Hidden',
+                reporting_manager_name: 'Hidden',
+                code: 'Hidden'
+            };
+        } else if (isConfidential) {
+            // Confidential tickets are strictly restricted to Org Super Admin, the explicitly assigned user as per admin config, or the submitter
+            const isAssigned = reqUserId && (ticket.assigned_to_user_id === reqUserId || (Array.isArray(ticket.assigned_history) && ticket.assigned_history.includes(reqUserId)));
+            const isSubmitter = reqUserId && ticket.raised_by_user_id === reqUserId;
+
+            if (!isSuperAdmin && !isAssigned && !isSubmitter) {
+                return NextResponse.json({ success: false, error: 'Confidential tickets are not accessible to HR roles and are restricted to Org Super Admin and assigned users.' }, { status: 403 });
+            }
         }
 
         // Resolve names for each escalation level authority
@@ -236,6 +270,113 @@ export async function GET(
             l4: escalationFlow[3]?.assignee || l4Name
         };
 
+        // Enrich assigned_to_details with complete location, app_role, employee_role, photo_url
+        if (ticket.assigned_to_user_id) {
+            try {
+                const { data: assignedProfile } = await supabaseAdmin
+                    .from('employee_profiles')
+                    .select('employee_code, first_name, last_name, designation, department, location, phone, email, is_hr_authority, is_hr_manager_authority, is_director_authority')
+                    .eq('user_id', ticket.assigned_to_user_id)
+                    .maybeSingle();
+
+                const { data: assignedMem } = await supabaseAdmin
+                    .from('organization_memberships')
+                    .select('role')
+                    .eq('user_id', ticket.assigned_to_user_id)
+                    .maybeSingle();
+
+                const { data: userRecord } = await supabaseAdmin
+                    .from('users')
+                    .select('user_photo_url, role')
+                    .eq('id', ticket.assigned_to_user_id)
+                    .maybeSingle();
+
+                const photoUrl = (userRecord as any)?.user_photo_url || null;
+                const appRole = assignedMem?.role || (userRecord as any)?.role || (assignedProfile?.is_director_authority ? 'Director' : assignedProfile?.is_hr_authority ? 'HR Head' : assignedProfile?.is_hr_manager_authority ? 'HR Manager' : 'Staff');
+
+                // Resolve handler location independently from employee profile or property
+                let handlerLocation = assignedProfile?.location;
+                if (!handlerLocation || handlerLocation.toLowerCase() === 'hidden') {
+                    const { data: propMem } = await supabaseAdmin
+                        .from('property_memberships')
+                        .select('property:properties(name, city)')
+                        .eq('user_id', ticket.assigned_to_user_id)
+                        .limit(1)
+                        .maybeSingle();
+                    if (propMem?.property) {
+                        const p = propMem.property as any;
+                        handlerLocation = p.name ? `${p.name}${p.city ? ` (${p.city})` : ''}` : p.city;
+                    }
+                }
+                if (!handlerLocation || handlerLocation.toLowerCase() === 'hidden') {
+                    handlerLocation = 'Head Office';
+                }
+
+                const handlerEmpCode = assignedProfile?.employee_code || 'N/A';
+
+                ticket.assigned_to_details = {
+                    id: ticket.assigned_to_user_id,
+                    full_name: ticket.assigned_to?.full_name || `${assignedProfile?.first_name || ''} ${assignedProfile?.last_name || ''}`.trim() || 'Assigned User',
+                    email: ticket.assigned_to?.email || assignedProfile?.email || '',
+                    phone: ticket.assigned_to?.phone || assignedProfile?.phone || '',
+                    photo_url: photoUrl,
+                    avatar_url: photoUrl,
+                    location: handlerLocation,
+                    department: assignedProfile?.department || 'Operations',
+                    employee_role: assignedProfile?.designation || 'Level Owner',
+                    app_role: appRole,
+                    employee_code: handlerEmpCode
+                };
+            } catch (e) {
+                console.warn('Error fetching assigned user details:', e);
+            }
+        }
+
+        // Attach structured submitter details
+        if (!ticket.is_anonymous) {
+            const submitterPhoto = ticket.raised_by?.user_photo_url || null;
+            ticket.submitter_details = {
+                id: ticket.raised_by_user_id,
+                full_name: ticket.employee_snapshot?.name || ticket.raised_by?.full_name || 'Employee',
+                email: ticket.raised_by?.email || '',
+                phone: ticket.raised_by?.phone || '',
+                photo_url: submitterPhoto,
+                avatar_url: submitterPhoto,
+                employee_code: ticket.employee_snapshot?.code || 'N/A',
+                department: ticket.employee_snapshot?.department || 'Operations',
+                location: ticket.employee_snapshot?.location || 'Head Office',
+                designation: ticket.employee_snapshot?.designation || 'Staff',
+                manager_name: ticket.employee_snapshot?.manager_name || ticket.employee_snapshot?.reporting_manager_name || 'N/A',
+                is_anonymous: false
+            };
+        } else {
+            ticket.submitter_details = {
+                id: null,
+                full_name: 'Anonymous Employee',
+                email: 'hidden',
+                phone: 'hidden',
+                photo_url: null,
+                avatar_url: null,
+                employee_code: 'Hidden',
+                department: 'Confidential',
+                location: 'Hidden',
+                designation: 'Confidential',
+                manager_name: 'Hidden',
+                is_anonymous: true
+            };
+        }
+
+        // Filter out internal notes for the creator of the request (submitter)
+        if (Array.isArray(ticket.comments)) {
+            const isAssigned = reqUserId && (ticket.assigned_to_user_id === reqUserId || (Array.isArray(ticket.assigned_history) && ticket.assigned_history.includes(reqUserId)));
+            const isSubmitter = reqUserId && ticket.raised_by_user_id === reqUserId;
+            const canViewInternalNotes = isSuperAdmin || (isAssigned && !isSubmitter) || (isHrRole && !isSubmitter);
+
+            if (!canViewInternalNotes) {
+                ticket.comments = ticket.comments.filter((c: any) => !c.is_internal);
+            }
+        }
+
         return NextResponse.json({ success: true, data: ticket });
     } catch (err: any) {
         return NextResponse.json({ success: false, error: err.message }, { status: 500 });
@@ -271,6 +412,29 @@ export async function PATCH(
         const safeActorId = cleanUuid(actor_user_id) || cleanUuid(resolved_by_user_id);
         const safeResolvedById = cleanUuid(resolved_by_user_id) || safeActorId;
 
+        const isConfidential = Boolean(existing.is_confidential) || existing.ticket_type === 'confidential_feedback' || existing.ticket_type === 'confidential';
+        const isAnonymous = Boolean(existing.is_anonymous) || existing.ticket_type === 'anonymous_feedback';
+
+        if ((isConfidential || isAnonymous) && safeActorId) {
+            const { data: mems } = await supabaseAdmin
+                .from('organization_memberships')
+                .select('role')
+                .eq('user_id', safeActorId)
+                .eq('organization_id', existing.organization_id);
+
+            const isSuper = mems && mems.some(m => ['org_super_admin', 'master_admin', 'super_admin'].includes((m.role || '').toLowerCase()));
+            const isAssigned = existing.assigned_to_user_id === safeActorId || (Array.isArray(existing.assigned_history) && existing.assigned_history.includes(safeActorId));
+            const isSubmitter = existing.raised_by_user_id === safeActorId;
+
+            if (isAnonymous && !isSuper && !(isSubmitter && (action === 'acknowledge' || action === 'reopen' || status === 'closed' || status === 'reopened'))) {
+                return NextResponse.json({ success: false, error: 'Anonymous tickets can only be updated by Org Super Admin.' }, { status: 403 });
+            }
+
+            if (isConfidential && !isSuper && !isAssigned && !(isSubmitter && (action === 'acknowledge' || action === 'reopen' || status === 'closed' || status === 'reopened'))) {
+                return NextResponse.json({ success: false, error: 'Confidential tickets are not accessible to HR roles and can only be updated by Org Super Admin or the assigned user.' }, { status: 403 });
+            }
+        }
+
         const updates: any = { updated_at: new Date().toISOString() };
         if (status) updates.status = status;
         if (priority) updates.priority = priority;
@@ -305,8 +469,50 @@ export async function PATCH(
             updates.current_level = nextLevel;
             updates.status = 'escalated';
 
-            // Resolve next level owner based on hierarchy
-            if (nextLevel === 2) {
+            // Resolve next level owner based on Admin Config first, then fallback to role hierarchy
+            let nextAssigneeId: string | null = null;
+            try {
+                const { data: orgSettings } = await supabaseAdmin
+                    .from('organization_settings')
+                    .select('hr_escalation_config, notification_matrix')
+                    .limit(1)
+                    .maybeSingle();
+
+                const configObj = orgSettings?.notification_matrix?.hr_escalation_config || orgSettings?.hr_escalation_config || {};
+                let flowAssigneesConfig = configObj.flow_assignees || {};
+                while (flowAssigneesConfig && flowAssigneesConfig.flow_assignees) {
+                    flowAssigneesConfig = flowAssigneesConfig.flow_assignees;
+                }
+
+                const tType = existing.ticket_type || 'grievance';
+                const levelCustomAssignees = flowAssigneesConfig[tType]?.[String(nextLevel)] || flowAssigneesConfig[tType]?.[nextLevel];
+
+                if (Array.isArray(levelCustomAssignees) && levelCustomAssignees.length > 0) {
+                    const firstEmpId = levelCustomAssignees[0];
+                    const { data: targetProfile } = await supabaseAdmin
+                        .from('employee_profiles')
+                        .select('user_id')
+                        .or(`id.eq.${firstEmpId},user_id.eq.${firstEmpId}`)
+                        .maybeSingle();
+
+                    if (targetProfile?.user_id) {
+                        nextAssigneeId = targetProfile.user_id;
+                    } else {
+                        const { data: uRec } = await supabaseAdmin
+                            .from('users')
+                            .select('id')
+                            .eq('id', firstEmpId)
+                            .maybeSingle();
+                        if (uRec?.id) nextAssigneeId = uRec.id;
+                    }
+                }
+            } catch (cfgErr) {
+                console.warn('Could not read admin escalation config on PATCH ticket escalation:', cfgErr);
+            }
+
+            if (nextAssigneeId) {
+                updates.assigned_to_user_id = nextAssigneeId;
+            } else if (nextLevel === 2) {
                 // Level 2: Designated HR Manager / Operations Lead
                 const { data: hrMgrs } = await supabaseAdmin
                     .from('employee_profiles')
@@ -404,6 +610,21 @@ export async function PATCH(
             old_values: { status: existing.status, level: existing.current_level, assigned_to: existing.assigned_to_user_id },
             new_values: updates
         });
+
+        // Dispatch Omnichannel Notifications
+        if (escalate) {
+            NotificationService.afterHrTicketEscalated(id, existing.current_level, updates.current_level, false, safeActorId || undefined).catch(err => {
+                console.error('[HR Tickets API] afterHrTicketEscalated dispatch error:', err);
+            });
+        } else if (action === 'acknowledge' || (status === 'closed' && safeActorId === existing.raised_by_user_id)) {
+            NotificationService.afterHrTicketAcknowledged(id).catch(err => {
+                console.error('[HR Tickets API] afterHrTicketAcknowledged dispatch error:', err);
+            });
+        } else if (status && status !== existing.status) {
+            NotificationService.afterHrTicketStatusUpdated(id, existing.status, status, safeActorId || undefined).catch(err => {
+                console.error('[HR Tickets API] afterHrTicketStatusUpdated dispatch error:', err);
+            });
+        }
 
         return NextResponse.json({ success: true, data: updated });
     } catch (err: any) {

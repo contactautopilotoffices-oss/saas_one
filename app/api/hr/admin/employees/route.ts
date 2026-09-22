@@ -17,8 +17,8 @@ export async function GET(request: Request) {
             .from('employee_profiles')
             .select(`
                 *,
-                user:users!user_id(id, email, full_name, phone, deleted_at),
-                reporting_manager:users!reporting_manager_id(id, email, full_name, phone)
+                user:users!user_id(id, email, full_name, phone, user_photo_url, deleted_at),
+                reporting_manager:users!reporting_manager_id(id, email, full_name, phone, user_photo_url)
             `)
             .or('is_active.eq.true,is_active.is.null')
             .order('employee_code', { ascending: true });
@@ -53,7 +53,7 @@ export async function GET(request: Request) {
         const [orgMemsRes, propMemsRes, appUsersRes] = await Promise.all([
             supabaseAdmin.from('organization_memberships').select('user_id, role'),
             supabaseAdmin.from('property_memberships').select('user_id, role'),
-            supabaseAdmin.from('users').select('id, email, phone, full_name, deleted_at').is('deleted_at', null)
+            supabaseAdmin.from('users').select('id, email, phone, full_name, user_photo_url, deleted_at').is('deleted_at', null)
         ]);
 
         const excludedUserIds = new Set<string>();
@@ -144,9 +144,12 @@ export async function GET(request: Request) {
 
             const appEmail = p.user?.email || p.email || null;
             const appPhone = p.user?.phone || p.phone || null;
+            const appPhoto = p.user?.user_photo_url || null;
 
             return {
                 ...p,
+                user_photo_url: appPhoto,
+                photo_url: appPhoto,
                 email: p.email || appEmail,
                 app_role: role || (p.user_id ? 'app_user' : null),
                 app_email: appEmail,

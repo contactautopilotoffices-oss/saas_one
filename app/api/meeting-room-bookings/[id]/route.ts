@@ -4,7 +4,6 @@ import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { EventProcessor } from '@/backend/services/EventProcessor';
 import { NotificationService } from '@/backend/services/NotificationService';
-import { EmailService } from '@/backend/services/EmailService';
 import { getBookingDateTimeIST } from '@/backend/utils/timezone';
 
 /**
@@ -149,33 +148,11 @@ async function cancelBooking(bookingId: string, user: any) {
             status: 'completed',
         });
 
-        // Send attendee & booker cancellation email
-        const recipientEmails = new Set<string>();
-        if (booking.users?.email) recipientEmails.add(booking.users.email);
-        if (booking.attendee_email?.trim()) {
-            booking.attendee_email
-                .split(/[,;]+/)
-                .map((e: string) => e.trim())
-                .filter((e: string) => e && e.includes('@'))
-                .forEach((e: string) => recipientEmails.add(e));
-        }
-
-        for (const emailTo of Array.from(recipientEmails)) {
-            await EmailService.sendMeetingRoomEmail({
-                emailTo,
-                roomName: booking.meeting_rooms?.name || 'Meeting Room',
-                date: cleanDate,
-                startTime: booking.start_time,
-                endTime: booking.end_time,
-                propertyName: prop?.name || 'Your Property',
-                requesterName: booking.users?.full_name || 'Meeting Host',
-                requesterEmail: booking.users?.email || 'N/A',
-                isCancellation: true,
-                comment: booking.comment || null
-            }).catch(e => console.error('[Booking Cancel API] Cancellation email error:', e));
-        }
+        // Note: Attendee, booker, and property admin cancellation emails are handled asynchronously
+        // via the Event Outbox pattern (tr_meeting_room_booking_outbox_insert_update_delete -> EventProcessor)
+        // to prevent duplicate emails and avoid blocking HTTP cancellation requests.
     } catch (err) {
-        console.error('Activity log or attendee email dispatch failed:', err);
+        console.error('Activity log recording failed:', err);
     }
 
     // 7. Trigger cancellation notifications asynchronously

@@ -235,7 +235,7 @@ export async function GET(request: NextRequest) {
             .from('users')
             .select('*')
             .is('deleted_at', null)
-            .or(`organization_id.eq.${orgId!},raw_user_meta_data->>organization_id.eq.${orgId!}`)
+            .eq('organization_id', orgId!)
             .or('is_approved.eq.false,approval_status.eq.pending,approval_status.eq.pending_approval');
 
         if (directPendingUsers && directPendingUsers.length > 0) {

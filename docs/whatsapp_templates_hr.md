@@ -9,7 +9,7 @@ This document contains the official **Meta WhatsApp Business Manager / AiSensy**
 Submit these exact template specifications to **Meta WhatsApp Business Manager / AiSensy** for approval.
 
 ### Template 1: Ticket Submitted (To Submitter)
-* **Template Name**: `hr_ticket_created_submitter`
+* **Template Name**: `hr_ticket_created_submitter_v2`
 * **Category**: UTILITY
 * **Language**: `en`
 * **Header**: None (or Text: `HR Portal Update`)
@@ -30,7 +30,7 @@ Submit these exact template specifications to **Meta WhatsApp Business Manager /
 ---
 
 ### Template 2: New Ticket Assignment (To Assigned Manager / Handler)
-* **Template Name**: `hr_ticket_assigned_handler`
+* **Template Name**: `hr_ticket_assigned_handler_v2`
 * **Category**: UTILITY
 * **Language**: `en`
 * **Header**: None

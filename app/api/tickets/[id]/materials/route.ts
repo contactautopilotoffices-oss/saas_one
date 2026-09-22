@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
-import { EmailService } from '@/backend/services/EmailService';
 
 /**
  * POST /api/tickets/[id]/materials
@@ -99,18 +98,10 @@ export async function POST(
             }
         });
 
-        // 5. Send Automated Email
-        if (assignee?.email) {
-            // Non-blocking email trigger
-            EmailService.sendMaterialRequestEmail({
-                emailTo: assignee.email,
-                ticket,
-                property: ticket.property,
-                requestedBy: requester,
-                requesterRole: reqMembership?.role || 'Staff',
-                items
-            }).catch(e => console.error('SMTP Failure (Async):', e));
-        }
+        // 5. Automated Email Dispatch
+        // Note: Email dispatch to the procurement assignee and property team is handled
+        // asynchronously via the Event Outbox pattern (trg_material_requests_outbox -> EventProcessor)
+        // to prevent duplicate emails and reduce API response latency.
 
         return NextResponse.json({ success: true, material_request: materialReq });
     } catch (error) {

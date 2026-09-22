@@ -12,6 +12,8 @@ import {
 import { useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import NotificationBell from './NotificationBell';
+import HRTicketsContent from '@/frontend/components/hr/HRTicketsContent';
+import { ShieldCheck, Plus } from 'lucide-react';
 import ProcurementPOProcessor from '../procurement/ProcurementPOProcessor';
 import ProcurementStatusModal from './ProcurementStatusModal';
 import ProcurementComparativeFlow from './ProcurementComparativeFlow';
@@ -60,7 +62,7 @@ interface MaterialRequest {
     };
 }
 
-type Tab = 'overview' | 'urgency-tracker' | 'task-sheet' | 'requests' | 'vendor_tickets' | 'monthly-requisitions' | 'monthly-feedback' | 'site-pricing' | 'history' | 'manage-items' | 'po-generator' | 'settings' | 'profile';
+type Tab = 'overview' | 'urgency-tracker' | 'task-sheet' | 'requests' | 'vendor_tickets' | 'monthly-requisitions' | 'monthly-feedback' | 'site-pricing' | 'history' | 'manage-items' | 'po-generator' | 'settings' | 'profile' | 'grievance';
 
 export default function ProcurementDashboard() {
     const supabase = createClient();
@@ -72,10 +74,11 @@ export default function ProcurementDashboard() {
     const [procurementUsers, setProcurementUsers] = useState<any[]>([]);
     const [allProperties, setAllProperties] = useState<any[]>([]);
     const [activeTab, setActiveTab] = useState<Tab>('overview');
+    const [userOrgId, setUserOrgId] = useState<string>('');
 
     useEffect(() => {
         const tabParam = searchParams?.get('tab') as Tab | null;
-        const linkableTabs = ['overview', 'urgency-tracker', 'task-sheet', 'requests', 'vendor_tickets', 'monthly-requisitions', 'monthly-feedback', 'history', 'manage-items', 'po-generator', 'settings', 'profile'];
+        const linkableTabs = ['overview', 'urgency-tracker', 'task-sheet', 'requests', 'vendor_tickets', 'monthly-requisitions', 'monthly-feedback', 'history', 'manage-items', 'po-generator', 'settings', 'profile', 'grievance'];
         if (SHOW_LEGACY_PER_PROPERTY_CONTROLS) linkableTabs.push('site-pricing');
         if (tabParam && linkableTabs.includes(tabParam)) {
             setActiveTab(tabParam);
@@ -133,6 +136,13 @@ export default function ProcurementDashboard() {
         const getUser = async () => {
             const { data: { user } } = await supabase.auth.getUser();
             setUser(user);
+            if (user?.user_metadata?.organization_id) {
+                setUserOrgId(user.user_metadata.organization_id);
+            } else if (user?.id) {
+                supabase.from('organization_memberships').select('organization_id').eq('user_id', user.id).limit(1).maybeSingle().then(({ data }) => {
+                    if (data?.organization_id) setUserOrgId(data.organization_id);
+                });
+            }
         };
         getUser();
     }, [supabase]);
@@ -659,6 +669,7 @@ export default function ProcurementDashboard() {
                             </p>
                             <div className="space-y-1">
                                 {[
+                                    { id: 'grievance', icon: ShieldCheck, label: 'My Grievances' },
                                     { id: 'settings', icon: Settings, label: 'Settings' },
                                     { id: 'profile', icon: UserCircle, label: 'Profile' },
                                 ].map((item) => (
@@ -755,6 +766,20 @@ export default function ProcurementDashboard() {
                         </div>
 
                         <div className="flex items-center gap-4">
+                            <button
+                                onClick={() => {
+                                    setActiveTab('grievance');
+                                    const url = new URL(window.location.href);
+                                    url.searchParams.set('tab', 'grievance');
+                                    url.searchParams.set('action', 'create');
+                                    window.history.pushState({}, '', url.toString());
+                                }}
+                                className="flex items-center gap-1.5 px-3 py-2 bg-[#587e85] hover:bg-[#48686e] text-white rounded-xl text-xs font-bold transition-all shadow-xs active:scale-95 shrink-0"
+                                title="Raise HR Request / Grievance"
+                            >
+                                <Plus className="w-4 h-4" />
+                                <span className="hidden sm:inline">Raise Grievance</span>
+                            </button>
                             <NotificationBell />
                             <div className="w-10 h-10 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-center text-slate-400 font-black text-sm">
                                 {user?.email?.[0].toUpperCase() || 'P'}
@@ -856,6 +881,11 @@ export default function ProcurementDashboard() {
                                 user={user} 
                                 onUserUpdated={(updatedUser) => setUser(updatedUser)} 
                             />
+                        )}
+                        {activeTab === 'grievance' && (
+                            <div className="py-2">
+                                <HRTicketsContent orgId={user?.user_metadata?.organization_id || userOrgId || ''} />
+                            </div>
                         )}
                         {activeTab === 'profile' && (
                             <ProcurementSettingsTab 

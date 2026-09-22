@@ -178,22 +178,54 @@ export async function POST(request: Request) {
             if (error) throw error;
 
             return NextResponse.json({ success: true, message: 'Employee onboarding approved and linked successfully', data: updated });
-        } else if (action === 'manual_link') {
-            // Manually link an Excel profile to an App User
+        } else if (action === 'manual_link' || action === 'relink_profile') {
+            // Manually link/re-link an Excel profile to an App User
             if (!employee_profile_id || !user_id) {
                 return NextResponse.json({ success: false, error: 'employee_profile_id and user_id are required' }, { status: 400 });
             }
 
+            // Fetch target app user to sync email if needed
+            const { data: targetUser } = await supabaseAdmin
+                .from('users')
+                .select('email')
+                .eq('id', user_id)
+                .maybeSingle();
+
+            const updateData: any = {
+                user_id,
+                reconciliation_status: 'linked',
+                updated_at: new Date().toISOString()
+            };
+            if (targetUser?.email) {
+                updateData.email = targetUser.email;
+            }
+
             const { data: updated, error } = await supabaseAdmin
                 .from('employee_profiles')
-                .update({ user_id, reconciliation_status: 'linked', updated_at: new Date().toISOString() })
+                .update(updateData)
                 .eq('id', employee_profile_id)
                 .select()
                 .single();
 
             if (error) throw error;
 
-            return NextResponse.json({ success: true, message: 'User manually linked', data: updated });
+            return NextResponse.json({ success: true, message: 'Employee profile linked successfully', data: updated });
+        } else if (action === 'unlink_profile') {
+            // Unlink an employee profile from its current app user
+            if (!employee_profile_id) {
+                return NextResponse.json({ success: false, error: 'employee_profile_id is required' }, { status: 400 });
+            }
+
+            const { data: updated, error } = await supabaseAdmin
+                .from('employee_profiles')
+                .update({ user_id: null, reconciliation_status: 'unlinked', updated_at: new Date().toISOString() })
+                .eq('id', employee_profile_id)
+                .select()
+                .single();
+
+            if (error) throw error;
+
+            return NextResponse.json({ success: true, message: 'Employee profile unlinked successfully', data: updated });
         } else if (action === 'create_and_link_profile') {
             // Create a new employee_profile record for an existing unmapped app user and assign an ECode
             if (!user_id) {

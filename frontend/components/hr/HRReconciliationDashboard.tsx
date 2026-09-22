@@ -223,12 +223,42 @@ export default function HRReconciliationDashboard({ orgId, organizationId, onRef
         }
     };
 
+    const handleUnlinkProfile = async (employeeProfileId: string, empName: string) => {
+        if (!confirm(`Are you sure you want to unlink ${empName} from their app account?`)) return;
+        setApprovingId(employeeProfileId);
+        setMsg('');
+        try {
+            const res = await fetch('/api/hr/admin/reconcile', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'unlink_profile',
+                    employee_profile_id: employeeProfileId
+                })
+            });
+            const text = await res.text();
+            const result = text ? JSON.parse(text) : {};
+            if (result.success) {
+                setMsg(`Unlinked ${empName} successfully!`);
+                fetchReconciliation();
+                onRefresh?.();
+            } else {
+                alert(`Error: ${result.error || 'Failed to unlink profile'}`);
+            }
+        } catch (err) {
+            console.error('Error unlinking profile:', err);
+        } finally {
+            setApprovingId(null);
+        }
+    };
+
     if (loading) {
         return <div className="p-8 text-center text-slate-400 text-xs">Loading identity reconciliation data...</div>;
     }
 
     const summary = data?.summary || {};
     const allProfiles = data?.data?.all_profiles || data?.data?.unlinked || [];
+    const linkedList = data?.data?.linked || [];
     const unlinkedList = data?.data?.unlinked || [];
     const pendingList = data?.data?.pending_approval || [];
     const unmappedAppUsers = data?.data?.unmapped_app_users || [];
@@ -311,7 +341,6 @@ export default function HRReconciliationDashboard({ orgId, organizationId, onRef
                 </div>
             )}
 
-
             {/* Section 2: Excel Employees Awaiting App Registration */}
             <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 shadow-sm space-y-4">
                 <div>
@@ -344,7 +373,7 @@ export default function HRReconciliationDashboard({ orgId, organizationId, onRef
                                     <td className="p-3">{emp.department}</td>
                                     <td className="p-3">{emp.reporting_manager_code || 'Unassigned'}</td>
                                     <td className="p-3">
-                                        <span className="px-2 py-0.5 bg-amber-100 text-amber-700 font-bold rounded text-[10px]">
+                                        <span className="px-2 py-0.5 bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-bold rounded text-[10px]">
                                             Pending Onboarding
                                         </span>
                                     </td>
@@ -354,6 +383,63 @@ export default function HRReconciliationDashboard({ orgId, organizationId, onRef
                     </table>
                 </div>
             </div>
+
+            {/* Section 3: Linked & Matched Employees (Unlink / Re-link capability) */}
+            {linkedList.length > 0 && (
+                <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 shadow-sm space-y-4">
+                    <div>
+                        <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                            <ShieldCheck className="w-4 h-4 text-emerald-500" />
+                            Linked & Matched Employees ({linkedList.length})
+                        </h3>
+                        <p className="text-xs text-slate-500">
+                            These Excel employee profiles are currently linked to app user accounts. You can unlink or re-link any incorrect account without deleting the profile.
+                        </p>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs border-collapse">
+                            <thead>
+                                <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-slate-500 font-semibold">
+                                    <th className="p-3">ECode</th>
+                                    <th className="p-3">Excel Profile Name</th>
+                                    <th className="p-3">Linked App Email</th>
+                                    <th className="p-3">Department</th>
+                                    <th className="p-3">Status</th>
+                                    <th className="p-3 text-right">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                {linkedList.map((emp: any) => (
+                                    <tr key={emp.id} className="hover:bg-slate-50/50">
+                                        <td className="p-3 font-mono font-bold text-indigo-600">{emp.employee_code}</td>
+                                        <td className="p-3 font-semibold">{emp.first_name} {emp.last_name}</td>
+                                        <td className="p-3 text-slate-700 dark:text-slate-300 font-medium">
+                                            {emp.user?.email || emp.email || 'N/A'}
+                                        </td>
+                                        <td className="p-3">{emp.department}</td>
+                                        <td className="p-3">
+                                            <span className="px-2 py-0.5 bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 font-bold rounded text-[10px]">
+                                                Linked
+                                            </span>
+                                        </td>
+                                        <td className="p-3 text-right">
+                                            <button
+                                                type="button"
+                                                disabled={approvingId === emp.id}
+                                                onClick={() => handleUnlinkProfile(emp.id, `${emp.first_name} ${emp.last_name}`)}
+                                                className="px-2.5 py-1 text-xs font-semibold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 rounded-lg transition-colors border border-rose-200 dark:border-rose-900/50 disabled:opacity-50"
+                                            >
+                                                Unlink Account
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

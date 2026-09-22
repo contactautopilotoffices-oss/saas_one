@@ -249,13 +249,13 @@ const MODULES_META: ModuleMeta[] = [
         color: 'text-indigo-600 bg-indigo-50 border-indigo-100',
         events: [
             {
-                key: 'hr_ticket_created_submitter',
+                key: 'hr_ticket_created_submitter_v2',
                 name: 'Ticket Submitted (To Submitter)',
                 description: 'Sent immediately to the submitter confirming their HR ticket creation and assigned handler.',
                 hasContextual: { requester: true }
             },
             {
-                key: 'hr_ticket_assigned_handler',
+                key: 'hr_ticket_assigned_handler_v2',
                 name: 'New Ticket Assignment (To Assigned Manager / Handler)',
                 description: 'Sent to the assigned L1 Manager or L2 HR Handler with ticket details and SLA window.',
                 hasContextual: { assignee: true }
@@ -632,10 +632,17 @@ const MODULES_META: ModuleMeta[] = [
 
 const DEFAULT_NOTIFICATION_MATRIX: NotificationMatrix = {
     hr_tickets: {
-        hr_ticket_created: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: ['hr', 'hr_head', 'org_super_admin'], user_ids: [], notify_assignee: true, notify_requester: true },
-        hr_ticket_assigned: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: ['manager', 'hr', 'hr_head'], user_ids: [], notify_assignee: true },
+        hr_ticket_created_submitter_v2: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: ['hr', 'hr_head', 'org_super_admin'], user_ids: [], notify_assignee: false, notify_requester: true },
+        hr_ticket_assigned_handler_v2: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: ['manager', 'hr', 'hr_head'], user_ids: [], notify_assignee: true },
+        hr_ticket_escalated_handler: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: ['hr_head', 'org_super_admin'], user_ids: [], notify_assignee: true },
         hr_ticket_status_updated: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: [], user_ids: [], notify_requester: true },
-        hr_ticket_sla_reminder: { channels: { email: true, whatsapp: true, push: true, voice: true }, roles: ['hr', 'hr_head', 'org_super_admin'], user_ids: [], notify_assignee: true, reminder_minutes: 60 }
+        hr_ticket_comment_added: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: [], user_ids: [], notify_assignee: true, notify_requester: true },
+        hr_ticket_resolved_ack: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: [], user_ids: [], notify_requester: true },
+        hr_ticket_acknowledged_closed: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: [], user_ids: [], notify_assignee: true },
+        hr_ticket_reportee_alert: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: [], user_ids: [], notify_approver: true },
+        hr_ticket_sla_warning: { channels: { email: true, whatsapp: true, push: true, voice: true }, roles: ['hr', 'hr_head', 'org_super_admin'], user_ids: [], notify_assignee: true, reminder_minutes: 60 },
+        hr_ticket_created: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: ['hr', 'hr_head', 'org_super_admin'], user_ids: [], notify_assignee: true, notify_requester: true },
+        hr_ticket_assigned: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: ['manager', 'hr', 'hr_head'], user_ids: [], notify_assignee: true }
     },
     tickets: {
         ticket_created: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin', 'staff'], user_ids: [], notify_assignee: true, notify_requester: true },
