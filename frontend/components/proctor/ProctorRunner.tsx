@@ -348,7 +348,7 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
             setStream(s);
             setPhase('ready');
         } catch {
-            setError('Camera and microphone access was blocked. Allow both for this site in your browser, then try again.');
+            setError('Camera and microphone access was blocked. Click the icon at the left of the address bar, set Camera and Microphone to Allow, reload the page, and try again.');
         }
     };
 
@@ -453,7 +453,9 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
     }
 
     if (phase === 'identify' || phase === 'setup' || phase === 'ready') {
-        const identified = name.trim().length >= 2 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+        const nameOk = name.trim().length >= 2;
+        const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+        const identified = nameOk && emailOk;
         const canEnableMedia = mode === 'authed' || identified;
         return (
             <div className="min-h-screen bg-slate-50 px-4 py-10">
@@ -501,23 +503,35 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
                                     <Step n={1} done={identified} />
                                     <p className="flex-1 text-sm font-bold text-slate-900">Who is taking this test?</p>
                                 </div>
-                                <div className="grid gap-2 sm:grid-cols-2 pl-10">
-                                    <input
-                                        className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                                        placeholder="Full name"
-                                        value={name}
-                                        onChange={(e) => setName(e.target.value)}
-                                        disabled={phase !== 'identify'}
-                                    />
-                                    <input
-                                        className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                                        placeholder="Email address"
-                                        type="email"
-                                        value={email}
-                                        onChange={(e) => setEmail(e.target.value)}
-                                        disabled={phase !== 'identify'}
-                                    />
+                                <div className="grid gap-3 pl-10 sm:grid-cols-2">
+                                    <label className="block">
+                                        <span className="mb-1 block text-xs font-bold text-slate-600">Your full name</span>
+                                        <input
+                                            className={`w-full rounded-xl border px-3 py-2 text-sm ${nameOk || !name ? 'border-slate-200' : 'border-rose-300'}`}
+                                            placeholder="e.g. Lohitaksha Rajpurohit"
+                                            value={name}
+                                            onChange={(e) => setName(e.target.value)}
+                                            disabled={phase !== 'identify'}
+                                        />
+                                    </label>
+                                    <label className="block">
+                                        <span className="mb-1 block text-xs font-bold text-slate-600">Your email address</span>
+                                        <input
+                                            className={`w-full rounded-xl border px-3 py-2 text-sm ${emailOk || !email ? 'border-slate-200' : 'border-rose-300'}`}
+                                            placeholder="e.g. name@company.com"
+                                            type="email"
+                                            value={email}
+                                            onChange={(e) => setEmail(e.target.value)}
+                                            disabled={phase !== 'identify'}
+                                        />
+                                        {email && !emailOk && <span className="mt-1 block text-xs font-bold text-rose-600">That is not an email address yet</span>}
+                                    </label>
                                 </div>
+                                {phase === 'identify' && !identified && (
+                                    <p className="pl-10 text-xs text-slate-500">
+                                        Fill both in to switch on the camera. Your reviewer needs them to know whose attempt this is.
+                                    </p>
+                                )}
                             </div>
                         )}
 
@@ -528,6 +542,7 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
                                 <button
                                     onClick={enableMedia}
                                     disabled={!canEnableMedia}
+                                    title={canEnableMedia ? 'Your browser will ask for camera and microphone' : 'Enter your name and email first'}
                                     className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white disabled:opacity-40"
                                 >
                                     <Camera className="w-4 h-4" /> <Mic className="w-4 h-4" /> Enable
