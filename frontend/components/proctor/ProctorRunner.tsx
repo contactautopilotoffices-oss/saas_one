@@ -335,8 +335,40 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
     }, [phase, authHeaders]);
 
     // ── Setup steps ──────────────────────────────────────────────────────────
+    const noChancesLeftMessage = (completed: boolean, lastReason: string | null) =>
+        (completed
+            ? 'You have already completed this test.'
+            : `You have used both your attempts at this test.${lastReason ? ` The last one was closed: ${REASON_LABEL[lastReason] || 'you left the test window.'}` : ''}`)
+        + ' Ask your administrator to send you a new link if you need another attempt.';
+
     const enableMedia = async () => {
         setError(null);
+        // A candidate from the public link is only known once they type their email,
+        // so their chances are checked here — before the camera, not after fullscreen.
+        if (mode === 'public') {
+            try {
+                const res = await fetch(`/api/public/proctor/${token}/check`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: email.trim() }),
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Could not check this link');
+                if (data.completed || data.chances_left === 0) {
+                    setMessage(noChancesLeftMessage(data.completed, data.last_reason));
+                    setPhase('blocked');
+                    return;
+                }
+                setChancesLeft(data.chances_left);
+                if (data.attempts_used > 0 && !previousNote) {
+                    setPreviousNote(`This is attempt ${data.attempts_used + 1} of ${data.max_attempts}.` +
+                        (data.last_reason ? ` Your previous one was closed: ${REASON_LABEL[data.last_reason] || 'you left the test window.'}` : ''));
+                }
+            } catch (err) {
+                setError(errMsg(err));
+                return;
+            }
+        }
         try {
             const s = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: true });
             if (!s.getAudioTracks().length) {
@@ -387,7 +419,13 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
             setPhase('running');
         } catch (err) {
             if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-            setError(errMsg(err));
+            const text = errMsg(err);
+            if (/already completed|used all|used your only/i.test(text)) {
+                setMessage(`${text}. Ask your administrator to send you a new link if you need another attempt.`);
+                setPhase('blocked');
+            } else {
+                setError(text);
+            }
         } finally {
             setBusy(false);
         }
@@ -436,7 +474,7 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
                 <p className="text-sm font-bold text-slate-900 max-w-md">
                     {chancesLeft > 0
                         ? `You have ${plural(chancesLeft, 'chance')} left. Open the test link again when you are ready.`
-                        : 'That was your last chance at this test.'}
+                        : 'That was your last chance at this test. Ask your administrator to send you a new link if you need another attempt.'}
                 </p>
             </Centered>
         );
@@ -609,9 +647,9 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
                                 </div>
                             )}
                             {inSection.map((q) => (
-                                <fieldset key={q.id} className="rounded-2xl border border-slate-200 p-4">
-                                    <legend className="px-1 text-sm font-black text-slate-900">Q{questions.indexOf(q) + 1}. {q.text}</legend>
-                                    <div className="mt-2 space-y-2">
+                                <div key={q.id} role="group" aria-labelledby={`label-${q.id}`} className="rounded-2xl border border-slate-200 p-4">
+                                    <p id={`label-${q.id}`} className="text-sm font-black text-slate-900">Q{questions.indexOf(q) + 1}. {q.text}</p>
+                                    <div className="mt-3 space-y-2">
                                         {q.options.map((opt, oi) => (
                                             <label key={oi} className={`flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2 text-sm ${answers[q.id] === oi ? 'border-slate-900 bg-slate-50 font-bold' : 'border-slate-200'}`}>
                                                 <input
@@ -624,7 +662,7 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
                                             </label>
                                         ))}
                                     </div>
-                                </fieldset>
+                                </div>
                             ))}
                         </section>
                     );
