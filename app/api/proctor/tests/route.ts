@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { resolveProctorAccess, isProctorAccessError, COMPLETED_STATUSES, type ProctorQuestion } from '@/backend/lib/proctor/access';
-import { SECTION_KEYS } from '@/frontend/lib/proctor/sections';
 
 /**
  * GET /api/proctor/tests?org_id=
@@ -14,7 +13,7 @@ export async function GET(request: NextRequest) {
 
     let query = supabaseAdmin
         .from('proctor_tests')
-        .select('id, title, instructions, duration_minutes, ai_monitoring, is_active, max_attempts, questions, created_at')
+        .select('id, title, instructions, duration_minutes, ai_monitoring, is_active, max_attempts, look_away_strikes, public_token, questions, created_at')
         .eq('organization_id', access.organizationId)
         .order('created_at', { ascending: false });
     if (!access.canAuthor) query = query.eq('is_active', true);
@@ -40,11 +39,13 @@ export async function GET(request: NextRequest) {
                 ai_monitoring: t.ai_monitoring,
                 is_active: t.is_active,
                 max_attempts: t.max_attempts,
+                look_away_strikes: t.look_away_strikes,
                 question_count: Array.isArray(t.questions) ? t.questions.length : 0,
                 created_at: t.created_at,
                 my_attempts_used: mine.length,
                 my_completed: mine.some((a) => COMPLETED_STATUSES.includes(a.status)),
                 ...(access.canAuthor ? {
+                    public_token: t.public_token,
                     people: new Set(forTest.map((a) => a.user_id)).size,
                     attempts: forTest.length,
                     terminated: forTest.filter((a) => a.status === 'terminated').length,
@@ -56,7 +57,8 @@ export async function GET(request: NextRequest) {
 
 /**
  * POST /api/proctor/tests — create a test (authors only).
- * Body: { org_id?, title, instructions?, duration_minutes, max_attempts?, ai_monitoring?,
+ * Body: { org_id?, title, instructions?, duration_minutes, max_attempts?, look_away_strikes?,
+ *         ai_monitoring?, sections?: [{ key, title, description }],
  *         questions: [{ section?, text, options[], answer_index }] }
  */
 export async function POST(request: NextRequest) {
@@ -76,13 +78,27 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Chances must be 1–5' }, { status: 400 });
     }
 
+    const strikes = body.look_away_strikes === undefined ? 3 : Number(body.look_away_strikes);
+    if (!Number.isInteger(strikes) || strikes < 1 || strikes > 20) {
+        return NextResponse.json({ error: 'Camera warnings must be 1–20' }, { status: 400 });
+    }
+
+    const sections = (Array.isArray(body.sections) ? body.sections : [])
+        .filter((s: { key?: unknown }) => typeof s?.key === 'string' && s.key.trim())
+        .map((s: { key: string; title?: unknown; description?: unknown }) => ({
+            key: s.key.trim(),
+            title: String(s.title || '').trim(),
+            description: String(s.description || '').trim(),
+        }));
+
+    const sectionKeys = new Set<string>([...sections.map((s: { key: string }) => s.key), 'general']);
     const raw = Array.isArray(body.questions) ? body.questions : [];
     const questions: ProctorQuestion[] = [];
     for (const [i, q] of raw.entries()) {
         const text = String(q?.text || '').trim();
         const options = (Array.isArray(q?.options) ? q.options : []).map((o: unknown) => String(o || '').trim()).filter(Boolean);
         const answer = Number(q?.answer_index);
-        const section = SECTION_KEYS.includes(q?.section) ? q.section : 'general';
+        const section = sectionKeys.has(String(q?.section)) ? String(q.section) : 'general';
         if (!text) return NextResponse.json({ error: `Question ${i + 1} has no text` }, { status: 400 });
         if (options.length < 2) return NextResponse.json({ error: `Question ${i + 1} needs at least two options` }, { status: 400 });
         if (!Number.isInteger(answer) || answer < 0 || answer >= options.length) {
@@ -100,13 +116,15 @@ export async function POST(request: NextRequest) {
             instructions: String(body.instructions || '').trim() || null,
             duration_minutes: duration,
             max_attempts: maxAttempts,
+            look_away_strikes: strikes,
+            sections,
             ai_monitoring: body.ai_monitoring !== false,
             questions,
             created_by: access.userId,
         })
-        .select('id')
+        .select('id, public_token')
         .single();
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-    return NextResponse.json({ id: data.id }, { status: 201 });
+    return NextResponse.json({ id: data.id, public_token: data.public_token }, { status: 201 });
 }

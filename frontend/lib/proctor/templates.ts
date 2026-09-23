@@ -10,6 +10,12 @@ export interface TemplateQuestion {
     answer_index: number;
 }
 
+export interface TemplateSection {
+    key: string;
+    title: string;
+    description: string;
+}
+
 export interface ProctorTemplate {
     key: string;
     label: string;
@@ -17,6 +23,7 @@ export interface ProctorTemplate {
     instructions: string;
     duration_minutes: number;
     max_attempts: number;
+    sections: TemplateSection[];
     questions: TemplateQuestion[];
 }
 
@@ -30,6 +37,12 @@ const OPS_MANAGER: ProctorTemplate = {
         'Work the numbers in your head — keep phones, calculators and papers away; the camera flags them.',
     duration_minutes: 30,
     max_attempts: 2,
+    sections: [
+        { key: 'cognitive', title: 'Cognitive ability', description: 'Reasoning with numbers, patterns and words. No facility knowledge needed.' },
+        { key: 'aptitude', title: 'Aptitude', description: 'The arithmetic of running a site: diesel, occupancy, budgets, SLAs.' },
+        { key: 'culture', title: 'Workplace culture', description: 'How you work with a team, and what you do when something is not right.' },
+        { key: 'situational', title: 'Situational judgement', description: 'Real situations on site. Pick what you would actually do first.' },
+    ],
     questions: [
         // ── Cognitive ability ───────────────────────────────────────────────
         {

@@ -1,3 +1,29 @@
+## 2026-09-23 — Saas.one: Assessments get a public link, AI-written questions, and a sharper camera
+
+**HR can now describe a test and have AI draft it, read it as the candidate will, and send one link that works without any login — while the camera keeps evidence of a phone or a second person for the reviewer.**
+
+- **Why:** The test only reached people who already had an account, which rules out the outside candidates it is mostly meant for. Writing 20 fair questions by hand is slow. And "the AI flagged something" is not worth much to a reviewer who cannot see what it saw.
+- **Structural decisions:**
+  - **A public link, `/t/<token>`.** No sign-in, no account. The candidate types their name and email, and from that moment the attempt is identified by a secret the server issues (`attempt_token`) rather than by a session. The same routes serve both kinds of taker: a signed-in member is recognised by their login, a candidate by that token. Chances for a candidate are counted per email address. Someone can type a different email to get another go — that is the honest price of no sign-in, and every attempt is still listed for the reviewer.
+  - **Sections are now the author's**, like the sections of a form: title, description, and questions under it. A test starts with the four standard ones and they can be renamed, described, removed, or added to.
+  - **Two different responses to what the camera sees**, deliberately. Not looking at the screen is a mistake worth correcting, so the candidate is told, and after three warnings (the author sets the number) the attempt closes. A phone or a second face is not a mistake, so **nothing is shown** — the frame is saved to a private bucket for the reviewer. Telling the candidate would only teach them what the camera catches.
+  - **The microphone is on** and the page watches the sound level. A sustained voice is recorded for the reviewer, at most one note every 30 seconds. It cannot tell who spoke, so it reports "a voice was picked up", not "someone else was there".
+  - **Evidence frames are private.** The bucket has no policies at all; the reviewer sees them through links that expire in an hour.
+  - **AI drafts, a person decides.** "Draft with AI" fills the form and saves nothing. The author reads every question and presses Save, so a wrong question costs an edit, not a bad hire.
+  - A standing line at the top of the test says the camera, microphone and screen activity go to the reviewer, so nobody is recorded without being told.
+- **What works now:** HR describes the test in a sentence, presses Draft with AI, edits what came back, saves, opens **Preview** to read it exactly as the candidate will (with the answers marked), then **Copy link** and sends it. The candidate opens it on any laptop, types their name and email, allows camera and microphone, and takes the test in fullscreen. Results show the score by section, who came in from the public link, the camera warnings, the frames kept, and when a voice was heard.
+- **Left undone, deliberately:**
+  - The migration (`supabase/migrations/20260923000001_proctor_public_link_and_evidence.sql`) has not been applied.
+  - Still not run end to end in a browser by a real candidate with a working camera. Type check, lint and the SQL linter pass, and the vision call is verified against live ENGY.
+  - **Anyone with the link can start an attempt.** There is no per-candidate invite and no rate limit, so a leaked link could be used by strangers, or spammed. Every attempt is recorded with the name and email typed, which is the only check today.
+  - Voice detection is a loudness threshold, not speech recognition. A noisy room, a fan or the candidate reading aloud will read the same as a second person talking. The measured level is stored so the threshold can be tuned.
+  - A saved test still cannot be edited; make a new one.
+  - Evidence frames are kept indefinitely. There is no deletion schedule, and no consent text beyond the notice on the test.
+- **Open questions for the founder:**
+  - How long should camera frames of a candidate be kept, and who besides HR may open them? This is personal data of people who may never join.
+  - Should the public link expire, or be one link per candidate so it cannot be passed around?
+  - Should a failed attempt (closed for looking away) count as one of the two chances, as it does today?
+
 ## 2026-09-22 — Saas.one: AI proctored assessments, inside the HR module
 
 **HR can now give a candidate or employee a sectioned multiple-choice test on a locked page (camera on, fullscreen) with two chances, starting from a ready-made Ops Manager test.**

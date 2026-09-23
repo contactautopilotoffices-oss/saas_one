@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 
@@ -62,27 +62,50 @@ export function isProctorAccessError(x: ProctorAccess | NextResponse): x is Next
     return x instanceof NextResponse;
 }
 
+/** The secret the signed-out taker's page sends on every call after start. */
+export function readAttemptToken(request: NextRequest, body?: { attempt_token?: unknown }): string | null {
+    const header = request.headers.get('x-attempt-token');
+    if (header && header.trim()) return header.trim();
+    return typeof body?.attempt_token === 'string' && body.attempt_token.trim() ? body.attempt_token.trim() : null;
+}
+
 /**
  * The caller's own attempt plus its test, for the routes the locked page calls
- * while a test is running. Returns an error response if it isn't theirs.
+ * while a test is running. Two ways to prove it is theirs, because a test can
+ * be taken from a public link with no account:
+ *   · the signed-in user owns the attempt, or
+ *   · the caller holds the attempt_token issued when the attempt started.
+ * Returns an error response otherwise.
  */
-export async function loadOwnAttempt(attemptId: string) {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return { error: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) };
-
+export async function loadOwnAttempt(attemptId: string, attemptToken?: string | null) {
     const { data: attempt } = await supabaseAdmin
         .from('proctor_attempts')
-        .select('id, test_id, user_id, status, started_at, attempt_no, test:proctor_tests(id, questions, duration_minutes, ai_monitoring, max_attempts)')
+        .select('id, test_id, user_id, status, started_at, attempt_no, attempt_token, candidate_name, candidate_email, test:proctor_tests(id, organization_id, questions, duration_minutes, ai_monitoring, max_attempts, look_away_strikes)')
         .eq('id', attemptId)
         .maybeSingle();
-    if (!attempt || attempt.user_id !== user.id) {
-        return { error: NextResponse.json({ error: 'Attempt not found' }, { status: 404 }) };
+    if (!attempt) return { error: NextResponse.json({ error: 'Attempt not found' }, { status: 404 }) };
+
+    const tokenMatches = !!attemptToken && attemptToken === attempt.attempt_token;
+    if (!tokenMatches) {
+        // Fall back to the session: a signed-in taker's own attempt.
+        const supabase = await createClient();
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user || !attempt.user_id || attempt.user_id !== user.id) {
+            return { error: NextResponse.json({ error: 'Attempt not found' }, { status: 404 }) };
+        }
     }
+
     const test = (Array.isArray(attempt.test) ? attempt.test[0] : attempt.test) as {
-        id: string; questions: ProctorQuestion[]; duration_minutes: number; ai_monitoring: boolean; max_attempts: number;
+        id: string; organization_id: string; questions: ProctorQuestion[]; duration_minutes: number;
+        ai_monitoring: boolean; max_attempts: number; look_away_strikes: number;
     };
     return { attempt, test };
+}
+
+export interface ProctorSection {
+    key: string;
+    title: string;
+    description?: string;
 }
 
 export interface ProctorQuestion {
@@ -100,6 +123,41 @@ export function stripAnswers(questions: ProctorQuestion[]) {
 
 /** Grace on top of the test duration for network lag before an attempt counts as expired. */
 export const EXPIRY_GRACE_MS = 60_000;
+
+/**
+ * The sections of a test, in order, as the taker and the reviewer see them:
+ * what the author saved, limited to sections that actually have questions, with
+ * anything the author never described falling back to the standard labels.
+ */
+export function resolveSections(
+    stored: unknown,
+    questions: ProctorQuestion[],
+): Array<ProctorSection & { question_count: number }> {
+    const used = [...new Set((questions || []).map((q) => q.section || 'general'))];
+    const saved = (Array.isArray(stored) ? stored : []) as ProctorSection[];
+    const ordered = [
+        ...saved.filter((s) => used.includes(s.key)),
+        ...used.filter((k) => !saved.some((s) => s.key === k)).map((key): ProctorSection => ({ key, title: '' })),
+    ];
+    return ordered.map((s) => ({
+        key: s.key,
+        title: s.title || SECTION_FALLBACK_TITLES[s.key] || 'Questions',
+        description: s.description || '',
+        question_count: (questions || []).filter((q) => (q.section || 'general') === s.key).length,
+    }));
+}
+
+/** Labels for the built-in sections, used when an author didn't title one. */
+const SECTION_FALLBACK_TITLES: Record<string, string> = {
+    cognitive: 'Cognitive ability',
+    aptitude: 'Aptitude',
+    culture: 'Workplace culture',
+    situational: 'Situational judgement',
+    general: 'General',
+};
+
+/** Private bucket holding flagged webcam frames, read back through signed URLs. */
+export const EVIDENCE_BUCKET = 'proctor-evidence';
 
 /** An attempt that finished the test (on time or late) — no further chances after this. */
 export const COMPLETED_STATUSES = ['submitted', 'expired'];

@@ -48,6 +48,7 @@ export async function proxy(request: NextRequest) {
         '/reset-password',
         '/join',
         '/q',          // Public QR code entry points
+        '/t/',         // Public proctored-test links (/t/<token>) — no sign-in by design
         '/api',        // API routes handle their own auth
         '/kiosk',
         '/onboard',    // Public client onboarding QR route

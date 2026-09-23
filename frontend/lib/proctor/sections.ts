@@ -1,25 +1,18 @@
-// Sections a proctored test's questions are grouped into. Pure data, shared by
-// the API (validation, per-section scoring) and the pages (labels, grouping).
+// Sections a test is divided into, like the sections of a form: a title, a
+// description the candidate reads, and the questions under it. Authors can
+// rename these, add their own, or remove any of them; these are just the ones
+// a new test starts with.
 
-export const PROCTOR_SECTIONS = [
-    { key: 'cognitive', label: 'Cognitive ability', hint: 'Logical, numerical and verbal reasoning' },
-    { key: 'aptitude', label: 'Aptitude', hint: 'Job arithmetic: costs, percentages, capacity' },
-    { key: 'culture', label: 'Workplace culture', hint: 'Ownership, honesty, teamwork' },
-    { key: 'situational', label: 'Situational judgement', hint: 'What you would do, on the floor' },
-    { key: 'general', label: 'General', hint: 'Anything else' },
+export const DEFAULT_SECTIONS = [
+    { key: 'cognitive', title: 'Cognitive ability', description: 'Reasoning with numbers, patterns and words.' },
+    { key: 'aptitude', title: 'Aptitude', description: 'The arithmetic of the job: costs, percentages, capacity.' },
+    { key: 'culture', title: 'Workplace culture', description: 'How you work with a team, and what you do when something is not right.' },
+    { key: 'situational', title: 'Situational judgement', description: 'Real situations. Pick what you would actually do.' },
 ] as const;
 
-export type ProctorSectionKey = (typeof PROCTOR_SECTIONS)[number]['key'];
+export type ProctorSectionKey = (typeof DEFAULT_SECTIONS)[number]['key'] | 'general';
 
-export const SECTION_KEYS = PROCTOR_SECTIONS.map((s) => s.key) as readonly string[];
-
+/** Fallback label for a section key with no title saved against it. */
 export function sectionLabel(key: string | undefined | null) {
-    return PROCTOR_SECTIONS.find((s) => s.key === key)?.label || 'General';
-}
-
-/** Questions grouped by section, in the canonical section order. */
-export function groupBySection<T extends { section?: string }>(questions: T[]) {
-    return PROCTOR_SECTIONS
-        .map((s) => ({ ...s, questions: questions.filter((q) => (q.section || 'general') === s.key) }))
-        .filter((g) => g.questions.length > 0);
+    return DEFAULT_SECTIONS.find((s) => s.key === key)?.title || (key === 'general' ? 'General' : 'Questions');
 }
