@@ -55,6 +55,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         return NextResponse.json({ ok: false, error: verdict.error });
     }
 
+    // The vision call takes a few seconds, and the attempt can end while it runs
+    // (a real run recorded a clean check 4s after the test had closed). Re-read
+    // the status before recording anything, so the log ends when the test does.
+    const { data: still } = await supabaseAdmin.from('proctor_attempts').select('status').eq('id', id).maybeSingle();
+    if (still?.status !== 'in_progress') return NextResponse.json({ status: still?.status || 'ended' });
+
     const category = verdict.flagged ? categorise(verdict) : null;
     const warns = !!category && WARNING_CATEGORIES.includes(category);
 

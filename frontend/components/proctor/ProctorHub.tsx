@@ -554,6 +554,14 @@ function Results({ test, onBack }: { test: TestRow; onBack: () => void }) {
                                             <td className="px-4 py-3 text-xs text-slate-500">
                                                 {new Date(a.started_at).toLocaleString()}
                                                 {minutes(a) && <p>{minutes(a)} min</p>}
+                                                <Link
+                                                    href={`/proctor/report/${a.id}`}
+                                                    target="_blank"
+                                                    onClick={(e) => e.stopPropagation()}
+                                                    className="mt-1 inline-flex items-center gap-1 font-bold text-slate-700 underline"
+                                                >
+                                                    <FileText className="w-3.5 h-3.5" /> Report
+                                                </Link>
                                             </td>
                                         </tr>
                                         {open === a.id && (

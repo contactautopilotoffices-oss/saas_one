@@ -1,3 +1,26 @@
+## 2026-09-23 (later) — Saas.one: the reviewer's report, with the camera frames inside it
+
+**Every attempt now has a one-page report — score, every answer, the full proctoring log, and the flagged camera frames embedded in the page itself — that prints or saves as a PDF without losing its evidence.**
+
+- **Why:** "The AI flagged something" is worth little to a reviewer who cannot see what it saw. And a report that is forwarded or filed has to still make sense a month later.
+- **Structural decisions:**
+  - Frames are **embedded in the report as data URIs, not linked.** A signed storage link expires in an hour, so a saved or printed report would lose its evidence exactly when someone comes back to check it. That costs a few hundred KB per report and keeps it true on its own. Up to 40 frames per report.
+  - The report is built by one function (`backend/lib/proctor/report.ts`) that the route wraps with the author check. That separation is what let it be tested against live data without a login.
+  - A clean camera check never appears in the log. Only flags, voice notes and the reason the test ended.
+- **What works now:** In Results, each attempt has a **Report** link. It opens the full report: outcome, score with a bar per section, the frames the camera kept with what the model saw, the proctoring log, and every question with what the candidate chose against the right answer. "Print / Save as PDF" gives a clean copy with the images inside it.
+- **Verified against live data today:**
+  - **The case that mattered is settled: a real person at a laptop is not flagged.** Six checks in a row on a live webcam came back "one person, facing the camera, no devices" — no false alarms on the candidate themselves.
+  - **A second person is caught.** Four checks flagged "a second person partially visible at the right edge" while someone else was in the room.
+  - **A phone is caught.** "Holding up a smartphone and looking down at it instead of the screen" was flagged as a phone and as looking away.
+  - Both ways of leaving worked: switching tab closed one attempt, switching app closed the other.
+  - The report itself was built end to end against the live database and the private bucket: the frame came back as an embedded image, the section scores and the right/wrong answer review were correct. The rows used for that check were deleted afterwards.
+- **Fixed because that run exposed it:** a camera check that was still running when the attempt closed was recorded four seconds *after* the end. The check now re-reads the attempt before recording, so the log stops when the test does.
+- **Left undone, deliberately:**
+  - The earlier runs happened before the evidence bucket existed, so those phone and second-person flags have no frames saved. New attempts will have them.
+  - Reports are per attempt. There is no comparison across candidates, and no shortlist view.
+  - The print layout is the browser's; it has not been tuned past page breaks on the sections that matter.
+- **Open questions for the founder:** unchanged from the entry below — how long camera frames are kept and who may open them, whether the public link should expire, and whether a closed attempt should keep costing a chance.
+
 ## 2026-09-23 — Saas.one: Assessments get a public link, AI-written questions, and a sharper camera
 
 **HR can now describe a test and have AI draft it, read it as the candidate will, and send one link that works without any login — while the camera keeps evidence of a phone or a second person for the reviewer.**
