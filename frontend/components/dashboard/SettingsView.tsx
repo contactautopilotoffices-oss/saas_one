@@ -665,7 +665,7 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
                                 <div className="min-w-0">
                                     <div className="text-[10px] font-black uppercase tracking-wider text-indigo-600">Employee Role / Designation</div>
                                     <div className="text-sm font-extrabold text-slate-900 truncate">
-                                        {profile?.designation || 'Forward Deployed Engineer'}
+                                        {profile?.designation || 'Not Specified'}
                                     </div>
                                     {profile?.department && (
                                         <div className="text-[11px] font-medium text-slate-500">

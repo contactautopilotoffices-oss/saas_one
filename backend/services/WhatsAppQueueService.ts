@@ -91,8 +91,46 @@ export class WhatsAppQueueService {
         }
 
         if (recipientsToEnqueue.length > 0) {
+            // Deduplicate: prevent double dispatch if identical (entity_id, phone, template_name) was enqueued within the last 2 minutes
+            let eligibleRecipients = recipientsToEnqueue;
+            const targetEntityId = payload.entityId || payload.ticketId || null;
+
+            if (targetEntityId) {
+                try {
+                    const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+                    const phones = recipientsToEnqueue.map(u => u.phone);
+                    const { data: recentRows } = await supabaseAdmin
+                        .from('whatsapp_queue')
+                        .select('phone, template_name, event_type')
+                        .eq('entity_id', String(targetEntityId))
+                        .in('phone', phones)
+                        .gte('created_at', twoMinutesAgo);
+
+                    if (recentRows && recentRows.length > 0) {
+                        const existingKeySet = new Set(
+                            recentRows.map(r => `${r.phone}_${r.template_name || r.event_type}`)
+                        );
+                        eligibleRecipients = recipientsToEnqueue.filter(u => {
+                            const key = `${u.phone}_${payload.templateName || payload.eventType}`;
+                            if (existingKeySet.has(key)) {
+                                console.log(`[WhatsAppQueue] Deduplicated redundant message for ${u.phone} (event: ${payload.eventType}, template: ${payload.templateName}, entity: ${targetEntityId})`);
+                                return false;
+                            }
+                            return true;
+                        });
+                    }
+                } catch (dedupErr) {
+                    console.warn('[WhatsAppQueue] Deduplication check warning:', dedupErr);
+                }
+            }
+
+            if (eligibleRecipients.length === 0) {
+                console.log(`[WhatsAppQueue] All recipients deduplicated for event: ${payload.eventType}`);
+                return;
+            }
+
             // 1. Enqueue WhatsApp messages for recipients with phone numbers
-            const rows = recipientsToEnqueue.map(u => ({
+            const rows = eligibleRecipients.map(u => ({
                 ticket_id: payload.ticketId || null,
                 user_id: u.id,
                 phone: u.phone,
@@ -104,7 +142,7 @@ export class WhatsAppQueueService {
                 organization_id: payload.organizationId ?? null,
                 template_name: payload.templateName ?? null,
                 template_params: payload.templateParams ?? null,
-                entity_id: payload.entityId ?? null,
+                entity_id: payload.entityId ?? (payload.ticketId ? String(payload.ticketId) : null),
             }));
 
             const { data: insertedRows, error } = await supabaseAdmin

@@ -23,11 +23,12 @@ export async function GET(request: NextRequest) {
         const fiveMinsAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
         const fifteenMinsAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
 
-        // 1. Fetch pending outbox events (e.g. inserted via mobile/database trigger)
+        // 1. Fetch pending outbox events older than 5 minutes (stuck/stale)
         const { data: pendingEvents } = await supabaseAdmin
             .from('event_outbox')
             .select('*')
             .eq('status', 'pending')
+            .lt('created_at', fiveMinsAgo)
             .limit(20);
 
         // 2. Fetch crashed processing
@@ -74,6 +75,29 @@ export async function GET(request: NextRequest) {
             if (claimError || !claimData) {
                 console.log(`[SweepOutbox] Failed to claim event ${event.id}, skipping.`);
                 continue;
+            }
+
+            // Deduplication Check: if an identical event (same entity_id and event_type) was completed in the last 2 minutes, skip re-execution
+            if (claimData.entity_id && claimData.event_type) {
+                const twoMinsAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+                const { data: duplicateCompleted } = await supabaseAdmin
+                    .from('event_outbox')
+                    .select('id')
+                    .eq('entity_id', claimData.entity_id)
+                    .eq('event_type', claimData.event_type)
+                    .eq('status', 'completed')
+                    .gt('updated_at', twoMinsAgo)
+                    .neq('id', claimData.id)
+                    .maybeSingle();
+
+                if (duplicateCompleted) {
+                    console.log(`[SweepOutbox] Duplicate outbox event for entity ${claimData.entity_id} (${claimData.event_type}) was already completed recently. Skipping.`);
+                    await supabaseAdmin
+                        .from('event_outbox')
+                        .update({ status: 'completed', error_message: 'Skipped duplicate event', updated_at: new Date().toISOString() })
+                        .eq('id', claimData.id);
+                    continue;
+                }
             }
 
             console.log(`[SweepOutbox] Processing outbox event ${event.id}: ${event.event_type}`);

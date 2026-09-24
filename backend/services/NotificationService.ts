@@ -3033,12 +3033,8 @@ export class NotificationService {
                 });
             }
 
-            // Dispatch WhatsApp Acknowledged Closed
-            const { WhatsAppEventProcessor } = await import('./WhatsAppEventProcessor');
-            WhatsAppEventProcessor.processEvent({
-                event_type: 'HR_TICKET_ACKNOWLEDGED',
-                payload: ticket
-            }).catch(e => console.error('[NotificationService] WhatsApp HR ticket acknowledged error:', e));
+            // Note: WhatsApp & Email dispatch are handled asynchronously via PostgreSQL database trigger
+            // (trg_hr_tickets_outbox -> public.event_outbox -> webhook/sweep-outbox -> WhatsAppEventProcessor)
         } catch (err) {
             console.error('[NotificationService] afterHrTicketAcknowledged error:', err);
         }

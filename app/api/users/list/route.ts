@@ -69,6 +69,34 @@ export async function GET(request: NextRequest) {
             }
         }
 
+        // Helper function to attach employee profiles to user records
+        async function attachEmployeeProfiles(usersList: any[]) {
+            if (!usersList || usersList.length === 0) return;
+            const userIds = usersList.map((u: any) => u.id).filter(Boolean);
+            const userEmails = usersList.map((u: any) => u.email).filter(Boolean);
+
+            const { data: empProfiles } = await adminClient
+                .from('employee_profiles')
+                .select('user_id, email, designation, employee_code, department, phone');
+
+            if (empProfiles && empProfiles.length > 0) {
+                const empByUserId = new Map(empProfiles.filter((ep: any) => ep.user_id).map((ep: any) => [ep.user_id, ep]));
+                const empByEmail = new Map(empProfiles.filter((ep: any) => ep.email).map((ep: any) => [ep.email.toLowerCase(), ep]));
+
+                usersList.forEach((u: any) => {
+                    const ep = empByUserId.get(u.id) || (u.email ? empByEmail.get(u.email.toLowerCase()) : null);
+                    if (ep) {
+                        u.designation = u.designation || ep.designation || null;
+                        u.employee_code = u.employee_code || ep.employee_code || null;
+                        u.department = u.department || ep.department || null;
+                        if (!u.phone && ep.phone) {
+                            u.phone = ep.phone;
+                        }
+                    }
+                });
+            }
+        }
+
         // Fetch users using admin client (bypasses RLS)
         if (propertyId) {
             // First get the orgId for this property
@@ -82,6 +110,7 @@ export async function GET(request: NextRequest) {
                 .from('property_memberships')
                 .select(`
                     role,
+                    custom_designation,
                     is_active,
                     created_at,
                     property:properties (id, name, organization_id),
@@ -92,9 +121,6 @@ export async function GET(request: NextRequest) {
             if (error) throw error;
 
             // Filter out soft-deleted users:
-            // An item is visible if:
-            // 1. User has not been soft-deleted (deleted_at is null)
-            // 2. AND (is_active is true OR user is a new signup genuinely awaiting onboarding approval)
             const isVisibleMembership = (item: any) => {
                 if (!item?.user) return false;
                 if (item.user.deleted_at) return false;
@@ -112,6 +138,7 @@ export async function GET(request: NextRequest) {
                     user_photo_url: item.user?.user_photo_url,
                     phone: item.user?.phone,
                     propertyRole: item.role,
+                    designation: item.custom_designation || null,
                     propertyName: item.property?.name,
                     propertyId: item.property?.id,
                     organizationId: item.property?.organization_id,
@@ -124,6 +151,27 @@ export async function GET(request: NextRequest) {
                     rejection_reason: item.user?.rejection_reason || null,
                     approverName: null as string | null
                 })).sort((a: any, b: any) => a.full_name.localeCompare(b.full_name));
+
+            // Attach org roles if available
+            const userIds = users.map((u: any) => u.id).filter(Boolean);
+            if (userIds.length > 0) {
+                const { data: orgM } = await adminClient
+                    .from('organization_memberships')
+                    .select('user_id, role')
+                    .in('user_id', userIds)
+                    .eq('is_active', true);
+                if (orgM && orgM.length > 0) {
+                    const orgMap = new Map(orgM.map((m: any) => [m.user_id, m.role]));
+                    users.forEach((u: any) => {
+                        if (orgMap.has(u.id)) {
+                            u.orgRole = orgMap.get(u.id);
+                        }
+                    });
+                }
+            }
+
+            // Attach employee profile details (designation, employee_code, department, phone)
+            await attachEmployeeProfiles(users);
 
             // Resolve approver names if any approved_by IDs exist
             const approverIds = Array.from(new Set(users.map((u: any) => u.approved_by).filter(Boolean)));
@@ -160,6 +208,7 @@ export async function GET(request: NextRequest) {
             .from('property_memberships')
             .select(`
                 role,
+                custom_designation,
                 is_active,
                 created_at,
                 property:properties!inner (id, name, organization_id),
@@ -207,6 +256,7 @@ export async function GET(request: NextRequest) {
                 existing.propertyRole = item.role;
                 existing.propertyName = item.property?.name;
                 existing.propertyId = item.property?.id;
+                if (item.custom_designation) existing.designation = item.custom_designation;
             } else {
                 userMap.set(item.user.id, {
                     id: item.user.id,
@@ -215,6 +265,7 @@ export async function GET(request: NextRequest) {
                     user_photo_url: item.user.user_photo_url,
                     phone: item.user.phone,
                     propertyRole: item.role,
+                    designation: item.custom_designation || null,
                     propertyName: item.property?.name,
                     propertyId: item.property?.id,
                     organizationId: orgId,
@@ -265,26 +316,8 @@ export async function GET(request: NextRequest) {
 
         const users = Array.from(userMap.values()).sort((a, b) => a.full_name.localeCompare(b.full_name));
 
-        // Attach designation, employee_code, and department from employee_profiles
-        const userIds = users.map((u: any) => u.id).filter(Boolean);
-        if (userIds.length > 0) {
-            const { data: empProfiles } = await adminClient
-                .from('employee_profiles')
-                .select('user_id, designation, employee_code, department')
-                .in('user_id', userIds);
-
-            if (empProfiles && empProfiles.length > 0) {
-                const empMap = new Map(empProfiles.map((ep: any) => [ep.user_id, ep]));
-                users.forEach((u: any) => {
-                    const ep = empMap.get(u.id);
-                    if (ep) {
-                        u.designation = ep.designation;
-                        u.employee_code = u.employee_code || ep.employee_code;
-                        u.department = ep.department;
-                    }
-                });
-            }
-        }
+        // Attach designation, employee_code, department, and phone from employee_profiles
+        await attachEmployeeProfiles(users);
 
         // Resolve approver names
         const approverIds = Array.from(new Set(users.map((u: any) => u.approved_by).filter(Boolean)));
