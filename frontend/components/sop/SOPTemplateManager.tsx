@@ -102,7 +102,7 @@ const SOPTemplateManager: React.FC<SOPTemplateManagerProps> = ({ propertyId, pro
             if (!isAdmin) {
                 const { data: { user } } = await supabase.auth.getUser();
                 if (user) {
-                    query = query.or(`assigned_to.is.null,assigned_to.eq.${user.id}`);
+                    query = query.or(`assigned_to.is.null,assigned_to.cs.{${user.id}}`);
                 }
             }
 
@@ -156,18 +156,22 @@ const SOPTemplateManager: React.FC<SOPTemplateManagerProps> = ({ propertyId, pro
         if (!confirm('Permanently delete this template? This will also remove all historical audit logs for this template.')) return;
 
         try {
-            const { error } = await supabase
-                .from('sop_templates')
-                .delete()
-                .eq('id', templateId);
-
-            if (error) throw error;
+            const target = templates.find(t => t.id === templateId);
+            const pid = target?.property_id || propertyId;
+            const res = await fetch(`/api/properties/${pid}/sop/templates/${templateId}`, {
+                method: 'DELETE',
+            });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data.error || 'Failed to delete template');
+            }
 
             invalidateCache(`sop-templates-${propertyId || (propertyIds?.join(','))}-${isAdmin}`);
             setTemplates(templates.filter(t => t.id !== templateId));
             setToast({ message: 'Template deleted', type: 'success' });
-        } catch (err) {
-            setToast({ message: 'Error deleting template', type: 'error' });
+            onRefresh?.();
+        } catch (err: any) {
+            setToast({ message: err?.message || 'Error deleting template', type: 'error' });
         }
     };
 

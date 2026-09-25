@@ -77,12 +77,11 @@ export async function GET(request: Request) {
                     metadata: user.user_metadata
                 }).select('is_master_admin, onboarding_completed').single(),
 
-                // B. Check Organization Membership (Org Super Admin)
+                // B. Check Organization Membership
                 supabase
                     .from('organization_memberships')
                     .select('organization_id, role')
                     .eq('user_id', user.id)
-                    .eq('role', 'org_super_admin')
                     .eq('is_active', true)
                     .maybeSingle(),
 

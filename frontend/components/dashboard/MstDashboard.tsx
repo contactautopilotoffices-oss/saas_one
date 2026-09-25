@@ -1,12 +1,13 @@
 'use client';
+import HRTicketsContent from '@/frontend/components/hr/HRTicketsContent';
 
 import React, { useState, useEffect } from 'react';
 import {
     LayoutDashboard, Ticket, Clock, CheckCircle2, AlertCircle, Plus,
     LogOut, Settings, Search, UserCircle, Coffee, Fuel, UsersRound,
-    ClipboardList, FolderKanban, Moon, Sun, ChevronRight, Cog, X,
+    ClipboardList, FolderKanban, Moon, Sun, ChevronRight, ChevronLeft, Cog, X,
     AlertOctagon, BarChart3, FileText, Wrench, Camera, Menu, Pencil, Loader2, Filter, Activity, Zap, Calendar, ClipboardCheck, ScanLine, Tag, Droplets,
-  MessageSquarePlus
+  MessageSquarePlus, ShieldCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
@@ -40,7 +41,7 @@ import GuestExperienceDashboard from '@/frontend/components/guest-experience/Gue
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
 
 // Types
-type Tab = 'dashboard' | 'requests' | 'guest_experience' | 'create_request' | 'visitors' | 'diesel' | 'electricity' | 'settings' | 'profile' | 'flow-map' | 'checklist' | 'water' | 'assets';
+type Tab = 'dashboard' | 'requests' | 'guest_experience' | 'create_request' | 'visitors' | 'diesel' | 'electricity' | 'settings' | 'profile' | 'flow-map' | 'checklist' | 'water' | 'grievance' | 'assets';
 
 interface Property {
     id: string;
@@ -589,7 +590,7 @@ const MstDashboard = () => {
 
 
     return (
-        <div className="min-h-screen bg-background flex font-inter text-text-primary">
+        <div className="min-h-screen w-full max-w-full bg-background flex font-inter text-text-primary overflow-x-hidden">
             <FeedbackModal isOpen={showFeedbackModal} onClose={() => setShowFeedbackModal(false)} />
             {/* Mobile Overlay */}
             <AnimatePresence>
@@ -616,7 +617,7 @@ const MstDashboard = () => {
                     onClick={() => setSidebarOpen(false)}
                     className="absolute top-4 right-4 lg:hidden p-2 rounded-lg hover:bg-surface-elevated transition-colors"
                 >
-                    <X className="w-5 h-5 text-text-secondary" />
+                    <ChevronLeft className="w-5 h-5 text-text-secondary" />
                 </button>
 
                 {/* Logo */}
@@ -789,6 +790,16 @@ const MstDashboard = () => {
                             System & Personal
                         </p>
                         <div className="space-y-0.5">
+                                                        <button
+                                onClick={() => {
+                                    handleTabChange('grievance');
+                                    setSidebarOpen(false);
+                                }}
+                                className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg transition-all text-sm font-bold ${activeTab === 'grievance' ? 'bg-primary text-text-inverse shadow-sm' : 'text-text-secondary hover:bg-muted hover:text-text-primary'}`}
+                            >
+                                <ShieldCheck className="w-4 h-4 text-primary" />
+                                <span className="flex-1 text-left">My Grievances</span>
+                            </button>
                             <button
                                 onClick={() => { setShowFeedbackModal(true); setSidebarOpen(false); }}
                                 className="w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg transition-all text-sm font-bold text-text-secondary hover:bg-muted hover:text-text-primary group"
@@ -833,9 +844,9 @@ const MstDashboard = () => {
             </aside>
 
             {/* Main Content */}
-            <div className="flex-1 lg:ml-64 flex flex-col bg-background border-l border-slate-300 shadow-[-4px_0_12px_-4px_rgba(0,0,0,0.05)] relative z-10">
+            <div className="flex-1 w-full min-w-0 max-w-full overflow-x-hidden lg:ml-64 flex flex-col bg-background border-l border-slate-300 shadow-[-4px_0_12px_-4px_rgba(0,0,0,0.05)] relative z-10">
                 {/* Top Header */}
-                <header className="h-14 bg-white border-b border-border flex items-center justify-between px-4 md:px-6 sticky top-0 z-30">
+                <header className="h-14 w-full min-w-0 bg-white border-b border-border flex items-center justify-between px-3 sm:px-4 md:px-6 sticky top-0 z-30">
                     <div className="flex items-center gap-4">
                         {/* Mobile Menu Toggle */}
                         <button
@@ -845,7 +856,7 @@ const MstDashboard = () => {
                             <Menu className="w-6 h-6" />
                         </button>
                     </div>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2 sm:gap-3 min-w-0 shrink-0">
                         {/* Notification Bell */}
                         <PendingActionsBell />
                         <NotificationBell />
@@ -856,7 +867,7 @@ const MstDashboard = () => {
                             isLoading={isShiftLoading}
                             onToggle={handleShiftToggle}
                         />
-                        <span className="text-xs text-text-secondary font-medium">
+                        <span className="text-xs text-text-secondary font-medium truncate max-w-[110px] sm:max-w-[180px]">
                             {user?.user_metadata?.full_name || user?.email?.split('@')[0]}
                         </span>
                     </div>
@@ -864,7 +875,7 @@ const MstDashboard = () => {
 
                 {/* Page Content */}
                 {/* Page Content */}
-                <main id="main-scroll-container" className={`flex-1 w-full min-h-0 overflow-y-auto overflow-x-hidden ${activeTab === 'checklist' ? 'p-0' : 'p-2 sm:p-4 md:p-6'} bg-slate-50/50`}>
+                <main id="main-scroll-container" className={`flex-1 w-full min-h-0 max-w-full overflow-y-auto overflow-x-hidden ${activeTab === 'checklist' ? 'p-0' : 'p-2 sm:p-4 md:p-6'} bg-slate-50/50`}>
 
                     <AnimatePresence mode="wait">
                         <motion.div
@@ -950,6 +961,9 @@ const MstDashboard = () => {
                                     propertyName={property.name}
                                     canManage={false}
                                 />
+                            )}
+                            {activeTab === 'grievance' && (
+                                <HRTicketsContent orgId={property?.organization_id || 'org'} />
                             )}
                             {activeTab === 'settings' && <SettingsView />}
                             {activeTab === 'profile' && (
@@ -1199,7 +1213,7 @@ const DashboardTab = ({ tickets, completedCount, ticketStats, onTicketClick, use
                     <p className="text-xs text-text-tertiary">All requests for this property</p>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-4 sm:gap-6 min-w-0">
                     {isLoading ? (
                         [1, 2, 3].map(i => (
                             <div key={i} className="h-48 bg-surface-elevated border border-border rounded-2xl animate-pulse" />
@@ -1395,14 +1409,14 @@ const RequestsTab = ({
 
     return (
         <div className="space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 min-w-0">
                 <div>
                     <h1 className="text-2xl font-bold text-text-primary">Requests</h1>
                     <p className="text-text-tertiary text-xs mt-1">Manage and track service requests</p>
                 </div>
 
-                <div className="flex flex-col sm:flex-row shadow-sm sm:shadow-none items-stretch sm:items-center gap-2 sm:gap-3 p-1 sm:p-0 bg-white sm:bg-transparent rounded-2xl border border-gray-100 sm:border-none">
-                    <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2 sm:gap-3 p-1 sm:p-0 bg-white sm:bg-transparent rounded-2xl border border-gray-100 sm:border-none min-w-0">
+                    <div className="flex flex-wrap items-center gap-2 min-w-0">
                         {/* Status Filter */}
                         <div className="flex items-center gap-2 bg-surface-elevated border border-border px-3 py-2 sm:py-1.5 rounded-xl">
                             <Filter className="w-3.5 h-3.5 text-text-tertiary shrink-0" />
@@ -1500,7 +1514,7 @@ const RequestsTab = ({
                         <p className="text-text-tertiary text-xs mt-1">Try switching the filter to see more data.</p>
                     </div>
                 ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-4 sm:gap-6 min-w-0">
                         {filtered
                             .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
                             .map((ticket) => (

@@ -20,20 +20,61 @@ export async function GET() {
         if (profErr) throw profErr;
 
         // Fetch memberships to identify tenant, super_tenant, and vendor users to exclude from HR
-        const EXCLUDED_HR_ROLES = new Set(['tenant', 'super_tenant', 'tenant_admin', 'vendor', 'maintenance_vendor']);
+        const isTenantOrVendorRole = (role?: string | null): boolean => {
+            if (!role) return false;
+            const r = role.toLowerCase().trim();
+            return (
+                r.includes('tenant') ||
+                r.includes('vendor') ||
+                ['tenant', 'super_tenant', 'tenant_admin', 'vendor', 'maintenance_vendor', 'food_vendor', 'pantry_vendor', 'cafeteria_vendor', 'external_vendor'].includes(r)
+            );
+        };
+
+        const INTERNAL_STAFF_ROLES = new Set([
+            'staff', 'manager', 'property_admin', 'hr', 'hr_head', 'ops_super_admin', 'org_super_admin',
+            'mst', 'security', 'procurement', 'bd_rep', 'bd_admin', 'accounts', 'soft_service_supervisor',
+            'soft_service_manager', 'soft_service_staff'
+        ]);
 
         const [orgMemsRes, propMemsRes, appUsersRes] = await Promise.all([
             supabaseAdmin.from('organization_memberships').select('user_id, role'),
             supabaseAdmin.from('property_memberships').select('user_id, role'),
-            supabaseAdmin.from('users').select('id, email, phone, full_name, created_at')
+            supabaseAdmin.from('users').select('id, email, phone, full_name, created_at, deleted_at').is('deleted_at', null)
         ]);
 
         const excludedUserIds = new Set<string>();
-        (orgMemsRes.data || []).forEach(m => { if (EXCLUDED_HR_ROLES.has(m.role)) excludedUserIds.add(m.user_id); });
-        (propMemsRes.data || []).forEach(m => { if (EXCLUDED_HR_ROLES.has(m.role)) excludedUserIds.add(m.user_id); });
+        const internalUserIds = new Set<string>();
 
-        let profilesList = (profiles || []).filter(p => !p.user_id || !excludedUserIds.has(p.user_id));
-        const eligibleAppUsers = (appUsersRes.data || []).filter(u => !excludedUserIds.has(u.id));
+        (orgMemsRes.data || []).forEach(m => {
+            if (isTenantOrVendorRole(m.role)) excludedUserIds.add(m.user_id);
+            if (INTERNAL_STAFF_ROLES.has(m.role)) internalUserIds.add(m.user_id);
+        });
+        (propMemsRes.data || []).forEach(m => {
+            if (isTenantOrVendorRole(m.role)) excludedUserIds.add(m.user_id);
+            if (INTERNAL_STAFF_ROLES.has(m.role)) internalUserIds.add(m.user_id);
+        });
+
+        let profilesList = (profiles || []).filter(p => {
+            if (p.is_active === false) return false;
+            if (p.user && p.user.deleted_at) return false;
+            if (p.user_id && excludedUserIds.has(p.user_id)) return false;
+            return true;
+        });
+
+        const mappedEmails = new Set(profilesList.map(p => (p.email || p.user?.email || '').toLowerCase().trim()).filter(Boolean));
+
+        const isInternalCompanyDomain = (email?: string | null): boolean => {
+            if (!email) return false;
+            const domain = email.toLowerCase().split('@')[1];
+            return domain === 'worksquare.in' || domain === 'autopilotoffices.com';
+        };
+
+        const eligibleAppUsers = (appUsersRes.data || []).filter(u => {
+            if (u.deleted_at) return false;
+            if (excludedUserIds.has(u.id)) return false;
+            const isMapped = (u.email && mappedEmails.has(u.email.toLowerCase().trim()));
+            return isMapped || internalUserIds.has(u.id) || isInternalCompanyDomain(u.email);
+        });
 
         // Perform auto-linking for matching unlinked profiles
         if (eligibleAppUsers.length > 0 && profilesList.length > 0) {
@@ -80,7 +121,12 @@ export async function GET() {
 
         // Users in app who aren't mapped to any employee profile
         const mappedUserIds = new Set(profilesList.map(p => p.user_id).filter(Boolean));
-        const unmappedAppUsers = eligibleAppUsers.filter(u => !mappedUserIds.has(u.id));
+
+        const unmappedAppUsers = eligibleAppUsers.filter(u => 
+            !u.deleted_at && 
+            !mappedUserIds.has(u.id) && 
+            (!u.email || !mappedEmails.has(u.email.toLowerCase().trim()))
+        );
 
         return NextResponse.json({
             success: true,
@@ -132,22 +178,54 @@ export async function POST(request: Request) {
             if (error) throw error;
 
             return NextResponse.json({ success: true, message: 'Employee onboarding approved and linked successfully', data: updated });
-        } else if (action === 'manual_link') {
-            // Manually link an Excel profile to an App User
+        } else if (action === 'manual_link' || action === 'relink_profile') {
+            // Manually link/re-link an Excel profile to an App User
             if (!employee_profile_id || !user_id) {
                 return NextResponse.json({ success: false, error: 'employee_profile_id and user_id are required' }, { status: 400 });
             }
 
+            // Fetch target app user to sync email if needed
+            const { data: targetUser } = await supabaseAdmin
+                .from('users')
+                .select('email')
+                .eq('id', user_id)
+                .maybeSingle();
+
+            const updateData: any = {
+                user_id,
+                reconciliation_status: 'linked',
+                updated_at: new Date().toISOString()
+            };
+            if (targetUser?.email) {
+                updateData.email = targetUser.email;
+            }
+
             const { data: updated, error } = await supabaseAdmin
                 .from('employee_profiles')
-                .update({ user_id, reconciliation_status: 'linked', updated_at: new Date().toISOString() })
+                .update(updateData)
                 .eq('id', employee_profile_id)
                 .select()
                 .single();
 
             if (error) throw error;
 
-            return NextResponse.json({ success: true, message: 'User manually linked', data: updated });
+            return NextResponse.json({ success: true, message: 'Employee profile linked successfully', data: updated });
+        } else if (action === 'unlink_profile') {
+            // Unlink an employee profile from its current app user
+            if (!employee_profile_id) {
+                return NextResponse.json({ success: false, error: 'employee_profile_id is required' }, { status: 400 });
+            }
+
+            const { data: updated, error } = await supabaseAdmin
+                .from('employee_profiles')
+                .update({ user_id: null, reconciliation_status: 'unlinked', updated_at: new Date().toISOString() })
+                .eq('id', employee_profile_id)
+                .select()
+                .single();
+
+            if (error) throw error;
+
+            return NextResponse.json({ success: true, message: 'Employee profile unlinked successfully', data: updated });
         } else if (action === 'create_and_link_profile') {
             // Create a new employee_profile record for an existing unmapped app user and assign an ECode
             if (!user_id) {

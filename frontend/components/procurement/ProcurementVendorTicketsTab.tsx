@@ -104,12 +104,12 @@ export default function ProcurementVendorTicketsTab() {
     const pendingCount = tickets.filter(t => t.vendor_procurement_status !== 'vendor_arranged').length;
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-6 font-inter">
             {/* Header / Stats */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-xs">
                 <div>
                     <h2 className="text-xl font-black text-slate-900 flex items-center gap-2">
-                        <ShoppingBag className="w-6 h-6 text-amber-500" />
+                        <ShoppingBag className="w-6 h-6 text-slate-900" />
                         Vendor Requirement Tickets
                     </h2>
                     <p className="text-sm text-slate-500 font-medium mt-1">
@@ -121,16 +121,16 @@ export default function ProcurementVendorTicketsTab() {
                 <div className="flex bg-slate-100 p-1.5 rounded-xl border border-slate-200">
                     <button
                         onClick={() => setFilter('pending')}
-                        className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-2 ${
+                        className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
                             filter === 'pending'
-                                ? 'bg-amber-500 text-white shadow-sm'
+                                ? 'bg-slate-900 text-white shadow-xs'
                                 : 'text-slate-600 hover:text-slate-900'
                         }`}
                     >
                         Pending Arrangement
                         {pendingCount > 0 && (
                             <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
-                                filter === 'pending' ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-700'
+                                filter === 'pending' ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-800'
                             }`}>
                                 {pendingCount}
                             </span>
@@ -138,9 +138,9 @@ export default function ProcurementVendorTicketsTab() {
                     </button>
                     <button
                         onClick={() => setFilter('arranged')}
-                        className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${
+                        className={`px-4 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
                             filter === 'arranged'
-                                ? 'bg-emerald-600 text-white shadow-sm'
+                                ? 'bg-emerald-600 text-white shadow-xs'
                                 : 'text-slate-600 hover:text-slate-900'
                         }`}
                     >
@@ -148,9 +148,9 @@ export default function ProcurementVendorTicketsTab() {
                     </button>
                     <button
                         onClick={() => setFilter('all')}
-                        className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${
+                        className={`px-4 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
                             filter === 'all'
-                                ? 'bg-slate-900 text-white shadow-sm'
+                                ? 'bg-slate-900 text-white shadow-xs'
                                 : 'text-slate-600 hover:text-slate-900'
                         }`}
                     >
@@ -162,13 +162,13 @@ export default function ProcurementVendorTicketsTab() {
             {/* Content List */}
             {isLoading ? (
                 <div className="flex flex-col items-center justify-center py-16 bg-white rounded-2xl border border-slate-200">
-                    <Loader2 className="w-8 h-8 text-amber-500 animate-spin mb-3" />
+                    <Loader2 className="w-8 h-8 text-slate-900 animate-spin mb-3" />
                     <p className="text-sm font-bold text-slate-500">Loading vendor tickets...</p>
                 </div>
             ) : filteredTickets.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-16 bg-white rounded-2xl border border-slate-200 text-center px-4">
-                    <div className="w-14 h-14 bg-amber-50 rounded-2xl flex items-center justify-center mb-4">
-                        <ShoppingBag className="w-7 h-7 text-amber-500" />
+                    <div className="w-14 h-14 bg-slate-100 rounded-2xl flex items-center justify-center mb-4">
+                        <ShoppingBag className="w-7 h-7 text-slate-700" />
                     </div>
                     <h3 className="text-base font-bold text-slate-900 mb-1">No Vendor Requests Found</h3>
                     <p className="text-sm text-slate-500 max-w-sm">
@@ -185,7 +185,7 @@ export default function ProcurementVendorTicketsTab() {
                             <div
                                 key={t.id}
                                 className={`bg-white border rounded-2xl p-6 transition-all hover:shadow-md ${
-                                    isArranged ? 'border-emerald-200 bg-emerald-50/10' : 'border-amber-200 bg-amber-50/10'
+                                    isArranged ? 'border-emerald-200 bg-emerald-50/10' : 'border-slate-200'
                                 }`}
                             >
                                 <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-100">

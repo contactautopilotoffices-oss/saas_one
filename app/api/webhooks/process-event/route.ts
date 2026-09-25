@@ -39,6 +39,29 @@ export async function POST(request: NextRequest) {
 
         event = claimedEvent;
 
+        // Deduplication Check: if an identical event (same entity_id and event_type) was completed in the last 2 minutes, skip re-execution
+        if (event.entity_id && event.event_type) {
+            const twoMinsAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+            const { data: duplicateCompleted } = await supabaseAdmin
+                .from('event_outbox')
+                .select('id')
+                .eq('entity_id', event.entity_id)
+                .eq('event_type', event.event_type)
+                .eq('status', 'completed')
+                .gt('updated_at', twoMinsAgo)
+                .neq('id', event.id)
+                .maybeSingle();
+
+            if (duplicateCompleted) {
+                console.log(`[EventProcessor] Duplicate outbox event for entity ${event.entity_id} (${event.event_type}) was already processed recently. Marking completed and skipping.`);
+                await supabaseAdmin
+                    .from('event_outbox')
+                    .update({ status: 'completed', error_message: 'Skipped duplicate event', updated_at: new Date().toISOString() })
+                    .eq('id', event.id);
+                return NextResponse.json({ message: 'Duplicate event skipped' });
+            }
+        }
+
         console.log(`[EventProcessor] Processing event ${event.id}: ${event.event_type}`);
 
         try {

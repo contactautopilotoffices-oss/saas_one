@@ -29,6 +29,9 @@ interface UserWithMembership {
     is_active: boolean;
     joined_at: string;
     phone?: string;
+    designation?: string;
+    employee_code?: string;
+    department?: string;
     is_approved?: boolean;
     approval_status?: string;
     approved_by?: string | null;
@@ -532,24 +535,27 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
             'vendor',
         ];
 
-    const formatRole = (role: string) => {
+    const formatRole = (role?: string) => {
         if (!role) return 'Member';
-        if (role === 'hr') return 'HR Executive';
-        if (role === 'hr_head') return 'HR Head';
-        if (role === 'tenant') return 'Client / Tenant';
-        if (role === 'super_tenant') return 'Super Client (Multi-Property)';
-        if (role === 'org_super_admin') return 'Org Super Admin';
-        if (role === 'ops_super_admin') return 'Ops Super Admin';
-        if (role === 'property_admin') return 'Property Admin';
-        if (role === 'mst') return 'MST (Technician)';
-        if (role === 'soft_service_manager') return 'Soft Service Manager';
-        if (role === 'soft_service_supervisor') return 'Soft Service Supervisor';
-        if (role === 'procurement' || role === 'procurement_user') return 'Procurement';
-        if (role === 'finance' || role === 'accounts') return 'Finance / Accounts';
-        if (role === 'sales' || role === 'sales_executive') return 'Sales / CRM';
-        if (role === 'bd_rep' || role === 'bd_admin' || role === 'bd_super_admin') return 'Business Development';
-        if (role === 'security') return 'Security / Front Desk';
-        if (role === 'vendor') return 'Vendor / Contractor';
+        const lower = role.toLowerCase();
+        if (lower === 'hr') return 'HR Executive';
+        if (lower === 'hr_head') return 'HR Head';
+        if (lower === 'tenant') return 'Client / Tenant';
+        if (lower === 'super_tenant') return 'Super Client (Multi-Property)';
+        if (lower === 'org_super_admin' || lower === 'org_admin') return 'Org Super Admin';
+        if (lower === 'ops_super_admin' || lower === 'master_admin') return 'Ops Super Admin';
+        if (lower === 'property_admin') return 'Property Admin';
+        if (lower === 'mst') return 'MST (Technician)';
+        if (lower === 'soft_service_manager') return 'Soft Service Manager';
+        if (lower === 'soft_service_supervisor') return 'Soft Service Supervisor';
+        if (lower === 'soft_service_staff' || lower === 'soft_services' || lower === 'soft_service') return 'Soft Service Staff';
+        if (lower === 'staff') return 'Staff';
+        if (lower === 'procurement' || lower === 'procurement_user') return 'Procurement';
+        if (lower === 'finance' || lower === 'accounts') return 'Finance / Accounts';
+        if (lower === 'sales' || lower === 'sales_executive') return 'Sales / CRM';
+        if (lower === 'bd_rep' || lower === 'bd_admin' || lower === 'bd_super_admin') return 'Business Development';
+        if (lower === 'security') return 'Security / Front Desk';
+        if (lower === 'vendor') return 'Vendor / Contractor';
         return role.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
     };
 
@@ -1206,161 +1212,178 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
-                        className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[110] p-4"
+                        className="fixed inset-0 bg-slate-900/60 backdrop-blur-md flex items-center justify-center z-[110] p-4 animate-in fade-in duration-200"
                         onClick={() => setSelectedUserForProfile(null)}
                     >
                         <motion.div
-                            initial={{ scale: 0.9, y: 20 }}
+                            initial={{ scale: 0.95, y: 15 }}
                             animate={{ scale: 1, y: 0 }}
-                            exit={{ scale: 0.9, y: 20 }}
-                            className="bg-white border border-slate-100 rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden"
+                            exit={{ scale: 0.95, y: 15 }}
+                            className="bg-white dark:bg-[#161b22] border border-slate-100 dark:border-[#30363d] rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden relative"
                             onClick={(e) => e.stopPropagation()}
                         >
-                            {/* Card Header with Autopilot Logo */}
-                            <div className="bg-gradient-to-br from-slate-900 to-slate-800 p-8 flex flex-col items-center">
-                                {/* Autopilot Logo */}
-                                <div className="flex items-center justify-center mb-6">
+                            {/* Top Cover Banner */}
+                            <div className="h-28 bg-gradient-to-r from-slate-900 via-teal-950 to-indigo-950 p-4 flex justify-between items-start relative">
+                                <div className="flex items-center gap-2">
                                     <img
                                         src="/autopilot-logo-new.png"
                                         alt="Autopilot Logo"
-                                        className="h-10 w-auto object-contain invert mix-blend-screen"
+                                        className="h-6 w-auto object-contain invert mix-blend-screen opacity-80"
                                     />
                                 </div>
+                                <button
+                                    onClick={() => setSelectedUserForProfile(null)}
+                                    className="w-8 h-8 rounded-full bg-black/40 hover:bg-black/60 text-white flex items-center justify-center backdrop-blur-md transition-all border border-white/10 cursor-pointer"
+                                >
+                                    <X className="w-4 h-4" />
+                                </button>
+                            </div>
 
+                            {/* Profile Header Content (Avatar + Badges) */}
+                            <div className="px-6 pt-0 pb-4 flex flex-col items-center relative">
                                 {/* User Avatar */}
-                                <div className="w-24 h-24 bg-white/10 rounded-full flex items-center justify-center border-4 border-white/20 mb-4 overflow-hidden shadow-xl">
+                                <div className="-mt-12 mb-3 w-20 h-20 rounded-2xl border-4 border-white dark:border-[#161b22] shadow-xl overflow-hidden bg-slate-900 flex items-center justify-center flex-shrink-0">
                                     {selectedUserForProfile.user_photo_url || selectedUserForProfile.avatar_url ? (
                                         <img
                                             src={selectedUserForProfile.user_photo_url || selectedUserForProfile.avatar_url}
-                                            alt="Profile"
+                                            alt={selectedUserForProfile.full_name}
                                             className="w-full h-full object-cover"
                                         />
                                     ) : (
-                                        <span className="text-4xl font-black text-white">
+                                        <span className="text-3xl font-black text-white">
                                             {selectedUserForProfile.full_name?.[0]?.toUpperCase() || 'U'}
                                         </span>
                                     )}
                                 </div>
 
-                                {/* Role Badge */}
-                                <span className="px-4 py-1.5 bg-amber-500 text-slate-900 rounded-full text-xs font-black uppercase tracking-wider shadow-lg">
-                                    {formatRole(selectedUserForProfile.orgRole || selectedUserForProfile.propertyRole || 'User')}
-                                </span>
+                                <h3 className="text-xl font-black text-slate-900 dark:text-white tracking-tight text-center leading-snug">
+                                    {selectedUserForProfile.full_name}
+                                </h3>
+
+                                {/* Role Badges */}
+                                <div className="flex items-center gap-2 flex-wrap justify-center mt-2">
+                                    <span className="px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-full text-xs font-black uppercase tracking-wider shadow-2xs">
+                                        App Role: {formatRole(selectedUserForProfile.propertyRole || selectedUserForProfile.orgRole || 'User')}
+                                    </span>
+                                    {selectedUserForProfile.designation && (
+                                        <span className="px-3 py-1 bg-indigo-500/10 border border-indigo-500/20 text-indigo-600 dark:text-indigo-400 rounded-full text-xs font-bold tracking-wider shadow-2xs">
+                                            {selectedUserForProfile.designation}
+                                        </span>
+                                    )}
+                                </div>
                             </div>
 
-                            {/* Card Body with User Info */}
-                            <div className="p-8 space-y-6">
-                                <div className="space-y-4">
-                                    <div className="flex justify-between items-center py-3 border-b border-slate-100">
-                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Full Name</span>
-                                        <span className="text-sm font-bold text-slate-900">
-                                            {selectedUserForProfile.full_name}
-                                        </span>
+                            {/* Card Body - Grid Info Tiles */}
+                            <div className="p-6 pt-2 space-y-3">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    {/* Email */}
+                                    <div className="p-3.5 bg-slate-50 dark:bg-[#0d1117] rounded-2xl border border-slate-100 dark:border-[#30363d] flex items-center gap-3 col-span-1 sm:col-span-2">
+                                        <div className="w-9 h-9 rounded-xl bg-blue-500/10 text-blue-600 flex items-center justify-center flex-shrink-0">
+                                            <Mail className="w-4 h-4" />
+                                        </div>
+                                        <div className="min-w-0 flex-1">
+                                            <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Email Address</p>
+                                            <p className="text-xs font-bold text-slate-900 dark:text-white break-all leading-normal">
+                                                {selectedUserForProfile.email}
+                                            </p>
+                                        </div>
                                     </div>
 
-                                    <div className="flex justify-between items-center py-3 border-b border-slate-100">
-                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Phone</span>
-                                        <span className="text-sm font-bold text-slate-900">
-                                            {selectedUserForProfile.phone || 'Not Set'}
-                                        </span>
+                                    {/* Phone */}
+                                    <div className="p-3.5 bg-slate-50 dark:bg-[#0d1117] rounded-2xl border border-slate-100 dark:border-[#30363d] flex items-center gap-3">
+                                        <div className="w-9 h-9 rounded-xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center flex-shrink-0">
+                                            <Phone className="w-4 h-4" />
+                                        </div>
+                                        <div className="min-w-0 flex-1">
+                                            <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Phone</p>
+                                            <p className="text-xs font-bold text-slate-900 dark:text-white break-words leading-normal">
+                                                {selectedUserForProfile.phone || 'Not Set'}
+                                            </p>
+                                        </div>
                                     </div>
 
-                                    <div className="flex justify-between items-center py-3 border-b border-slate-100">
-                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Email</span>
-                                        <span className="text-sm font-medium text-slate-700 truncate max-w-[200px]">
-                                            {selectedUserForProfile.email}
-                                        </span>
+                                    {/* Property */}
+                                    <div className="p-3.5 bg-slate-50 dark:bg-[#0d1117] rounded-2xl border border-slate-100 dark:border-[#30363d] flex items-center gap-3">
+                                        <div className="w-9 h-9 rounded-xl bg-teal-500/10 text-teal-600 flex items-center justify-center flex-shrink-0">
+                                            <Building2 className="w-4 h-4" />
+                                        </div>
+                                        <div className="min-w-0 flex-1">
+                                            <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Property</p>
+                                            <p className="text-xs font-bold text-slate-900 dark:text-white break-words leading-normal">
+                                                {selectedUserForProfile.propertyName || 'Not Assigned'}
+                                            </p>
+                                        </div>
                                     </div>
 
-                                    {selectedUserForProfile.propertyName && (
-                                        <div className="flex justify-between items-center py-3 border-b border-slate-100">
-                                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Property</span>
-                                            <span className="text-sm font-bold text-slate-900">
-                                                {selectedUserForProfile.propertyName}
-                                            </span>
+                                    {/* Employee Designation */}
+                                    <div className="p-3.5 bg-slate-50 dark:bg-[#0d1117] rounded-2xl border border-slate-100 dark:border-[#30363d] flex items-center gap-3">
+                                        <div className="w-9 h-9 rounded-xl bg-indigo-500/10 text-indigo-600 flex items-center justify-center flex-shrink-0">
+                                            <Briefcase className="w-4 h-4" />
                                         </div>
-                                    )}
-
-                                    {/* Approval Audit Information */}
-                                    <div className="flex justify-between items-center py-3 border-b border-slate-100">
-                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Approval Status</span>
-                                        <span className={`px-2 py-0.5 rounded text-xs font-bold ${
-                                            selectedUserForProfile.approval_status === 'rejected'
-                                                ? 'bg-rose-100 text-rose-800'
-                                                : selectedUserForProfile.is_approved
-                                                    ? 'bg-emerald-100 text-emerald-800'
-                                                    : 'bg-amber-100 text-amber-800'
-                                        }`}>
-                                            {selectedUserForProfile.approval_status === 'rejected'
-                                                ? 'Rejected'
-                                                : selectedUserForProfile.is_approved
-                                                    ? 'Approved'
-                                                    : 'Pending Approval'}
-                                        </span>
+                                        <div className="min-w-0 flex-1">
+                                            <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Designation</p>
+                                            <p className="text-xs font-bold text-indigo-600 dark:text-indigo-400 break-words leading-normal">
+                                                {selectedUserForProfile.designation || 'Not Specified'}
+                                            </p>
+                                        </div>
                                     </div>
 
-                                    {selectedUserForProfile.is_approved && selectedUserForProfile.approverName && (
-                                        <div className="flex justify-between items-center py-3 border-b border-slate-100">
-                                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Approved By</span>
-                                            <span className="text-sm font-bold text-slate-900">
-                                                {selectedUserForProfile.approverName}
-                                            </span>
+                                    {/* Department or Employee Code */}
+                                    {selectedUserForProfile.department ? (
+                                        <div className="p-3.5 bg-slate-50 dark:bg-[#0d1117] rounded-2xl border border-slate-100 dark:border-[#30363d] flex items-center gap-3">
+                                            <div className="w-9 h-9 rounded-xl bg-purple-500/10 text-purple-600 flex items-center justify-center flex-shrink-0">
+                                                <Shield className="w-4 h-4" />
+                                            </div>
+                                            <div className="min-w-0 flex-1">
+                                                <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Department</p>
+                                                <p className="text-xs font-bold text-slate-900 dark:text-white break-words leading-normal">
+                                                    {selectedUserForProfile.department}
+                                                </p>
+                                            </div>
                                         </div>
-                                    )}
-
-                                    {selectedUserForProfile.approved_at && (
-                                        <div className="flex justify-between items-center py-3 border-b border-slate-100">
-                                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Approved On</span>
-                                            <span className="text-xs font-semibold text-slate-700">
-                                                {new Date(selectedUserForProfile.approved_at).toLocaleString()}
-                                            </span>
+                                    ) : selectedUserForProfile.employee_code ? (
+                                        <div className="p-3.5 bg-slate-50 dark:bg-[#0d1117] rounded-2xl border border-slate-100 dark:border-[#30363d] flex items-center gap-3">
+                                            <div className="w-9 h-9 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center flex-shrink-0">
+                                                <Star className="w-4 h-4" />
+                                            </div>
+                                            <div className="min-w-0 flex-1">
+                                                <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Employee Code</p>
+                                                <p className="text-xs font-mono font-bold text-slate-900 dark:text-white break-words leading-normal">
+                                                    {selectedUserForProfile.employee_code}
+                                                </p>
+                                            </div>
                                         </div>
-                                    )}
+                                    ) : null}
+                                </div>
 
-                                    {selectedUserForProfile.rejection_reason && (
-                                        <div className="py-2 px-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800">
-                                            <strong>Reason:</strong> {selectedUserForProfile.rejection_reason}
-                                        </div>
-                                    )}
-
-                                    {/* Quick Actions if Pending */}
-                                    {((selectedUserForProfile.is_approved === false || selectedUserForProfile.approval_status === 'pending') && selectedUserForProfile.approval_status !== 'rejected') && (
-                                        <div className="flex gap-2 pt-2">
-                                            <button
-                                                onClick={() => handleApproveUser(selectedUserForProfile)}
-                                                disabled={approvingUserId === selectedUserForProfile.id}
-                                                className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-                                            >
-                                                <Check className="w-4 h-4" />
-                                                {approvingUserId === selectedUserForProfile.id ? 'Approving...' : 'Approve Access'}
-                                            </button>
-                                            <button
-                                                onClick={() => handleRejectUser(selectedUserForProfile)}
-                                                disabled={approvingUserId === selectedUserForProfile.id}
-                                                className="px-4 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 font-black text-xs uppercase tracking-wider rounded-xl border border-rose-200 transition-all cursor-pointer disabled:opacity-50"
-                                            >
-                                                <X className="w-4 h-4" />
-                                                Reject
-                                            </button>
-                                        </div>
-                                    )}
-
-                                    {canViewReliability && (
-                                        <div className="pt-2">
-                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Reliability</p>
-                                            <ReliabilityBadge userId={selectedUserForProfile.id} />
-                                        </div>
-                                    )}
-
-                                    <div className="pt-4 flex justify-center">
+                                {/* Quick Actions if Pending Approval */}
+                                {((selectedUserForProfile.is_approved === false || selectedUserForProfile.approval_status === 'pending') && selectedUserForProfile.approval_status !== 'rejected') && (
+                                    <div className="flex gap-2 pt-2">
                                         <button
-                                            onClick={() => setSelectedUserForProfile(null)}
-                                            className="px-8 py-2.5 bg-slate-900 text-white font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-slate-800 transition-all w-full cursor-pointer"
+                                            onClick={() => handleApproveUser(selectedUserForProfile)}
+                                            disabled={approvingUserId === selectedUserForProfile.id}
+                                            className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
                                         >
-                                            Done
+                                            <Check className="w-4 h-4" />
+                                            {approvingUserId === selectedUserForProfile.id ? 'Approving...' : 'Approve Access'}
+                                        </button>
+                                        <button
+                                            onClick={() => handleRejectUser(selectedUserForProfile)}
+                                            disabled={approvingUserId === selectedUserForProfile.id}
+                                            className="px-4 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 font-black text-xs uppercase tracking-wider rounded-xl border border-rose-200 transition-all cursor-pointer disabled:opacity-50"
+                                        >
+                                            <X className="w-4 h-4" />
+                                            Reject
                                         </button>
                                     </div>
-                                </div>
+                                )}
+
+                                {canViewReliability && (
+                                    <div className="pt-1">
+                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Reliability Score</p>
+                                        <ReliabilityBadge userId={selectedUserForProfile.id} />
+                                    </div>
+                                )}
                             </div>
                         </motion.div>
                     </motion.div>

@@ -1,7 +1,9 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Send, ShieldAlert, UserX, AlertTriangle, Paperclip, CheckCircle2 } from 'lucide-react';
+import { formatSlaDisplay } from '@/frontend/components/hr/HRAdminConfigPanel';
 
 interface TicketCreateModalProps {
     isOpen: boolean;
@@ -12,6 +14,7 @@ interface TicketCreateModalProps {
 }
 
 export default function TicketCreateModal({ isOpen, onClose, onSuccess, orgId, userId }: TicketCreateModalProps) {
+    const [mounted, setMounted] = useState(false);
     const [categories, setCategories] = useState<any[]>([]);
     const [ticketType, setTicketType] = useState<'grievance' | 'hr_query' | 'confidential_feedback' | 'anonymous_feedback'>('grievance');
     const [categoryId, setCategoryId] = useState('');
@@ -20,10 +23,14 @@ export default function TicketCreateModal({ isOpen, onClose, onSuccess, orgId, u
     const [priority, setPriority] = useState('medium');
     const [isConfidential, setIsConfidential] = useState(false);
     const [isAnonymous, setIsAnonymous] = useState(false);
-    const [attachmentUrl, setAttachmentUrl] = useState('');
     const [attachments, setAttachments] = useState<string[]>([]);
+    const [uploadingFile, setUploadingFile] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState('');
+
+    useEffect(() => {
+        setMounted(true);
+    }, []);
 
     useEffect(() => {
         if (isOpen) {
@@ -45,10 +52,34 @@ export default function TicketCreateModal({ isOpen, onClose, onSuccess, orgId, u
         }
     };
 
-    const handleAddAttachment = () => {
-        if (attachmentUrl.trim()) {
-            setAttachments([...attachments, attachmentUrl.trim()]);
-            setAttachmentUrl('');
+    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const files = e.target.files;
+        if (!files || files.length === 0) return;
+
+        setUploadingFile(true);
+        setError('');
+        try {
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                const formData = new FormData();
+                formData.append('file', file);
+
+                const res = await fetch('/api/hr/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await res.json();
+                if (data.success && data.url) {
+                    setAttachments(prev => [...prev, data.url]);
+                } else {
+                    setError(data.error || 'Failed to upload document');
+                }
+            }
+        } catch (err: any) {
+            setError(err?.message || 'File upload failed');
+        } finally {
+            setUploadingFile(false);
+            e.target.value = '';
         }
     };
 
@@ -102,10 +133,10 @@ export default function TicketCreateModal({ isOpen, onClose, onSuccess, orgId, u
         }
     };
 
-    if (!isOpen) return null;
+    if (!isOpen || !mounted) return null;
 
-    return (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-2 sm:p-4">
+    return createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-2 sm:p-4">
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-2xl max-h-[92vh] sm:max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200 my-auto">
                 {/* Header - Fixed Top */}
                 <div className="shrink-0 flex items-center justify-between px-4 sm:px-6 py-3.5 sm:py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50">
@@ -173,7 +204,7 @@ export default function TicketCreateModal({ isOpen, onClose, onSuccess, orgId, u
                         {/* Notice Callouts */}
                         {ticketType === 'grievance' && (
                             <div className="p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/50 rounded-xl text-xs text-amber-800 dark:text-amber-300">
-                                <strong>Note:</strong> Employee Grievances are assigned to your <strong>Reporting Manager / HOD (Level 1)</strong> with a 3-working-day resolution SLA before automatically escalating to HR.
+                                <strong>Note:</strong> Employee Grievances are assigned to your <strong>Reporting Manager / HOD (Level 1)</strong> with a 3-working-day resolution TAT (Turnaround Time) before automatically escalating to HR.
                             </div>
                         )}
 
@@ -201,21 +232,22 @@ export default function TicketCreateModal({ isOpen, onClose, onSuccess, orgId, u
                             </div>
                         )}
 
-                        {/* Category Selection */}
+                        {/* Category Selection Dropdown */}
                         <div>
-                            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                                Category *
+                            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center justify-between">
+                                <span>Category *</span>
+                                <span className="text-[10px] font-normal text-slate-400">Select from list ({filteredCategories.length} options)</span>
                             </label>
                             <select
                                 value={categoryId}
                                 onChange={(e) => setCategoryId(e.target.value)}
-                                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs focus:ring-2 focus:ring-indigo-500 outline-none"
+                                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-semibold focus:ring-2 focus:ring-indigo-500 outline-none cursor-pointer"
                                 required
                             >
-                                <option value="">Select Category...</option>
-                                {filteredCategories.map((c) => (
-                                    <option key={c.id} value={c.id}>
-                                        {c.category_name} {c.sub_category_name ? `(${c.sub_category_name})` : ''} - SLA: {c.l1_sla_days}d
+                                <option value="">-- Select Category Option --</option>
+                                {filteredCategories.map((cat) => (
+                                    <option key={cat.id} value={cat.id}>
+                                        {cat.category_name}{cat.sub_category_name ? ` — ${cat.sub_category_name}` : ''}
                                     </option>
                                 ))}
                             </select>
@@ -251,7 +283,7 @@ export default function TicketCreateModal({ isOpen, onClose, onSuccess, orgId, u
                             />
                         </div>
 
-                        {/* Priority & Attachments */}
+                        {/* Priority & Document File Upload */}
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                             <div>
                                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
@@ -271,43 +303,43 @@ export default function TicketCreateModal({ isOpen, onClose, onSuccess, orgId, u
 
                             <div>
                                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                                    Add Document Link / URL
+                                    Attach Documents / Screenshots
                                 </label>
-                                <div className="flex gap-2">
+                                <label className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold cursor-pointer transition-colors">
+                                    <Paperclip className="w-4 h-4 text-[#587e85]" />
+                                    <span>{uploadingFile ? 'Uploading file...' : 'Choose File(s) to Attach'}</span>
                                     <input
-                                        type="url"
-                                        value={attachmentUrl}
-                                        onChange={(e) => setAttachmentUrl(e.target.value)}
-                                        placeholder="https://..."
-                                        className="flex-1 min-w-0 px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs focus:ring-2 focus:ring-indigo-500 outline-none"
+                                        type="file"
+                                        multiple
+                                        onChange={handleFileUpload}
+                                        disabled={uploadingFile}
+                                        className="hidden"
                                     />
-                                    <button
-                                        type="button"
-                                        onClick={handleAddAttachment}
-                                        className="px-3 py-2 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-semibold hover:bg-slate-200 dark:hover:bg-slate-700 shrink-0"
-                                    >
-                                        Add
-                                    </button>
-                                </div>
+                                </label>
                             </div>
                         </div>
 
                         {/* Attachments List */}
                         {attachments.length > 0 && (
                             <div className="flex flex-wrap gap-2 pt-1">
-                                {attachments.map((url, idx) => (
-                                    <span key={idx} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-lg text-[11px]">
-                                        <Paperclip className="w-3 h-3 text-slate-400" />
-                                        <span className="max-w-[150px] truncate">{url}</span>
-                                        <button
-                                            type="button"
-                                            onClick={() => setAttachments(attachments.filter((_, i) => i !== idx))}
-                                            className="text-slate-400 hover:text-red-500 ml-1"
-                                        >
-                                            ×
-                                        </button>
-                                    </span>
-                                ))}
+                                {attachments.map((url, idx) => {
+                                    const name = url.split('/').pop()?.split('_').slice(2).join('_') || url.split('/').pop() || `Attachment ${idx + 1}`;
+                                    return (
+                                        <span key={idx} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-teal-50 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-800 text-teal-800 dark:text-teal-300 rounded-lg text-[11px] font-medium">
+                                            <Paperclip className="w-3 h-3 text-[#587e85]" />
+                                            <a href={url} target="_blank" rel="noopener noreferrer" className="max-w-[180px] truncate hover:underline">
+                                                {name}
+                                            </a>
+                                            <button
+                                                type="button"
+                                                onClick={() => setAttachments(attachments.filter((_, i) => i !== idx))}
+                                                className="text-slate-400 hover:text-red-500 ml-1 text-xs"
+                                            >
+                                                ×
+                                            </button>
+                                        </span>
+                                    );
+                                })}
                             </div>
                         )}
                     </div>
@@ -324,7 +356,7 @@ export default function TicketCreateModal({ isOpen, onClose, onSuccess, orgId, u
                         <button
                             type="submit"
                             disabled={submitting}
-                            className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-lg shadow-indigo-600/20 disabled:opacity-50 transition-all"
+                            className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-[#587e85] hover:bg-[#48686e] text-white text-xs font-bold shadow-md shadow-[#587e85]/20 disabled:opacity-50 transition-all active:scale-95"
                         >
                             {submitting ? 'Submitting...' : 'Submit Request'}
                             <Send className="w-3.5 h-3.5" />
@@ -332,6 +364,7 @@ export default function TicketCreateModal({ isOpen, onClose, onSuccess, orgId, u
                     </div>
                 </form>
             </div>
-        </div>
+        </div>,
+        document.body
     );
 }

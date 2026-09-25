@@ -1176,13 +1176,32 @@ export class NotificationService {
 
     static async send(payload: NotificationPayload) {
         try {
-            const { data: notification, error: notifError } = await supabaseAdmin
+            let propertyId = (payload.propertyId && payload.propertyId.trim()) ? payload.propertyId.trim() : null;
+            if (!propertyId && payload.organizationId) {
+                const { data: defaultProp } = await supabaseAdmin
+                    .from('properties')
+                    .select('id')
+                    .eq('organization_id', payload.organizationId)
+                    .limit(1)
+                    .maybeSingle();
+                if (defaultProp?.id) propertyId = defaultProp.id;
+            }
+            if (!propertyId) {
+                const { data: anyProp } = await supabaseAdmin
+                    .from('properties')
+                    .select('id')
+                    .limit(1)
+                    .maybeSingle();
+                if (anyProp?.id) propertyId = anyProp.id;
+            }
+
+            const { data: initialNotif, error: notifError } = await supabaseAdmin
                 .from('notifications')
                 .insert({
                     user_id: payload.userId,
                     ticket_id: (payload.ticketId && payload.ticketId.trim()) ? payload.ticketId.trim() : null,
                     booking_id: (payload.bookingId && payload.bookingId.trim()) ? payload.bookingId.trim() : null,
-                    property_id: (payload.propertyId && payload.propertyId.trim()) ? payload.propertyId.trim() : null,
+                    property_id: propertyId,
                     organization_id: (payload.organizationId && payload.organizationId.trim()) ? payload.organizationId.trim() : null,
                     notification_type: payload.type,
                     title: payload.title,
@@ -1193,9 +1212,35 @@ export class NotificationService {
                 .select()
                 .single();
 
+            let notification = initialNotif;
             if (notifError) {
-                console.error('[NS] DB insert failed:', notifError.message);
-                return;
+                if (notifError.message?.includes('notifications_ticket_id_fkey') || notifError.code === '23503') {
+                    console.warn('[NS] FK constraint violation on ticket_id, retrying insert with ticket_id: null');
+                    const { data: retryNotif, error: retryErr } = await supabaseAdmin
+                        .from('notifications')
+                        .insert({
+                            user_id: payload.userId,
+                            ticket_id: null,
+                            booking_id: (payload.bookingId && payload.bookingId.trim()) ? payload.bookingId.trim() : null,
+                            property_id: propertyId,
+                            organization_id: (payload.organizationId && payload.organizationId.trim()) ? payload.organizationId.trim() : null,
+                            notification_type: payload.type,
+                            title: payload.title,
+                            message: payload.message,
+                            deep_link: payload.deepLink,
+                            is_read: false
+                        })
+                        .select()
+                        .single();
+                    if (retryErr) {
+                        console.error('[NS] DB insert fallback failed:', retryErr.message);
+                        return;
+                    }
+                    notification = retryNotif;
+                } else {
+                    console.error('[NS] DB insert failed:', notifError.message);
+                    return;
+                }
             }
 
             const { data: tokenRows } = await supabaseAdmin
@@ -1268,6 +1313,14 @@ export class NotificationService {
                 .maybeSingle();
             if (defaultProp?.id) fallbackPropertyId = defaultProp.id;
         }
+        if (!fallbackPropertyId) {
+            const { data: anyProp } = await supabaseAdmin
+                .from('properties')
+                .select('id')
+                .limit(1)
+                .maybeSingle();
+            if (anyProp?.id) fallbackPropertyId = anyProp.id;
+        }
 
         const rows = unique.map(userId => ({
             user_id: userId,
@@ -1282,14 +1335,29 @@ export class NotificationService {
             is_read: false,
         }));
 
-        const { data: inserted, error: insertErr } = await supabaseAdmin
+        const { data: initialInserted, error: insertErr } = await supabaseAdmin
             .from('notifications')
             .insert(rows)
             .select();
 
+        let inserted = initialInserted;
         if (insertErr) {
-            console.error('[NS] sendToMany DB insert failed:', insertErr.message);
-            return;
+            if (insertErr.message?.includes('notifications_ticket_id_fkey') || insertErr.code === '23503') {
+                console.warn('[NS] sendToMany FK constraint violation on ticket_id, retrying insert with ticket_id: null');
+                const nullTicketRows = rows.map(r => ({ ...r, ticket_id: null }));
+                const { data: retryInserted, error: retryErr } = await supabaseAdmin
+                    .from('notifications')
+                    .insert(nullTicketRows)
+                    .select();
+                if (retryErr) {
+                    console.error('[NS] sendToMany DB insert fallback failed:', retryErr.message);
+                    return;
+                }
+                inserted = retryInserted;
+            } else {
+                console.error('[NS] sendToMany DB insert failed:', insertErr.message);
+                return;
+            }
         }
 
         const { data: tokenRows } = await supabaseAdmin
@@ -2668,96 +2736,310 @@ export class NotificationService {
     // ============================================================================
     static async afterHrTicketCreated(ticketId: string) {
         try {
-            const { data: ticket } = await supabaseAdmin
+            const { data: ticket, error } = await supabaseAdmin
                 .from('hr_tickets')
-                .select('*, raised_by:users!raised_by_user_id(id, full_name, email), assigned_to:users!assigned_to_user_id(id, full_name, email), category:hr_ticket_categories(category_name)')
+                .select('*, category:hr_ticket_categories(*), raised_by:users!raised_by_user_id(id, full_name, email, phone), assigned_to:users!assigned_to_user_id(id, full_name, email, phone)')
                 .eq('id', ticketId)
                 .maybeSingle();
 
-            if (!ticket) return;
+            if (error || !ticket) return;
 
-            const isConfidential = ticket.is_confidential || ticket.is_anonymous;
-            const eventType = isConfidential ? 'HR_CONFIDENTIAL_DIRECTOR_ALERT' : 'HR_TICKET_CREATED';
+            const categoryName = ticket.category?.category_name || ticket.ticket_type?.replace(/_/g, ' ') || 'Grievance';
+            const submitterName = ticket.is_anonymous ? 'Anonymous Employee' : (ticket.employee_snapshot?.name || ticket.raised_by?.full_name || 'Employee');
+            const assigneeName = ticket.assigned_to?.full_name || ticket.assigned_to?.email || `Level ${ticket.current_level} Authority`;
 
-            // 1. Process WhatsApp Omnichannel Event
-            const { WhatsAppEventProcessor } = await import('./WhatsAppEventProcessor');
-            await WhatsAppEventProcessor.processEvent({
-                event_type: eventType,
-                payload: ticket
-            }).catch(err => console.error('[NotificationService] WhatsApp HR ticket created error:', err));
-
-            // 2. In-App Notification Dispatch
-            const targetUsers = Array.from(new Set([
-                ticket.raised_by_user_id,
-                ticket.assigned_to_user_id
-            ])).filter(Boolean) as string[];
-
-            if (targetUsers.length > 0) {
-                await this.sendToMany(targetUsers, {
+            // 1. Send Omnichannel Notification to Submitter
+            if (ticket.raised_by_user_id) {
+                await this.send({
+                    userId: ticket.raised_by_user_id,
                     organizationId: ticket.organization_id,
                     type: 'HR_TICKET_CREATED',
-                    title: `HR Ticket #${ticket.ticket_number} Created`,
-                    message: `${ticket.subject} (${ticket.category?.category_name || 'Grievance'})`,
+                    title: `HR Ticket #${ticket.ticket_number} Submitted`,
+                    message: `Your HR request "${ticket.subject}" (${categoryName}) has been successfully submitted and assigned to ${assigneeName} for Level ${ticket.current_level} review.`,
                     deepLink: `/hr-tickets?tab=tickets&id=${ticket.id}`
                 });
             }
+
+            // 2. Send Omnichannel Notification to Assigned Level Handler
+            if (ticket.assigned_to_user_id) {
+                await this.send({
+                    userId: ticket.assigned_to_user_id,
+                    organizationId: ticket.organization_id,
+                    type: 'HR_TICKET_ASSIGNED',
+                    title: `New HR Ticket Assigned #${ticket.ticket_number}`,
+                    message: `New HR request "${ticket.subject}" assigned to you for Level ${ticket.current_level} review. Submitter: ${submitterName}, Priority: ${ticket.priority?.toUpperCase()}.`,
+                    deepLink: `/hr-tickets?tab=tickets&id=${ticket.id}`
+                });
+            }
+
+            // Note: WhatsApp & Email dispatch are handled asynchronously via PostgreSQL database trigger
+            // (trg_hr_tickets_outbox -> public.event_outbox -> webhook/sweep-outbox -> WhatsAppEventProcessor)
         } catch (err) {
             console.error('[NotificationService] afterHrTicketCreated error:', err);
         }
     }
 
-    static async afterHrTicketStatusUpdated(ticketId: string, oldStatus: string, newStatus: string, actorId?: string) {
+    static async afterHrTicketEscalated(ticketId: string, fromLevel: number, toLevel: number, isSlaBreach: boolean = false, actorUserId?: string | null) {
         try {
             const { data: ticket } = await supabaseAdmin
                 .from('hr_tickets')
-                .select('*')
+                .select('*, category:hr_ticket_categories(*), raised_by:users!raised_by_user_id(id, full_name, email, phone), assigned_to:users!assigned_to_user_id(id, full_name, email, phone)')
                 .eq('id', ticketId)
                 .maybeSingle();
 
             if (!ticket) return;
 
-            const { WhatsAppEventProcessor } = await import('./WhatsAppEventProcessor');
-            if (newStatus === 'resolved' || newStatus === 'closed') {
-                await WhatsAppEventProcessor.processEvent({
-                    event_type: 'HR_TICKET_RESOLVED',
-                    payload: ticket
-                }).catch(err => console.error('[NotificationService] WhatsApp HR ticket resolved error:', err));
+            const submitterName = ticket.is_anonymous ? 'Anonymous Employee' : (ticket.employee_snapshot?.name || ticket.raised_by?.full_name || 'Employee');
+            const newAssigneeName = ticket.assigned_to?.full_name || ticket.assigned_to?.email || `Level ${toLevel} Authority`;
+            const reason = isSlaBreach ? 'due to SLA timeout' : 'by handler escalation';
+
+            // 1. Notify Newly Assigned Level Owner
+            if (ticket.assigned_to_user_id) {
+                await this.send({
+                    userId: ticket.assigned_to_user_id,
+                    organizationId: ticket.organization_id,
+                    type: 'HR_TICKET_ESCALATED',
+                    title: `⚠️ HR Ticket Escalated to Level ${toLevel} #${ticket.ticket_number}`,
+                    message: `HR Ticket "${ticket.subject}" has been ESCALATED to Level ${toLevel} (${newAssigneeName}) ${reason}. Submitter: ${submitterName}.`,
+                    deepLink: `/hr-tickets?tab=tickets&id=${ticket.id}`
+                });
             }
 
+            // 2. Notify Submitter of Progress/Escalation
             if (ticket.raised_by_user_id) {
                 await this.send({
                     userId: ticket.raised_by_user_id,
                     organizationId: ticket.organization_id,
-                    type: 'HR_TICKET_STATUS_UPDATED',
-                    title: `HR Ticket #${ticket.ticket_number} Status Updated`,
-                    message: `Status changed to ${newStatus.toUpperCase().replace('_', ' ')}.`,
+                    type: 'HR_TICKET_ESCALATED',
+                    title: `HR Ticket #${ticket.ticket_number} Escalated to Level ${toLevel}`,
+                    message: `Your HR request "${ticket.subject}" has been escalated to Level ${toLevel} for higher-level review by ${newAssigneeName}.`,
                     deepLink: `/hr-tickets?tab=tickets&id=${ticket.id}`
                 });
             }
+
+            // Note: WhatsApp Escalation dispatch is handled asynchronously via PostgreSQL database trigger
+            // (trg_hr_tickets_outbox -> public.event_outbox -> webhook/sweep-outbox -> WhatsAppEventProcessor)
+        } catch (err) {
+            console.error('[NotificationService] afterHrTicketEscalated error:', err);
+        }
+    }
+
+    static async afterHrTicketStatusUpdated(ticketId: string, oldStatus: string, newStatus: string, actorUserId?: string | null) {
+        try {
+            const { data: ticket } = await supabaseAdmin
+                .from('hr_tickets')
+                .select('*, resolved_by:users!resolved_by_user_id(id, full_name, email)')
+                .eq('id', ticketId)
+                .maybeSingle();
+
+            if (!ticket) return;
+
+            const isPendingAck = newStatus === 'pending_acknowledgement' || newStatus === 'resolved';
+            const isClosed = newStatus === 'closed';
+            const resolverName = ticket.resolved_by?.full_name || 'HR Handler';
+
+            if (ticket.raised_by_user_id) {
+                let notifTitle = `HR Ticket #${ticket.ticket_number} Status Updated`;
+                let notifMessage = `Status changed to ${newStatus.toUpperCase().replace(/_/g, ' ')}.`;
+
+                if (isPendingAck) {
+                    notifTitle = `✅ HR Ticket #${ticket.ticket_number} Resolved — Please Acknowledge`;
+                    notifMessage = `Your HR request "${ticket.subject}" has been marked RESOLVED at Level ${ticket.current_level} by ${resolverName}.${ticket.resolution_note ? ` Note: "${ticket.resolution_note}".` : ''} Please review and confirm acknowledgment.`;
+                } else if (isClosed) {
+                    notifTitle = `✅ HR Ticket #${ticket.ticket_number} Closed`;
+                    notifMessage = `Your HR request "${ticket.subject}" has been confirmed and closed.`;
+                }
+
+                await this.send({
+                    userId: ticket.raised_by_user_id,
+                    organizationId: ticket.organization_id,
+                    type: isPendingAck ? 'HR_TICKET_RESOLVED' : isClosed ? 'HR_TICKET_ACKNOWLEDGED' : 'HR_TICKET_STATUS_UPDATED',
+                    title: notifTitle,
+                    message: notifMessage,
+                    deepLink: `/hr-tickets?tab=tickets&id=${ticket.id}`
+                });
+            }
+
+            // Note: WhatsApp & Email resolution dispatch are handled asynchronously via PostgreSQL database trigger
+            // (trg_hr_tickets_outbox -> public.event_outbox -> webhook/sweep-outbox -> WhatsAppEventProcessor)
         } catch (err) {
             console.error('[NotificationService] afterHrTicketStatusUpdated error:', err);
         }
     }
 
-    static async afterHrTicketCommentAdded(ticketId: string, commentId: string) {
+    static async afterHrTicketCommentAdded(commentId: string) {
         try {
             const { data: comment } = await supabaseAdmin
-                .from('hr_ticket_discussions')
-                .select('*')
+                .from('hr_ticket_comments')
+                .select('*, ticket:hr_tickets(*)')
                 .eq('id', commentId)
                 .maybeSingle();
 
-            if (!comment) return;
+            if (!comment || !comment.ticket) return;
 
-            const { WhatsAppEventProcessor } = await import('./WhatsAppEventProcessor');
-            await WhatsAppEventProcessor.processEvent({
-                event_type: 'HR_TICKET_COMMENT_ADDED',
-                payload: comment
-            }).catch(err => console.error('[NotificationService] WhatsApp HR ticket comment error:', err));
+            const ticket = comment.ticket;
+            const orgId = ticket.organization_id;
+            const deepLink = orgId ? `/${orgId}/hr-tickets?ticketId=${ticket.id}` : `/hr-tickets?ticketId=${ticket.id}`;
+            const snippet = comment.content.substring(0, 75) + (comment.content.length > 75 ? '...' : '');
+
+            // 1. If INTERNAL NOTE: notify the assigned handler + HR authorities in the organization
+            // Strictly exclude internal notes from external WhatsApp / Email channels
+            if (comment.is_internal) {
+                const recipients = new Set<string>();
+                if (ticket.assigned_to_user_id && ticket.assigned_to_user_id !== comment.sender_user_id) {
+                    recipients.add(ticket.assigned_to_user_id);
+                }
+
+                if (orgId) {
+                    const { data: hrMembers } = await supabaseAdmin
+                        .from('organization_memberships')
+                        .select('user_id, org_role')
+                        .eq('organization_id', orgId)
+                        .in('org_role', ['hr', 'hr_head', 'hr_manager', 'org_admin', 'org_super_admin']);
+
+                    (hrMembers || []).forEach(m => {
+                        if (m.user_id && m.user_id !== comment.sender_user_id) {
+                            recipients.add(m.user_id);
+                        }
+                    });
+                }
+
+                for (const recipientId of Array.from(recipients)) {
+                    await this.send({
+                        userId: recipientId,
+                        organizationId: orgId,
+                        ticketId: ticket.id,
+                        type: 'HR_TICKET_INTERNAL_NOTE',
+                        title: `🔒 Internal Note: Ticket #${ticket.ticket_number}`,
+                        message: `${comment.sender_name || 'HR Handler'}: "${snippet}"`,
+                        deepLink
+                    });
+                }
+                return;
+            }
+
+            // 2. If PUBLIC REPLY / COMMENT
+            const isSenderSubmitter = comment.sender_user_id === ticket.raised_by_user_id;
+
+            if (isSenderSubmitter) {
+                // Submitter replied -> notify assigned handler and HR authorities
+                const recipients = new Set<string>();
+                if (ticket.assigned_to_user_id && ticket.assigned_to_user_id !== comment.sender_user_id) {
+                    recipients.add(ticket.assigned_to_user_id);
+                }
+                if ((ticket.current_level >= 2 || !ticket.assigned_to_user_id) && orgId) {
+                    const { data: hrMembers } = await supabaseAdmin
+                        .from('organization_memberships')
+                        .select('user_id')
+                        .eq('organization_id', orgId)
+                        .in('org_role', ['hr', 'hr_head', 'hr_manager']);
+
+                    (hrMembers || []).forEach(m => {
+                        if (m.user_id && m.user_id !== comment.sender_user_id) {
+                            recipients.add(m.user_id);
+                        }
+                    });
+                }
+
+                for (const recipientId of Array.from(recipients)) {
+                    await this.send({
+                        userId: recipientId,
+                        organizationId: orgId,
+                        ticketId: ticket.id,
+                        type: 'HR_TICKET_COMMENT_ADDED',
+                        title: `💬 New Reply on #${ticket.ticket_number}`,
+                        message: `${comment.sender_name || 'Employee'}: "${snippet}"`,
+                        deepLink
+                    });
+                }
+            } else {
+                // Support / Handler replied -> notify the submitter
+                if (ticket.raised_by_user_id && ticket.raised_by_user_id !== comment.sender_user_id) {
+                    await this.send({
+                        userId: ticket.raised_by_user_id,
+                        organizationId: orgId,
+                        ticketId: ticket.id,
+                        type: 'HR_TICKET_COMMENT_ADDED',
+                        title: `💬 Reply from HR on #${ticket.ticket_number}`,
+                        message: `${comment.sender_name || 'HR Team'}: "${snippet}"`,
+                        deepLink
+                    });
+                }
+            }
+
+            // Note: WhatsApp dispatch for comments is handled asynchronously via PostgreSQL database trigger
+            // (trg_hr_ticket_discussion_outbox -> public.event_outbox -> webhook/sweep-outbox -> WhatsAppEventProcessor)
         } catch (err) {
             console.error('[NotificationService] afterHrTicketCommentAdded error:', err);
         }
     }
+
+    static async afterHrTicketCreatedForReportee(ticketId: string, managerUserId: string) {
+        try {
+            const { data: ticket } = await supabaseAdmin
+                .from('hr_tickets')
+                .select('*, assigned_to:users!assigned_to_user_id(full_name)')
+                .eq('id', ticketId)
+                .maybeSingle();
+
+            if (!ticket || !managerUserId) return;
+
+            const assigneeName = ticket.assigned_to?.full_name || 'Reportee';
+            await this.send({
+                userId: managerUserId,
+                organizationId: ticket.organization_id,
+                type: 'HR_TICKET_REPORTEE_ASSIGNED',
+                title: `Department Alert: Ticket Assigned to Reportee #${ticket.ticket_number}`,
+                message: `Ticket "${ticket.subject}" has been assigned to your department reportee ${assigneeName}.`,
+                deepLink: `/hr-tickets?tab=tickets&id=${ticket.id}`
+            });
+
+            // Dispatch WhatsApp Reportee Alert
+            const { WhatsAppEventProcessor } = await import('./WhatsAppEventProcessor');
+            WhatsAppEventProcessor.processEvent({
+                event_type: 'HR_TICKET_REPORTEE_ALERT',
+                payload: {
+                    ...ticket,
+                    manager_user_id: managerUserId,
+                    reportee_name: assigneeName
+                }
+            }).catch(e => console.error('[NotificationService] WhatsApp HR reportee alert error:', e));
+        } catch (err) {
+            console.error('[NotificationService] afterHrTicketCreatedForReportee error:', err);
+        }
+    }
+
+    static async afterHrTicketAcknowledged(ticketId: string) {
+        try {
+            const { data: ticket } = await supabaseAdmin
+                .from('hr_tickets')
+                .select('*, submitter:users!raised_by_user_id(full_name)')
+                .eq('id', ticketId)
+                .maybeSingle();
+
+            if (!ticket) return;
+
+            const submitterName = ticket.employee_snapshot?.name || ticket.submitter?.full_name || 'Employee';
+            const recipientId = ticket.assigned_to_user_id;
+
+            if (recipientId) {
+                await this.send({
+                    userId: recipientId,
+                    organizationId: ticket.organization_id,
+                    type: 'HR_TICKET_ACKNOWLEDGED',
+                    title: `🎉 Ticket Closed & Acknowledged #${ticket.ticket_number}`,
+                    message: `${submitterName} reviewed and acknowledged resolution for "${ticket.subject}". Status is now CLOSED.`,
+                    deepLink: `/hr-tickets?tab=tickets&id=${ticket.id}`
+                });
+            }
+
+            // Note: WhatsApp & Email dispatch are handled asynchronously via PostgreSQL database trigger
+            // (trg_hr_tickets_outbox -> public.event_outbox -> webhook/sweep-outbox -> WhatsAppEventProcessor)
+        } catch (err) {
+            console.error('[NotificationService] afterHrTicketAcknowledged error:', err);
+        }
+    }
 }
+
 
 

@@ -61,17 +61,36 @@ const ALIAS_MAP: Record<string, string> = {
     visitor_approved: 'visitor_approved',
     visitor_rejected: 'visitor_rejected',
     hr_grievance_created: 'hr_grievance_created_emp',
+    hr_ticket_created_submitter_v2: 'hr_ticket_created_submitter_v2',
+    hr_ticket_submitted_v2: 'hr_ticket_created_submitter_v2',
+    hr_ticket_created_submitter: 'hr_ticket_created_submitter_v2',
     hr_grievance_assigned: 'hr_grievance_assigned_mgr',
+    hr_ticket_assigned_handler_v2: 'hr_ticket_assigned_handler_v2',
+    hr_ticket_assigned_v2: 'hr_ticket_assigned_handler_v2',
+    hr_ticket_assigned_handler: 'hr_ticket_assigned_handler_v2',
     hr_grievance_escalated: 'hr_grievance_level_escalated',
+    hr_ticket_escalated_handler: 'hr_ticket_escalated_handler',
     hr_grievance_sla_warning: 'hr_grievance_sla_warning',
+    hr_ticket_sla_warning: 'hr_grievance_sla_warning',
     hr_grievance_sla_breached: 'hr_grievance_sla_breached',
     hr_confidential_director_alert: 'hr_confidential_director_alert',
     hr_grievance_resolved: 'hr_grievance_status_resolved',
-    hr_grievance_comment_added: 'hr_grievance_comment_added'
+    hr_ticket_resolved_ack: 'hr_ticket_resolved_ack',
+    hr_ticket_acknowledged_closed: 'hr_ticket_acknowledged_closed',
+    hr_grievance_comment_added: 'hr_grievance_comment_added',
+    hr_ticket_comment_added: 'hr_ticket_comment_added'
 };
 
 export const DEFAULT_WHATSAPP_SERVICE_CONFIG: Record<string, FeatureWhatsAppConfig> = {
-    // HR Tickets & Grievances Omnichannel Configs
+    // Approved HR Templates Omnichannel Configs
+    hr_ticket_created_submitter_v2: { enabled: true, roles: ['hr', 'hr_head'], user_ids: [], notify_requester: true, notify_assignee: false },
+    hr_ticket_assigned_handler_v2: { enabled: true, roles: ['hr', 'hr_head', 'reporting_manager'], user_ids: [], notify_assignee: true },
+    hr_ticket_escalated_handler: { enabled: true, roles: ['hr_head', 'org_super_admin', 'director'], user_ids: [], notify_assignee: true },
+    hr_ticket_resolved_ack: { enabled: true, roles: [], user_ids: [], notify_requester: true },
+    hr_ticket_comment_added: { enabled: true, roles: [], user_ids: [], notify_requester: true, notify_assignee: true },
+    hr_ticket_acknowledged_closed: { enabled: true, roles: [], user_ids: [], notify_assignee: true },
+
+    // Legacy / Alias mappings
     hr_grievance_created_emp: { enabled: true, roles: ['hr', 'hr_head'], user_ids: [], notify_requester: true, notify_assignee: true },
     hr_grievance_assigned_mgr: { enabled: true, roles: ['hr', 'hr_head', 'reporting_manager'], user_ids: [], notify_assignee: true },
     hr_grievance_level_escalated: { enabled: true, roles: ['hr_head', 'org_super_admin', 'director'], user_ids: [], notify_assignee: true },

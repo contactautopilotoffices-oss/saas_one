@@ -374,7 +374,7 @@ export default function PropertyBudgetManagerModal({
                     {toast && (
                         <div className={`px-6 py-3 text-xs font-bold flex items-center gap-2 ${
                             toast.type === 'success' ? 'bg-emerald-500 text-white' :
-                            toast.type === 'error' ? 'bg-red-500 text-white' : 'bg-blue-500 text-white'
+                            toast.type === 'error' ? 'bg-rose-600 text-white' : 'bg-slate-900 text-white'
                         }`}>
                             {toast.type === 'success' ? <CheckCircle2 className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
                             <span>{toast.message}</span>

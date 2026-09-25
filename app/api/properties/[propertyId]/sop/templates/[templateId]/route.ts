@@ -10,7 +10,7 @@ export async function GET(
     const supabase = await createClient();
 
     try {
-        const { data: template, error } = await supabase
+        const { data: template, error } = await supabaseAdmin
             .from('sop_templates')
             .select(`
                 *,
@@ -51,7 +51,7 @@ export async function PUT(
 
 
 
-        const { data: template, error: updateError } = await supabase
+        const { data: template, error: updateError } = await supabaseAdmin
             .from('sop_templates')
             .update({
                 ...(title && { title }),
@@ -112,7 +112,7 @@ export async function PUT(
         }
 
         // Fetch final template with items
-        const { data: finalTemplate } = await supabase
+        const { data: finalTemplate } = await supabaseAdmin
             .from('sop_templates')
             .select(`
                 *,
@@ -153,7 +153,7 @@ export async function PATCH(
         const patchFields: any = { is_running, updated_at: new Date().toISOString() };
         if (is_running) patchFields.started_at = new Date().toISOString(); // track when schedule went live
 
-        const { data: template, error: updateError } = await supabase
+        const { data: template, error: updateError } = await supabaseAdmin
             .from('sop_templates')
             .update(patchFields)
             .eq('id', templateId)
@@ -188,7 +188,7 @@ export async function DELETE(
         }
 
         // Soft delete (set is_active = false)
-        const { error: deleteError } = await supabase
+        const { error: deleteError } = await supabaseAdmin
             .from('sop_templates')
             .update({ is_active: false })
             .eq('id', templateId)

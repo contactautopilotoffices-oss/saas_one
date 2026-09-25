@@ -56,16 +56,19 @@ export async function GET() {
             .from('hr_ticket_categories')
             .select(`
                 *,
-                default_hr_owner:users!default_hr_owner_id(id, email, full_name)
+                default_hr_owner:users(id, email, full_name)
             `)
             .order('ticket_type', { ascending: true })
             .order('category_name', { ascending: true });
 
         if (error) throw error;
 
-        // Auto-seed default categories if empty or incomplete
-        if (!data || data.length < 10) {
-            const seedRows = DEFAULT_SEED_CATEGORIES.map(c => ({
+        const existingMap = new Set((data || []).map(d => `${d.ticket_type}::${d.category_name?.trim().toLowerCase()}`));
+
+        // 1. Identify and insert missing default seed categories
+        const missingSeedRows = DEFAULT_SEED_CATEGORIES
+            .filter(c => !existingMap.has(`${c.ticket_type}::${c.category_name.trim().toLowerCase()}`))
+            .map(c => ({
                 ticket_type: c.ticket_type,
                 category_name: c.category_name,
                 first_level_owner_type: c.first_level_owner_type,
@@ -78,20 +81,22 @@ export async function GET() {
                 is_active: true
             }));
 
-            await supabaseAdmin.from('hr_ticket_categories').upsert(seedRows, { onConflict: 'ticket_type,category_name' as any });
-
-            // Fetch newly seeded list
-            const res = await supabaseAdmin
-                .from('hr_ticket_categories')
-                .select(`
-                    *,
-                    default_hr_owner:users!default_hr_owner_id(id, email, full_name)
-                `)
-                .order('ticket_type', { ascending: true })
-                .order('category_name', { ascending: true });
-            
-            data = res.data || [];
+        if (missingSeedRows.length > 0) {
+            await supabaseAdmin.from('hr_ticket_categories').insert(missingSeedRows);
         }
+
+        // 2. Query all active categories (both pre-seeded defaults & admin custom created categories)
+        const res = await supabaseAdmin
+            .from('hr_ticket_categories')
+            .select(`
+                *,
+                default_hr_owner:users(id, email, full_name)
+            `)
+            .eq('is_active', true)
+            .order('ticket_type', { ascending: true })
+            .order('category_name', { ascending: true });
+        
+        data = res.data || [];
 
         return NextResponse.json({ success: true, data });
     } catch (err: any) {
@@ -113,6 +118,12 @@ export async function POST(request: Request) {
             l2_sla_days = 7,
             l3_sla_days = 10,
             l4_sla_days = 12,
+            l5_sla_days = 15,
+            l6_sla_days = 18,
+            l7_sla_days = 21,
+            l8_sla_days = 24,
+            l9_sla_days = 27,
+            l10_sla_days = 30,
             is_confidential = false,
             is_anonymous = false
         } = body;
@@ -121,23 +132,32 @@ export async function POST(request: Request) {
             return NextResponse.json({ success: false, error: 'ticket_type and category_name are required' }, { status: 400 });
         }
 
+        const insertPayload: any = {
+            organization_id: organization_id || null,
+            ticket_type,
+            category_name,
+            sub_category_name: sub_category_name || null,
+            first_level_owner_type,
+            default_hr_owner_id: default_hr_owner_id || null,
+            l1_sla_days,
+            l2_sla_days,
+            l3_sla_days,
+            l4_sla_days,
+            is_confidential,
+            is_anonymous,
+            is_active: true
+        };
+
+        if (body.l5_sla_days !== undefined) insertPayload.l5_sla_days = Number(body.l5_sla_days);
+        if (body.l6_sla_days !== undefined) insertPayload.l6_sla_days = Number(body.l6_sla_days);
+        if (body.l7_sla_days !== undefined) insertPayload.l7_sla_days = Number(body.l7_sla_days);
+        if (body.l8_sla_days !== undefined) insertPayload.l8_sla_days = Number(body.l8_sla_days);
+        if (body.l9_sla_days !== undefined) insertPayload.l9_sla_days = Number(body.l9_sla_days);
+        if (body.l10_sla_days !== undefined) insertPayload.l10_sla_days = Number(body.l10_sla_days);
+
         const { data, error } = await supabaseAdmin
             .from('hr_ticket_categories')
-            .insert({
-                organization_id: organization_id || null,
-                ticket_type,
-                category_name,
-                sub_category_name: sub_category_name || null,
-                first_level_owner_type,
-                default_hr_owner_id: default_hr_owner_id || null,
-                l1_sla_days,
-                l2_sla_days,
-                l3_sla_days,
-                l4_sla_days,
-                is_confidential,
-                is_anonymous,
-                is_active: true
-            })
+            .insert(insertPayload)
             .select()
             .single();
 
@@ -152,11 +172,30 @@ export async function POST(request: Request) {
 export async function PATCH(request: Request) {
     try {
         const body = await request.json();
-        const { id, actor_user_id, ...updates } = body;
+        const { id, actor_user_id, default_hr_owner, users, ...updates } = body;
+        delete updates.default_hr_owner;
+        delete updates.users;
+        delete (updates as any).created_at;
 
         if (!id) {
             return NextResponse.json({ success: false, error: 'Category ID is required' }, { status: 400 });
         }
+
+        const sanitizeSlaVal = (val: any) => {
+            if (val === undefined || val === null || isNaN(Number(val))) return undefined;
+            return Number(Number(val).toFixed(6));
+        };
+
+        if (updates.l1_sla_days !== undefined) updates.l1_sla_days = sanitizeSlaVal(updates.l1_sla_days);
+        if (updates.l2_sla_days !== undefined) updates.l2_sla_days = sanitizeSlaVal(updates.l2_sla_days);
+        if (updates.l3_sla_days !== undefined) updates.l3_sla_days = sanitizeSlaVal(updates.l3_sla_days);
+        if (updates.l4_sla_days !== undefined) updates.l4_sla_days = sanitizeSlaVal(updates.l4_sla_days);
+        if (updates.l5_sla_days !== undefined) updates.l5_sla_days = sanitizeSlaVal(updates.l5_sla_days);
+        if (updates.l6_sla_days !== undefined) updates.l6_sla_days = sanitizeSlaVal(updates.l6_sla_days);
+        if (updates.l7_sla_days !== undefined) updates.l7_sla_days = sanitizeSlaVal(updates.l7_sla_days);
+        if (updates.l8_sla_days !== undefined) updates.l8_sla_days = sanitizeSlaVal(updates.l8_sla_days);
+        if (updates.l9_sla_days !== undefined) updates.l9_sla_days = sanitizeSlaVal(updates.l9_sla_days);
+        if (updates.l10_sla_days !== undefined) updates.l10_sla_days = sanitizeSlaVal(updates.l10_sla_days);
 
         // Fetch existing category before updating for SLA change logging
         const { data: existingCat } = await supabaseAdmin
@@ -175,6 +214,36 @@ export async function PATCH(request: Request) {
             .single();
 
         if (error) throw error;
+
+        // Update active tickets belonging to this category to reflect new SLA policy
+        if (
+            updates.l1_sla_days !== undefined ||
+            updates.l2_sla_days !== undefined ||
+            updates.l3_sla_days !== undefined ||
+            updates.l4_sla_days !== undefined
+        ) {
+            try {
+                const { data: activeTickets } = await supabaseAdmin
+                    .from('hr_tickets')
+                    .select('id, created_at, current_level')
+                    .eq('category_id', id)
+                    .not('status', 'in', '("resolved","closed","cancelled")');
+
+                for (const ticket of (activeTickets || [])) {
+                    const lvl = ticket.current_level || 1;
+                    const slaDays = Number(data[`l${lvl}_sla_days`]) || (lvl === 1 ? 3 : lvl === 2 ? 7 : lvl === 3 ? 10 : 12);
+                    const createdAtMs = new Date(ticket.created_at).getTime();
+                    const newSlaDueAt = new Date(createdAtMs + slaDays * 24 * 60 * 60 * 1000).toISOString();
+
+                    await supabaseAdmin
+                        .from('hr_tickets')
+                        .update({ sla_due_at: newSlaDueAt, updated_at: new Date().toISOString() })
+                        .eq('id', ticket.id);
+                }
+            } catch (tErr: any) {
+                console.warn('Active tickets SLA sync warning:', tErr.message);
+            }
+        }
 
         // Log SLA Config Audit Trail (who changed SLA, when, old vs new values)
         if (existingCat && actor_user_id) {

@@ -7,6 +7,7 @@ import OrgAdminDashboard from './OrgAdminDashboard';
 import MasterAdminDashboard from './MasterAdminDashboard';
 import SoftServiceManagerDashboard from './SoftServiceManagerDashboard';
 import SuperTenantDashboard from './SuperTenantDashboard';
+import TenantDashboard from './TenantDashboard';
 import VendorDashboard from '@/frontend/components/vendors/VendorDashboard';
 import ProcurementDashboard from './ProcurementDashboard';
 import Loader from '@/frontend/components/ui/Loader';
@@ -199,6 +200,12 @@ const UnifiedDashboard = () => {
     // Super Tenant — multi-property analytics dashboard
     if (role === 'super_tenant') {
         return <SuperTenantDashboard />;
+    }
+
+    // Standard Tenant / Client / Resident — tenant portal dashboard
+    if (role === 'tenant' || role === 'tenant_user' || role === 'client' || role === 'resident' || role === 'tenant_admin') {
+        const activePropertyId = propertyIds[0] || '';
+        return <TenantDashboard initialPropertyId={activePropertyId} assignedPropertyIds={propertyIds} />;
     }
 
     // Soft Service Manager/Supervisor — dedicated dashboard

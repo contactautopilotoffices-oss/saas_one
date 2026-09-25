@@ -143,7 +143,7 @@ export default function PaymentUrgencyTrackerTab({
                             Real-time urgency prioritization board. Tasks uploaded by Procurement are categorized by Org Super Admin into 
                             <strong className="text-rose-600"> P1 (Immediate)</strong>, 
                             <strong className="text-amber-600"> P2 (7 Days TAT)</strong>, and 
-                            <strong className="text-blue-600"> P3 (Flexible / No SLA)</strong> for organized execution.
+                            <strong className="text-slate-700"> P3 (Flexible / No SLA)</strong> for organized execution.
                         </p>
                     </div>
 
@@ -159,7 +159,7 @@ export default function PaymentUrgencyTrackerTab({
                                         : 'text-slate-500 hover:text-slate-800'
                                 }`}
                             >
-                                <Shield className="w-3.5 h-3.5 text-amber-400" />
+                                <Shield className="w-3.5 h-3.5 text-slate-300" />
                                 Org Super Admin View
                             </button>
                             <button
@@ -189,81 +189,81 @@ export default function PaymentUrgencyTrackerTab({
                 {/* KPI Cards Grid */}
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-8 pt-8 border-t border-slate-100">
                     {/* P1 Urgent */}
-                    <div className="p-5 bg-gradient-to-br from-rose-50 to-rose-100/40 border border-rose-200/80 rounded-2xl relative overflow-hidden">
+                    <div className="p-5 bg-white border border-slate-200 border-l-4 border-l-rose-500 rounded-2xl relative overflow-hidden shadow-xs">
                         <div className="flex items-center justify-between mb-2">
                             <span className="text-[10px] font-black uppercase tracking-widest text-rose-700 flex items-center gap-1.5">
                                 <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
                                 P1 · Immediate (&lt; 24h)
                             </span>
-                            <span className="px-2 py-0.5 bg-rose-200/70 text-rose-900 rounded-md text-[10px] font-black">
+                            <span className="px-2 py-0.5 bg-rose-100 text-rose-900 rounded-md text-[10px] font-black">
                                 {stats.p1Count} Items
                             </span>
                         </div>
-                        <p className="text-xl md:text-2xl font-black text-rose-950 flex items-center">
+                        <p className="text-xl md:text-2xl font-black text-slate-900 flex items-center">
                             <IndianRupee className="w-4 h-4 mr-0.5 text-rose-600" />
                             {stats.p1Value.toLocaleString('en-IN')}
                         </p>
-                        <p className="text-[10px] font-bold text-rose-600/90 mt-1">
+                        <p className="text-[10px] font-bold text-slate-500 mt-1">
                             Critical & breakdown payments
                         </p>
                     </div>
 
                     {/* P2 7-Days */}
-                    <div className="p-5 bg-gradient-to-br from-amber-50 to-amber-100/40 border border-amber-200/80 rounded-2xl relative overflow-hidden">
+                    <div className="p-5 bg-white border border-slate-200 border-l-4 border-l-amber-500 rounded-2xl relative overflow-hidden shadow-xs">
                         <div className="flex items-center justify-between mb-2">
                             <span className="text-[10px] font-black uppercase tracking-widest text-amber-700 flex items-center gap-1.5">
                                 <Clock className="w-3.5 h-3.5 text-amber-600" />
                                 P2 · 7 Days TAT
                             </span>
-                            <span className="px-2 py-0.5 bg-amber-200/70 text-amber-900 rounded-md text-[10px] font-black">
+                            <span className="px-2 py-0.5 bg-amber-100 text-amber-900 rounded-md text-[10px] font-black">
                                 {stats.p2Count} Items
                             </span>
                         </div>
-                        <p className="text-xl md:text-2xl font-black text-amber-950 flex items-center">
+                        <p className="text-xl md:text-2xl font-black text-slate-900 flex items-center">
                             <IndianRupee className="w-4 h-4 mr-0.5 text-amber-600" />
                             {stats.p2Value.toLocaleString('en-IN')}
                         </p>
-                        <p className="text-[10px] font-bold text-amber-600/90 mt-1">
+                        <p className="text-[10px] font-bold text-slate-500 mt-1">
                             Weekly scheduled vendor bills
                         </p>
                     </div>
 
                     {/* P3 Flexible */}
-                    <div className="p-5 bg-gradient-to-br from-blue-50 to-blue-100/40 border border-blue-200/80 rounded-2xl relative overflow-hidden">
+                    <div className="p-5 bg-white border border-slate-200 border-l-4 border-l-slate-400 rounded-2xl relative overflow-hidden shadow-xs">
                         <div className="flex items-center justify-between mb-2">
-                            <span className="text-[10px] font-black uppercase tracking-widest text-blue-700 flex items-center gap-1.5">
-                                <Layers className="w-3.5 h-3.5 text-blue-600" />
+                            <span className="text-[10px] font-black uppercase tracking-widest text-slate-700 flex items-center gap-1.5">
+                                <Layers className="w-3.5 h-3.5 text-slate-600" />
                                 P3 · Flexible
                             </span>
-                            <span className="px-2 py-0.5 bg-blue-200/70 text-blue-900 rounded-md text-[10px] font-black">
+                            <span className="px-2 py-0.5 bg-slate-100 text-slate-900 rounded-md text-[10px] font-black">
                                 {stats.p3Count} Items
                             </span>
                         </div>
-                        <p className="text-xl md:text-2xl font-black text-blue-950 flex items-center">
-                            <IndianRupee className="w-4 h-4 mr-0.5 text-blue-600" />
+                        <p className="text-xl md:text-2xl font-black text-slate-900 flex items-center">
+                            <IndianRupee className="w-4 h-4 mr-0.5 text-slate-600" />
                             {stats.p3Value.toLocaleString('en-IN')}
                         </p>
-                        <p className="text-[10px] font-bold text-blue-600/90 mt-1">
+                        <p className="text-[10px] font-bold text-slate-500 mt-1">
                             No SLA / TAT constraint
                         </p>
                     </div>
 
                     {/* Settled / Closed */}
-                    <div className="p-5 bg-gradient-to-br from-emerald-50 to-emerald-100/40 border border-emerald-200/80 rounded-2xl relative overflow-hidden">
+                    <div className="p-5 bg-white border border-slate-200 border-l-4 border-l-emerald-500 rounded-2xl relative overflow-hidden shadow-xs">
                         <div className="flex items-center justify-between mb-2">
                             <span className="text-[10px] font-black uppercase tracking-widest text-emerald-700 flex items-center gap-1.5">
                                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                                 Closed / Paid
                             </span>
-                            <span className="px-2 py-0.5 bg-emerald-200/70 text-emerald-900 rounded-md text-[10px] font-black">
+                            <span className="px-2 py-0.5 bg-emerald-100 text-emerald-900 rounded-md text-[10px] font-black">
                                 {stats.completedCount} Done
                             </span>
                         </div>
-                        <p className="text-xl md:text-2xl font-black text-emerald-950 flex items-center">
+                        <p className="text-xl md:text-2xl font-black text-slate-900 flex items-center">
                             <IndianRupee className="w-4 h-4 mr-0.5 text-emerald-600" />
                             {stats.completedValue.toLocaleString('en-IN')}
                         </p>
-                        <p className="text-[10px] font-bold text-emerald-600/90 mt-1">
+                        <p className="text-[10px] font-bold text-slate-500 mt-1">
                             Cleared & fulfilled
                         </p>
                     </div>

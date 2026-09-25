@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Search, UserCheck, Edit2, Check, AlertCircle, RefreshCw, UserPlus, Eye, ShieldCheck, AlertTriangle, Info, X, Trash2, ChevronDown } from 'lucide-react';
+import { formatAppRole } from '../../lib/accounts/roles';
 
 interface SearchableManagerDropdownProps {
     value: string;
@@ -214,10 +215,12 @@ function SearchableManagerDropdown({
 }
 
 interface HREmployeeDirectoryProps {
-    onRefresh: () => void;
+    orgId?: string;
+    organizationId?: string;
+    onRefresh?: () => void;
 }
 
-export default function HREmployeeDirectory({ onRefresh }: HREmployeeDirectoryProps) {
+export default function HREmployeeDirectory({ orgId, organizationId, onRefresh }: HREmployeeDirectoryProps) {
     const [employees, setEmployees] = useState<any[]>([]);
     const [allManagers, setAllManagers] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
@@ -231,6 +234,74 @@ export default function HREmployeeDirectory({ onRefresh }: HREmployeeDirectoryPr
     const [selectedEmpForInfo, setSelectedEmpForInfo] = useState<any | null>(null);
     const [deletingEmp, setDeletingEmp] = useState<{ id: string; name: string; code: string } | null>(null);
     const [deleting, setDeleting] = useState(false);
+
+    // Normalize manager name variations for accurate reportees matching
+    const normalizeManagerName = (str: string): string => {
+        if (!str) return '';
+        let s = str.trim().toLowerCase();
+        if (s.includes('shailesh') && (s.includes('kashyap') || s === 'shailesh k')) return 'shailesh kumar kashyap';
+        if (s.includes('chavan meena') || s.includes('meena chavan')) return 'meena chavan';
+        if (s.includes('rajesh') && s.includes('kadam')) return 'rajesh kadam';
+        if (s.includes('mehul') && s.includes('kapadia')) return 'mehul kapadia';
+        if (s.includes('shrihari') || s.includes('gardas')) return 'shrihari gardas';
+        if (s.includes('roohi') && (s.includes('idirishi') || s.includes('idrishi'))) return 'roohi idirishi';
+        if (s.includes('siddhalingappa')) return 'siddhalingappa nagond';
+        if (s.includes('suraj') && (s.includes('nandavadekar') || s.includes('nandavadkar'))) return 'suraj nandavadekar';
+        if (s.includes('altamash')) return 'altamash chaugule';
+        if (s.includes('abhiram')) return 'abhiram k';
+        if (s.includes('kiran') && (s.includes('kumar') || s === 'kiran')) return 'kiran kumar';
+        return s;
+    };
+
+    const getDirectReportees = (mgr: any, allList: any[]): any[] => {
+        if (!mgr) return [];
+        const mgrUid = mgr.user_id || mgr.id;
+        const mgrCode = (mgr.employee_code || '').toLowerCase().trim();
+        const mgrFullName = `${mgr.first_name || ''} ${mgr.last_name || ''}`.trim();
+        const normMgrFullName = normalizeManagerName(mgrFullName);
+
+        return allList.filter(e => {
+            const eUid = e.user_id || e.id;
+            if (mgrUid && eUid === mgrUid) return false;
+
+            const rId = e.reporting_manager_id || '';
+            const rCode = (e.reporting_manager_code || '').trim();
+            const rName = (e.reporting_manager_name || '').trim();
+            const rStr = (rName || rCode).trim();
+            const normRStr = normalizeManagerName(rStr);
+
+            if (!rStr && !rId) return false;
+
+            if (mgrUid && rId && (rId === mgrUid || rId === mgr.id)) return true;
+            if (mgrCode && mgrCode.length > 1 && (rCode.toLowerCase() === mgrCode || rName.toLowerCase() === mgrCode)) return true;
+            if (normMgrFullName && normRStr && normRStr === normMgrFullName) return true;
+            if (mgrFullName && rStr && rStr.toLowerCase() === mgrFullName.toLowerCase()) return true;
+
+            return false;
+        });
+    };
+
+    const getAllSubTreeReportees = (mgr: any, allList: any[], visited = new Set<string>()): any[] => {
+        if (!mgr) return [];
+        const mgrKey = mgr.user_id || mgr.id || (mgr.employee_code || '').toLowerCase().trim() || `${mgr.first_name || ''} ${mgr.last_name || ''}`.trim().toLowerCase();
+        if (!mgrKey || visited.has(mgrKey)) return [];
+        const nextVisited = new Set(visited);
+        nextVisited.add(mgrKey);
+
+        const direct = getDirectReportees(mgr, allList);
+        let all = [...direct];
+
+        for (const child of direct) {
+            const sub = getAllSubTreeReportees(child, allList, nextVisited);
+            for (const s of sub) {
+                const sKey = s.user_id || s.id || (s.employee_code || '').toLowerCase().trim();
+                if (!all.some(item => (item.id === s.id || (sKey && (item.user_id || item.id || (item.employee_code || '').toLowerCase().trim()) === sKey)))) {
+                    all.push(s);
+                }
+            }
+        }
+        return all;
+    };
 
     useEffect(() => {
         fetchAllManagers();
@@ -304,7 +375,7 @@ export default function HREmployeeDirectory({ onRefresh }: HREmployeeDirectoryPr
                 // Reset search query so the UI re-fetches and displays all remaining employees
                 setSearchQuery('');
                 fetchEmployees();
-                onRefresh();
+                onRefresh?.();
             } else {
                 alert(`Failed to remove employee: ${data.error || 'Unknown error'}`);
             }
@@ -336,7 +407,7 @@ export default function HREmployeeDirectory({ onRefresh }: HREmployeeDirectoryPr
                 setSuccessMsg(`Manager updated successfully! ${data.synced_tickets_count > 0 ? `(${data.synced_tickets_count} open L1 tickets re-assigned)` : ''}`);
                 setEditingEmpId(null);
                 fetchEmployees();
-                onRefresh();
+                onRefresh?.();
             }
         } catch (err) {
             console.error('Error updating manager:', err);
@@ -396,7 +467,7 @@ export default function HREmployeeDirectory({ onRefresh }: HREmployeeDirectoryPr
                     role: 'staff'
                 });
                 fetchEmployees();
-                onRefresh();
+                onRefresh?.();
             } else {
                 alert(`Error: ${data.error}`);
             }
@@ -619,7 +690,7 @@ export default function HREmployeeDirectory({ onRefresh }: HREmployeeDirectoryPr
                                                             Linked in App
                                                         </span>
                                                         <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 font-mono">
-                                                            {emp.app_email || emp.user?.email || emp.email} • <span className="font-bold text-indigo-600 dark:text-indigo-400 uppercase">{emp.app_role || 'Staff'}</span>
+                                                            {emp.app_email || emp.user?.email || emp.email} • <span className="font-bold text-indigo-600 dark:text-indigo-400 uppercase">{formatAppRole(emp)}</span>
                                                         </div>
                                                     </div>
                                                 ) : (
@@ -823,6 +894,36 @@ export default function HREmployeeDirectory({ onRefresh }: HREmployeeDirectoryPr
                                     </div>
                                 )}
                             </div>
+
+                            {/* Reportees & Reporting Hierarchy Stats */}
+                            {(() => {
+                                const allList = allManagers.length > 0 ? allManagers : employees;
+                                const directList = getDirectReportees(selectedEmpForInfo, allList);
+                                const totalList = getAllSubTreeReportees(selectedEmpForInfo, allList);
+                                const indirectCount = totalList.length - directList.length;
+
+                                return (
+                                    <div className="bg-[#587e85]/5 dark:bg-[#587e85]/10 p-4 rounded-2xl border border-[#587e85]/20 space-y-2">
+                                        <div className="font-bold text-[#587e85] dark:text-teal-300 uppercase tracking-wider text-[10px]">
+                                            Reporting Hierarchy Breakdown
+                                        </div>
+                                        <div className="grid grid-cols-3 gap-2 pt-1 text-center">
+                                            <div className="p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                                                <span className="text-[9.5px] font-extrabold uppercase text-slate-400 block">Direct</span>
+                                                <span className="text-sm font-black text-slate-900 dark:text-white">{directList.length}</span>
+                                            </div>
+                                            <div className="p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                                                <span className="text-[9.5px] font-extrabold uppercase text-indigo-500 block">Indirect</span>
+                                                <span className="text-sm font-black text-indigo-600 dark:text-indigo-400">{indirectCount}</span>
+                                            </div>
+                                            <div className="p-2 rounded-xl bg-[#587e85] text-white">
+                                                <span className="text-[9.5px] font-extrabold uppercase text-teal-100 block">Total</span>
+                                                <span className="text-sm font-black">{totalList.length}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })()}
                         </div>
 
                         {/* Footer */}

@@ -253,7 +253,7 @@ export default function TaskSheetUploadView({
                                 : 'text-slate-500 hover:text-slate-800'
                         }`}
                     >
-                        <Upload className="w-4 h-4 text-indigo-500" />
+                        <Upload className="w-4 h-4 text-slate-700" />
                         Batch Excel / CSV
                     </button>
                     <button
@@ -619,7 +619,7 @@ export default function TaskSheetUploadView({
                                             <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${
                                                 t.urgency_tier === 'P1' ? 'bg-rose-100 text-rose-700' :
                                                 t.urgency_tier === 'P2' ? 'bg-amber-100 text-amber-700' :
-                                                t.urgency_tier === 'P3' ? 'bg-blue-100 text-blue-700' :
+                                                t.urgency_tier === 'P3' ? 'bg-slate-100 text-slate-700' :
                                                 'bg-emerald-100 text-emerald-700'
                                             }`}>
                                                 {t.urgency_tier} · {t.tat_label}

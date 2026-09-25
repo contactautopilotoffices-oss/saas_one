@@ -97,7 +97,43 @@ interface SystemUser {
 const MasterAdminDashboard = () => {
     const { user, signOut } = useAuth();
     const { theme, toggleTheme } = useTheme();
-    const [activeTab, setActiveTab] = useState<Tab>('overview');
+    const router = useRouter();
+    const searchParams = useSearchParams();
+
+    // Active Tab with URL searchParams & localStorage persistence
+    const [activeTab, setActiveTabRaw] = useState<Tab>(() => {
+        if (typeof window !== 'undefined') {
+            const urlParams = new URLSearchParams(window.location.search);
+            const tabParam = urlParams.get('tab');
+            if (tabParam) return tabParam as Tab;
+            const saved = localStorage.getItem('active_tab_master_admin');
+            if (saved) return saved as Tab;
+        }
+        return 'overview';
+    });
+
+    const setActiveTab = React.useCallback((newTab: Tab | ((prev: Tab) => Tab)) => {
+        setActiveTabRaw((prevTab) => {
+            const resolvedTab = typeof newTab === 'function' ? newTab(prevTab) : newTab;
+            if (typeof window !== 'undefined') {
+                try {
+                    localStorage.setItem('active_tab_master_admin', resolvedTab);
+                    const url = new URL(window.location.href);
+                    url.searchParams.set('tab', resolvedTab);
+                    window.history.replaceState(null, '', url.toString());
+                } catch (e) {}
+            }
+            return resolvedTab;
+        });
+    }, []);
+
+    useEffect(() => {
+        const tabParam = searchParams.get('tab');
+        if (tabParam) {
+            setActiveTabRaw(tabParam as Tab);
+        }
+    }, [searchParams]);
+
     const [searchQuery, setSearchQuery] = useState('');
     const [organizations, setOrganizations] = useState<Organization[]>([]);
     const [users, setUsers] = useState<SystemUser[]>([]);
@@ -115,8 +151,6 @@ const MasterAdminDashboard = () => {
     const [selectedOrg, setSelectedOrg] = useState<Organization | null>(null); // For drill-down
     const [showSignOutModal, setShowSignOutModal] = useState(false);
     const [showFeedbackModal, setShowFeedbackModal] = useState(false);
-    const router = useRouter();
-    const searchParams = useSearchParams();
     const supabase = createClient();
 
     const showToast = (message: string, type: 'success' | 'error' = 'success') => {

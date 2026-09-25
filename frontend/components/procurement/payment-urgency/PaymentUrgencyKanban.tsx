@@ -80,10 +80,10 @@ export default function PaymentUrgencyKanban({
             tier: 'P3',
             title: 'P3 · Flexible',
             subtitle: 'No SLA / TAT Constraint',
-            color: 'text-blue-600',
-            border: 'border-blue-300',
-            bg: 'bg-blue-50/40',
-            badge: 'bg-blue-500 text-white shadow-blue-200',
+            color: 'text-slate-700',
+            border: 'border-slate-300',
+            bg: 'bg-slate-50/50',
+            badge: 'bg-slate-700 text-white shadow-slate-200',
             icon: Layers
         },
         {
@@ -245,7 +245,7 @@ export default function PaymentUrgencyKanban({
                                                     <div className="absolute top-0 left-0 bottom-0 w-1.5 bg-amber-500" />
                                                 )}
                                                 {task.urgency_tier === 'P3' && (
-                                                    <div className="absolute top-0 left-0 bottom-0 w-1.5 bg-blue-400" />
+                                                    <div className="absolute top-0 left-0 bottom-0 w-1.5 bg-slate-400" />
                                                 )}
                                                 {task.urgency_tier === 'COMPLETED' && (
                                                     <div className="absolute top-0 left-0 bottom-0 w-1.5 bg-emerald-500" />
@@ -258,7 +258,7 @@ export default function PaymentUrgencyKanban({
                                                     </span>
                                                     <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md ${
                                                         task.frequency === 'emergency' ? 'bg-rose-100 text-rose-700' :
-                                                        task.frequency === 'daily' ? 'bg-indigo-100 text-indigo-700' :
+                                                        task.frequency === 'daily' ? 'bg-slate-100 text-slate-700' :
                                                         'bg-slate-100 text-slate-700'
                                                     }`}>
                                                         {task.frequency}
@@ -296,7 +296,7 @@ export default function PaymentUrgencyKanban({
                                                         <span className={`inline-block text-[10px] font-black px-2 py-0.5 rounded-md ${
                                                             task.urgency_tier === 'P1' ? 'bg-rose-50 text-rose-600 border border-rose-200' :
                                                             task.urgency_tier === 'P2' ? 'bg-amber-50 text-amber-600 border border-amber-200' :
-                                                            task.urgency_tier === 'P3' ? 'bg-blue-50 text-blue-600 border border-blue-200' :
+                                                            task.urgency_tier === 'P3' ? 'bg-slate-100 text-slate-700 border border-slate-200' :
                                                             'bg-emerald-50 text-emerald-600 border border-emerald-200'
                                                         }`}>
                                                             {task.tat_label}
@@ -336,7 +336,7 @@ export default function PaymentUrgencyKanban({
                                                                     type="button"
                                                                     title="Shift to P3 (Flexible)"
                                                                     onClick={(e) => handleQuickMove(e, task.id, 'P3')}
-                                                                    className="px-2 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-md font-black uppercase text-[9px] transition-all cursor-pointer"
+                                                                    className="px-2 py-1 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-md font-black uppercase text-[9px] transition-all cursor-pointer"
                                                                 >
                                                                     → P3
                                                                 </button>

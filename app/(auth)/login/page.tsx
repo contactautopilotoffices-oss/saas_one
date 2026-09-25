@@ -411,6 +411,12 @@ function AuthContent() {
                     return;
                 }
 
+                // If user has no memberships and hasn't completed onboarding, send to onboarding
+                if (!userProfile.onboarding_completed) {
+                    router.replace('/onboarding');
+                    return;
+                }
+
                 /* Nothing found */
                 await signOut();
                 throw new Error(

@@ -110,6 +110,9 @@ const formatRoleLabel = (roleId: string) => {
     if (r === 'staff') return 'Staff';
     if (r === 'mst') return 'MST';
     if (r === 'sales') return 'Sales Executive';
+    if (r === 'hr') return 'HR Admin';
+    if (r === 'hr_head') return 'HR Head';
+    if (r === 'director') return 'Director';
     return roleId.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
 };
 
@@ -238,6 +241,71 @@ export interface ModuleMeta {
 }
 
 const MODULES_META: ModuleMeta[] = [
+    {
+        id: 'hr_tickets',
+        name: 'HR Helpdesk & Workplace Grievances',
+        description: 'Omnichannel alerts for HR requests, workplace grievances, manager actions, L2 HR assignments, and resolution SLA reminders.',
+        icon: ShieldAlert,
+        color: 'text-indigo-600 bg-indigo-50 border-indigo-100',
+        events: [
+            {
+                key: 'hr_ticket_created_submitter_v2',
+                name: 'Ticket Submitted (To Submitter)',
+                description: 'Sent immediately to the submitter confirming their HR ticket creation and assigned handler.',
+                hasContextual: { requester: true }
+            },
+            {
+                key: 'hr_ticket_assigned_handler_v2',
+                name: 'New Ticket Assignment (To Assigned Manager / Handler)',
+                description: 'Sent to the assigned L1 Manager or L2 HR Handler with ticket details and SLA window.',
+                hasContextual: { assignee: true }
+            },
+            {
+                key: 'hr_ticket_escalated_handler',
+                name: 'Escalation Notification (To Higher Level Authority)',
+                description: 'Sent to Level 2/3/4 authorities when a ticket escalates automatically due to SLA timeout.',
+                hasContextual: { assignee: true, approver: true }
+            },
+            {
+                key: 'hr_ticket_status_updated',
+                name: 'Ticket Status Update (To Submitter)',
+                description: 'Sent to the employee when their ticket status changes (In Progress, Awaiting Info, Resolved, Closed).',
+                hasContextual: { requester: true }
+            },
+            {
+                key: 'hr_ticket_comment_added',
+                name: 'New Reply / Public Comment Added',
+                description: 'Sent when a new reply or comment is posted on the HR ticket.',
+                hasContextual: { assignee: true, requester: true }
+            },
+            {
+                key: 'hr_ticket_resolved_ack',
+                name: 'Ticket Resolved & Acknowledgment Required',
+                description: 'Sent to the submitter when ticket is marked as resolved, requesting acknowledgment & closure.',
+                hasContextual: { requester: true }
+            },
+            {
+                key: 'hr_ticket_acknowledged_closed',
+                name: 'Ticket Acknowledged & Closed Alert',
+                description: 'Sent to assigned handler and HR Admin when employee clicks Acknowledge & Close.',
+                hasContextual: { assignee: true, approver: true }
+            },
+            {
+                key: 'hr_ticket_reportee_alert',
+                name: 'Department Reportee Ticket Alert (To Manager)',
+                description: 'Sent to reporting manager when a ticket is created or assigned to their direct reportee.',
+                hasContextual: { approver: true }
+            },
+            {
+                key: 'hr_ticket_sla_warning',
+                name: 'HR Resolution SLA Deadline Warning',
+                description: 'Automated alert sent before an HR request or workplace grievance resolution SLA deadline breaches.',
+                isReminder: true,
+                reminderLabel: 'Remind before SLA deadline',
+                hasContextual: { assignee: true, approver: true }
+            }
+        ]
+    },
     {
         id: 'tickets',
         name: 'Tickets & Service Requests',
@@ -563,6 +631,19 @@ const MODULES_META: ModuleMeta[] = [
 ];
 
 const DEFAULT_NOTIFICATION_MATRIX: NotificationMatrix = {
+    hr_tickets: {
+        hr_ticket_created_submitter_v2: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: ['hr', 'hr_head', 'org_super_admin'], user_ids: [], notify_assignee: false, notify_requester: true },
+        hr_ticket_assigned_handler_v2: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: ['manager', 'hr', 'hr_head'], user_ids: [], notify_assignee: true },
+        hr_ticket_escalated_handler: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: ['hr_head', 'org_super_admin'], user_ids: [], notify_assignee: true },
+        hr_ticket_status_updated: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: [], user_ids: [], notify_requester: true },
+        hr_ticket_comment_added: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: [], user_ids: [], notify_assignee: true, notify_requester: true },
+        hr_ticket_resolved_ack: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: [], user_ids: [], notify_requester: true },
+        hr_ticket_acknowledged_closed: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: [], user_ids: [], notify_assignee: true },
+        hr_ticket_reportee_alert: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: [], user_ids: [], notify_approver: true },
+        hr_ticket_sla_warning: { channels: { email: true, whatsapp: true, push: true, voice: true }, roles: ['hr', 'hr_head', 'org_super_admin'], user_ids: [], notify_assignee: true, reminder_minutes: 60 },
+        hr_ticket_created: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: ['hr', 'hr_head', 'org_super_admin'], user_ids: [], notify_assignee: true, notify_requester: true },
+        hr_ticket_assigned: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: ['manager', 'hr', 'hr_head'], user_ids: [], notify_assignee: true }
+    },
     tickets: {
         ticket_created: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin', 'staff'], user_ids: [], notify_assignee: true, notify_requester: true },
         ticket_assigned: { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [], notify_assignee: true },
@@ -636,6 +717,7 @@ const minutesToReminderParts = (minutes: number | null | undefined): { value: st
 };
 
 const DEFAULT_VOICE_TEMPLATES: Record<string, string> = {
+    hr_ticket_sla_reminder: "Hi {{user_name}}, this is Pratiksha from the HR Operations team. HR Request #{{ticket_number}} at {{property_name}} is approaching its resolution SLA deadline. Please review and update the ticket status in your app.",
     checklist_slot_reminder: "Hi {{user_name}}, this is Pratiksha from the Operations team. A quick reminder that your checklist '{{checklist_title}}' at {{property_name}} is due soon. Please ensure all items are completed on time.",
     checklist_started: "Hi {{user_name}}, this is Pratiksha from the Operations team. Your scheduled checklist '{{checklist_title}}' at {{property_name}} has started. Please begin your inspection rounds and upload verification photos in the app.",
     checklist_overdue_alert: "Hi {{user_name}}, this is Pratiksha from the Operations team with an urgent update. The checklist '{{checklist_title}}' at {{property_name}} was not completed during its scheduled shift. Please review and complete it right away.",

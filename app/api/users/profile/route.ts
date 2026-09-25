@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
 
         const [dbUserRes, empProfileRes] = await Promise.all([
             adminSupabase.from('users').select('*').eq('id', user.id).maybeSingle(),
-            adminSupabase.from('employee_profiles').select('*, reporting_manager:users!reporting_manager_id(id, email, raw_user_meta_data)').or(userFilter).maybeSingle()
+            adminSupabase.from('employee_profiles').select('*').or(userFilter).limit(1).maybeSingle()
         ]);
 
         const dbUser = dbUserRes.data;
@@ -35,23 +35,24 @@ export async function GET(request: NextRequest) {
 
         let reportingManagerName: string | null = null;
         if (empProfile) {
-            const repMgr: any = empProfile.reporting_manager;
-            const repMgrObj = Array.isArray(repMgr) ? repMgr[0] : repMgr;
-            if (repMgrObj?.full_name) {
-                reportingManagerName = repMgrObj.full_name;
-            } else if (repMgrObj?.raw_user_meta_data?.full_name) {
-                reportingManagerName = repMgrObj.raw_user_meta_data.full_name;
-            }
-
-            if (!reportingManagerName && empProfile.reporting_manager_id) {
+            if (empProfile.reporting_manager_id) {
                 // 1. Check users table by ID
                 const { data: mgrUser } = await adminSupabase
                     .from('users')
-                    .select('full_name')
+                    .select('full_name, id')
                     .eq('id', empProfile.reporting_manager_id)
                     .maybeSingle();
+
                 if (mgrUser?.full_name) {
-                    reportingManagerName = mgrUser.full_name;
+                    const { data: mgrProf } = await adminSupabase
+                        .from('employee_profiles')
+                        .select('employee_code')
+                        .or(`user_id.eq.${mgrUser.id},id.eq.${empProfile.reporting_manager_id}`)
+                        .maybeSingle();
+                    
+                    reportingManagerName = mgrProf?.employee_code 
+                        ? `${mgrUser.full_name} (${mgrProf.employee_code})`
+                        : mgrUser.full_name;
                 } else {
                     // 2. Check employee_profiles table by ID
                     const { data: mgrEmpProf } = await adminSupabase
@@ -59,6 +60,7 @@ export async function GET(request: NextRequest) {
                         .select('first_name, last_name, employee_code, user:users!user_id(full_name)')
                         .eq('id', empProfile.reporting_manager_id)
                         .maybeSingle();
+
                     if (mgrEmpProf) {
                         const uObj: any = mgrEmpProf.user;
                         const uName = Array.isArray(uObj) ? uObj[0]?.full_name : uObj?.full_name;
@@ -71,11 +73,13 @@ export async function GET(request: NextRequest) {
             }
 
             if (!reportingManagerName && empProfile.reporting_manager_code) {
+                // Try matching employee_code
                 const { data: mgrProf } = await adminSupabase
                     .from('employee_profiles')
                     .select('first_name, last_name, employee_code, user:users!user_id(full_name)')
                     .eq('employee_code', empProfile.reporting_manager_code)
                     .maybeSingle();
+
                 if (mgrProf) {
                     const uObj: any = mgrProf.user;
                     const uName = Array.isArray(uObj) ? uObj[0]?.full_name : uObj?.full_name;
@@ -83,6 +87,9 @@ export async function GET(request: NextRequest) {
                     if (baseName) {
                         reportingManagerName = mgrProf.employee_code ? `${baseName} (${mgrProf.employee_code})` : baseName;
                     }
+                } else {
+                    // Fallback: reporting_manager_code contains raw manager name string (e.g. "Harsh Patil")
+                    reportingManagerName = empProfile.reporting_manager_code;
                 }
             }
         }

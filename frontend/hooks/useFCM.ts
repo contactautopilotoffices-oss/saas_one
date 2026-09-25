@@ -34,7 +34,30 @@ export function useFCM() {
                 const fcmToken = await requestForToken();
                 if (!fcmToken) return;
 
-                // 4. Upsert to push_tokens table
+                // 4. Save to push_tokens via API route (bypasses RLS conflicts if token was previously registered to another account on same browser)
+                try {
+                    const res = await fetch('/api/push-tokens', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            user_id: user.id,
+                            token: fcmToken,
+                            browser: instanceId,
+                            device_info: navigator.userAgent
+                        })
+                    });
+                    const resData = await res.json();
+                    if (resData.success) {
+                        console.log('[FCM] Token synchronized successfully via API');
+                        return;
+                    } else {
+                        console.warn('[FCM] API sync failed, trying direct upsert:', resData.error);
+                    }
+                } catch (apiErr) {
+                    console.warn('[FCM] API route unavailable, falling back to direct client upsert:', apiErr);
+                }
+
+                // Fallback direct upsert
                 const { error } = await supabase
                     .from('push_tokens')
                     .upsert({
@@ -47,9 +70,9 @@ export function useFCM() {
                     }, { onConflict: 'token' });
 
                 if (error) {
-                    console.error('[FCM] Error saving token to DB:', error);
+                    console.error('[FCM] Error saving token to DB:', error?.message || error?.details || JSON.stringify(error));
                 } else {
-                    console.log('[FCM] Token synchronized successfully');
+                    console.log('[FCM] Token synchronized successfully via direct client');
                 }
             } catch (err) {
                 console.error('[FCM] Initialization error:', err);

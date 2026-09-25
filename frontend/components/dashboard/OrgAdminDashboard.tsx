@@ -1,12 +1,13 @@
 'use client';
 
+import HRTicketsContent from '@/frontend/components/hr/HRTicketsContent';
 import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from 'react';
 import {
     LayoutDashboard, Building2, Users, UserPlus, Ticket, Settings, UserCircle, Activity,
     Search, Plus, Filter, LogOut, ChevronRight, MapPin, Edit, Trash2, X, Check, UsersRound,
     Coffee, IndianRupee, FileDown, ChevronDown, Fuel, Menu, Upload, FileBarChart, Zap, Package, ClipboardCheck, Scan, Key,
     AlertCircle, CheckCircle2, Clock, GitBranch, DoorOpen, MessageCircle, Send, Loader2, CalendarDays, Calendar, Wrench, ShoppingCart, Sun, Moon, Droplets, TrendingUp, Smartphone,
-    MessageSquarePlus, Bot, Gauge, Cpu, FolderLock, Layers
+    MessageSquarePlus, Bot, Gauge, Cpu, FolderLock, Layers, ShieldCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
@@ -61,7 +62,7 @@ import AgentPulse from '@/frontend/components/agents/AgentPulse';
 import type { ModuleKey } from '@/frontend/types/agentRuntime';
 
 // Types
-type Tab = 'overview' | 'properties' | 'requests' | 'reports' | 'visitors' | 'settings' | 'profile' | 'revenue' | 'users' | 'diesel_logger' | 'diesel' | 'electricity_logger' | 'electricity' | 'stock_reports' | 'checklist' | 'super_tenants' | 'escalation' | 'rooms' | 'ppm' | 'vendors' | 'procurement' | 'roster' | 'water_logger' | 'water' | 'guest_experience' | 'ai_tickets' | 'org_progress' | 'org_efficiency' | 'agent_console' | 'document_bank' | 'assets';
+type Tab = 'overview' | 'properties' | 'requests' | 'reports' | 'visitors' | 'settings' | 'profile' | 'revenue' | 'users' | 'diesel_logger' | 'diesel' | 'electricity_logger' | 'electricity' | 'stock_reports' | 'checklist' | 'super_tenants' | 'escalation' | 'rooms' | 'ppm' | 'vendors' | 'procurement' | 'roster' | 'water_logger' | 'water' | 'guest_experience' | 'ai_tickets' | 'org_progress' | 'org_efficiency' | 'agent_console' | 'document_bank' | 'grievance' | 'assets';
 
 /**
  * AGENT PULSE MOUNTS — tab -> canonical module slug.
@@ -121,10 +122,45 @@ const OrgAdminDashboard = () => {
     const { user, signOut, membership } = useAuth();
     const params = useParams();
     const router = useRouter();
+    const searchParams = useSearchParams();
     const orgSlugOrId = params?.orgId as string;
 
-    // State
-    const [activeTab, setActiveTab] = useState<Tab>('overview');
+    // Active Tab with URL searchParams & localStorage persistence
+    const [activeTab, setActiveTabRaw] = useState<Tab>(() => {
+        if (typeof window !== 'undefined') {
+            const urlParams = new URLSearchParams(window.location.search);
+            const tabParam = urlParams.get('tab');
+            if (tabParam) return tabParam as Tab;
+            const savedKey = orgSlugOrId ? `active_tab_${orgSlugOrId}` : 'active_tab_org';
+            const saved = localStorage.getItem(savedKey);
+            if (saved) return saved as Tab;
+        }
+        return 'overview';
+    });
+
+    const setActiveTab = useCallback((newTab: Tab | ((prev: Tab) => Tab)) => {
+        setActiveTabRaw((prevTab) => {
+            const resolvedTab = typeof newTab === 'function' ? newTab(prevTab) : newTab;
+            if (typeof window !== 'undefined') {
+                try {
+                    const savedKey = orgSlugOrId ? `active_tab_${orgSlugOrId}` : 'active_tab_org';
+                    localStorage.setItem(savedKey, resolvedTab);
+                    const url = new URL(window.location.href);
+                    url.searchParams.set('tab', resolvedTab);
+                    window.history.replaceState(null, '', url.toString());
+                } catch (e) {}
+            }
+            return resolvedTab;
+        });
+    }, [orgSlugOrId]);
+
+    useEffect(() => {
+        const tabParam = searchParams.get('tab');
+        if (tabParam) {
+            setActiveTabRaw(tabParam as Tab);
+        }
+    }, [searchParams]);
+
     const [org, setOrg] = useState<Organization | null>(null);
     const [properties, setProperties] = useState<Property[]>([]);
     const [orgUsers, setOrgUsers] = useState<OrgUser[]>([]);
@@ -220,8 +256,6 @@ const OrgAdminDashboard = () => {
     const [upcomingPpmTasks, setUpcomingPpmTasks] = useState<any[]>([]);
     const [isSummariesLoading, setIsSummariesLoading] = useState(false);
     const { getCachedData, setCachedData, invalidateCache } = useDataCache();
-    
-    const searchParams = useSearchParams();
 
     // Restore showRequestsList, filter, and selectedPropertyId from URL on mount/back navigation
     // Restore showRequestsList, filter, and selectedPropertyId from URL on mount/back navigation
@@ -515,7 +549,7 @@ const OrgAdminDashboard = () => {
     // Restore tab from URL
     useEffect(() => {
         const tab = searchParams.get('tab');
-        if (tab && ['overview', 'properties', 'requests', 'reports', 'visitors', 'settings', 'profile', 'revenue', 'users', 'diesel_logger', 'diesel', 'electricity_logger', 'electricity', 'stock_reports', 'checklist', 'super_tenants', 'escalation', 'rooms', 'ppm', 'vendors', 'procurement', 'roster', 'water_logger', 'water', 'guest_experience', 'agent_console', 'org_progress', 'org_efficiency', 'assets'].includes(tab)) {
+        if (tab && ['overview', 'properties', 'requests', 'reports', 'visitors', 'settings', 'profile', 'revenue', 'users', 'diesel_logger', 'diesel', 'electricity_logger', 'electricity', 'stock_reports', 'checklist', 'super_tenants', 'escalation', 'rooms', 'ppm', 'vendors', 'procurement', 'roster', 'water_logger', 'water', 'guest_experience', 'agent_console', 'org_progress', 'org_efficiency', 'grievance', 'assets'].includes(tab)) {
             if (isOpsSuperAdmin && (tab === 'org_progress' || tab === 'org_efficiency' || tab === 'agent_console')) {
                 setActiveTab('overview');
             } else {
@@ -1458,6 +1492,16 @@ const OrgAdminDashboard = () => {
                                 AI Automation
                             </button>
                             <button
+                                onClick={() => handleTabChange('grievance')}
+                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm group ${activeTab === 'grievance'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-primary/10 hover:text-primary'
+                                    }`}
+                            >
+                                <ShieldCheck className="w-4 h-4 text-primary group-hover:scale-110 transition-transform" />
+                                <span className="flex-1 text-left">HR & Grievances</span>
+                            </button>
+                            <button
                                 onClick={() => setShowFeedbackModal(true)}
                                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm text-text-secondary hover:bg-muted hover:text-text-primary`}
                             >
@@ -1712,6 +1756,9 @@ const OrgAdminDashboard = () => {
                             <div className="h-full bg-slate-50 relative min-h-[calc(100vh-12rem)]">
                                 <GuestExperienceDashboard propertyId={selectedPropertyId} />
                             </div>
+                        )}
+                        {activeTab === 'grievance' && (
+                            <HRTicketsContent orgId={org?.id || membership?.org_id || 'org'} />
                         )}
                         
                         {activeTab === 'water' && (

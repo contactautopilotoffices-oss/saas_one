@@ -14,7 +14,7 @@ export async function GET(
     const includeInactive = searchParams.get('includeInactive') === 'true';
 
     try {
-        let query = supabase
+        let query = supabaseAdmin
             .from('sop_templates')
             .select(`
                 *,
@@ -90,7 +90,7 @@ export async function POST(
         }
 
         // Create template
-        const { data: template, error: templateError } = await supabase
+        const { data: template, error: templateError } = await supabaseAdmin
             .from('sop_templates')
             .insert({
                 property_id: propertyId,

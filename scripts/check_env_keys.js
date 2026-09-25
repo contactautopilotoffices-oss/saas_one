@@ -1,10 +1,9 @@
 const fs = require('fs');
-require('dotenv').config({ path: '.env.local' });
-require('dotenv').config({ path: '.env' });
+const dotenv = require('dotenv');
 
-console.log('Available keys in process.env:');
-Object.keys(process.env).forEach(k => {
-    if (k.includes('SUPABASE') || k.includes('DB') || k.includes('POSTGRES') || k.includes('DATABASE')) {
-        console.log(k);
-    }
-});
+if (fs.existsSync('.env.local')) {
+    console.log('Keys in .env.local:', Object.keys(dotenv.parse(fs.readFileSync('.env.local'))));
+}
+if (fs.existsSync('.env')) {
+    console.log('Keys in .env:', Object.keys(dotenv.parse(fs.readFileSync('.env'))));
+}

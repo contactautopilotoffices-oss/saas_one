@@ -105,7 +105,7 @@ BEGIN
                 'sender_user_id', NEW.sender_user_id,
                 'raised_by_user_id', v_ticket.raised_by_user_id,
                 'assigned_to_user_id', v_ticket.assigned_to_user_id,
-                'message', NEW.message,
+                'message', NEW.content,
                 'created_at', NEW.created_at
             ),
             v_ticket.organization_id,
@@ -117,7 +117,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
-DROP TRIGGER IF EXISTS trg_hr_ticket_discussions_outbox ON public.hr_ticket_discussions;
-CREATE TRIGGER trg_hr_ticket_discussions_outbox
-AFTER INSERT ON public.hr_ticket_discussions
+DROP TRIGGER IF EXISTS trg_hr_ticket_comments_outbox ON public.hr_ticket_comments;
+CREATE TRIGGER trg_hr_ticket_comments_outbox
+AFTER INSERT ON public.hr_ticket_comments
 FOR EACH ROW EXECUTE FUNCTION public.fn_hr_ticket_discussion_outbox();

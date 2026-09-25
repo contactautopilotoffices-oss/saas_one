@@ -128,15 +128,15 @@ export async function GET(
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
-        const { data: template, error } = await supabase
+        const { data: template, error } = await supabaseAdmin
             .from('sop_templates')
             .select('cad_areas, cad_converted_image_url, cad_file_type')
             .eq('id', templateId)
             .eq('property_id', propertyId)
-            .single();
+            .maybeSingle();
 
-        if (error) {
-            return NextResponse.json({ error: error.message }, { status: 500 });
+        if (error || !template) {
+            return NextResponse.json({ error: error?.message || 'Template not found' }, { status: error ? 500 : 404 });
         }
 
         return NextResponse.json({

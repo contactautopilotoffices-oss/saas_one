@@ -8,6 +8,7 @@ const SELECT = `
     *,
     requester:users!petty_cash_requests_requester_id_fkey(id, full_name, email),
     approver:users!petty_cash_requests_approver_id_fkey(id, full_name),
+    assigned_approver:users!petty_cash_requests_assigned_approver_id_fkey(id, full_name, email),
     payer:users!petty_cash_requests_paid_by_fkey(id, full_name),
     property:properties(id, name, code)
 `;

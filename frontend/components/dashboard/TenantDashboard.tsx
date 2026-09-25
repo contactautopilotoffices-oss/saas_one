@@ -28,7 +28,7 @@ import TenantRoomBooking from '@/frontend/components/meeting-rooms/TenantRoomBoo
 import PPMCalendar from '@/frontend/components/ppm/PPMCalendar';
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
 import TenantVisitorManagement from '@/frontend/components/vms/TenantVisitorManagement';
-import { CalendarDays } from 'lucide-react';
+import { CalendarDays, ChevronDown } from 'lucide-react';
 
 // Types
 type Tab = 'overview' | 'requests' | 'create_request' | 'visitors' | 'room_booking' | 'ppm' | 'settings' | 'profile';
@@ -68,12 +68,23 @@ function buildEscalationChain(logs?: Ticket['ticket_escalation_logs']): { name: 
     return chain.length > 0 ? chain : undefined;
 }
 
-const TenantDashboard = () => {
+interface TenantDashboardProps {
+    initialPropertyId?: string;
+    assignedPropertyIds?: string[];
+}
+
+const TenantDashboard: React.FC<TenantDashboardProps> = ({ initialPropertyId, assignedPropertyIds }) => {
     const { user, signOut } = useAuth();
     const { theme, toggleTheme } = useTheme();
     const params = useParams();
     const router = useRouter();
-    const propertyId = params?.propertyId as string;
+    const paramPropId = params?.propertyId as string;
+
+    const [selectedPropertyId, setSelectedPropertyId] = useState<string>(initialPropertyId || paramPropId || '');
+    const [assignedProperties, setAssignedProperties] = useState<{ id: string; name: string; code?: string }[]>([]);
+    const [showPropDropdown, setShowPropDropdown] = useState(false);
+
+    const propertyId = selectedPropertyId || paramPropId || initialPropertyId || '';
 
     // State
     const [activeTab, setActiveTab] = useState<Tab>('overview');
@@ -196,13 +207,63 @@ const TenantDashboard = () => {
 
     const supabase = useMemo(() => createClient(), []);
 
-    // Refs to prevent duplicate fetches
-    const hasFetchedProperty = useRef(false);
-    const hasFetchedTickets = useRef(false);
+    // Fetch assigned properties for tenant user
+    useEffect(() => {
+        const userId = user?.id;
+        if (!userId) return;
+        async function fetchAssignedProps() {
+            try {
+                const { data } = await supabase
+                    .from('property_memberships')
+                    .select('property_id, properties(id, name, code)')
+                    .eq('user_id', userId)
+                    .neq('is_active', false);
+
+                let list: { id: string; name: string; code?: string }[] = [];
+                if (data) {
+                    list = data
+                        .filter((r: any) => r.properties && r.properties.id)
+                        .map((r: any) => ({
+                            id: r.properties.id,
+                            name: r.properties.name,
+                            code: r.properties.code
+                        }));
+                }
+
+                // If assignedPropertyIds prop was provided, merge any additional properties
+                if (assignedPropertyIds && assignedPropertyIds.length > 0) {
+                    const existingIds = new Set(list.map(p => p.id));
+                    const missingIds = assignedPropertyIds.filter(id => !existingIds.has(id));
+                    if (missingIds.length > 0) {
+                        const { data: missingProps } = await supabase
+                            .from('properties')
+                            .select('id, name, code')
+                            .in('id', missingIds);
+                        if (missingProps) {
+                            missingProps.forEach((p: any) => {
+                                list.push({
+                                    id: p.id,
+                                    name: p.name,
+                                    code: p.code
+                                });
+                            });
+                        }
+                    }
+                }
+
+                setAssignedProperties(list);
+                if (!selectedPropertyId && list.length > 0) {
+                    setSelectedPropertyId(list[0].id);
+                }
+            } catch (err) {
+                console.error('Failed to fetch tenant assigned properties:', err);
+            }
+        }
+        fetchAssignedProps();
+    }, [user, supabase, assignedPropertyIds]);
 
     useEffect(() => {
-        if (propertyId && !hasFetchedProperty.current) {
-            hasFetchedProperty.current = true;
+        if (propertyId) {
             fetchPropertyDetails();
         }
     }, [propertyId]);
@@ -603,7 +664,7 @@ const TenantDashboard = () => {
             >
                 {/* Static Header Section */}
                 <header className="h-16 bg-background/80 border-b border-border flex items-center justify-between px-4 md:px-12 lg:px-20 sticky top-0 z-50 backdrop-blur-md">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-3">
                         {!sidebarOpen && (
                             <button
                                 onClick={() => setSidebarOpen(true)}
@@ -611,6 +672,48 @@ const TenantDashboard = () => {
                             >
                                 <Menu className="w-5 h-5 group-hover:scale-110 transition-transform" />
                             </button>
+                        )}
+
+                        {/* Property Selector Dropdown */}
+                        {assignedProperties.length > 0 && (
+                            <div className="relative">
+                                <button
+                                    onClick={() => setShowPropDropdown(v => !v)}
+                                    className="flex items-center gap-2 px-3.5 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-black text-slate-800 hover:bg-slate-50 transition-all shadow-xs"
+                                >
+                                    <Building2 className="w-4 h-4 text-primary" />
+                                    <span className="max-w-[160px] truncate">
+                                        {assignedProperties.find(p => p.id === propertyId)?.name || property?.name || 'Select Property'}
+                                    </span>
+                                    {assignedProperties.length > 1 && (
+                                        <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${showPropDropdown ? 'rotate-180' : ''}`} />
+                                    )}
+                                </button>
+
+                                {showPropDropdown && assignedProperties.length > 1 && (
+                                    <>
+                                        <div className="fixed inset-0 z-10" onClick={() => setShowPropDropdown(false)} />
+                                        <div className="absolute left-0 top-full mt-1.5 z-20 bg-white border border-slate-200 rounded-2xl shadow-xl py-1.5 min-w-[220px] max-h-64 overflow-y-auto">
+                                            <div className="px-3.5 py-1.5 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                                                Assigned Properties ({assignedProperties.length})
+                                            </div>
+                                            {assignedProperties.map(p => (
+                                                <button
+                                                    key={p.id}
+                                                    onClick={() => {
+                                                        setSelectedPropertyId(p.id);
+                                                        setShowPropDropdown(false);
+                                                    }}
+                                                    className={`w-full text-left px-3.5 py-2.5 text-xs transition-colors flex items-center justify-between ${propertyId === p.id ? 'bg-primary/10 text-primary font-bold' : 'text-slate-700 hover:bg-slate-50 font-medium'}`}
+                                                >
+                                                    <span className="truncate">{p.name}</span>
+                                                    {p.code && <span className="text-[10px] text-slate-400 font-normal ml-2">{p.code}</span>}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </>
+                                )}
+                            </div>
                         )}
                     </div>
 

@@ -27,6 +27,43 @@ export function accountsCaps(m: MembershipLike | null | undefined): AccountsCaps
     };
 }
 
+export function formatAppRole(emp: any): string {
+    if (!emp) return 'N/A';
+    
+    const rawRole = (emp.app_role || emp.role || '').toLowerCase();
+    const desig = (emp.designation || '').toLowerCase();
+
+    if (emp.user?.is_master_admin || emp.is_master_admin || rawRole === 'master_admin') {
+        return 'Master Admin';
+    }
+    if (rawRole === 'ops_super_admin') return 'Ops Super Admin';
+    if (rawRole === 'org_super_admin' || rawRole === 'org_admin') return 'Org Admin';
+    if (rawRole === 'hr_head') return 'HR Head';
+    if (rawRole === 'hr' || rawRole === 'hr_manager' || emp.is_hr_authority || emp.is_hr_manager_authority) {
+        return 'HR Manager / Authority';
+    }
+    if (rawRole === 'property_admin') return 'Property Admin';
+    if (rawRole === 'director' || emp.is_director_authority || desig.includes('director')) return 'Director';
+    if (rawRole === 'purchase_manager') return 'Purchase Manager';
+    if (rawRole === 'procurement') return 'Procurement';
+    if (rawRole === 'manager' || desig.includes('manager') || desig.includes('head') || desig.includes('vp')) return 'Manager';
+    if (rawRole === 'mst' || desig.includes('technician') || desig.includes('mst')) return 'MST / Technician';
+    if (rawRole === 'bms' || desig.includes('bms')) return 'BMS Operator';
+    if (rawRole === 'bd_rep' || desig.includes('bd rep')) return 'BD Rep';
+    if (rawRole === 'bd_admin') return 'BD Admin';
+    if (rawRole === 'security' || desig.includes('security')) return 'Security';
+
+    if (rawRole && rawRole !== 'staff' && rawRole !== 'app_user') {
+        return rawRole.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
+    }
+    
+    if (emp.designation) {
+        return emp.designation.replace(/\b\w/g, (c: string) => c.toUpperCase());
+    }
+
+    return 'Staff / App User';
+}
+
 // Colours are the agreed Payment Tracker signal set:
 //   To Align -> orange, Aligned -> yellow, Completed -> green.
 export interface StatusMeta { label: string; color: string; }

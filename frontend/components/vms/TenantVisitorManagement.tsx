@@ -290,10 +290,11 @@ export default function TenantVisitorManagement({ propertyId, user, propertyName
                 <div className="space-y-3">
                     {visitors.map(visitor => {
                         const catConfig = CATEGORY_BADGES[visitor.category?.toLowerCase()] || { label: visitor.category || 'Visitor', bg: 'bg-slate-100', text: 'text-slate-700' };
+                        const isCheckedOut = visitor.status === 'checked_out' || !!visitor.checkout_time;
                         const appStatus = visitor.approval_status || 'pending';
-                        const isPending = appStatus === 'pending';
-                        const isApproved = appStatus === 'approved';
-                        const isRejected = appStatus === 'rejected';
+                        const isPending = !isCheckedOut && appStatus === 'pending';
+                        const isApproved = !isCheckedOut && appStatus === 'approved';
+                        const isRejected = !isCheckedOut && appStatus === 'rejected';
 
                         return (
                             <motion.div
@@ -395,19 +396,21 @@ export default function TenantVisitorManagement({ propertyId, user, propertyName
                                 <div className="flex items-center justify-between md:justify-end gap-3 pt-3 md:pt-0 border-t md:border-t-0 border-slate-100">
                                     {/* Status Badge */}
                                     <div>
-                                        {isPending && (
+                                        {isCheckedOut ? (
+                                            <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-slate-100 text-slate-700 border border-slate-200 text-xs font-black rounded-full">
+                                                Checked Out
+                                            </span>
+                                        ) : isPending ? (
                                             <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-100 text-amber-800 border border-amber-300 text-xs font-black rounded-full">
                                                 <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
                                                 Awaiting Approval
                                             </span>
-                                        )}
-                                        {isApproved && (
+                                        ) : isApproved ? (
                                             <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-black rounded-full">
                                                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                                                 Approved
                                             </span>
-                                        )}
-                                        {isRejected && (
+                                        ) : (
                                             <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-rose-100 text-rose-800 border border-rose-300 text-xs font-black rounded-full">
                                                 <XCircle className="w-3.5 h-3.5 text-rose-600" />
                                                 Rejected
@@ -416,42 +419,44 @@ export default function TenantVisitorManagement({ propertyId, user, propertyName
                                     </div>
 
                                     {/* Action Buttons (Approve & Reject) */}
-                                    <div className="flex items-center gap-2">
-                                        {isPending ? (
-                                            <>
+                                    {!isCheckedOut && (
+                                        <div className="flex items-center gap-2">
+                                            {isPending ? (
+                                                <>
+                                                    <button
+                                                        onClick={() => handleApprovalAction(visitor, 'approved')}
+                                                        disabled={actionLoadingId === visitor.id}
+                                                        className="flex-1 sm:flex-initial px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 active:scale-95 disabled:opacity-50"
+                                                    >
+                                                        {actionLoadingId === visitor.id ? (
+                                                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                        ) : (
+                                                            <>
+                                                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                                                Approve
+                                                            </>
+                                                        )}
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleApprovalAction(visitor, 'rejected')}
+                                                        disabled={actionLoadingId === visitor.id}
+                                                        className="flex-1 sm:flex-initial px-4 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-black rounded-xl transition-all flex items-center justify-center gap-1.5 active:scale-95 disabled:opacity-50"
+                                                    >
+                                                        <XCircle className="w-3.5 h-3.5" />
+                                                        Reject
+                                                    </button>
+                                                </>
+                                            ) : (
                                                 <button
-                                                    onClick={() => handleApprovalAction(visitor, 'approved')}
+                                                    onClick={() => handleApprovalAction(visitor, isApproved ? 'rejected' : 'approved')}
                                                     disabled={actionLoadingId === visitor.id}
-                                                    className="flex-1 sm:flex-initial px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 active:scale-95 disabled:opacity-50"
+                                                    className="text-[11px] font-bold text-slate-400 hover:text-slate-700 underline px-2 py-1 transition-colors"
                                                 >
-                                                    {actionLoadingId === visitor.id ? (
-                                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                                    ) : (
-                                                        <>
-                                                            <CheckCircle2 className="w-3.5 h-3.5" />
-                                                            Approve
-                                                        </>
-                                                    )}
+                                                    Change to {isApproved ? 'Reject' : 'Approve'}
                                                 </button>
-                                                <button
-                                                    onClick={() => handleApprovalAction(visitor, 'rejected')}
-                                                    disabled={actionLoadingId === visitor.id}
-                                                    className="flex-1 sm:flex-initial px-4 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-black rounded-xl transition-all flex items-center justify-center gap-1.5 active:scale-95 disabled:opacity-50"
-                                                >
-                                                    <XCircle className="w-3.5 h-3.5" />
-                                                    Reject
-                                                </button>
-                                            </>
-                                        ) : (
-                                            <button
-                                                onClick={() => handleApprovalAction(visitor, isApproved ? 'rejected' : 'approved')}
-                                                disabled={actionLoadingId === visitor.id}
-                                                className="text-[11px] font-bold text-slate-400 hover:text-slate-700 underline px-2 py-1 transition-colors"
-                                            >
-                                                Change to {isApproved ? 'Reject' : 'Approve'}
-                                            </button>
-                                        )}
-                                    </div>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                             </motion.div>
                         );

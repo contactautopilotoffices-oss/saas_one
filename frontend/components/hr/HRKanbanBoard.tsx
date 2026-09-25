@@ -39,7 +39,7 @@ export default function HRKanbanBoard({ tickets, onSelectTicket, onUpdateStatus 
 
     return (
         <div className="w-full overflow-x-auto pb-6">
-            <div className="flex gap-4 min-w-[1200px] lg:min-w-full">
+            <div className="flex gap-3.5 min-w-[1300px]">
                 {KANBAN_COLUMNS.map((col) => {
                     const colTickets = tickets.filter(t => t.status === col.id);
                     return (
@@ -47,7 +47,7 @@ export default function HRKanbanBoard({ tickets, onSelectTicket, onUpdateStatus 
                             key={col.id}
                             onDragOver={handleDragOver}
                             onDrop={(e) => handleDrop(e, col.id)}
-                            className={`flex-1 min-w-[260px] max-w-[320px] rounded-2xl border ${col.color} p-3.5 flex flex-col gap-3 min-h-[500px] transition-all`}
+                            className={`flex-1 min-w-[210px] max-w-[260px] rounded-2xl border ${col.color} p-3.5 flex flex-col gap-3 min-h-[500px] transition-all`}
                         >
                             {/* Column Header */}
                             <div className="flex items-center justify-between px-1">

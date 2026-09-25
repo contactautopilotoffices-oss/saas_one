@@ -157,7 +157,6 @@ export async function GET(request: Request) {
                 .from('organization_memberships')
                 .select('organization_id, role')
                 .eq('user_id', user.id)
-                .eq('role', 'org_super_admin')
                 .eq('is_active', true)
                 .maybeSingle(),
 

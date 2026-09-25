@@ -15,6 +15,7 @@ import ApproverRequisitionModal from './ApproverRequisitionModal';
 import PropertyBudgetManagerModal from './PropertyBudgetManagerModal';
 import BulkApproverUploadModal from './BulkApproverUploadModal';
 import MonthlyFeedbackFormModal from './MonthlyFeedbackFormModal';
+import { SHOW_LEGACY_PER_PROPERTY_CONTROLS } from './procurementFeatureFlags';
 
 interface Property {
     id: string;
@@ -490,7 +491,12 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                 <Upload className="w-3.5 h-3.5 text-sky-600 shrink-0" />
                                 <span>Upload Quote (Multi-Site)</span>
                             </button>
+                        </>
+                    )}
 
+                    {/* Per-property price/budget/export controls — superseded by the standard item master */}
+                    {SHOW_LEGACY_PER_PROPERTY_CONTROLS && (isProcurementRole || isSuperAdmin) && (
+                        <>
                             <button
                                 onClick={handleDownloadAllPropertiesExcel}
                                 disabled={isExportingAll}
@@ -532,7 +538,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                 className="h-9 px-3 inline-flex items-center gap-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200/80 dark:border-slate-700 hover:bg-slate-200 font-bold text-xs whitespace-nowrap transition-all cursor-pointer shrink-0"
                                 title="Configure contracted site-specific rates"
                             >
-                                <DollarSign className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                                <DollarSign className="w-3.5 h-3.5 text-slate-700 shrink-0" />
                                 <span>Site Prices</span>
                             </button>
                         </>
@@ -854,16 +860,16 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                                 <div className="flex flex-col items-start gap-1">
                                                     <span className={`inline-flex items-center gap-1.5 h-6 px-2.5 rounded-lg text-[11px] font-black uppercase tracking-wider whitespace-nowrap shrink-0 ${
                                                         req.status === 'approved' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/80 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800/80' :
-                                                        req.status === 'ordered' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200/80 dark:bg-indigo-950/40 dark:text-indigo-300 dark:border-indigo-800/80' :
+                                                        req.status === 'ordered' ? 'bg-slate-100 text-slate-800 border border-slate-300 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700' :
                                                         req.status === 'rejected' ? 'bg-rose-50 text-rose-700 border border-rose-200/80 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800/80' :
-                                                        req.status === 'pending_approval' ? 'bg-sky-50 text-sky-700 border border-sky-200/80 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-800/80' :
+                                                        req.status === 'pending_approval' ? 'bg-slate-100 text-slate-700 border border-slate-200/80 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700' :
                                                         'bg-amber-50 text-amber-700 border border-amber-200/80 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800/80'
                                                     }`}>
                                                         <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                                                             req.status === 'approved' ? 'bg-emerald-500' :
-                                                            req.status === 'ordered' ? 'bg-indigo-500' :
+                                                            req.status === 'ordered' ? 'bg-slate-700' :
                                                             req.status === 'rejected' ? 'bg-rose-500' :
-                                                            req.status === 'pending_approval' ? 'bg-sky-500' :
+                                                            req.status === 'pending_approval' ? 'bg-slate-500' :
                                                             'bg-amber-500'
                                                         }`} />
                                                         <span>
@@ -877,7 +883,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                                         </span>
                                                     )}
                                                     {req.status === 'ordered' && req.po_info?.po_number && (
-                                                        <span className="text-[10px] font-semibold text-indigo-600 dark:text-indigo-400 whitespace-nowrap">
+                                                        <span className="text-[10px] font-semibold text-slate-700 dark:text-slate-300 whitespace-nowrap">
                                                             #{req.po_info.po_number}
                                                         </span>
                                                     )}

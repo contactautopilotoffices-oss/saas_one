@@ -215,7 +215,7 @@ BEGIN
 
     -- Resolve template title if template_id exists
     IF NEW.template_id IS NOT NULL THEN
-        SELECT COALESCE(title, name)
+        SELECT title
         INTO v_template_title
         FROM public.sop_templates
         WHERE id = NEW.template_id;

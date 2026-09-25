@@ -4,12 +4,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Settings, Plus, Check, Edit3, Shield, Clock, Trash2, X, AlertTriangle, GitFork, Table as TableIcon, Search, ChevronDown, User } from 'lucide-react';
 import { useAuth } from '@/frontend/context/AuthContext';
 import HREscalationTreeVisualizer from '@/frontend/components/hr/HREscalationTreeVisualizer';
+import { matchCategorySearch, HighlightedCategoryText } from '@/frontend/utils/categorySearch';
 
 interface HRAdminConfigPanelProps {
     orgId?: string;
 }
 
-interface SearchableEmployeeSelectorProps {
+export interface SearchableEmployeeSelectorProps {
     placeholder: string;
     employees: any[];
     selectedIds: string[];
@@ -17,7 +18,131 @@ interface SearchableEmployeeSelectorProps {
     accentColor?: 'blue' | 'purple' | 'red' | 'indigo' | 'emerald';
 }
 
-function SearchableEmployeeSelector({
+export function formatSlaDisplay(valInDays: number | string | null | undefined): string {
+    if (valInDays === null || valInDays === undefined || isNaN(Number(valInDays))) return '-';
+    const numDays = Number(valInDays);
+    if (numDays <= 0) return '0m';
+
+    const totalMins = Math.round(numDays * 24 * 60);
+    if (totalMins < 60) {
+        return `${totalMins}m`;
+    }
+
+    const totalHours = Math.round((totalMins / 60) * 10) / 10;
+    if (totalHours < 24 || totalMins % (24 * 60) !== 0) {
+        return `${totalHours}h`;
+    }
+    return `${totalHours / 24}d`;
+}
+
+export function SlaInputCell({
+    valueInDays,
+    onChange
+}: {
+    valueInDays: number | undefined;
+    onChange: (newDays: number) => void;
+}) {
+    const safeDays = valueInDays !== undefined && !isNaN(Number(valueInDays)) ? Number(valueInDays) : 1;
+    const totalMins = Math.round(safeDays * 24 * 60);
+
+    let initialUnit: 'mins' | 'hours' | 'days' = 'days';
+    let initialVal = Math.round(safeDays);
+
+    if (totalMins < 60) {
+        initialUnit = 'mins';
+        initialVal = totalMins;
+    } else if (totalMins % 60 !== 0 || (totalMins / 60) % 24 !== 0) {
+        initialUnit = 'hours';
+        initialVal = Math.round((totalMins / 60) * 10) / 10;
+    } else {
+        initialUnit = 'days';
+        initialVal = Math.round(safeDays);
+    }
+
+    const [numVal, setNumVal] = useState<number | string>(initialVal || 1);
+    const [unit, setUnit] = useState<'mins' | 'hours' | 'days'>(initialUnit);
+
+    useEffect(() => {
+        const mins = Math.round(safeDays * 24 * 60);
+        let u: 'mins' | 'hours' | 'days' = 'days';
+        let v = Math.round(safeDays);
+
+        if (mins < 60) {
+            u = 'mins';
+            v = mins;
+        } else if (mins % 60 !== 0 || (mins / 60) % 24 !== 0) {
+            u = 'hours';
+            v = Math.round((mins / 60) * 10) / 10;
+        } else {
+            u = 'days';
+            v = Math.round(safeDays);
+        }
+
+        // Avoid overwriting numVal if current input value already matches valueInDays within tolerance
+        const currentParsed = typeof numVal === 'number' ? numVal : parseFloat(numVal as string);
+        if (!isNaN(currentParsed)) {
+            const currentDays = unit === 'mins' ? currentParsed / (24 * 60) : unit === 'hours' ? currentParsed / 24 : currentParsed;
+            if (Math.abs(currentDays - safeDays) < 0.0001) {
+                return;
+            }
+        }
+
+        setNumVal(v);
+        setUnit(u);
+    }, [valueInDays]);
+
+    const handleValChange = (valStr: string, currentUnit: 'mins' | 'hours' | 'days') => {
+        setNumVal(valStr);
+        if (valStr.trim() === '') return;
+        const parsed = parseFloat(valStr);
+        if (isNaN(parsed)) return;
+
+        const days = currentUnit === 'mins' ? parsed / (24 * 60) : currentUnit === 'hours' ? parsed / 24 : parsed;
+        onChange(days);
+    };
+
+    const handleUnitChange = (newUnit: 'mins' | 'hours' | 'days') => {
+        setUnit(newUnit);
+        const parsed = typeof numVal === 'number' ? numVal : parseFloat(numVal as string) || 0;
+        const currentDays = unit === 'mins' ? parsed / (24 * 60) : unit === 'hours' ? parsed / 24 : parsed;
+
+        let convertedVal: number;
+        if (newUnit === 'mins') {
+            convertedVal = Math.round(currentDays * 24 * 60) || 1;
+        } else if (newUnit === 'hours') {
+            convertedVal = Math.round((currentDays * 24) * 10) / 10 || 1;
+        } else {
+            convertedVal = Math.round(currentDays * 10) / 10 || 1;
+        }
+        setNumVal(convertedVal);
+        const days = newUnit === 'mins' ? convertedVal / (24 * 60) : newUnit === 'hours' ? convertedVal / 24 : convertedVal;
+        onChange(days);
+    };
+
+    return (
+        <div className="flex items-center gap-1">
+            <input
+                type="number"
+                step="any"
+                min={0}
+                value={numVal}
+                onChange={(e) => handleValChange(e.target.value, unit)}
+                className="w-16 px-1.5 py-1 border border-slate-300 dark:border-slate-700 rounded text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono outline-none focus:ring-1 focus:ring-indigo-500"
+            />
+            <select
+                value={unit}
+                onChange={(e) => handleUnitChange(e.target.value as 'mins' | 'hours' | 'days')}
+                className="px-1.5 py-1 border border-slate-300 dark:border-slate-700 rounded text-[11px] bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold outline-none cursor-pointer"
+            >
+                <option value="mins">mins</option>
+                <option value="hours">hrs</option>
+                <option value="days">days</option>
+            </select>
+        </div>
+    );
+}
+
+export function SearchableEmployeeSelector({
     placeholder,
     employees = [],
     selectedIds = [],
@@ -162,6 +287,8 @@ export default function HRAdminConfigPanel({ orgId }: HRAdminConfigPanelProps = 
     const { user } = useAuth();
     const [activeTab, setActiveTab] = useState<'tree' | 'table'>('tree');
     const [categories, setCategories] = useState<any[]>([]);
+    const [categorySearch, setCategorySearch] = useState('');
+    const [categoryTypeFilter, setCategoryTypeFilter] = useState('all');
     const [loading, setLoading] = useState(true);
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editForm, setEditForm] = useState<any>({});
@@ -193,6 +320,8 @@ export default function HRAdminConfigPanel({ orgId }: HRAdminConfigPanelProps = 
     const [designatedHrManagers, setDesignatedHrManagers] = useState<any[]>([]);
     const [designatedHrHeads, setDesignatedHrHeads] = useState<any[]>([]);
     const [designatedDirectors, setDesignatedDirectors] = useState<any[]>([]);
+    const [flowAssignees, setFlowAssignees] = useState<Record<string, Record<string, any[]>>>({});
+    const [flowLevels, setFlowLevels] = useState<Record<string, any[]>>({});
 
     const [savingAuthorities, setSavingAuthorities] = useState(false);
     const [authoritySaveMsg, setAuthoritySaveMsg] = useState('');
@@ -205,7 +334,8 @@ export default function HRAdminConfigPanel({ orgId }: HRAdminConfigPanelProps = 
 
     const fetchEscalationConfig = async () => {
         try {
-            const url = `/api/hr/admin/escalation-config${orgId ? `?orgId=${orgId}` : ''}`;
+            const effectiveOrgId = orgId || '211e1330-ad83-446d-941f-dcea48396798';
+            const url = `/api/hr/admin/escalation-config?orgId=${effectiveOrgId}`;
             const res = await fetch(url);
             const text = await res.text();
             let data: any = {};
@@ -241,6 +371,13 @@ export default function HRAdminConfigPanel({ orgId }: HRAdminConfigPanelProps = 
 
                 setDesignatedDirectors(directors);
                 setSelectedDirectorIds(directors.map((p: any) => p.id));
+
+                if (data.data.flow_assignees) {
+                    setFlowAssignees(data.data.flow_assignees);
+                }
+                if (data.data.flow_levels) {
+                    setFlowLevels(data.data.flow_levels);
+                }
             }
         } catch (err) {
             console.error('Error fetching escalation config:', err);
@@ -280,19 +417,36 @@ export default function HRAdminConfigPanel({ orgId }: HRAdminConfigPanelProps = 
         setSelectedDirectorIds(selectedDirectorIds.filter(itemId => itemId !== id));
     };
 
-    const handleSaveAuthorities = async () => {
+    const handleSaveAuthorities = async (customData?: any) => {
         setSavingAuthorities(true);
         setAuthoritySaveMsg('');
         setAuthorityErrorMsg('');
 
         try {
+            let payloadFlowAssignees = flowAssignees;
+            let payloadFlowLevels = flowLevels;
+
+            if (customData) {
+                if (customData.flow_assignees) {
+                    payloadFlowAssignees = customData.flow_assignees;
+                } else if (typeof customData === 'object' && !customData.flow_levels) {
+                    payloadFlowAssignees = customData;
+                }
+                if (customData.flow_levels) {
+                    payloadFlowLevels = customData.flow_levels;
+                }
+            }
+
             const res = await fetch('/api/hr/admin/escalation-config', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
+                    organization_id: customData?.organization_id || orgId || '211e1330-ad83-446d-941f-dcea48396798',
                     hr_manager_profile_ids: selectedHrManagerIds,
                     hr_head_profile_ids: selectedHrHeadIds,
-                    director_profile_ids: selectedDirectorIds
+                    director_profile_ids: selectedDirectorIds,
+                    flow_assignees: payloadFlowAssignees,
+                    flow_levels: payloadFlowLevels
                 })
             });
 
@@ -300,8 +454,9 @@ export default function HRAdminConfigPanel({ orgId }: HRAdminConfigPanelProps = 
             let data: any = {};
             try { data = text ? JSON.parse(text) : {}; } catch {}
             if (data.success) {
-                setAuthoritySaveMsg(`Saved ${selectedHrManagerIds.length} HR Manager(s), ${selectedHrHeadIds.length} HR Head(s) & ${selectedDirectorIds.length} Director(s)! Future escalations will route to all selected members.`);
+                setAuthoritySaveMsg(`Saved escalation authorities & per-flow step assignees! Future ticket escalations will route to all designated members.`);
                 await fetchEscalationConfig();
+                await fetchCategories();
             } else {
                 setAuthorityErrorMsg(data.error || 'Failed to update escalation authorities');
             }
@@ -342,7 +497,7 @@ export default function HRAdminConfigPanel({ orgId }: HRAdminConfigPanelProps = 
             let data: any = {};
             try { data = text ? JSON.parse(text) : {}; } catch {}
             if (data.success) {
-                setSaveMsg('Category SLA & Routing updated successfully!');
+                setSaveMsg('Category Resolution TAT & Routing updated successfully!');
                 setEditingId(null);
                 fetchCategories();
             } else {
@@ -377,6 +532,8 @@ export default function HRAdminConfigPanel({ orgId }: HRAdminConfigPanelProps = 
             if (data.success) {
                 setSaveMsg(`New category "${newCategory.category_name}" added to dropdown options!`);
                 setShowAddModal(false);
+                setCategorySearch('');
+                setActiveTab('table');
                 setNewCategory({
                     ticket_type: 'grievance',
                     category_name: '',
@@ -423,6 +580,68 @@ export default function HRAdminConfigPanel({ orgId }: HRAdminConfigPanelProps = 
         }
     };
 
+    const defaultTypeLevels: Record<string, number> = {
+        grievance: 4,
+        hr_query: 4,
+        confidential_feedback: 2,
+        anonymous_feedback: 2
+    };
+
+    const getLevelCountForType = (type: string) => {
+        if (flowLevels && flowLevels[type] && Array.isArray(flowLevels[type]) && flowLevels[type].length > 0) {
+            return flowLevels[type].length;
+        }
+        return defaultTypeLevels[type] || 4;
+    };
+
+    const maxLevelsForView = categoryTypeFilter === 'all'
+        ? Math.max(
+            getLevelCountForType('grievance'),
+            getLevelCountForType('hr_query'),
+            getLevelCountForType('confidential_feedback'),
+            getLevelCountForType('anonymous_feedback')
+        )
+        : getLevelCountForType(categoryTypeFilter);
+
+    const parseSlaTextToDays = (slaText: string | undefined, defaultDays: number): number => {
+        if (!slaText) return defaultDays;
+        const clean = slaText.trim();
+        const matchMin = clean.match(/(\d+(?:\.\d+)?)\s*(?:m|min|mins|minutes)/i);
+        if (matchMin && matchMin[1]) {
+            return Number((parseFloat(matchMin[1]) / 1440).toFixed(6));
+        }
+        const matchHr = clean.match(/(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hours)/i);
+        if (matchHr && matchHr[1]) {
+            return Number((parseFloat(matchHr[1]) / 24).toFixed(6));
+        }
+        const matchRange = clean.match(/Day\s*\d+\s*-\s*Day\s*(\d+)/i) || clean.match(/0\s*-\s*(\d+)\s*Days?/i);
+        if (matchRange && matchRange[1]) {
+            return parseFloat(matchRange[1]);
+        }
+        const matchDay = clean.match(/(\d+(?:\.\d+)?)\s*(?:d|day|days|working days)/i);
+        if (matchDay && matchDay[1]) {
+            return parseFloat(matchDay[1]);
+        }
+        const directVal = parseFloat(clean);
+        if (!isNaN(directVal)) return directVal;
+
+        return defaultDays;
+    };
+
+    const getConfiguredLevelSlaDays = (ticketType: string, levelNum: number, defaultDaysFallback: number): number => {
+        const typeLevels = flowLevels?.[ticketType];
+        if (typeLevels && Array.isArray(typeLevels) && typeLevels[levelNum - 1]) {
+            const lvlObj = typeLevels[levelNum - 1];
+            if (lvlObj.sla_days && !isNaN(Number(lvlObj.sla_days))) {
+                return Number(lvlObj.sla_days);
+            }
+            if (lvlObj.slaText) {
+                return parseSlaTextToDays(lvlObj.slaText, defaultDaysFallback);
+            }
+        }
+        return defaultDaysFallback;
+    };
+
     if (loading) {
         return <div className="p-8 text-center text-slate-400 text-xs">Loading configuration...</div>;
     }
@@ -430,13 +649,12 @@ export default function HRAdminConfigPanel({ orgId }: HRAdminConfigPanelProps = 
     return (
         <div className="space-y-6">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
-                <div>
-                    <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <div>                    <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
                         <Settings className="w-4 h-4 text-indigo-500" />
-                        HR Categories, SLAs & Escalation Settings
+                        HR Categories, Resolution TAT & Escalation Settings
                     </h3>
                     <p className="text-xs text-slate-500 mt-1">
-                        Configure request categories, SLA days, owner routing, and escalation authorities without IT changes.
+                        Configure request categories, Resolution TAT, owner routing, and escalation authorities without IT changes.
                     </p>
                 </div>
 
@@ -465,7 +683,7 @@ export default function HRAdminConfigPanel({ orgId }: HRAdminConfigPanelProps = 
                             }`}
                         >
                             <TableIcon className="w-3.5 h-3.5" />
-                            <span>SLA Table</span>
+                            <span>Resolution TAT Table</span>
                         </button>
                     </div>
 
@@ -479,201 +697,13 @@ export default function HRAdminConfigPanel({ orgId }: HRAdminConfigPanelProps = 
                 </div>
             </div>
 
-            {/* Designated Escalation Authorities Selection Panel */}
-            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 shadow-sm space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-3">
-                    <div>
-                        <h4 className="text-xs font-black uppercase tracking-wider text-slate-900 dark:text-white flex items-center gap-2">
-                            <Shield className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                            Designated Escalation Authorities (Level 3 HR Head & Level 4 Director)
-                        </h4>
-                        <p className="text-xs text-slate-500 mt-0.5">
-                            Select which active employees act as HR Head and Director. Future automatic and manual ticket escalations route directly to their accounts.
-                        </p>
-                    </div>
-                    <button
-                        type="button"
-                        onClick={handleSaveAuthorities}
-                        disabled={savingAuthorities}
-                        className="px-4 py-2 bg-[#587e85] hover:bg-[#48686e] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm shrink-0 transition-colors disabled:opacity-50"
-                    >
-                        <Check className="w-4 h-4" />
-                        {savingAuthorities ? 'Saving...' : 'Save Escalation Authorities'}
-                    </button>
+            {/* Error Message Alert */}
+            {errorMsg && (
+                <div className="p-4 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 rounded-xl text-red-600 dark:text-red-400 text-xs flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    <span>{errorMsg}</span>
                 </div>
-
-                {authoritySaveMsg && (
-                    <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl text-xs text-emerald-700 dark:text-emerald-300 font-semibold flex items-center gap-2">
-                        <Check className="w-4 h-4 shrink-0" />
-                        <span>{authoritySaveMsg}</span>
-                    </div>
-                )}
-
-                {authorityErrorMsg && (
-                    <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-xl text-xs text-red-700 dark:text-red-300 font-semibold flex items-center gap-2">
-                        <AlertTriangle className="w-4 h-4 shrink-0" />
-                        <span>{authorityErrorMsg}</span>
-                    </div>
-                )}
-
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                    {/* Level 2: HR Manager Selection (Supports 2 or more) */}
-                    <div className="p-4 rounded-xl border border-blue-200 dark:border-blue-900/60 bg-blue-50/40 dark:bg-blue-950/20 space-y-3">
-                        <div className="flex items-center justify-between">
-                            <span className="px-2 py-0.5 bg-blue-100 text-blue-800 dark:bg-blue-900/80 dark:text-blue-200 rounded text-[10px] font-black uppercase tracking-wider">
-                                Level 2 Owners ({selectedHrManagerIds.length} Selected)
-                            </span>
-                            <span className="text-[11px] font-bold text-slate-500">SLA: Day 3 - 7</span>
-                        </div>
-                        <div>
-                            <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1.5">
-                                Designated HR Managers (Add 2 or more)
-                            </label>
-
-                            {/* Selected HR Manager Badges */}
-                            <div className="flex flex-wrap gap-1.5 mb-2.5">
-                                {selectedHrManagerIds.length > 0 ? (
-                                    selectedHrManagerIds.map((id) => {
-                                        const emp = employeesList.find(e => e.id === id);
-                                        return (
-                                            <div
-                                                key={id}
-                                                className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white dark:bg-slate-900 border border-blue-300 dark:border-blue-700 text-blue-900 dark:text-blue-200 rounded-lg text-xs font-bold shadow-xs"
-                                            >
-                                                <User className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                                                <span>{emp ? `${emp.full_name || `${emp.first_name} ${emp.last_name}`} (${emp.employee_code || ''})` : id}</span>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleRemoveHrManager(id)}
-                                                    className="p-0.5 hover:bg-blue-100 dark:hover:bg-blue-800 rounded-full text-slate-400 hover:text-blue-700 dark:hover:text-blue-200 transition-colors"
-                                                    title="Remove HR Manager"
-                                                >
-                                                    <X className="w-3.5 h-3.5" />
-                                                </button>
-                                            </div>
-                                        );
-                                    })
-                                ) : (
-                                    <div className="text-xs text-slate-400 italic">No HR Manager selected. Escalations will default to HR Team.</div>
-                                )}
-                            </div>
-
-                            {/* Searchable Combobox to add HR Manager */}
-                            <SearchableEmployeeSelector
-                                placeholder="+ Add HR Manager"
-                                employees={employeesList}
-                                selectedIds={selectedHrManagerIds}
-                                onSelect={handleAddHrManager}
-                                accentColor="blue"
-                            />
-                        </div>
-                    </div>
-
-                    {/* Level 3: HR Head Selection (Supports 2 or more) */}
-                    <div className="p-4 rounded-xl border border-purple-200 dark:border-purple-900/60 bg-purple-50/40 dark:bg-purple-950/20 space-y-3">
-                        <div className="flex items-center justify-between">
-                            <span className="px-2 py-0.5 bg-purple-100 text-purple-800 dark:bg-purple-900/80 dark:text-purple-200 rounded text-[10px] font-black uppercase tracking-wider">
-                                Level 3 Owners ({selectedHrHeadIds.length} Selected)
-                            </span>
-                            <span className="text-[11px] font-bold text-slate-500">SLA: Day 7 - 10</span>
-                        </div>
-                        <div>
-                            <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1.5">
-                                Designated HR Heads (Add 2 or more)
-                            </label>
-
-                            {/* Selected HR Head Badges */}
-                            <div className="flex flex-wrap gap-1.5 mb-2.5">
-                                {selectedHrHeadIds.length > 0 ? (
-                                    selectedHrHeadIds.map((id) => {
-                                        const emp = employeesList.find(e => e.id === id);
-                                        return (
-                                            <div
-                                                key={id}
-                                                className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white dark:bg-slate-900 border border-purple-300 dark:border-purple-700 text-purple-900 dark:text-purple-200 rounded-lg text-xs font-bold shadow-xs"
-                                            >
-                                                <User className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
-                                                <span>{emp ? `${emp.full_name || `${emp.first_name} ${emp.last_name}`} (${emp.employee_code || ''})` : id}</span>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleRemoveHrHead(id)}
-                                                    className="p-0.5 hover:bg-purple-100 dark:hover:bg-purple-800 rounded-full text-slate-400 hover:text-purple-700 dark:hover:text-purple-200 transition-colors"
-                                                    title="Remove HR Head"
-                                                >
-                                                    <X className="w-3.5 h-3.5" />
-                                                </button>
-                                            </div>
-                                        );
-                                    })
-                                ) : (
-                                    <div className="text-xs text-slate-400 italic">No HR Head selected.</div>
-                                )}
-                            </div>
-
-                            {/* Searchable Combobox to add HR Head */}
-                            <SearchableEmployeeSelector
-                                placeholder="+ Add HR Head"
-                                employees={employeesList}
-                                selectedIds={selectedHrHeadIds}
-                                onSelect={handleAddHrHead}
-                                accentColor="purple"
-                            />
-                        </div>
-                    </div>
-
-                    {/* Level 4: Director Selection (Supports 2 or more) */}
-                    <div className="p-4 rounded-xl border border-red-200 dark:border-red-900/60 bg-red-50/40 dark:bg-red-950/20 space-y-3">
-                        <div className="flex items-center justify-between">
-                            <span className="px-2 py-0.5 bg-red-100 text-red-800 dark:bg-red-900/80 dark:text-red-200 rounded text-[10px] font-black uppercase tracking-wider">
-                                Level 4 Owners ({selectedDirectorIds.length} Selected)
-                            </span>
-                            <span className="text-[11px] font-bold text-slate-500">SLA: Day 10+</span>
-                        </div>
-                        <div>
-                            <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1.5">
-                                Designated Directors (Add 2 or more)
-                            </label>
-
-                            {/* Selected Director Badges */}
-                            <div className="flex flex-wrap gap-1.5 mb-2.5">
-                                {selectedDirectorIds.length > 0 ? (
-                                    selectedDirectorIds.map((id) => {
-                                        const emp = employeesList.find(e => e.id === id);
-                                        return (
-                                            <div
-                                                key={id}
-                                                className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white dark:bg-slate-900 border border-red-300 dark:border-red-700 text-red-900 dark:text-red-200 rounded-lg text-xs font-bold shadow-xs"
-                                            >
-                                                <User className="w-3.5 h-3.5 text-red-600 dark:text-red-400" />
-                                                <span>{emp ? `${emp.full_name || `${emp.first_name} ${emp.last_name}`} (${emp.employee_code || ''})` : id}</span>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleRemoveDirector(id)}
-                                                    className="p-0.5 hover:bg-red-100 dark:hover:bg-red-800 rounded-full text-slate-400 hover:text-red-700 dark:hover:text-red-200 transition-colors"
-                                                    title="Remove Director"
-                                                >
-                                                    <X className="w-3.5 h-3.5" />
-                                                </button>
-                                            </div>
-                                        );
-                                    })
-                                ) : (
-                                    <div className="text-xs text-slate-400 italic">No Director selected.</div>
-                                )}
-                            </div>
-
-                            {/* Searchable Combobox to add Director */}
-                            <SearchableEmployeeSelector
-                                placeholder="+ Add Director"
-                                employees={employeesList}
-                                selectedIds={selectedDirectorIds}
-                                onSelect={handleAddDirector}
-                                accentColor="red"
-                            />
-                        </div>
-                    </div>
-                </div>
-            </div>
+            )}
 
             {saveMsg && (
                 <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl text-xs text-emerald-700 dark:text-emerald-300 font-semibold flex items-center gap-2">
@@ -682,186 +712,247 @@ export default function HRAdminConfigPanel({ orgId }: HRAdminConfigPanelProps = 
                 </div>
             )}
 
-            {errorMsg && (
-                <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-xl text-xs text-red-700 dark:text-red-300 font-semibold flex items-center gap-2">
-                    <AlertTriangle className="w-4 h-4 shrink-0" />
-                    <span>{errorMsg}</span>
-                </div>
-            )}
-
             {/* View 1: Graphical Escalation Tree */}
             {activeTab === 'tree' && (
                 <HREscalationTreeVisualizer
+                    orgId={orgId || '211e1330-ad83-446d-941f-dcea48396798'}
                     designatedHrManagers={designatedHrManagers}
                     designatedHrHeads={designatedHrHeads}
                     designatedDirectors={designatedDirectors}
+                    employeesList={employeesList}
+                    selectedDirectorIds={selectedDirectorIds}
+                    onAddDirector={handleAddDirector}
+                    onRemoveDirector={handleRemoveDirector}
+                    selectedHrHeadIds={selectedHrHeadIds}
+                    onAddHrHead={handleAddHrHead}
+                    onRemoveHrHead={handleRemoveHrHead}
+                    selectedHrManagerIds={selectedHrManagerIds}
+                    onAddHrManager={handleAddHrManager}
+                    onRemoveHrManager={handleRemoveHrManager}
+                    onSaveAuthorities={handleSaveAuthorities}
+                    savingAuthorities={savingAuthorities}
+                    authoritySaveMsg={authoritySaveMsg}
+                    authorityErrorMsg={authorityErrorMsg}
+                    flowAssignees={flowAssignees}
+                    flowLevels={flowLevels}
+                    onFlowLevelsChange={setFlowLevels}
                 />
             )}
-
             {/* View 2: Table View */}
             {activeTab === 'table' && (
-                <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+                <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden space-y-0">
+                    {/* Search & Filter Header Bar */}
+                    <div className="p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        {/* Search Input */}
+                        <div className="relative flex-1 max-w-md">
+                            <Search className="w-4 h-4 absolute left-3 top-2.5 text-indigo-500" />
+                            <input
+                                type="text"
+                                placeholder="Search category, subcategory, or keyword (e.g. POSH, salary, leave)..."
+                                value={categorySearch}
+                                onChange={(e) => setCategorySearch(e.target.value)}
+                                className="w-full pl-9 pr-8 py-2 text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800 dark:text-slate-100 placeholder:text-slate-400"
+                            />
+                            {categorySearch && (
+                                <button
+                                    type="button"
+                                    onClick={() => setCategorySearch('')}
+                                    className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                                >
+                                    <X className="w-3.5 h-3.5" />
+                                </button>
+                            )}
+                        </div>
+
+                        {/* Classification Type Filter & Counter Badge */}
+                        <div className="flex items-center gap-2 flex-wrap">
+                            <select
+                                value={categoryTypeFilter}
+                                onChange={(e) => setCategoryTypeFilter(e.target.value)}
+                                className="px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 outline-none focus:ring-2 focus:ring-indigo-500"
+                            >
+                                <option value="all">All Classification Types</option>
+                                <option value="grievance">Employee Grievances</option>
+                                <option value="hr_query">HR-Related Queries</option>
+                                <option value="confidential_feedback">Confidential Feedback</option>
+                                <option value="anonymous_feedback">Anonymous Feedback</option>
+                            </select>
+
+                            <span className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-xl font-mono text-xs font-bold border border-slate-200 dark:border-slate-700 shrink-0">
+                                Showing {categories.filter((cat) => {
+                                    if (categoryTypeFilter !== 'all' && cat.ticket_type !== categoryTypeFilter) return false;
+                                    return matchCategorySearch(cat, categorySearch);
+                                }).length} of {categories.length}
+                            </span>
+                        </div>
+                    </div>
+
+                    {/* Table */}
                     <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs border-collapse">
-                        <thead>
-                            <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 font-semibold">
-                                <th className="p-3.5 pl-4">Type</th>
-                                <th className="p-3.5">Category Name</th>
-                                <th className="p-3.5">Sub-Category</th>
-                                <th className="p-3.5">Level 1 Owner</th>
-                                <th className="p-3.5">L1 SLA</th>
-                                <th className="p-3.5">L2 SLA</th>
-                                <th className="p-3.5">L3 SLA</th>
-                                <th className="p-3.5">L4 SLA</th>
-                                <th className="p-3.5 pr-4 text-right">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-700 dark:text-slate-300">
-                            {categories.map((cat) => {
-                                const isEditing = editingId === cat.id;
-                                return (
-                                    <tr key={cat.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
-                                        <td className="p-3.5 pl-4 uppercase font-bold text-[10px]">
-                                            <span className={`px-2 py-0.5 rounded font-extrabold ${
-                                                cat.ticket_type === 'grievance' ? 'bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300' :
-                                                cat.ticket_type === 'hr_query' ? 'bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300' :
-                                                cat.ticket_type === 'confidential_feedback' ? 'bg-purple-100 dark:bg-purple-950 text-purple-800 dark:text-purple-300' :
-                                                'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200'
-                                            }`}>
-                                                {cat.ticket_type?.replace('_', ' ')}
-                                            </span>
-                                        </td>
-                                        <td className="p-3.5 font-bold text-slate-900 dark:text-white">
-                                            {isEditing ? (
-                                                <input
-                                                    type="text"
-                                                    value={editForm.category_name ?? cat.category_name}
-                                                    onChange={(e) => setEditForm({ ...editForm, category_name: e.target.value })}
-                                                    className="px-2 py-1 border rounded text-xs bg-white dark:bg-slate-800"
-                                                />
-                                            ) : (
-                                                cat.category_name
-                                            )}
-                                        </td>
-                                        <td className="p-3.5 text-slate-500">
-                                            {isEditing ? (
-                                                <input
-                                                    type="text"
-                                                    value={editForm.sub_category_name ?? cat.sub_category_name ?? ''}
-                                                    onChange={(e) => setEditForm({ ...editForm, sub_category_name: e.target.value })}
-                                                    className="px-2 py-1 border rounded text-xs bg-white dark:bg-slate-800"
-                                                />
-                                            ) : (
-                                                cat.sub_category_name || '-'
-                                            )}
-                                        </td>
-                                        <td className="p-3.5 capitalize font-semibold">
-                                            {isEditing ? (
-                                                <select
-                                                    value={editForm.first_level_owner_type || cat.first_level_owner_type}
-                                                    onChange={(e) => setEditForm({ ...editForm, first_level_owner_type: e.target.value })}
-                                                    className="px-2 py-1 border rounded text-xs bg-white dark:bg-slate-800"
-                                                >
-                                                    <option value="reporting_manager">Reporting Manager</option>
-                                                    <option value="hr">HR Dept</option>
-                                                    <option value="director">Director</option>
-                                                </select>
-                                            ) : (
-                                                cat.first_level_owner_type?.replace('_', ' ')
-                                            )}
-                                        </td>
-                                        <td className="p-3.5 font-mono">
-                                            {isEditing ? (
-                                                <input
-                                                    type="number"
-                                                    value={editForm.l1_sla_days ?? cat.l1_sla_days}
-                                                    onChange={(e) => setEditForm({ ...editForm, l1_sla_days: parseInt(e.target.value) })}
-                                                    className="w-14 px-2 py-1 border rounded text-xs bg-white dark:bg-slate-800"
-                                                />
-                                            ) : (
-                                                `${cat.l1_sla_days}d`
-                                            )}
-                                        </td>
-                                        <td className="p-3.5 font-mono">
-                                            {isEditing ? (
-                                                <input
-                                                    type="number"
-                                                    value={editForm.l2_sla_days ?? cat.l2_sla_days}
-                                                    onChange={(e) => setEditForm({ ...editForm, l2_sla_days: parseInt(e.target.value) })}
-                                                    className="w-14 px-2 py-1 border rounded text-xs bg-white dark:bg-slate-800"
-                                                />
-                                            ) : (
-                                                `${cat.l2_sla_days}d`
-                                            )}
-                                        </td>
-                                        <td className="p-3.5 font-mono">
-                                            {isEditing ? (
-                                                <input
-                                                    type="number"
-                                                    value={editForm.l3_sla_days ?? cat.l3_sla_days}
-                                                    onChange={(e) => setEditForm({ ...editForm, l3_sla_days: parseInt(e.target.value) })}
-                                                    className="w-14 px-2 py-1 border rounded text-xs bg-white dark:bg-slate-800"
-                                                />
-                                            ) : (
-                                                `${cat.l3_sla_days}d`
-                                            )}
-                                        </td>
-                                        <td className="p-3.5 font-mono">
-                                            {isEditing ? (
-                                                <input
-                                                    type="number"
-                                                    value={editForm.l4_sla_days ?? cat.l4_sla_days}
-                                                    onChange={(e) => setEditForm({ ...editForm, l4_sla_days: parseInt(e.target.value) })}
-                                                    className="w-14 px-2 py-1 border rounded text-xs bg-white dark:bg-slate-800"
-                                                />
-                                            ) : (
-                                                `${cat.l4_sla_days}d`
-                                            )}
-                                        </td>
-                                        <td className="p-3.5 pr-4 text-right">
-                                            {isEditing ? (
-                                                <div className="flex justify-end gap-1.5">
-                                                    <button
-                                                        onClick={() => handleSave(cat.id)}
-                                                        className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-semibold"
-                                                    >
-                                                        Save
-                                                    </button>
-                                                    <button
-                                                        onClick={() => setEditingId(null)}
-                                                        className="px-2.5 py-1 bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-lg text-[11px]"
-                                                    >
-                                                        Cancel
-                                                    </button>
-                                                </div>
-                                            ) : (
-                                                <div className="flex items-center justify-end gap-2">
-                                                    <button
-                                                        onClick={() => {
-                                                            setEditingId(cat.id);
-                                                            setEditForm(cat);
-                                                        }}
-                                                        className="px-2.5 py-1 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 rounded-lg text-[11px] font-bold"
-                                                    >
-                                                        Edit SLA
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleDeleteCategory(cat.id, cat.category_name)}
-                                                        className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg transition-colors"
-                                                        title="Delete Category Option"
-                                                    >
-                                                        <Trash2 className="w-3.5 h-3.5" />
-                                                    </button>
-                                                </div>
-                                            )}
+                        <table className="w-full text-left text-xs border-collapse">
+                            <thead>
+                                <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 font-semibold">
+                                    <th className="p-3.5 pl-4">Type</th>
+                                    <th className="p-3.5">Category Name</th>
+                                    <th className="p-3.5">Sub-Category</th>
+                                    <th className="p-3.5">Level 1 Owner</th>
+                                    {Array.from({ length: maxLevelsForView }, (_, i) => (
+                                        <th key={i} className="p-3.5 whitespace-nowrap">L{i + 1} TAT</th>
+                                    ))}
+                                    <th className="p-3.5 pr-4 text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-700 dark:text-slate-300">
+                                {categories.filter((cat) => {
+                                    if (categoryTypeFilter !== 'all' && cat.ticket_type !== categoryTypeFilter) return false;
+                                    return matchCategorySearch(cat, categorySearch);
+                                }).length === 0 ? (
+                                    <tr>
+                                        <td colSpan={5 + maxLevelsForView} className="p-8 text-center text-slate-400 text-xs italic">
+                                            No categories found matching "{categorySearch}". Try typing words like <strong>salary</strong>, <strong>leave</strong>, <strong>POSH</strong>, <strong>manager</strong>, or <strong>PF</strong>.
                                         </td>
                                     </tr>
-                                );
-                            })}
-                        </tbody>
-                    </table>
+                                ) : (
+                                    categories.filter((cat) => {
+                                        if (categoryTypeFilter !== 'all' && cat.ticket_type !== categoryTypeFilter) return false;
+                                        return matchCategorySearch(cat, categorySearch);
+                                    }).map((cat) => {
+                                        const isEditing = editingId === cat.id;
+                                        const rowCatLevelCount = getLevelCountForType(cat.ticket_type);
+
+                                        return (
+                                            <tr key={cat.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
+                                                <td className="p-3.5 pl-4 uppercase font-bold text-[10px]">
+                                                    <span className={`px-2 py-0.5 rounded font-extrabold ${
+                                                        cat.ticket_type === 'grievance' ? 'bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300' :
+                                                        cat.ticket_type === 'hr_query' ? 'bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300' :
+                                                        cat.ticket_type === 'confidential_feedback' ? 'bg-purple-100 dark:bg-purple-950 text-purple-800 dark:text-purple-300' :
+                                                        'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200'
+                                                    }`}>
+                                                        {cat.ticket_type?.replace('_', ' ')}
+                                                    </span>
+                                                </td>
+                                                <td className="p-3.5 font-bold text-slate-900 dark:text-white">
+                                                    {isEditing ? (
+                                                        <input
+                                                            type="text"
+                                                            value={editForm.category_name ?? cat.category_name}
+                                                            onChange={(e) => setEditForm({ ...editForm, category_name: e.target.value })}
+                                                            className="px-2 py-1 border rounded text-xs bg-white dark:bg-slate-800"
+                                                        />
+                                                    ) : (
+                                                        <HighlightedCategoryText text={cat.category_name} query={categorySearch} />
+                                                    )}
+                                                </td>
+                                                <td className="p-3.5 text-slate-500">
+                                                    {isEditing ? (
+                                                        <input
+                                                            type="text"
+                                                            value={editForm.sub_category_name ?? cat.sub_category_name ?? ''}
+                                                            onChange={(e) => setEditForm({ ...editForm, sub_category_name: e.target.value })}
+                                                            className="px-2 py-1 border rounded text-xs bg-white dark:bg-slate-800"
+                                                        />
+                                                    ) : (
+                                                        cat.sub_category_name ? (
+                                                            <HighlightedCategoryText text={cat.sub_category_name} query={categorySearch} />
+                                                        ) : '-'
+                                                    )}
+                                                </td>
+                                                <td className="p-3.5 capitalize font-semibold">
+                                                    {isEditing ? (
+                                                        <select
+                                                            value={editForm.first_level_owner_type || cat.first_level_owner_type}
+                                                            onChange={(e) => setEditForm({ ...editForm, first_level_owner_type: e.target.value })}
+                                                            className="px-2 py-1 border rounded text-xs bg-white dark:bg-slate-800"
+                                                        >
+                                                            <option value="reporting_manager">Reporting Manager</option>
+                                                            <option value="hr">HR Dept</option>
+                                                            <option value="director">Director</option>
+                                                        </select>
+                                                    ) : (
+                                                        cat.first_level_owner_type?.replace('_', ' ')
+                                                    )}
+                                                </td>
+
+                                                {/* Dynamic SLA Level Cells */}
+                                                {Array.from({ length: maxLevelsForView }, (_, i) => {
+                                                    const levelNum = i + 1;
+                                                    const slaPropKey = `l${levelNum}_sla_days`;
+                                                    const isLevelApplicable = levelNum <= rowCatLevelCount;
+
+                                                    if (!isLevelApplicable) {
+                                                        return (
+                                                            <td key={levelNum} className="p-3.5 font-mono text-center text-slate-300 dark:text-slate-600 select-none" title={`Level ${levelNum} not applicable for ${cat.ticket_type?.replace('_', ' ')}`}>
+                                                                -
+                                                            </td>
+                                                        );
+                                                    }
+
+                                                    const defaultDaysFallback = levelNum === 1 ? 3 : levelNum === 2 ? 7 : levelNum === 3 ? 10 : levelNum === 4 ? 12 : 12 + (levelNum - 4) * 3;
+                                                    const configuredLevelDays = getConfiguredLevelSlaDays(cat.ticket_type, levelNum, defaultDaysFallback);
+                                                    const currentVal = isEditing
+                                                        ? (editForm[slaPropKey] ?? cat[slaPropKey] ?? configuredLevelDays)
+                                                        : (cat[slaPropKey] ?? configuredLevelDays);
+
+                                                    return (
+                                                        <td key={levelNum} className="p-3.5 font-mono whitespace-nowrap">
+                                                            {isEditing ? (
+                                                                <SlaInputCell
+                                                                    valueInDays={currentVal}
+                                                                    onChange={(newDays) => setEditForm({ ...editForm, [slaPropKey]: newDays })}
+                                                                />
+                                                            ) : (
+                                                                formatSlaDisplay(currentVal)
+                                                            )}
+                                                        </td>
+                                                    );
+                                                })}
+
+                                                <td className="p-3.5 pr-4 text-right">
+                                                    {isEditing ? (
+                                                        <div className="flex justify-end gap-1.5">
+                                                            <button
+                                                                onClick={() => handleSave(cat.id)}
+                                                                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-semibold"
+                                                            >
+                                                                Save
+                                                            </button>
+                                                            <button
+                                                                onClick={() => setEditingId(null)}
+                                                                className="px-2.5 py-1 bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-lg text-[11px]"
+                                                            >
+                                                                Cancel
+                                                            </button>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="flex items-center justify-end gap-2">
+                                                            <button
+                                                                onClick={() => {
+                                                                    setEditingId(cat.id);
+                                                                    setEditForm(cat);
+                                                                }}
+                                                                className="px-2.5 py-1 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 rounded-lg text-[11px] font-bold"
+                                                            >
+                                                                Edit TAT
+                                                            </button>
+                                                            <button
+                                                                onClick={() => handleDeleteCategory(cat.id, cat.category_name)}
+                                                                className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg transition-colors"
+                                                                title="Delete Category Option"
+                                                            >
+                                                                <Trash2 className="w-3.5 h-3.5" />
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        );
+                                    })
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
-            </div>
             )}
 
             {/* Modal to Add New Category Option */}
@@ -887,10 +978,38 @@ export default function HRAdminConfigPanel({ orgId }: HRAdminConfigPanelProps = 
                                         value={newCategory.ticket_type}
                                         onChange={(e) => {
                                             const type = e.target.value;
+                                            const configuredArr = flowLevels[type];
+                                            let l1 = (type === 'hr_query' || type === 'confidential_feedback') ? 2 : 3;
+                                            let l2 = (type === 'hr_query' || type === 'confidential_feedback') ? 5 : 7;
+                                            let l3 = (type === 'hr_query' || type === 'confidential_feedback') ? 7 : 10;
+                                            let l4 = (type === 'hr_query' || type === 'confidential_feedback') ? 10 : 12;
+
+                                            if (configuredArr && Array.isArray(configuredArr) && configuredArr.length > 0) {
+                                                const parseDays = (lvl: any, defaultDays: number) => {
+                                                    if (!lvl) return defaultDays;
+                                                    if (lvl.sla_days && !isNaN(Number(lvl.sla_days))) return Number(lvl.sla_days);
+                                                    if (lvl.slaText) {
+                                                        const matchR = lvl.slaText.match(/Day\s*\d+\s*-\s*Day\s*(\d+)/i) || lvl.slaText.match(/0\s*-\s*(\d+)\s*Days?/i);
+                                                        if (matchR && matchR[1]) return Number(matchR[1]);
+                                                        const matchS = lvl.slaText.match(/(\d+)\s*working\s*day/i) || lvl.slaText.match(/(\d+)\s*day/i);
+                                                        if (matchS && matchS[1]) return Number(matchS[1]);
+                                                    }
+                                                    return defaultDays;
+                                                };
+                                                l1 = parseDays(configuredArr[0], l1);
+                                                l2 = parseDays(configuredArr[1], l2);
+                                                l3 = parseDays(configuredArr[2], l3);
+                                                l4 = parseDays(configuredArr[3], l4);
+                                            }
+
                                             setNewCategory({
                                                 ...newCategory,
                                                 ticket_type: type,
                                                 first_level_owner_type: type === 'grievance' ? 'reporting_manager' : type === 'hr_query' ? 'hr' : 'director',
+                                                l1_sla_days: l1,
+                                                l2_sla_days: l2,
+                                                l3_sla_days: l3,
+                                                l4_sla_days: l4,
                                                 is_confidential: type === 'confidential_feedback',
                                                 is_anonymous: type === 'anonymous_feedback'
                                             });
@@ -940,28 +1059,40 @@ export default function HRAdminConfigPanel({ orgId }: HRAdminConfigPanelProps = 
                                     </select>
                                 </div>
 
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                    <div>
-                                        <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">L1 SLA (Days)</label>
-                                        <input
-                                            type="number"
-                                            min={1}
-                                            value={newCategory.l1_sla_days}
-                                            onChange={(e) => setNewCategory({ ...newCategory, l1_sla_days: parseInt(e.target.value) || 1 })}
-                                            className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">L2 SLA (Days)</label>
-                                        <input
-                                            type="number"
-                                            min={1}
-                                            value={newCategory.l2_sla_days}
-                                            onChange={(e) => setNewCategory({ ...newCategory, l2_sla_days: parseInt(e.target.value) || 1 })}
-                                            className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none"
-                                        />
-                                    </div>
-                                </div>
+                                {/* Dynamic Level TAT Inputs */}
+                                {(() => {
+                                    const configuredArr = flowLevels[newCategory.ticket_type];
+                                    const levelCount = (configuredArr && Array.isArray(configuredArr) && configuredArr.length > 0)
+                                        ? configuredArr.length
+                                        : (newCategory.ticket_type === 'confidential_feedback' || newCategory.ticket_type === 'anonymous_feedback') ? 2 : 4;
+
+                                    const levelIndices = Array.from({ length: levelCount }, (_, i) => i + 1);
+
+                                    return (
+                                        <div className="grid grid-cols-2 gap-3 pt-1">
+                                            {levelIndices.map((lvlNum) => {
+                                                const fieldKey = `l${lvlNum}_sla_days`;
+                                                const defaultFallback = (newCategory.ticket_type === 'hr_query' || newCategory.ticket_type === 'confidential_feedback')
+                                                    ? (lvlNum === 1 ? 2 : lvlNum === 2 ? 5 : lvlNum === 3 ? 7 : 10)
+                                                    : (lvlNum === 1 ? 3 : lvlNum === 2 ? 7 : lvlNum === 3 ? 10 : 12);
+                                                
+                                                const valInDays = (newCategory as any)[fieldKey] ?? defaultFallback;
+
+                                                return (
+                                                    <div key={lvlNum}>
+                                                        <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                                                            L{lvlNum} TAT
+                                                        </label>
+                                                        <SlaInputCell
+                                                            valueInDays={valInDays}
+                                                            onChange={(newDays) => setNewCategory({ ...newCategory, [fieldKey]: newDays })}
+                                                        />
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    );
+                                })()}
                             </div>
 
                             {/* Footer */}

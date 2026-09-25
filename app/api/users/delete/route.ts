@@ -66,6 +66,12 @@ export async function POST(request: NextRequest) {
             .update({ is_active: false })
             .eq('user_id', userId)
 
+        // Step 2.2: Unlink employee profile associated with deleted user so re-onboarding can auto-link
+        await adminClient
+            .from('employee_profiles')
+            .update({ user_id: null, reconciliation_status: 'unlinked' })
+            .eq('user_id', userId)
+
         // Step 2.5: Log the action in the audit logs
         await adminClient.from('user_management_audit_logs').insert({
             action: 'delete_user',
