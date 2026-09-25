@@ -31,6 +31,7 @@ import { ShiftToast } from '@/frontend/components/mst/ShiftStatus';
 import NavbarShiftStatus from '@/frontend/components/mst/NavbarShiftStatus';
 import TicketCard from '@/frontend/components/shared/TicketCard';
 import SOPDashboard from '@/frontend/components/sop/SOPDashboard';
+import AssetsModule from '@/frontend/components/assets/AssetsModule';
 import dynamic from 'next/dynamic';
 const UniversalQRScannerModal = dynamic(() => import('@/frontend/components/shared/UniversalQRScannerModal'), { ssr: false });
 
@@ -39,7 +40,7 @@ import GuestExperienceDashboard from '@/frontend/components/guest-experience/Gue
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
 
 // Types
-type Tab = 'dashboard' | 'requests' | 'guest_experience' | 'create_request' | 'visitors' | 'diesel' | 'electricity' | 'settings' | 'profile' | 'flow-map' | 'checklist' | 'water';
+type Tab = 'dashboard' | 'requests' | 'guest_experience' | 'create_request' | 'visitors' | 'diesel' | 'electricity' | 'settings' | 'profile' | 'flow-map' | 'checklist' | 'water' | 'assets';
 
 interface Property {
     id: string;
@@ -179,7 +180,7 @@ const MstDashboard = () => {
     // Restore state from URL
     useEffect(() => {
         const tab = searchParams.get('tab');
-        if (tab && ['dashboard', 'requests', 'guest_experience', 'create_request', 'visitors', 'diesel', 'electricity', 'settings', 'profile', 'flow-map', 'checklist', 'water'].includes(tab)) {
+        if (tab && ['dashboard', 'requests', 'guest_experience', 'create_request', 'visitors', 'diesel', 'electricity', 'settings', 'profile', 'flow-map', 'checklist', 'water', 'assets'].includes(tab)) {
             setActiveTab(tab as Tab);
         }
         
@@ -768,6 +769,16 @@ const MstDashboard = () => {
                                 <ClipboardCheck className="w-4 h-4" />
                                 Checklists
                             </button>
+                            <button
+                                onClick={() => handleTabChange('assets')}
+                                className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg transition-all text-sm font-bold ${activeTab === 'assets'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                    }`}
+                            >
+                                <Wrench className="w-4 h-4" />
+                                Assets
+                            </button>
                         </div>
                     </div>
 
@@ -932,6 +943,14 @@ const MstDashboard = () => {
                             {activeTab === 'electricity' && property && <ElectricityStaffDashboard propertyId={property.id} isDark={isDarkMode} />}
                             {activeTab === 'water' && propertyId && <WaterDashboard propertyId={propertyId} />}
                             {activeTab === 'checklist' && property && <SOPDashboard propertyId={property.id} />}
+                            {activeTab === 'assets' && property && (
+                                <AssetsModule
+                                    organizationId={property.organization_id || ''}
+                                    propertyId={property.id}
+                                    propertyName={property.name}
+                                    canManage={false}
+                                />
+                            )}
                             {activeTab === 'settings' && <SettingsView />}
                             {activeTab === 'profile' && (
                                 <div className="flex justify-center items-start py-8">

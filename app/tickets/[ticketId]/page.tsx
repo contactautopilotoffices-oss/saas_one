@@ -46,6 +46,8 @@ import {
   Package,
   ChevronDown,
   Search,
+  QrCode,
+  Wrench,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { compressImage } from "@/frontend/utils/image-compression";
@@ -60,6 +62,7 @@ import ProcurementCatalogModal from "@/frontend/components/procurement/Procureme
 import ConfirmModal from "@/frontend/components/ui/ConfirmModal";
 import { Toast } from "@/frontend/components/ui/Toast";
 import ProcurementComparativeFlow from "@/frontend/components/dashboard/ProcurementComparativeFlow";
+import LogAssetWorkModal from "@/frontend/components/assets/LogAssetWorkModal";
 import { SLABreachDetailsCard } from "@/frontend/components/tickets/SLABreachDetailsCard";
 
 // Types
@@ -174,6 +177,12 @@ export default function TicketDetailPage() {
   const [showMobileChat, setShowMobileChat] = useState(false);
   const [commentText, setCommentText] = useState("");
   const [uploading, setUploading] = useState(false);
+
+  // Asset lifecycle — MST logs work against a scanned asset; everyone sees what was logged.
+  const [showLogAssetWork, setShowLogAssetWork] = useState(false);
+  const [linkedAssets, setLinkedAssets] = useState<
+    { id: string; title: string; description: string; occurred_at: string; created_by_user?: { full_name: string } | null; asset: { id: string; asset_code: string; name: string; qr_token: string; floor?: string | null; location?: string | null; category?: { name: string; color: string | null } | null } }[]
+  >([]);
 
   // Reassign State
   const [resolvers, setResolvers] = useState<any[]>([]);
@@ -533,6 +542,7 @@ export default function TicketDetailPage() {
         fetchComments(),
         fetchEscalationLogs(),
         fetchMaterialRequests(),
+        fetchLinkedAssets(),
       ]);
     } catch (err: any) {
       // Supabase errors have non-enumerable props — extract them explicitly
@@ -797,6 +807,17 @@ export default function TicketDetailPage() {
     } catch (e) {
       console.error("Error determining user role:", e);
       setUserRole("admin"); // Fallback to admin for safety
+    }
+  };
+
+  const fetchLinkedAssets = async () => {
+    try {
+      const res = await fetch(`/api/tickets/${ticketId}/assets`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setLinkedAssets(data.events || []);
+    } catch {
+      /* non-critical — the trace log still shows the raw activity row */
     }
   };
 
@@ -1981,6 +2002,16 @@ export default function TicketDetailPage() {
                 className="flex items-center justify-center gap-2 px-3 py-3 bg-primary text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-primary-dark transition-all shadow-lg col-span-2 sm:col-span-1"
               >
                 <CheckCircle2 className="w-4 h-4" /> Complete Task
+              </button>
+            )}
+
+            {/* Log Asset Work: scan the asset QR, write what was fixed — same gate as Complete Task */}
+            {isAssignedToMe && ticket.status === "in_progress" && (
+              <button
+                onClick={() => setShowLogAssetWork(true)}
+                className={`flex items-center justify-center gap-2 px-3 py-3 ${isDark ? "bg-[#21262d] border-[#30363d] text-slate-300 hover:bg-[#30363d]" : "bg-slate-100 border-slate-100 text-slate-600 hover:bg-slate-200"} border rounded-xl text-[10px] font-black uppercase tracking-widest transition-all col-span-2 sm:col-span-1`}
+              >
+                <QrCode className="w-4 h-4" /> Log Asset Work
               </button>
             )}
 
@@ -3359,6 +3390,61 @@ export default function TicketDetailPage() {
               </div>
             )}
 
+            {/* Asset(s) worked on — visible to every role, populated by the MST's QR-scan log */}
+            {linkedAssets.length > 0 && (
+              <div
+                id="section-assets"
+                className={`${isDark ? "bg-[#161b22] border-[#21262d]" : "bg-white border-slate-100"} p-6 rounded-3xl border shadow-sm`}
+              >
+                <h3
+                  className={`text-sm font-black ${isDark ? "text-white" : "text-slate-900"} mb-5 flex items-center gap-2`}
+                >
+                  <Wrench className="w-4 h-4 text-primary" />
+                  Asset{linkedAssets.length > 1 ? "s" : ""} Worked On
+                </h3>
+                <div className="space-y-3">
+                  {linkedAssets.map((ev) => (
+                    <a
+                      key={ev.id}
+                      href={`/a/${ev.asset.qr_token}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={`flex items-start gap-3 p-4 rounded-2xl border transition-colors ${isDark ? "bg-[#0f1419] border-[#21262d] hover:border-primary/40" : "bg-slate-50 border-slate-100 hover:border-primary/40"}`}
+                    >
+                      <div
+                        className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 text-[10px] font-black text-white"
+                        style={{ backgroundColor: ev.asset.category?.color || "#708F96" }}
+                      >
+                        {ev.asset.asset_code.slice(0, 2)}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className={`text-sm font-bold ${isDark ? "text-white" : "text-slate-900"}`}>
+                            {ev.asset.name}
+                          </span>
+                          <span className={`text-[10px] font-mono ${isDark ? "text-slate-500" : "text-slate-400"}`}>
+                            {ev.asset.asset_code}
+                          </span>
+                        </div>
+                        {(ev.asset.floor || ev.asset.location) && (
+                          <p className={`text-[11px] ${isDark ? "text-slate-500" : "text-slate-400"} mt-0.5`}>
+                            {[ev.asset.floor, ev.asset.location].filter(Boolean).join(" · ")}
+                          </p>
+                        )}
+                        <p className={`text-[12px] italic mt-1.5 ${isDark ? "text-slate-300" : "text-slate-600"}`}>
+                          "{ev.description}"
+                        </p>
+                        <p className={`text-[10px] mt-1.5 ${isDark ? "text-slate-600" : "text-slate-400"}`}>
+                          {ev.created_by_user?.full_name || "MST"} ·{" "}
+                          {new Date(ev.occurred_at).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                        </p>
+                      </div>
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* 3. Activity Timeline (Progress) */}
             <div
               id="section-timeline"
@@ -3834,6 +3920,34 @@ export default function TicketDetailPage() {
                 <div className="space-y-4">
                   {activities.map((act) => {
                     const isAssignment = act.action === "reassigned" || act.action === "assigned";
+                    if (act.action === "asset_worked_on") {
+                      return (
+                        <div key={act.id} className="flex justify-between items-start gap-4 opacity-75">
+                          <div className={`text-xs ${isDark ? "text-slate-400" : "text-slate-500"}`}>
+                            <p className={`text-[11px] ${isDark ? "text-slate-400" : "text-slate-600"} leading-relaxed`}>
+                              <span className={`font-bold ${isDark ? "text-white" : "text-slate-900"}`}>
+                                {act.user?.full_name || "System"}
+                              </span>{" "}
+                              logged work on{" "}
+                              <span className="font-bold text-primary">{act.old_value}</span>
+                              {act.new_value && (
+                                <span className={`ml-1 italic ${isDark ? "text-slate-400" : "text-slate-600"}`}>
+                                  — "{act.new_value}"
+                                </span>
+                              )}
+                            </p>
+                          </div>
+                          <span
+                            className={`text-[9px] ${isDark ? "text-slate-600" : "text-slate-400"} font-bold uppercase whitespace-nowrap`}
+                          >
+                            {parseDate(act.created_at)?.toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </span>
+                        </div>
+                      );
+                    }
                     return (
                       <div
                         key={act.id}
@@ -4786,6 +4900,17 @@ export default function TicketDetailPage() {
           ticketNumber={ticket.ticket_number}
           title={ticket.title}
         />
+
+        {showLogAssetWork && typeof ticketId === "string" && (
+          <LogAssetWorkModal
+            ticketId={ticketId}
+            onClose={() => setShowLogAssetWork(false)}
+            onLogged={() => {
+              fetchLinkedAssets();
+              fetchActivities();
+            }}
+          />
+        )}
 
         <ConfirmModal
           isOpen={!!deleteRequestId}

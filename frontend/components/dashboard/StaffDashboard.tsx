@@ -5,7 +5,7 @@ import {
     LayoutDashboard, Ticket, Clock, CheckCircle2, AlertCircle, Plus,
     LogOut, Settings, Search, UserCircle, Coffee, Fuel, UsersRound,
     ClipboardList, FolderKanban, Moon, Sun, ChevronRight, RefreshCw, Cog, X,
-    AlertOctagon, BarChart3, FileText, Camera, Menu, Pencil, Loader2, Zap, Activity, Filter, Calendar, Package, Scan, Droplets,
+    AlertOctagon, BarChart3, FileText, Camera, Menu, Pencil, Loader2, Zap, Activity, Filter, Calendar, Package, Scan, Droplets, Wrench,
   MessageSquarePlus
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -31,6 +31,7 @@ import AdminRoomManager from '@/frontend/components/meeting-rooms/AdminRoomManag
 import StockDashboard from '@/frontend/components/stock/StockDashboard';
 import StockMovementModal from '@/frontend/components/stock/StockMovementModal';
 import SOPDashboard from '@/frontend/components/sop/SOPDashboard';
+import AssetsModule from '@/frontend/components/assets/AssetsModule';
 import dynamic from 'next/dynamic';
 import type { QRScanResult } from '@/frontend/components/shared/UniversalQRScannerModal';
 const UniversalQRScannerModal = dynamic(() => import('@/frontend/components/shared/UniversalQRScannerModal'), { ssr: false });
@@ -40,7 +41,7 @@ import GuestExperienceDashboard from '@/frontend/components/guest-experience/Gue
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
 
 // Types
-type Tab = 'dashboard' | 'requests' | 'guest_experience' | 'create_request' | 'visitors' | 'rooms' | 'diesel' | 'electricity' | 'stock' | 'checklist' | 'settings' | 'profile' | 'flow-map' | 'water';
+type Tab = 'dashboard' | 'requests' | 'guest_experience' | 'create_request' | 'visitors' | 'rooms' | 'diesel' | 'electricity' | 'stock' | 'checklist' | 'settings' | 'profile' | 'flow-map' | 'water' | 'assets';
 
 interface Property {
     id: string;
@@ -154,7 +155,7 @@ const StaffDashboard = () => {
     // Restore tab from URL
     useEffect(() => {
         const tab = searchParams.get('tab');
-        if (tab && ['dashboard', 'requests', 'guest_experience', 'create_request', 'visitors', 'rooms', 'diesel', 'electricity', 'stock', 'checklist', 'settings', 'profile', 'flow-map', 'water'].includes(tab)) {
+        if (tab && ['dashboard', 'requests', 'guest_experience', 'create_request', 'visitors', 'rooms', 'diesel', 'electricity', 'stock', 'checklist', 'settings', 'profile', 'flow-map', 'water', 'assets'].includes(tab)) {
             setActiveTab(tab as Tab);
         }
     }, [searchParams]);
@@ -606,6 +607,16 @@ const StaffDashboard = () => {
                                 <ClipboardList className="w-4 h-4" />
                                 Checklists
                             </button>
+                            <button
+                                onClick={() => handleTabChange('assets')}
+                                className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg transition-all text-sm font-bold ${activeTab === 'assets'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                    }`}
+                            >
+                                <Wrench className="w-4 h-4" />
+                                Assets
+                            </button>
                         </div>
                     </div>
 
@@ -787,6 +798,14 @@ const StaffDashboard = () => {
                             )}
                             {activeTab === 'checklist' && property && (
                                 <SOPDashboard propertyId={property.id} />
+                            )}
+                            {activeTab === 'assets' && property && (
+                                <AssetsModule
+                                    organizationId={property.organization_id}
+                                    propertyId={property.id}
+                                    propertyName={property.name}
+                                    canManage={false}
+                                />
                             )}
                             {activeTab === 'settings' && <SettingsView />}
                             {activeTab === 'profile' && (

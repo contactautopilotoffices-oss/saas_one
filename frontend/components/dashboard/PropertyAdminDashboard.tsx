@@ -36,6 +36,8 @@ import AdminRoomManager from '@/frontend/components/meeting-rooms/AdminRoomManag
 import StockDashboard from '@/frontend/components/stock/StockDashboard';
 import StockMovementModal from '@/frontend/components/stock/StockMovementModal';
 import SOPDashboard from '@/frontend/components/sop/SOPDashboard';
+import AssetsModule from '@/frontend/components/assets/AssetsModule';
+import { assetCaps } from '@/frontend/lib/assets/roles';
 import EscalationHierarchyBuilder from '@/frontend/components/escalation/EscalationHierarchyBuilder';
 import PPMModule from '@/frontend/components/ppm/PPMModule';
 import ProcurementModule from '@/frontend/components/procurement/ProcurementModule';
@@ -51,7 +53,7 @@ import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
 import AITicketsDashboard from '@/frontend/components/ai-tickets/AITicketsDashboard';
 
 // Types
-type Tab = 'overview' | 'requests' | 'guest_experience' | 'reports' | 'users' | 'visitors' | 'rooms' | 'diesel' | 'diesel_analytics' | 'electricity' | 'electricity_analytics' | 'cafeteria' | 'settings' | 'profile' | 'units' | 'vendor_revenue' | 'stock' | 'checklist' | 'escalation' | 'ppm' | 'procurement' | 'roster' | 'water' | 'water_analytics' | 'ai_tickets';
+type Tab = 'overview' | 'requests' | 'guest_experience' | 'reports' | 'users' | 'visitors' | 'rooms' | 'diesel' | 'diesel_analytics' | 'electricity' | 'electricity_analytics' | 'cafeteria' | 'settings' | 'profile' | 'units' | 'vendor_revenue' | 'stock' | 'checklist' | 'escalation' | 'ppm' | 'procurement' | 'roster' | 'water' | 'water_analytics' | 'ai_tickets' | 'assets';
 
 interface Property {
     id: string;
@@ -434,7 +436,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
     // Restore tab from URL
     useEffect(() => {
         const tab = searchParams.get('tab');
-        if (tab && ['overview', 'requests', 'reports', 'users', 'visitors', 'rooms', 'diesel', 'diesel_analytics', 'electricity', 'electricity_analytics', 'cafeteria', 'settings', 'profile', 'units', 'vendor_revenue', 'stock', 'checklist', 'roster', 'water', 'water_analytics', 'facility_qr', 'ai_tickets'].includes(tab)) {
+        if (tab && ['overview', 'requests', 'reports', 'users', 'visitors', 'rooms', 'diesel', 'diesel_analytics', 'electricity', 'electricity_analytics', 'cafeteria', 'settings', 'profile', 'units', 'vendor_revenue', 'stock', 'checklist', 'roster', 'water', 'water_analytics', 'facility_qr', 'ai_tickets', 'assets'].includes(tab)) {
             setActiveTab(tab as Tab);
         }
         const filter = searchParams.get('filter');
@@ -836,6 +838,16 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                                 PPM
                             </button>
                             <button
+                                onClick={() => handleTabChange('assets')}
+                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${openTab === 'assets'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                    }`}
+                            >
+                                <QrCode className="w-4 h-4" />
+                                Assets
+                            </button>
+                            <button
                                 onClick={() => handleTabChange('escalation')}
                                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${openTab === 'escalation'
                                     ? 'bg-primary text-text-inverse shadow-sm'
@@ -1082,6 +1094,14 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                             <PPMModule
                                 organizationId={property.organization_id}
                                 propertyId={property.id}
+                            />
+                        )}
+                        {openTab === 'assets' && property && (
+                            <AssetsModule
+                                organizationId={property.organization_id}
+                                propertyId={property.id}
+                                propertyName={property.name}
+                                canManage={assetCaps(membership as any).canManage}
                             />
                         )}
                         {openTab === 'escalation' && property && (

@@ -37,6 +37,8 @@ import PropertyFeaturesModal from './PropertyFeaturesModal';
 import EscalationHierarchyBuilder from '@/frontend/components/escalation/EscalationHierarchyBuilder';
 import AdminRoomManager from '@/frontend/components/meeting-rooms/AdminRoomManager';
 import PPMModule from '@/frontend/components/ppm/PPMModule';
+import AssetsModule from '@/frontend/components/assets/AssetsModule';
+import { assetCaps } from '@/frontend/lib/assets/roles';
 import DocumentBank from '@/frontend/components/audit/DocumentBank';
 import VendorManagement from '@/frontend/components/vendors/VendorManagement';
 import { UniversalSearch } from '@/frontend/components/shared/UniversalSearch';
@@ -59,7 +61,7 @@ import AgentPulse from '@/frontend/components/agents/AgentPulse';
 import type { ModuleKey } from '@/frontend/types/agentRuntime';
 
 // Types
-type Tab = 'overview' | 'properties' | 'requests' | 'reports' | 'visitors' | 'settings' | 'profile' | 'revenue' | 'users' | 'diesel_logger' | 'diesel' | 'electricity_logger' | 'electricity' | 'stock_reports' | 'checklist' | 'super_tenants' | 'escalation' | 'rooms' | 'ppm' | 'vendors' | 'procurement' | 'roster' | 'water_logger' | 'water' | 'guest_experience' | 'ai_tickets' | 'org_progress' | 'org_efficiency' | 'agent_console' | 'document_bank';
+type Tab = 'overview' | 'properties' | 'requests' | 'reports' | 'visitors' | 'settings' | 'profile' | 'revenue' | 'users' | 'diesel_logger' | 'diesel' | 'electricity_logger' | 'electricity' | 'stock_reports' | 'checklist' | 'super_tenants' | 'escalation' | 'rooms' | 'ppm' | 'vendors' | 'procurement' | 'roster' | 'water_logger' | 'water' | 'guest_experience' | 'ai_tickets' | 'org_progress' | 'org_efficiency' | 'agent_console' | 'document_bank' | 'assets';
 
 /**
  * AGENT PULSE MOUNTS — tab -> canonical module slug.
@@ -513,7 +515,7 @@ const OrgAdminDashboard = () => {
     // Restore tab from URL
     useEffect(() => {
         const tab = searchParams.get('tab');
-        if (tab && ['overview', 'properties', 'requests', 'reports', 'visitors', 'settings', 'profile', 'revenue', 'users', 'diesel_logger', 'diesel', 'electricity_logger', 'electricity', 'stock_reports', 'checklist', 'super_tenants', 'escalation', 'rooms', 'ppm', 'vendors', 'procurement', 'roster', 'water_logger', 'water', 'guest_experience', 'agent_console', 'org_progress', 'org_efficiency'].includes(tab)) {
+        if (tab && ['overview', 'properties', 'requests', 'reports', 'visitors', 'settings', 'profile', 'revenue', 'users', 'diesel_logger', 'diesel', 'electricity_logger', 'electricity', 'stock_reports', 'checklist', 'super_tenants', 'escalation', 'rooms', 'ppm', 'vendors', 'procurement', 'roster', 'water_logger', 'water', 'guest_experience', 'agent_console', 'org_progress', 'org_efficiency', 'assets'].includes(tab)) {
             if (isOpsSuperAdmin && (tab === 'org_progress' || tab === 'org_efficiency' || tab === 'agent_console')) {
                 setActiveTab('overview');
             } else {
@@ -1385,6 +1387,16 @@ const OrgAdminDashboard = () => {
                                 <CalendarDays className="w-4 h-4" />
                                 PPM
                             </button>
+                            <button
+                                onClick={() => handleTabChange('assets')}
+                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'assets'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                    }`}
+                            >
+                                <Wrench className="w-4 h-4" />
+                                Assets
+                            </button>
                             {/* The vault is reachable at PPM > Digital Audit > Document Bank —
                                 three stateful clicks with nothing on the way naming "documents".
                                 This is a direct entry to the same component, not a second copy. */}
@@ -1925,6 +1937,18 @@ const OrgAdminDashboard = () => {
                                     organizationId={org.id}
                                     propertyId={selectedPropertyId !== 'all' ? selectedPropertyId : undefined}
                                     properties={properties}
+                                />
+                            </div>
+                        )}
+
+                        {activeTab === 'assets' && org && (
+                            <div className="w-full min-h-screen bg-white">
+                                <AssetsModule
+                                    organizationId={org.id}
+                                    propertyId={selectedPropertyId !== 'all' ? selectedPropertyId : undefined}
+                                    propertyName={selectedPropertyId !== 'all' ? properties.find(p => p.id === selectedPropertyId)?.name : undefined}
+                                    properties={properties}
+                                    canManage={assetCaps(membership as any).canManage}
                                 />
                             </div>
                         )}

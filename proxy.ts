@@ -48,6 +48,9 @@ export async function proxy(request: NextRequest) {
         '/reset-password',
         '/join',
         '/q',          // Public QR code entry points
+        '/a/',         // Public asset QR scan page. Keep the trailing slash: the check is
+                       // startsWith, and a bare '/a' would also unlock /<orgId>/... for any
+                       // org id beginning with "a".
         '/api',        // API routes handle their own auth
         '/kiosk',
         '/onboard',    // Public client onboarding QR route

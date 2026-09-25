@@ -45,6 +45,10 @@
       "schedule": "0 4 * * *"
     },
     {
+      "path": "/api/cron/asset-alerts",
+      "schedule": "15 4 * * *"
+    },
+    {
       "path": "/api/cron/generate-sop-slots",
       "schedule": "*/5 * * * *"
     },

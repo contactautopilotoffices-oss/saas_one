@@ -8,6 +8,7 @@ export type QRScanResult =
     | { type: 'stock'; itemId: string; raw: string }
     | { type: 'barcode'; value: string }
     | { type: 'checklist'; templateId: string; raw: string }
+    | { type: 'asset'; token: string; raw: string }
     | { type: 'unknown'; raw: string };
 
 interface UniversalQRScannerModalProps {
@@ -19,8 +20,14 @@ interface UniversalQRScannerModalProps {
 type ScanMode = 'camera' | 'gallery' | 'manual';
 
 function detectQRType(decoded: string): QRScanResult {
+    // Asset QR labels encode a URL: {origin}/a/<token>. Also accept a bare token
+    // or a JSON payload, so an asset label survives being re-typed manually.
+    const urlMatch = decoded.match(/\/a\/([A-Za-z0-9_-]{8,64})(?:[?#]|$)/);
+    if (urlMatch) return { type: 'asset', token: urlMatch[1], raw: decoded };
+
     try {
         const parsed = JSON.parse(decoded);
+        if (parsed?.asset_token) return { type: 'asset', token: parsed.asset_token, raw: decoded };
         if (parsed?.item_id) return { type: 'stock', itemId: parsed.item_id, raw: decoded };
         if (parsed?.template_id) return { type: 'checklist', templateId: parsed.template_id, raw: decoded };
         if (parsed?.type === 'checklist') {
@@ -93,6 +100,7 @@ export default function UniversalQRScannerModal({
         const result = detectQRType(decoded);
         const label =
             result.type === 'stock' ? 'Stock item detected — opening...' :
+            result.type === 'asset' ? 'Asset detected — opening...' :
             result.type === 'barcode' ? `Barcode: ${result.value}` :
             'QR scanned — opening...';
 
