@@ -5,10 +5,11 @@ import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from '
 import {
     LayoutDashboard, Building2, Users, UserPlus, Ticket, Settings, UserCircle, Activity,
     Search, Plus, Filter, LogOut, ChevronRight, MapPin, Edit, Trash2, X, Check, UsersRound,
-    Coffee, IndianRupee, FileDown, ChevronDown, Fuel, Menu, Upload, FileBarChart, Zap, Package, ClipboardCheck, Scan, Key,
+    Coffee, IndianRupee, PhoneCall, FileDown, ChevronDown, Fuel, Menu, Upload, FileBarChart, Zap, Package, ClipboardCheck, Scan, Key,
     AlertCircle, CheckCircle2, Clock, GitBranch, DoorOpen, MessageCircle, Send, Loader2, CalendarDays, Calendar, Wrench, ShoppingCart, Sun, Moon, Droplets, TrendingUp, Smartphone,
     MessageSquarePlus, Bot, Gauge, Cpu, FolderLock, Layers, ShieldCheck
 } from 'lucide-react';
+import SatejConsole from '@/frontend/components/satej/SatejConsole';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
 import { useAuth } from '@/frontend/context/AuthContext';
@@ -1402,6 +1403,16 @@ const OrgAdminDashboard = () => {
                                 Payment Tracker
                             </button>
                             <button
+                                onClick={() => handleTabChange('procurement', 'all', undefined, undefined, 'vendor-discovery')}
+                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'procurement' && searchParams.get('procurement_tab') === 'vendor-discovery'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                    }`}
+                            >
+                                <PhoneCall className="w-4 h-4" />
+                                Vendor Discovery (Satej)
+                            </button>
+                            <button
                                 onClick={() => handleTabChange('checklist')}
                                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'checklist'
                                     ? 'bg-primary text-text-inverse shadow-sm'
@@ -1714,7 +1725,9 @@ const OrgAdminDashboard = () => {
                         {activeTab === 'procurement' && org && (
                             <>
                                 <AgentPulse orgId={org.id} module={AGENT_PULSE_BY_TAB.procurement} consoleTab="agent_console" className="mb-3" />
-                                <ProcurementModule key="procurement-admin" orgId={org.id} isAdmin={true} properties={properties} />
+                                {searchParams.get('procurement_tab') === 'vendor-discovery'
+                                    ? <SatejConsole orgId={org.id} />
+                                    : <ProcurementModule key="procurement-admin" orgId={org.id} isAdmin={true} properties={properties} />}
                             </>
                         )}
                         {activeTab === 'roster' && selectedPropertyId === 'all' && (

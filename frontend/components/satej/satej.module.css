@@ -1,0 +1,66 @@
+/*
+ * Satej console. Every colour is an app token from app/globals.css, so the page
+ * follows the app's light and dark themes (.dark on <html>) instead of the OS —
+ * the package's own palette keyed off prefers-color-scheme and would have put a
+ * dark card on a light page.
+ */
+
+.page { --s-card: var(--surface); --s-sunken: var(--surface-elevated); --s-ink: var(--foreground); --s-muted: var(--text-secondary);
+  --s-line: var(--border); --s-accent: var(--primary); --s-good: var(--success); --s-warn: var(--warning); --s-bad: var(--error); --s-info: var(--info);
+  color: var(--s-ink); padding: 24px; font-size: 14px; }
+.page h1 { margin: 0 0 4px; font-size: 22px; font-weight: 700; }
+.page h2 { margin: 6px 0 0; font-size: 18px; font-weight: 700; }
+.page h3 { margin: 0 0 10px; font-size: 15px; font-weight: 700; }
+.header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+.muted { color: var(--s-muted); font-size: 12px; margin: 0; }
+.layout { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 16px; }
+@media (max-width: 900px) { .layout { grid-template-columns: 1fr; } .page { padding: 16px; } }
+.list { display: flex; flex-direction: column; gap: 8px; max-height: calc(100vh - 180px); overflow: auto; }
+.item { text-align: left; background: var(--s-card); border: 1px solid var(--s-line); border-radius: 10px; padding: 10px 12px; cursor: pointer; color: inherit; font: inherit; }
+.itemActive { border-color: var(--s-accent); box-shadow: 0 0 0 1px var(--s-accent); }
+.itemTop { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.itemTitle { font-weight: 600; margin: 4px 0 2px; }
+.code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--s-muted); }
+.chip { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 99px; border: 1px solid var(--s-line); margin-left: 4px; white-space: nowrap; }
+.good { color: var(--s-good); border-color: currentColor; }
+.warn { color: var(--s-warn); border-color: currentColor; }
+.bad { color: var(--s-bad); border-color: currentColor; }
+.info { color: var(--s-info); border-color: currentColor; }
+.detailHead { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.card { background: var(--s-card); border: 1px solid var(--s-line); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; }
+.kv { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 6px 12px; }
+.kv span { color: var(--s-muted); }
+.steps { display: flex; gap: 6px; list-style: none; padding: 0; margin: 0 0 12px; flex-wrap: wrap; }
+.steps li { flex: 1; min-width: 80px; text-align: center; padding: 6px; border-radius: 8px; border: 1px solid var(--s-line); color: var(--s-muted); font-size: 12px; }
+.steps li.done { background: var(--s-accent); color: #fff; border-color: var(--s-accent); }
+.steps li.now { border-color: var(--s-accent); color: var(--s-accent); font-weight: 600; }
+.tableWrap { overflow-x: auto; }
+.table { width: 100%; border-collapse: collapse; }
+.table th { text-align: left; font-size: 12px; color: var(--s-muted); font-weight: 600; border-bottom: 1px solid var(--s-line); padding: 6px 8px; }
+.table td { border-bottom: 1px solid var(--s-line); padding: 8px; vertical-align: top; }
+.primary, .ghost { font: inherit; border-radius: 8px; padding: 8px 14px; cursor: pointer; text-decoration: none; display: inline-block; }
+.primary { background: var(--s-accent); color: #fff; border: 1px solid var(--s-accent); }
+.primary:disabled, .ghost:disabled { opacity: 0.6; cursor: default; }
+.ghost { background: transparent; color: var(--s-ink); border: 1px solid var(--s-line); }
+.link { background: none; border: none; color: var(--s-accent); cursor: pointer; padding: 0; font: inherit; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-start; justify-content: flex-end; }
+.errorBox { background: color-mix(in srgb, var(--s-bad) 12%, transparent); color: var(--s-bad); padding: 8px 12px; border-radius: 8px; margin: 8px 0; }
+.noteBox { background: color-mix(in srgb, var(--s-warn) 12%, transparent); color: var(--s-ink); padding: 8px 12px; border-radius: 8px; margin: 8px 0; }
+.modalBack { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45); display: flex; align-items: flex-start; justify-content: center; padding: 32px 16px; overflow: auto; z-index: 50; }
+.modal { background: var(--s-card); color: var(--s-ink); border-radius: 12px; padding: 20px; width: min(760px, 100%); }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; margin: 12px 0; }
+@media (max-width: 640px) { .grid { grid-template-columns: 1fr; } }
+.grid label, .card label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--s-muted); margin-bottom: 8px; }
+.full { grid-column: 1 / -1; }
+.page input, .page select, .page textarea, .modal input, .modal select, .modal textarea { font: inherit; color: var(--s-ink); background: var(--s-sunken); border: 1px solid var(--s-line); border-radius: 8px; padding: 8px; }
+.log { list-style: none; padding: 0; margin: 0; max-height: 260px; overflow: auto; }
+.log li { padding: 4px 0; border-bottom: 1px dashed var(--s-line); }
+.callBox { background: var(--s-sunken); border-radius: 8px; padding: 10px 12px; }
+.parts { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin: 8px 0; }
+.transcript { white-space: pre-wrap; font-size: 12px; max-height: 320px; overflow: auto; background: var(--s-card); padding: 8px; border-radius: 8px; }
+.summary { white-space: pre-wrap; font-size: 13px; max-height: 360px; overflow: auto; background: var(--s-sunken); padding: 10px 12px; border-radius: 8px; margin: 0 0 8px; }
+.audio { width: 100%; margin: 6px 0; }
+.setupList { list-style: none; padding: 0; margin: 0; display: grid; gap: 4px; }
+.tabs { display: flex; gap: 4px; margin: 0 0 14px; border-bottom: 1px solid var(--s-line); }
+.tab { font: inherit; background: none; border: none; border-bottom: 2px solid transparent; padding: 8px 12px; color: var(--s-muted); cursor: pointer; margin-bottom: -1px; }
+.tabActive { color: var(--s-ink); border-bottom-color: var(--s-accent); font-weight: 600; }

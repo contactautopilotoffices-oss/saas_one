@@ -1448,3 +1448,70 @@ Thank you for ensuring prompt maintenance service!
 
 
 
+
+---
+
+## 11. Satej — Vendor Discovery Agent
+
+Sent by `backend/lib/satej/clients/whatsapp.ts` through AiSensy. The full ranked
+summary never goes in a template (templates cannot carry new lines); the button
+opens the requirement on the Satej page, where the summary has a copy button.
+Names are configurable with `SATEJ_WA_SUMMARY_TEMPLATE` / `SATEJ_WA_INPUT_TEMPLATE`.
+
+### Template 27: `satej_input_needed_v1` (Satej needs an answer or an approval)
+- **Template Name:** `satej_input_needed_v1`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Text` &rarr; `Vendor discovery: your input`
+- **Body:**
+```text
+Hello {{1}},
+
+Satej needs your input on {{2}} (ref {{3}}):
+
+{{4}}
+
+Open the requirement to continue.
+```
+- **Footer:** `AutoPilot Procurement`
+- **Button Type:** `Call to Action (Dynamic URL)`
+  - **Button Text:** `Open requirement`
+  - **URL Type:** `Dynamic` &rarr; `https://fms-dev-saas-one.vercel.app/{{5}}`
+- **Sample Values:**
+  - `{{1}}`: `Satej`
+  - `{{2}}`: `Gypsum false ceiling, Lower Parel office`
+  - `{{3}}`: `REQ-260928-4821`
+  - `{{4}}`: `12 vendors are ready to call. Please check the list and approve the calls.`
+  - `{{5}}` *(Dynamic URL Path)*: `211e1330-ad83-446d-941f-dcea48396798/satej?req=REQ-260928-4821`
+
+### Template 28: `satej_vendor_summary_v1` (Ranked shortlist is ready)
+- **Template Name:** `satej_vendor_summary_v1`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Text` &rarr; `Vendor shortlist ready`
+- **Body:**
+```text
+Hello {{1}},
+
+Satej has finished vendor discovery for {{2}} (ref {{3}}).
+
+Vendors called: {{4}}
+Qualified: {{5}}
+Top pick: {{6}}
+Last call: {{7}}
+
+The ranked list, call recordings and transcripts are on the Satej page.
+```
+- **Footer:** `AutoPilot Procurement`
+- **Button Type:** `Call to Action (Dynamic URL)`
+  - **Button Text:** `Open shortlist`
+  - **URL Type:** `Dynamic` &rarr; `https://fms-dev-saas-one.vercel.app/{{8}}`
+- **Sample Values:**
+  - `{{1}}`: `Satej`
+  - `{{2}}`: `Gypsum false ceiling, Lower Parel office`
+  - `{{3}}`: `REQ-260928-4821`
+  - `{{4}}`: `6`
+  - `{{5}}`: `3`
+  - `{{6}}`: `Shree Ganesh Interiors (96/100)`
+  - `{{7}}`: `28 Sept 2026, 05:39 pm`
+  - `{{8}}` *(Dynamic URL Path)*: `211e1330-ad83-446d-941f-dcea48396798/satej?req=REQ-260928-4821`

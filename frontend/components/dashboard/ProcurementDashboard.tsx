@@ -27,7 +27,8 @@ import ProcurementVendorTicketsTab from '../procurement/ProcurementVendorTickets
 import { ProcurementSettingsTab } from '../procurement/ProcurementSettingsTab';
 import PaymentUrgencyTrackerTab from '../procurement/payment-urgency/PaymentUrgencyTrackerTab';
 import { INITIAL_TEST_TASKS } from '../procurement/payment-urgency/mockData';
-import { Layers, DollarSign } from 'lucide-react';
+import { Layers, DollarSign, PhoneCall } from 'lucide-react';
+import SatejConsole from '@/frontend/components/satej/SatejConsole';
 
 // --- Types ---
 interface MaterialRequest {
@@ -62,7 +63,7 @@ interface MaterialRequest {
     };
 }
 
-type Tab = 'overview' | 'urgency-tracker' | 'task-sheet' | 'requests' | 'vendor_tickets' | 'monthly-requisitions' | 'monthly-feedback' | 'site-pricing' | 'history' | 'manage-items' | 'po-generator' | 'settings' | 'profile' | 'grievance';
+type Tab = 'overview' | 'vendor-discovery' | 'urgency-tracker' | 'task-sheet' | 'requests' | 'vendor_tickets' | 'monthly-requisitions' | 'monthly-feedback' | 'site-pricing' | 'history' | 'manage-items' | 'po-generator' | 'settings' | 'profile' | 'grievance';
 
 export default function ProcurementDashboard() {
     const supabase = createClient();
@@ -78,7 +79,7 @@ export default function ProcurementDashboard() {
 
     useEffect(() => {
         const tabParam = searchParams?.get('tab') as Tab | null;
-        const linkableTabs = ['overview', 'urgency-tracker', 'task-sheet', 'requests', 'vendor_tickets', 'monthly-requisitions', 'monthly-feedback', 'history', 'manage-items', 'po-generator', 'settings', 'profile', 'grievance'];
+        const linkableTabs = ['overview', 'vendor-discovery', 'urgency-tracker', 'task-sheet', 'requests', 'vendor_tickets', 'monthly-requisitions', 'monthly-feedback', 'history', 'manage-items', 'po-generator', 'settings', 'profile', 'grievance'];
         if (SHOW_LEGACY_PER_PROPERTY_CONTROLS) linkableTabs.push('site-pricing');
         if (tabParam && linkableTabs.includes(tabParam)) {
             setActiveTab(tabParam);
@@ -595,6 +596,11 @@ export default function ProcurementDashboard() {
                                         label: 'Vendor Requests',
                                         count: sidebarCounts.vendorTickets
                                     },
+                                    {
+                                        id: 'vendor-discovery',
+                                        icon: PhoneCall,
+                                        label: 'Vendor Discovery (Satej)'
+                                    },
                                     { 
                                         id: 'monthly-requisitions', 
                                         icon: FileSpreadsheet, 
@@ -727,6 +733,7 @@ export default function ProcurementDashboard() {
                             </h1>
                             <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">
                                 {activeTab === 'overview' ? 'Operational Overview' : 
+                                 activeTab === 'vendor-discovery' ? 'Satej finds, calls and ranks vendors' :
                                  activeTab === 'manage-items' ? `Catalog · ${stats.total} Items` :
                                  activeTab === 'po-generator' ? 'AI Purchase Order Processor' :
                                  `Awaiting Fulfillment · ${stats.pending} Items`}
@@ -870,6 +877,11 @@ export default function ProcurementDashboard() {
                                 propertyId={propertyFilter === 'all' ? '' : propertyFilter}
                                 isProcurementUser={isProcurementRole}
                             />
+                        )}
+                        {activeTab === 'vendor-discovery' && (
+                            user?.user_metadata?.organization_id
+                                ? <SatejConsole orgId={user.user_metadata.organization_id} />
+                                : <p className="py-8 text-sm text-slate-500">Your account has no organisation, so Satej has nothing to work in.</p>
                         )}
                         {activeTab === 'po-generator' && (
                             <div className="py-8">

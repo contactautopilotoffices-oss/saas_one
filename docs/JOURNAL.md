@@ -1,3 +1,32 @@
+## 2026-09-28 — Saas.one: Satej, the vendor discovery agent, and a voice caller that no longer sounds scripted
+
+**Procurement can now hand a purchase requirement to an agent that finds local vendors, has them phoned, ranks them and sends the shortlist on WhatsApp — and the Agent Console now saves and shows an agent's workflow, names its failures, and knows Bolna calls and WhatsApp messages as tools.**
+
+- **Why:** Finding vendors for a new requirement means a purchase executive searching the web and phoning businesses one by one. The founder wanted the procurement-agent plan (the "Procurement Agent Plan" document) built inside FMS as an agent called Satej, using what FMS already has, with the Bolna voice agent wired in. Two Bolna problems were raised along the way: how a spreadsheet of vendors reaches the voice agent column by column, and a voice that sounded like a machine to the vendors it called. Separately, the Agent Console was reporting builds as done while showing no workflow, with no explanation when something failed.
+- **Structural decisions:**
+  - Satej reuses FMS's own pieces instead of the plan's new ones: the council language-model connection (Engy) instead of a second one, the existing Supabase database instead of a separate database connection, AiSensy for WhatsApp instead of a new direct WhatsApp account, FMS login instead of a shared password, and the Agent Console's run recorder so every stage it runs is traced.
+  - WhatsApp through AiSensy can only send pre-approved templates, so the team gets two short messages (a question or an approval is waiting; the shortlist is ready) with a button to the full ranked list in FMS. The plan's WhatsApp command channel (NEW, STATUS, ANSWER by chat) was left out for now; everything it did is on the Satej page.
+  - A person approves every call list before anyone is phoned. The plan made this optional; calls reach real businesses and cost money, so it is on by default.
+  - The existing Bolna agent **Meera** is the voice, as the founder chose, and she keeps her name. Her prompt, voice and settings now live in the codebase and are pushed to Bolna by one script, so the version that calls vendors is always the reviewed one.
+  - Vendor pages are read by a faster, cheaper model than the rest. Measured today: the default model took 17 seconds per page and failed on a long directory page; the faster one took 3–25 seconds and found more vendors. The whole search has to fit inside one five-minute server run.
+- **What works now:**
+  - Procurement users have **Vendor Discovery (Satej)** in their sidebar, and org admins have it under Procurement. They raise a requirement; Satej asks a question only if the calls would be useless without the answer, searches the web, drops duplicates and irrelevant businesses, skips anyone called in the last 30 days, and waits for approval.
+  - After approval, Meera phones each vendor inside calling hours (10:00–18:30, Monday to Saturday). The spreadsheet Satej sends has exactly the column names Meera's prompt uses, so each call is filled with its own vendor and requirement. That was the "how do we map the columns" problem, and the sync script now refuses a prompt that uses any name the spreadsheet does not supply.
+  - Meera was made to sound like a person. Her real calls showed why she did not: she numbered her questions, used textbook Hindi, used a masculine verb form for herself, said "Wonderful", and would not tell a vendor what the job was. Her voice also changed to a different speaker when a vendor spoke English, announced "Let me connect you with who speaks English", and ended calls with "The call will now disconnect". All of that is fixed, and she has a quiet office sound behind her. She still answers honestly if a vendor asks directly whether she is an AI. Her old setup is saved in the repository.
+  - Every call's recording and transcript, the score out of 100 with the reason for each point, and a copyable WhatsApp summary are on the Satej page. A **Run log** tab shows each step Satej took, how long it took, what it cost and what failed.
+  - In the Agent Console: the workflow is saved with the agent and shown on its Configure tab. A model failure is named in red instead of being passed off as a plan. The flow builder opens full screen. Bolna voice calls and the WhatsApp webhook are tools an agent's flow can use. The root-cause write-up is `docs/agents/RCA-2026-09-28-agent-console-build.md`.
+  - Tested: the whole Satej flow end to end with simulated search, calls and messages; the real Engy, Exa and planner connections once each; every new endpoint's security locally. **Not tested:** a real phone call, and the new screens while signed in.
+- **Left undone:**
+  - Satej's database tables are written as a migration (`20260928000001_satej_vendor_discovery.sql`) but not applied, per standing instruction. Until it runs, Satej says so on screen and its worker reports it every minute.
+  - Two settings must be added in Vercel before deploying (`SATEJ_BOLNA_AGENT_ID`, `SATEJ_BOLNA_WEBHOOK_TOKEN`), and two WhatsApp templates must be created in AiSensy and approved by Meta. The exact text is in `WHATSAPP_META_TEMPLATES.md`, section 11.
+  - Meera's webhook already points at the hosted site, where Satej is not deployed yet. Until it is, Bolna's call results for Meera get no answer there; Satej's five-minute catch-up covers any it misses once live.
+  - No automatic grader checks the quality of Satej's call analyses yet. The plan is to hand-check the first 20 against their recordings first.
+  - Three security gaps found in the Agent Console and Ira's Bolna webhook were not fixed here; they were started as separate tasks.
+- **Open questions for the founder:**
+  - Who is the first real test call to? It needs a team member's phone number, posing as a vendor, before any real vendor is dialled.
+  - Should Satej call vendors in every city FMS operates in, or start with Mumbai? Web coverage in smaller cities has not been checked.
+  - The company brief Meera uses to answer vendors' questions about Autopilot is still the plan's draft. Who signs it off?
+
 ## 2026-09-26 — Saas.one: Everything we learned, written down as a reusable engineering playbook
 
 **The whole of what FMS taught us — schema, tenancy, security, dark mode, crons, email, agents — is now a portable skill stored outside this repo, and the exercise turned up several live security problems that need action today.**
