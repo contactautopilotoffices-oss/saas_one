@@ -61,11 +61,15 @@ a fixed rulebook, and sends the ranked shortlist to the purchase team on WhatsAp
 
 ## Go-live, in order
 
-1. Apply `supabase/migrations/20260928000001_satej_vendor_discovery.sql`.
-2. In Vercel, add `SATEJ_BOLNA_AGENT_ID` and `SATEJ_BOLNA_WEBHOOK_TOKEN` (same values as the local `.env`), and check that `EXA`, `BOLNA_API_KEY`, `COUNCIL_PROVIDER` / `COUNCIL_BASE_URL` / `COUNCIL_API_KEY` / `COUNCIL_MODEL`, `AISENSY_API_KEY` and `CRON_SECRET` are set there too (they are in the local `.env`; Vercel was not checked).
+1. Apply `supabase/migrations/20260928000001_satej_vendor_discovery.sql` (applied 2026-10-03) and `supabase/migrations/20261003000001_satej_chat.sql` (the chat panel).
+2. In Vercel, add `SATEJ_BOLNA_AGENT_ID`, `SATEJ_BOLNA_WEBHOOK_TOKEN` and `SATEJ_ELEVENLABS_AGENT_ID` (same values as the local `.env`), and `ELEVENLABS_API_KEY` if it is not there; and check that `EXA`, `BOLNA_API_KEY`, `COUNCIL_PROVIDER` / `COUNCIL_BASE_URL` / `COUNCIL_API_KEY` / `COUNCIL_MODEL`, `AISENSY_API_KEY` and `CRON_SECRET` are set there too (they are in the local `.env`; Vercel was not checked).
 3. In AiSensy, create the two templates in `WHATSAPP_META_TEMPLATES.md` (section "Satej") and wait for Meta approval.
 4. Deploy. The Satej worker cron (every minute) comes with `vercel.json`.
 5. Open Vendor Discovery (Satej): the setup line must say **Ready**. Anything else names what is missing.
 6. First real run: 3 vendors, approve the list by hand, listen to every recording.
+
+## Talking to Satej
+
+Each requirement has a chat panel (Satej answers from that requirement's record and proposes changes; a person presses Apply) and a **Call** button — a voice call on ElevenLabs Conversational AI, agent "Satej (FMS vendor discovery)", voice Amay (Indian English). The agent is set up by `npx tsx scripts/satej-sync-elevenlabs.ts --apply`; every call overrides its prompt with the requirement's live record. Call minutes land in the chat, and any change asked for on the call arrives as a proposal to apply. Nothing said in chat or on a call changes a requirement by itself.
 
 Meera's prompt, voice and webhook are changed only through `npx tsx scripts/satej-sync-bolna.ts --apply`. Editing her in the Bolna dashboard works, but the next sync puts the repo's version back.

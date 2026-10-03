@@ -44,6 +44,7 @@ import {
     FINAL_CALL_STATUSES,
     type CallAnalysis,
     type CallRecord,
+    type LiveProgress,
     type Requirement,
     type RequirementInput,
     type RequirementStatus,
@@ -78,6 +79,24 @@ function log(r: Requirement, msg: string) {
     r.events.push({ at: nowIso(), msg });
     if (r.events.length > 200) r.events = r.events.slice(-200);
 }
+
+/**
+ * The live board's snapshot. Saved at most every 1.5 s while a stage runs, so
+ * the page (polling every few seconds) watches Satej search, read and pick
+ * vendors as it happens instead of seeing only the end result.
+ */
+const lastLiveSave = new Map<string, number>();
+async function setLive(r: Requirement, patch: Partial<LiveProgress> & { stage?: LiveProgress['stage'] }, force = false) {
+    r.live = { ...(r.live ?? { stage: patch.stage ?? 'structuring', detail: '' }), ...patch, updatedAt: nowIso() } as LiveProgress;
+    const last = lastLiveSave.get(r.id) ?? 0;
+    if (!force && Date.now() - last < 1500) return;
+    lastLiveSave.set(r.id, Date.now());
+    await getRepo().saveRequirement(r).catch(() => undefined); // progress is a nicety; never fail a stage over it
+}
+
+const hostOf = (url: string) => {
+    try { return new URL(url).host.replace(/^www\./, ''); } catch { return url; }
+};
 
 // ------------------------------------------------------------------ kill switch
 
@@ -236,6 +255,7 @@ function formForLlm(i: RequirementInput) {
 const strings = (x: unknown): string[] => (Array.isArray(x) ? x.map(String).map((s) => s.trim()).filter(Boolean) : []);
 
 async function structure(r: Requirement, step: StepFn) {
+    await setLive(r, { stage: 'structuring', detail: 'Reading your requirement and writing the brief' }, true);
     const s = await step('Structuring the requirement into a brief', 'llm');
     const raw = await chatJSON<StructuredBrief>({
         task: 'structure',
@@ -255,6 +275,7 @@ async function structure(r: Requirement, step: StepFn) {
         locationArea: String(raw.locationArea || r.input.locationArea || ''),
     };
     r.brief = brief;
+    r.live = null;
     await s.ok({ detail: { questions: brief.questions.length, queries: brief.searchQueries.length } });
 
     if (brief.questions.length) {
@@ -341,13 +362,18 @@ async function discover(r: Requirement, step: StepFn) {
 
     const queries = roundQueries(b, r.round);
     const s1 = await step(`Searching the web for vendors (${queries.length} queries)`, 'tool', { queries });
+    const liveQueries = queries.map((text) => ({ text, done: false, pages: 0 }));
+    await setLive(r, { stage: 'searching', detail: `Searching the web: ${queries.length} queries`, queries: liveQueries, spotted: [], pagesRead: 0, pagesTotal: 0 }, true);
     const searchErrors: string[] = [];
-    const pageLists = await mapLimit(queries, 3, (q) =>
-        exaSearch(q).catch((e: unknown) => {
+    const pageLists = await mapLimit(queries, 3, async (q, i) => {
+        const found = await exaSearch(q).catch((e: unknown) => {
             searchErrors.push(e instanceof Error ? e.message : String(e));
             return [] as ExaPage[];
-        }),
-    );
+        });
+        liveQueries[i] = { text: q, done: true, pages: found.length };
+        await setLive(r, { queries: [...liveQueries] });
+        return found;
+    });
     const seen = new Set<string>();
     // At most MAX_PAGES are read: each is one model call, and the whole stage has to fit in one function run.
     const pages = pageLists.flat().filter((p) => p.url && p.text && !seen.has(p.url) && seen.add(p.url)).slice(0, MAX_PAGES);
@@ -361,6 +387,9 @@ async function discover(r: Requirement, step: StepFn) {
     const briefLine = `${b.itemSummary}. Quantity: ${b.quantityText}. Scope: ${b.scopeType}. Location: ${b.locationText}. Vendor types: ${b.vendorTypes.join(', ')}.`;
     const s2 = await step(`Reading ${pages.length} pages for vendor details`, 'llm');
     const readErrors: string[] = [];
+    const spotted: NonNullable<LiveProgress['spotted']> = [];
+    let pagesRead = 0;
+    await setLive(r, { stage: 'reading', detail: `Reading ${pages.length} pages for vendors`, pagesRead: 0, pagesTotal: pages.length }, true);
     const extracted = await mapLimit(pages, 6, async (page) => {
         try {
             const out = await chatJSON<{ vendors?: Omit<PageVendor, '_url'>[] }>({
@@ -369,10 +398,19 @@ async function discover(r: Requirement, step: StepFn) {
                 user: discoveryUser(briefLine, page),
                 model: 'fast',
             });
-            return (Array.isArray(out.vendors) ? out.vendors : []).map((v): PageVendor => ({ ...v, _url: page.url }));
+            const list = (Array.isArray(out.vendors) ? out.vendors : []).map((v): PageVendor => ({ ...v, _url: page.url }));
+            for (const v of list) {
+                if (Number(v.relevance ?? 0) >= 6 && v.name) {
+                    spotted.push({ name: String(v.name), area: String(v.area || v.city || ''), source: hostOf(page.url), relevance: Number(v.relevance) });
+                }
+            }
+            return list;
         } catch (e) {
             readErrors.push(e instanceof Error ? e.message : String(e));
             return [] as PageVendor[];
+        } finally {
+            pagesRead++;
+            await setLive(r, { pagesRead, spotted: spotted.slice(-60), detail: `Read ${pagesRead} of ${pages.length} pages · ${spotted.length} possible vendors spotted` });
         }
     });
     if (pages.length && readErrors.length === pages.length) {
@@ -381,6 +419,7 @@ async function discover(r: Requirement, step: StepFn) {
     }
     await s2.ok({ detail: { vendorsOnPages: extracted.flat().length, unreadPages: readErrors.length } });
 
+    await setLive(r, { stage: 'choosing', detail: 'Removing duplicates, checking cities and phone numbers, skipping recent calls' }, true);
     const s3 = await step('Filtering, de-duplicating and choosing vendors to call', 'decide');
     const byPhone = new Map<string, Candidate>();
     const byName = new Map<string, Candidate>();
@@ -460,6 +499,7 @@ async function discover(r: Requirement, step: StepFn) {
         ...skipped.map((c) => toVendor(c, 'excluded', blocked.has(c.phone) ? 'Blocked number' : `Called in the last ${satejConfig.doNotRecallDays} days`)),
     ]);
     await s3.ok({ detail: { chosen: chosen.length, skipped: skipped.length } });
+    r.live = null;
     log(r, `Found ${chosen.length} vendors to call${skipped.length ? `, skipped ${skipped.length} (blocked or called recently)` : ''}`);
 
     if (!chosen.length) {
@@ -733,6 +773,8 @@ async function analyze(r: Requirement, step: StepFn) {
     const todo = calls.filter((c) => isFinal(c.status) && !c.score);
     const s = await step(`Analysing ${todo.length} call transcript(s)`, 'llm');
     let failed = 0;
+    let analysed = 0;
+    await setLive(r, { stage: 'analysing', detail: `Analysing ${todo.length} call(s)` }, true);
     await mapLimit(todo, 3, async (c) => {
         const v = vendors.find((x) => x.id === c.vendorId);
         const spoke = c.status === 'completed' && c.transcript.length >= 150;
@@ -776,6 +818,8 @@ async function analyze(r: Requirement, step: StepFn) {
             c.score = { total: 0, qualification: 'not_reached', parts: [] };
         }
         await repo.saveCall(c);
+        analysed++;
+        await setLive(r, { detail: `Analysed ${analysed} of ${todo.length} call(s)` });
     });
     await s.ok({ detail: { analysed: todo.length - failed, failed } });
 
@@ -785,6 +829,7 @@ async function analyze(r: Requirement, step: StepFn) {
     const s2 = await step('Ranking vendors with the fixed rulebook', 'decide');
     r.ranking = rankVendors(fresh, await repo.listVendors(r.id));
     r.status = 'ranked';
+    r.live = null;
     const qualified = r.ranking.filter((x) => x.score.qualification === 'qualified').length;
     await s2.ok({ detail: { ranked: r.ranking.length, qualified } });
     log(r, `Ranked ${r.ranking.length} vendors, ${qualified} qualified`);
@@ -828,6 +873,88 @@ async function notify(r: Requirement, step: StepFn) {
 }
 
 // ------------------------------------------------------------------ team actions
+
+/** Before calls go out an edit re-plans from scratch; after, it starts a new round. */
+const PRE_CALL: RequirementStatus[] = ['submitted', 'needs_clarification', 'structured', 'discovering', 'awaiting_call_approval', 'failed'];
+const EDITABLE_FIELDS = ['title', 'itemDescription', 'quantity', 'unit', 'scope', 'locationCity', 'locationArea', 'siteName', 'timeline', 'budgetHint', 'notes', 'vendorTarget', 'spendType', 'notifyWhatsapp'] as const;
+type EditableField = (typeof EDITABLE_FIELDS)[number];
+
+export async function editRequirement(r: Requirement, changes: Partial<Record<EditableField, unknown>>, by: string): Promise<{ newRound: boolean; changed: string[] }> {
+    if (r.status === 'cancelled') throw new Error('This requirement is cancelled');
+    const repo = getRepo();
+    if (!(await repo.tryLock(r.id, 120))) {
+        throw new Error('Satej is in the middle of a step on this requirement. Try again in a minute.');
+    }
+    try {
+        const fresh = (await repo.getRequirement(r.id))!;
+        const changed: string[] = [];
+        const input = { ...fresh.input } as Record<string, unknown>;
+        for (const key of EDITABLE_FIELDS) {
+            if (!(key in changes)) continue;
+            let next: unknown = changes[key];
+            if (key === 'vendorTarget') {
+                const n = Number(next);
+                next = Number.isFinite(n) ? Math.min(40, Math.max(3, Math.round(n))) : input.vendorTarget;
+            } else if (key === 'spendType') {
+                next = next === 'capex' ? 'capex' : 'opex';
+            } else if (key === 'notifyWhatsapp') {
+                const raw = String(next ?? '').trim();
+                const norm = raw ? normaliseIndianPhone(raw) : '';
+                if (raw && !norm) throw new Error('WhatsApp number is not a valid Indian number');
+                next = norm;
+            } else {
+                next = String(next ?? '').trim();
+            }
+            if (String(input[key] ?? '') === String(next ?? '')) continue;
+            changed.push(`${key}: "${String(input[key] ?? '') || '—'}" → "${String(next ?? '') || '—'}"`);
+            input[key] = next;
+        }
+        if (!changed.length) throw new Error('Nothing was changed');
+        const errs = validateInput(input as Partial<RequirementInput>);
+        if (errs.length) throw new Error(errs.join('; '));
+        fresh.input = input as unknown as RequirementInput;
+
+        const newRound = !PRE_CALL.includes(fresh.status);
+        if (newRound) {
+            fresh.round = (fresh.round ?? 1) + 1;
+            fresh.bolnaBatchId = undefined;
+            fresh.callsScheduledAt = undefined;
+            fresh.callsCompletedAt = undefined;
+            fresh.lastSyncAt = undefined;
+        } else {
+            // Vendors found for the old version were never called; they describe the wrong job.
+            await repo.deleteVendors(fresh.id, ['found']);
+        }
+        fresh.brief = undefined;
+        fresh.live = null;
+        fresh.error = undefined;
+        fresh.status = 'submitted';
+        log(fresh, `${by} edited the requirement (${changed.join('; ')}). `
+            + (newRound
+                ? `Calls already made stand; round ${fresh.round} searches again with the new details and skips vendors already called.`
+                : 'Satej is re-planning from the start.'));
+        await repo.saveRequirement(fresh);
+        Object.assign(r, fresh);
+        return { newRound, changed };
+    } finally {
+        await repo.unlock(r.id);
+    }
+}
+
+/** Take a vendor off the call list before the calls are approved. */
+export async function excludeVendor(r: Requirement, vendorId: string, by: string): Promise<string> {
+    if (r.status !== 'awaiting_call_approval') throw new Error('Vendors can only be removed while the call list is waiting for approval');
+    const repo = getRepo();
+    const v = (await repo.listVendors(r.id)).find((x) => x.id === vendorId);
+    if (!v) throw new Error('Vendor not found on this requirement');
+    if (v.status !== 'found') throw new Error(`${v.name} is not on the call list`);
+    v.status = 'excluded';
+    v.excludeReason = `Removed by ${by}`;
+    await repo.saveVendor(v);
+    log(r, `${by} removed ${v.name} from the call list`);
+    await repo.saveRequirement(r);
+    return v.name;
+}
 
 export async function resendSummary(r: Requirement) {
     if (!r.ranking) throw new Error('There is no ranking yet');

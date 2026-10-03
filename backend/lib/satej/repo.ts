@@ -32,6 +32,8 @@ export interface Repo {
     saveVendors(vendors: Vendor[]): Promise<void>;
     listVendors(requirementId: string): Promise<Vendor[]>;
     saveVendor(v: Vendor): Promise<void>;
+    /** Delete this requirement's vendors whose status is one of `statuses`. */
+    deleteVendors(requirementId: string, statuses: Vendor['status'][]): Promise<void>;
     /** Of `phones`, those this organisation called in the last `days` days. */
     recentlyCalledPhones(organizationId: string, phones: string[], days: number): Promise<Set<string>>;
 
@@ -99,6 +101,9 @@ export class MemoryRepo implements Repo {
     }
     async saveVendor(v: Vendor) {
         this.vendors.set(v.id, this.clone(v));
+    }
+    async deleteVendors(requirementId: string, statuses: Vendor['status'][]) {
+        for (const [id, v] of this.vendors) if (v.requirementId === requirementId && statuses.includes(v.status)) this.vendors.delete(id);
     }
     async recentlyCalledPhones(organizationId: string, phones: string[], days: number) {
         const cutoff = Date.now() - days * 86400_000;
@@ -235,6 +240,12 @@ class SupabaseRepo implements Repo {
     }
     async saveVendor(v: Vendor) {
         await this.saveVendors([v]);
+    }
+    async deleteVendors(requirementId: string, statuses: Vendor['status'][]) {
+        must(
+            await supabaseAdmin.from(VENDORS).delete().eq('requirement_id', requirementId).in('data->>status', statuses),
+            'delete vendors',
+        );
     }
     async recentlyCalledPhones(organizationId: string, phones: string[], days: number) {
         if (!phones.length) return new Set<string>();

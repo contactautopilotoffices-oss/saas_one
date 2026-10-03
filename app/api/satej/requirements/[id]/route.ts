@@ -2,7 +2,8 @@
  * One Satej requirement.
  *   GET  ?organizationId=              → requirement, vendors, calls and the copyable summary
  *   GET  ?organizationId=&format=csv   → the exact CSV Bolna receives
- *   POST { organizationId, action, answers? } → answer | approve_calls | resend_whatsapp | reanalyze | again | retry | cancel
+ *   POST { organizationId, action, answers?, changes?, vendorId? }
+ *        → answer | edit | exclude_vendor | approve_calls | resend_whatsapp | reanalyze | again | retry | cancel
  */
 
 import { after, NextRequest, NextResponse } from 'next/server';
@@ -13,6 +14,8 @@ import {
     approveCalls,
     buildCallCsv,
     cancelRequirement,
+    editRequirement,
+    excludeVendor,
     reanalyze,
     resendSummary,
     retryFailed,
@@ -59,7 +62,9 @@ export async function GET(request: NextRequest, ctx: Ctx) {
 
 export async function POST(request: NextRequest, ctx: Ctx) {
     const { id } = await ctx.params;
-    const body = (await request.json().catch(() => ({}))) as { organizationId?: string; action?: string; answers?: unknown };
+    const body = (await request.json().catch(() => ({}))) as {
+        organizationId?: string; action?: string; answers?: unknown; changes?: Record<string, unknown>; vendorId?: string;
+    };
     const caller = await requireSatejCaller(body.organizationId);
     if (caller instanceof NextResponse) return caller;
 
@@ -79,6 +84,14 @@ export async function POST(request: NextRequest, ctx: Ctx) {
                 await answerClarification(r, answers);
                 break;
             }
+            case 'edit': {
+                const { newRound } = await editRequirement(r, body.changes ?? {}, caller.name);
+                after(() => advance(r.id, { trigger: 'manual' }).then(() => undefined));
+                return NextResponse.json({ ok: true, newRound });
+            }
+            case 'exclude_vendor':
+                await excludeVendor(r, String(body.vendorId ?? ''), caller.name);
+                return NextResponse.json({ ok: true });
             case 'approve_calls':
                 await approveCalls(r, caller.name);
                 break;

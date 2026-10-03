@@ -201,8 +201,49 @@ export interface Requirement {
     notifyAttempts?: number;
     lastSyncAt?: string;
     round: number; // 1 for the first search; "Find more vendors" starts round 2 with wider queries
+    /** What Satej is doing right now, for the live board. Overwritten as it works; cleared when the stage ends. */
+    live?: LiveProgress | null;
     error?: string;
     events: RequirementEvent[];
     createdAt: string;
     updatedAt: string;
+}
+
+/** A snapshot the live board renders while a stage is running. */
+export interface LiveProgress {
+    stage: 'structuring' | 'searching' | 'reading' | 'choosing' | 'scheduling' | 'analysing';
+    detail: string;
+    queries?: { text: string; done: boolean; pages?: number }[];
+    pagesRead?: number;
+    pagesTotal?: number;
+    /** Vendors spotted on pages so far, before de-duplication — "who it is picking up". */
+    spotted?: { name: string; area: string; source: string; relevance: number }[];
+    updatedAt: string;
+}
+
+export type SatejActionType = 'edit' | 'find_more' | 'approve_calls' | 'exclude_vendor' | 'reanalyze' | 'resend_whatsapp' | 'cancel';
+
+/** A change Satej proposes in chat. Applied only when a person presses Apply. */
+export interface SatejAction {
+    type: SatejActionType;
+    /** For 'edit': only the form fields to change. */
+    changes?: Partial<Pick<RequirementInput,
+        'title' | 'itemDescription' | 'quantity' | 'unit' | 'scope' | 'locationCity' | 'locationArea' | 'siteName' | 'timeline' | 'notes' | 'vendorTarget'>>;
+    /** For 'exclude_vendor'. */
+    vendorId?: string;
+    /** One line shown on the Apply button's card. */
+    summary: string;
+}
+
+export interface SatejMessage {
+    id: string;
+    requirementId: string;
+    role: 'user' | 'satej';
+    kind: 'chat' | 'call_minutes';
+    authorName: string | null;
+    body: string;
+    action: SatejAction | null;
+    actionStatus: 'proposed' | 'applied' | 'dismissed' | 'failed' | null;
+    actionResult: string | null;
+    createdAt: string;
 }

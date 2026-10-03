@@ -1,3 +1,26 @@
+## 2026-10-03 — Saas.one: Satej becomes a live dashboard you can talk to
+
+**The Satej page now shows what the agent is doing as it does it, lets the team edit a request after submitting it, and puts Satej in a chat panel with a voice call one click away.**
+
+- **Why:** The procurement team asked to see who Satej is picking up while it works, to change a request after sending it, and to speak with Satej the way the Agent Council can be spoken with.
+- **Structural decisions:**
+  - Live progress is a small snapshot saved on the requirement while each stage runs (the queries, pages read, every vendor spotted, each call's state), and the page checks it every two and a half seconds while Satej is working. The alternative, the database's live-update feed, would have meant opening Satej's tables to browser reads, which are locked to the server on purpose.
+  - Satej never changes anything from a conversation. Asked for a change in chat or on a call, it proposes one; a person presses Apply, and the same code as the page's own buttons runs it. Calls cost money and reach real businesses, so a sentence is not enough to dial them.
+  - Editing before calls start re-plans from scratch; editing after calls starts a new round that skips every vendor already called, so no vendor is phoned twice for the same job.
+  - The voice call runs on ElevenLabs, as the founder chose, using the existing key: a new ElevenLabs agent "Satej" with an Indian-English male voice (Amay). The Council's own call runs on OpenAI, which this server has no key for. The call's audio components are served from FMS itself so the site's security rules did not have to be loosened; only ElevenLabs' own address was added to them.
+- **What works now:**
+  - Each requirement shows a stage rail and a live board: queries ticking off, a pages-read bar, and a feed of vendors as they are spotted; then the call list with a remove button on each vendor; then every call's live state (in queue, ringing, on the call, spoke, no answer) with the vendor's own words; then a score leaderboard with the reason for every point.
+  - Edit opens the request pre-filled and says plainly whether saving re-plans or starts a new round.
+  - The Satej chat panel answers questions about the requirement, offers suggested questions for each stage, and shows proposed changes with Apply and Dismiss. The Call button opens a voice call with live captions; when it ends, the minutes appear in the chat.
+  - Tested: all four stages and the edit dialog rendered in the browser with sample data and no errors; a real ElevenLabs session was opened with Satej's per-call prompt and Satej spoke its first line; the whole pipeline still passes its simulated end-to-end run. **Not tested:** a signed-in session against real data, and a full spoken conversation through a microphone.
+- **Left undone:**
+  - The chat needs one more migration (`20261003000001_satej_chat.sql`), written and not applied. Until it runs, the chat panel says so.
+  - Before deploying, `SATEJ_ELEVENLABS_AGENT_ID` (and the ElevenLabs key, if missing) must be added in Vercel.
+  - The multi-address fix on the Agent Console's Delivery tab is committed separately; it still has not been tried signed in.
+- **Open questions for the founder:**
+  - Is Amay the right voice for Satej, or should it match the team's preference?
+  - ElevenLabs bills voice calls per minute on the pay-as-you-go plan. Should calls have a monthly cap?
+
 ## 2026-09-28 — Saas.one: Satej, the vendor discovery agent, and a voice caller that no longer sounds scripted
 
 **Procurement can now hand a purchase requirement to an agent that finds local vendors, has them phoned, ranks them and sends the shortlist on WhatsApp — and the Agent Console now saves and shows an agent's workflow, names its failures, and knows Bolna calls and WhatsApp messages as tools.**
