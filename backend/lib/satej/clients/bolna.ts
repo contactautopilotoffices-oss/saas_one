@@ -111,3 +111,126 @@ export async function setAgentWebhook(agentId: string, url: string): Promise<voi
     });
     if (!res.ok) return fail(res, 'update agent webhook');
 }
+
+/* ---------------------------------------------------------------------------
+ * Caller script: read, publish, and the calls behind it.
+ * ------------------------------------------------------------------------- */
+
+type Json = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+async function bolnaJson(method: string, path: string, body?: unknown): Promise<Json> {
+    const res = await fetch(`${satejConfig.bolnaBaseUrl}${path}`, {
+        method,
+        headers: { ...auth(), ...(body ? { 'Content-Type': 'application/json' } : {}) },
+        body: body ? JSON.stringify(body) : undefined,
+    });
+    const text = await res.text();
+    if (!res.ok) throw new Error(`Bolna ${method} ${path.split('?')[0]} ${res.status}: ${text.slice(0, 300)}`);
+    // Bolna transcripts can carry raw control characters; parse leniently.
+    return text ? JSON.parse(text.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ' ')) : {};
+}
+
+export interface VoiceScript {
+    agentId: string;
+    name: string;
+    welcome: string;
+    prompt: string;
+    voice: string | null;
+    voiceModel: string | null;
+    llm: string | null;
+    updatedAt: string | null;
+}
+
+/** What Meera says right now, read from Bolna — not from the repo. */
+export async function getVoiceScript(agentId: string): Promise<VoiceScript> {
+    const a = await bolnaJson('GET', `/v2/agent/${encodeURIComponent(agentId)}`);
+    const tools = a.tasks?.[0]?.tools_config ?? {};
+    const synth = tools.multilingual_config?.languages?.hi?.synthesizer ?? tools.synthesizer;
+    return {
+        agentId,
+        name: String(a.agent_name ?? ''),
+        welcome: String(a.agent_welcome_message ?? ''),
+        prompt: String(a.agent_prompts?.task_1?.system_prompt ?? ''),
+        voice: synth?.provider_config?.voice ?? null,
+        voiceModel: synth?.provider_config?.model ?? null,
+        llm: tools.llm_agent?.llm_config?.model ?? null,
+        updatedAt: a.updated_at ?? null,
+    };
+}
+
+/**
+ * Publish a new greeting and prompt to the agent. A full PUT built from the
+ * agent as it stands, because the prompt also lives in each language slot of
+ * multilingual_config, which PATCH cannot reach — a PATCH would leave the
+ * Hindi and English slots speaking the old script. Re-reads to verify.
+ */
+export async function publishVoiceScript(agentId: string, welcome: string, prompt: string): Promise<void> {
+    const a = await bolnaJson('GET', `/v2/agent/${encodeURIComponent(agentId)}`);
+    const task = structuredClone(a.tasks[0]);
+    const langs = task.tools_config?.multilingual_config?.languages ?? {};
+    for (const k of Object.keys(langs)) langs[k].system_prompt = prompt;
+    await bolnaJson('PUT', `/v2/agent/${encodeURIComponent(agentId)}`, {
+        agent_config: {
+            agent_name: a.agent_name,
+            agent_welcome_message: welcome,
+            webhook_url: a.webhook_url,
+            agent_type: a.agent_type,
+            tasks: [task],
+            ingest_source_config: a.ingest_source_config,
+            calling_guardrails: a.calling_guardrails,
+            call_summary_enabled: a.call_summary_enabled,
+        },
+        agent_prompts: { task_1: { system_prompt: prompt } },
+    });
+    const after = await getVoiceScript(agentId);
+    if (after.prompt !== prompt || after.welcome !== welcome) {
+        throw new Error('Bolna accepted the update but the agent does not show it. Nothing else was changed; try again.');
+    }
+}
+
+export interface VoiceCall {
+    id: string;
+    createdAt: string;
+    status: string;
+    durationSec: number | null;
+    toNumber: string;
+    hasRecording: boolean;
+    transcript: string;
+    variables: Record<string, string>;
+}
+
+/** The agent's calls in the last `days`, newest first. Bolna allows a 7-day window per request, so this walks back window by window. */
+export async function listVoiceCalls(agentId: string, days = 30, limit = 60): Promise<VoiceCall[]> {
+    const out: VoiceCall[] = [];
+    const now = Date.now();
+    for (let start = 0; start < days && out.length < limit; start += 7) {
+        const to = new Date(now - start * 86400_000);
+        const from = new Date(now - Math.min(days, start + 7) * 86400_000);
+        for (let page = 1; page <= 3; page++) {
+            const d = await bolnaJson('GET', `/v2/agent/${encodeURIComponent(agentId)}/executions?from=${from.toISOString()}&to=${to.toISOString()}&page_size=50&page_number=${page}`);
+            for (const e of (d.data ?? []) as Json[]) {
+                const ctx = (e.context_details?.recipient_data ?? {}) as Record<string, unknown>;
+                out.push({
+                    id: String(e.id),
+                    createdAt: String(e.created_at),
+                    status: String(e.status ?? ''),
+                    durationSec: typeof e.conversation_duration === 'number' ? e.conversation_duration : null,
+                    toNumber: String(e.telephony_data?.to_number ?? ''),
+                    hasRecording: !!e.telephony_data?.recording_url,
+                    transcript: String(e.transcript ?? ''),
+                    variables: Object.fromEntries(Object.entries(ctx).filter(([k]) => k !== 'timezone').map(([k, v]) => [k, String(v)])),
+                });
+            }
+            if (!d.has_more) break;
+        }
+    }
+    const seen = new Set<string>();
+    return out.filter((c) => !seen.has(c.id) && seen.add(c.id)).sort((x, y) => y.createdAt.localeCompare(x.createdAt)).slice(0, limit);
+}
+
+/** One execution's recording URL, only if it belongs to `agentId`. */
+export async function recordingUrlFor(agentId: string, executionId: string): Promise<string | null> {
+    const e = await bolnaJson('GET', `/executions/${encodeURIComponent(executionId)}`);
+    if (String(e.agent_id ?? '') !== agentId) return null;
+    return e.telephony_data?.recording_url ?? null;
+}

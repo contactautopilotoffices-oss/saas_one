@@ -6,6 +6,7 @@
  *
  *   npx tsx scripts/satej-sync-bolna.ts            # dry run: prints what would change
  *   npx tsx scripts/satej-sync-bolna.ts --apply    # backs up, applies, re-reads and verifies
+ *   … --apply --force                              # also when the live prompt was edited from the console
  *
  * Needs in .env: BOLNA_API_KEY, SATEJ_BOLNA_AGENT_ID, SATEJ_BOLNA_WEBHOOK_TOKEN,
  * and SATEJ_PUBLIC_BASE_URL or NEXT_PUBLIC_APP_URL (the public https origin).
@@ -163,6 +164,13 @@ async function main() {
     if (stray.length) throw new Error(`Prompt uses variables the CSV does not send: ${stray.join(', ')}`);
 
     const before = await bolna('GET', `/v2/agent/${AGENT_ID}`);
+    // The Satej console can now publish Meera's script. If the live one is not
+    // the repo's, someone changed it there — do not silently put it back.
+    const livePrompt: string = before.agent_prompts?.task_1?.system_prompt ?? '';
+    if (livePrompt !== VOICE_AGENT_PROMPT && !process.argv.includes('--force')) {
+        throw new Error('Meera\'s live prompt differs from backend/lib/satej/prompts/voiceAgent.ts — it was probably edited from the Satej console '
+            + '(Caller script tab, which keeps every version). Copy that version into voiceAgent.ts first, or re-run with --force to overwrite it.');
+    }
     const body = desired(before, webhookUrl);
     const oldPrompt: string = before.agent_prompts?.task_1?.system_prompt ?? '';
 

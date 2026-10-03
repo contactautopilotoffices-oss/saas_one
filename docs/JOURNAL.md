@@ -13,8 +13,9 @@
   - Edit opens the request pre-filled and says plainly whether saving re-plans or starts a new round.
   - The Satej chat panel answers questions about the requirement, offers suggested questions for each stage, and shows proposed changes with Apply and Dismiss. The Call button opens a voice call with live captions; when it ends, the minutes appear in the chat.
   - Tested: all four stages and the edit dialog rendered in the browser with sample data and no errors; a real ElevenLabs session was opened with Satej's per-call prompt and Satej spoke its first line; the whole pipeline still passes its simulated end-to-end run. **Not tested:** a signed-in session against real data, and a full spoken conversation through a microphone.
+- **Caller script and recordings (added the same day):** a new tab shows exactly what Meera says to vendors — her live greeting (and how a given vendor hears it), how she introduces Autopilot and runs the call — read straight from Bolna. Her calls from the last 30 days play as MP3s with transcripts (her 165-second test call from 24 September plays). The team can write feedback and get a revised script back with a list of what changed, then an org super admin publishes it to Meera; the script that was live is saved first so any publish can be undone. A script that uses a placeholder Satej does not fill is refused before it reaches a vendor. The command-line setup script now refuses to overwrite a script edited from the console.
 - **Left undone:**
-  - The chat needs one more migration (`20261003000001_satej_chat.sql`), written and not applied. Until it runs, the chat panel says so.
+  - Two more migrations, written and not applied: `20261003000001_satej_chat.sql` (chat) and `20261003000002_satej_voice_versions.sql` (script versions — publishing is switched off until it runs, so no publish is ever unrecoverable).
   - Before deploying, `SATEJ_ELEVENLABS_AGENT_ID` (and the ElevenLabs key, if missing) must be added in Vercel.
   - The multi-address fix on the Agent Console's Delivery tab is committed separately; it still has not been tried signed in.
 - **Open questions for the founder:**

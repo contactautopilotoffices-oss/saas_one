@@ -30,3 +30,16 @@ export async function requireSatejCaller(organizationId: string | null | undefin
     const meta = (user.user_metadata ?? {}) as { full_name?: string; name?: string };
     return { userId: user.id, name: meta.full_name || meta.name || user.email || 'Team member' };
 }
+
+/**
+ * May this caller change what Meera says to every vendor? Org super admins and
+ * master admins only — the procurement desk can propose a script, not publish it.
+ */
+export async function canPublishVoiceScript(userId: string, organizationId: string): Promise<boolean> {
+    const { supabaseAdmin } = await import('@/backend/lib/supabase/admin');
+    const [{ data: m }, { data: u }] = await Promise.all([
+        supabaseAdmin.from('organization_memberships').select('role').eq('user_id', userId).eq('organization_id', organizationId).eq('is_active', true).maybeSingle(),
+        supabaseAdmin.from('users').select('is_master_admin').eq('id', userId).maybeSingle(),
+    ]);
+    return !!u?.is_master_admin || ['org_super_admin', 'master_admin'].includes(String(m?.role ?? ''));
+}

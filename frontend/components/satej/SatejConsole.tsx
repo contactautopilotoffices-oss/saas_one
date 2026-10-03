@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import AgentActivity from '@/frontend/components/agents/AgentActivity';
 import SatejChat from './SatejChat';
+import SatejVoiceScript from './SatejVoiceScript';
 import s from './satej.module.css';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -108,7 +109,7 @@ export default function SatejConsole({ orgId }: { orgId: string }) {
     const [selected, setSelected] = useState<string | null>(null);
     const [showForm, setShowForm] = useState(false);
     const [error, setError] = useState('');
-    const [view, setView] = useState<'requirements' | 'runs'>('requirements');
+    const [view, setView] = useState<'requirements' | 'script' | 'runs'>('requirements');
 
     const load = useCallback(async () => {
         try {
@@ -155,10 +156,12 @@ export default function SatejConsole({ orgId }: { orgId: string }) {
 
             <div className={s.tabs} role="tablist">
                 <button role="tab" aria-selected={view === 'requirements'} className={`${s.tab} ${view === 'requirements' ? s.tabActive : ''}`} onClick={() => setView('requirements')}>Requirements</button>
+                <button role="tab" aria-selected={view === 'script'} className={`${s.tab} ${view === 'script' ? s.tabActive : ''}`} onClick={() => setView('script')}>Caller script &amp; recordings</button>
                 <button role="tab" aria-selected={view === 'runs'} className={`${s.tab} ${view === 'runs' ? s.tabActive : ''}`} onClick={() => setView('runs')}>Run log</button>
             </div>
 
             {view === 'runs' && <AgentActivity orgId={orgId} agentKey="satej" />}
+            {view === 'script' && <SatejVoiceScript orgId={orgId} />}
             {view === 'requirements' && error && <div className={s.errorBox}>{error}</div>}
 
             {view === 'requirements' && (
@@ -453,7 +456,7 @@ function RequirementDetail({ orgId, id, onChange }: { orgId: string; id: string;
 
                 {r.status === 'needs_clarification' && <Questions r={r} act={act} busy={!!busy} />}
 
-                <LiveBoard d={d} act={act} busy={busy} />
+                <LiveBoard d={d} act={act} busy={busy} orgId={orgId} />
 
                 {d.summaryText && <SummaryCard text={d.summaryText} />}
 
@@ -548,7 +551,7 @@ function Questions({ r, act, busy }: { r: any; act: (a: string, x?: object) => v
 
 /* ---- the live board ------------------------------------------------------ */
 
-function LiveBoard({ d, act, busy }: { d: Detail; act: (a: string, x?: object) => void; busy: string }) {
+function LiveBoard({ d, act, busy, orgId }: { d: Detail; act: (a: string, x?: object) => void; busy: string; orgId: string }) {
     const r = d.requirement;
     const live = r.live;
 
@@ -665,7 +668,7 @@ function LiveBoard({ d, act, busy }: { d: Detail; act: (a: string, x?: object) =
         );
     }
 
-    if (r.ranking) return <Leaderboard d={d} />;
+    if (r.ranking) return <Leaderboard d={d} orgId={orgId} />;
     return null;
 }
 
@@ -680,7 +683,7 @@ function callState(v: any, c: any): { label: string; tone: string; chip: string;
     return { label: 'In queue', tone: 'idle', chip: '', icon: null };
 }
 
-function Leaderboard({ d }: { d: Detail }) {
+function Leaderboard({ d, orgId }: { d: Detail; orgId: string }) {
     const [open, setOpen] = useState<string | null>(null);
     const r = d.requirement;
     const callsByVendor = useMemo(() => {
@@ -701,7 +704,7 @@ function Leaderboard({ d }: { d: Detail }) {
                             <span className={`${s.chip} ${v.score.qualification === 'qualified' ? s.good : v.score.qualification === 'verify_gst' ? s.warn : s.bad}`}>{v.score.qualification.replace('_', ' ')}</span>
                             <ChevronDown size={15} className={open === v.vendorId ? s.rotated : ''} />
                         </button>
-                        {open === v.vendorId && <VendorCalls v={v} calls={callsByVendor[v.vendorId] ?? []} />}
+                        {open === v.vendorId && <VendorCalls v={v} calls={callsByVendor[v.vendorId] ?? []} orgId={orgId} />}
                     </Fragment>
                 ))}
             </div>
@@ -709,7 +712,7 @@ function Leaderboard({ d }: { d: Detail }) {
     );
 }
 
-function VendorCalls({ v, calls }: { v: any; calls: any[] }) {
+function VendorCalls({ v, calls, orgId }: { v: any; calls: any[]; orgId: string }) {
     return (
         <div className={s.callBox}>
             <p>{v.summary}</p>
@@ -730,7 +733,7 @@ function VendorCalls({ v, calls }: { v: any; calls: any[] }) {
             {calls.map((c) => (
                 <details key={c.id}>
                     <summary>Call {fmt(c.createdAt)} · {c.status} · {c.durationSec ? `${Math.round(c.durationSec)}s` : '-'}{c.retried ? ` · retry ${c.retried}` : ''}</summary>
-                    {c.recordingUrl && <audio controls src={c.recordingUrl} className={s.audio} />}
+                    {c.recordingUrl && <audio controls preload="none" src={`/api/satej/voice/recording?organizationId=${orgId}&executionId=${c.executionId}`} className={s.audio} />}
                     {c.analysis?.evidence?.length > 0 && (
                         <ul>{c.analysis.evidence.map((e: any, i: number) => <li key={i}><b>{e.field}:</b> &quot;{e.quote}&quot;</li>)}</ul>
                     )}
