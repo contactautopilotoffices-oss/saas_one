@@ -74,7 +74,22 @@ export default function ProcurementDashboard() {
     const [activities, setActivities] = useState<any[]>([]);
     const [procurementUsers, setProcurementUsers] = useState<any[]>([]);
     const [allProperties, setAllProperties] = useState<any[]>([]);
-    const [activeTab, setActiveTab] = useState<Tab>('overview');
+    const [activeTab, setActiveTabState] = useState<Tab>('overview');
+    /**
+     * Every tab change is written to the address bar. "Raise Grievance" puts
+     * ?tab=grievance in the URL; when the other tabs only changed state, that
+     * stale value stayed there and the effect below snapped the screen back to
+     * Grievances on the next reload or URL change.
+     */
+    const setActiveTab = useCallback((tab: Tab) => {
+        setActiveTabState(tab);
+        if (typeof window === 'undefined') return;
+        const url = new URL(window.location.href);
+        if (url.searchParams.get('tab') === tab) return;
+        url.searchParams.set('tab', tab);
+        if (tab !== 'grievance') url.searchParams.delete('action');
+        window.history.replaceState(window.history.state, '', url.toString());
+    }, []);
     const [userOrgId, setUserOrgId] = useState<string>('');
 
     useEffect(() => {
@@ -82,7 +97,7 @@ export default function ProcurementDashboard() {
         const linkableTabs = ['overview', 'vendor-discovery', 'urgency-tracker', 'task-sheet', 'requests', 'vendor_tickets', 'monthly-requisitions', 'monthly-feedback', 'history', 'manage-items', 'po-generator', 'settings', 'profile', 'grievance'];
         if (SHOW_LEGACY_PER_PROPERTY_CONTROLS) linkableTabs.push('site-pricing');
         if (tabParam && linkableTabs.includes(tabParam)) {
-            setActiveTab(tabParam);
+            setActiveTabState(tabParam);
         }
     }, [searchParams]);
     const [sidebarCounts, setSidebarCounts] = useState<{
