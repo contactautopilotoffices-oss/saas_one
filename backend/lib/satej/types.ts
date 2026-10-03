@@ -45,6 +45,8 @@ export interface RequirementInput {
     requestedBy: string; // name of the team member
     requestedByUserId?: string; // users.id of whoever submitted the form
     notifyWhatsapp: string; // purchase team number that gets the summary
+    /** Where the vendors come from: Satej's web search, the team's own list, or both. Default 'discover'. */
+    vendorSource?: 'discover' | 'own' | 'both';
 }
 
 export type ScopeType = 'supply_only' | 'supply_and_install' | 'service' | 'amc' | 'works_contract';
@@ -87,6 +89,8 @@ export interface Vendor {
     sourceUrls: string[];
     status: VendorStatus;
     excludeReason?: string;
+    /** 'manual' = added or imported by the team; kept when the request is re-planned. */
+    source?: 'web' | 'manual';
     createdAt: string;
 }
 
@@ -156,6 +160,9 @@ export interface CallRecord {
     score?: ScoreBreakdown;
     /** Failed analysis attempts. After 3 the call is ranked unanalysed rather than retried (and paid for) forever. */
     analysisAttempts?: number;
+    /** A test call to a team member's own phone. Never ranked, never counted as a vendor call. */
+    rehearsal?: boolean;
+    rehearsalAs?: string;
     analysisError?: string;
     createdAt: string;
     updatedAt: string;

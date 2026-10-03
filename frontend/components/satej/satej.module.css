@@ -279,3 +279,27 @@
 .callItem { border: 1px solid var(--s-line); border-radius: 11px; padding: 9px 11px; }
 .callItem summary { cursor: pointer; display: grid; gap: 2px; list-style: none; }
 .callItem[open] { background: var(--s-sunken); }
+
+/* ---- vendor intake + test call ------------------------------------------------- */
+.fieldLabel { font-size: 12px; font-weight: 600; color: var(--s-muted); margin-bottom: 6px; }
+.sourcePick { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+@media (max-width: 640px) { .sourcePick { grid-template-columns: 1fr; } }
+.sourcePick button { font: inherit; text-align: left; display: grid; gap: 2px; padding: 10px 12px; border-radius: 11px; border: 1px solid var(--border); background: var(--surface); color: var(--foreground); cursor: pointer; }
+.sourcePick button span { font-size: 11.5px; color: var(--text-secondary); }
+.sourcePick .sourceOn { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); background: color-mix(in srgb, var(--primary) 6%, var(--surface)); }
+.intake { border: 1px dashed var(--s-line); border-radius: 12px; padding: 12px 14px; background: var(--s-sunken); }
+.segment { display: inline-flex; padding: 3px; border-radius: 10px; background: var(--s-card); border: 1px solid var(--s-line); gap: 2px; }
+.segment button { font: inherit; font-size: 12.5px; padding: 5px 10px; border-radius: 7px; border: none; background: none; color: var(--s-muted); cursor: pointer; }
+.segment .segmentOn { background: var(--s-accent); color: #fff; }
+.typeRows { display: grid; gap: 6px; }
+.typeRow { display: grid; grid-template-columns: 1.3fr 1fr 1fr auto; gap: 6px; align-items: center; }
+@media (max-width: 700px) { .typeRow { grid-template-columns: 1fr; } }
+.dropZone { display: grid; justify-items: center; gap: 4px; text-align: center; padding: 22px 14px; border: 1.5px dashed var(--s-line); border-radius: 12px; background: var(--s-card); cursor: pointer; }
+.dropZone:hover { border-color: var(--s-accent); }
+.previewList { margin-top: 10px; display: grid; gap: 3px; max-height: 220px; overflow: auto; font-size: 13px; }
+.previewRow { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 8px; padding: 5px 8px; border-radius: 7px; background: var(--s-card); }
+.testCard { border-color: color-mix(in srgb, var(--s-good) 45%, var(--s-line)); }
+.testRow { display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; align-items: end; margin-top: 10px; }
+.testRow label { margin-bottom: 0; }
+@media (max-width: 700px) { .testRow { grid-template-columns: 1fr; } }
+.testResult { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--s-line); }

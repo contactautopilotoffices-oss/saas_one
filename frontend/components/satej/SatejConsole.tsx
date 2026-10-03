@@ -28,6 +28,7 @@ import {
 import AgentActivity from '@/frontend/components/agents/AgentActivity';
 import SatejChat from './SatejChat';
 import SatejVoiceScript from './SatejVoiceScript';
+import { TestCall, VendorIntake } from './SatejVendorTools';
 import s from './satej.module.css';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -110,6 +111,8 @@ export default function SatejConsole({ orgId }: { orgId: string }) {
     const [showForm, setShowForm] = useState(false);
     const [error, setError] = useState('');
     const [view, setView] = useState<'requirements' | 'script' | 'runs'>('requirements');
+    /** A test-call transcript handed to the Caller script tab as feedback evidence. */
+    const [scriptSeed, setScriptSeed] = useState<string | null>(null);
 
     const load = useCallback(async () => {
         try {
@@ -161,7 +164,7 @@ export default function SatejConsole({ orgId }: { orgId: string }) {
             </div>
 
             {view === 'runs' && <AgentActivity orgId={orgId} agentKey="satej" />}
-            {view === 'script' && <SatejVoiceScript orgId={orgId} />}
+            {view === 'script' && <SatejVoiceScript orgId={orgId} seedTranscript={scriptSeed} />}
             {view === 'requirements' && error && <div className={s.errorBox}>{error}</div>}
 
             {view === 'requirements' && (
@@ -200,7 +203,7 @@ export default function SatejConsole({ orgId }: { orgId: string }) {
                     </aside>
                     <main style={{ minWidth: 0 }}>
                         {selected
-                            ? <RequirementDetail key={selected} orgId={orgId} id={selected} onChange={load} />
+                            ? <RequirementDetail key={selected} orgId={orgId} id={selected} onChange={load} onImproveScript={(t) => { setScriptSeed(t); setView('script'); window.scrollTo({ top: 0, behavior: 'smooth' }); }} />
                             : list?.length === 0 ? null : <p className={s.muted}>Pick a requirement on the left.</p>}
                     </main>
                 </div>
@@ -270,8 +273,13 @@ const SCOPES = ['Supply only', 'Supply and installation', 'Service', 'AMC', 'Com
 const EMPTY_FORM = {
     title: '', spendType: 'capex', itemDescription: '', quantity: '', unit: '', scope: 'Supply and installation',
     locationCity: '', locationArea: '', siteName: '', timeline: '', budgetHint: '', notes: '', vendorTarget: '12',
-    requestedBy: '', notifyWhatsapp: '',
+    requestedBy: '', notifyWhatsapp: '', vendorSource: 'discover',
 };
+const SOURCES = [
+    { key: 'discover', label: 'Find vendors for me', hint: 'Satej searches the web' },
+    { key: 'own', label: 'Use my list', hint: 'Only the vendors you add or import' },
+    { key: 'both', label: 'Both', hint: 'Your list plus Satej\'s search' },
+];
 
 function RequirementForm({ orgId, existing, onClose, onDone }: {
     orgId: string;
@@ -343,6 +351,17 @@ function RequirementForm({ orgId, existing, onClose, onDone }: {
                     </div>
                 )}
                 <div className={s.grid}>
+                    <div className={s.full}>
+                        <div className={s.fieldLabel}>Which vendors should Meera call?</div>
+                        <div className={s.sourcePick}>
+                            {SOURCES.map((o) => (
+                                <button type="button" key={o.key} className={f.vendorSource === o.key ? s.sourceOn : ''} onClick={() => setF({ ...f, vendorSource: o.key })}>
+                                    <b>{o.label}</b><span>{o.hint}</span>
+                                </button>
+                            ))}
+                        </div>
+                        {!editing && f.vendorSource !== 'discover' && <p className={s.muted} style={{ marginTop: 6 }}>You add or import your vendors on the next screen, once Satej has written the brief.</p>}
+                    </div>
                     <label className={s.full}>Title<input required value={f.title} onChange={set('title')} placeholder="Gypsum false ceiling, Lower Parel office" /></label>
                     <label>Type
                         <select value={f.spendType} onChange={set('spendType')}>
@@ -361,7 +380,7 @@ function RequirementForm({ orgId, existing, onClose, onDone }: {
                     <label>Site name<input value={f.siteName} onChange={set('siteName')} placeholder="Mafatlal Chambers" /></label>
                     <label>Timeline<input value={f.timeline} onChange={set('timeline')} placeholder="within 15 days" /></label>
                     <label>Budget hint (internal, never said on calls)<input value={f.budgetHint} onChange={set('budgetHint')} /></label>
-                    <label>Vendors to call<input type="number" min={3} max={40} value={f.vendorTarget} onChange={set('vendorTarget')} /></label>
+                    <label>{f.vendorSource === 'own' ? 'Vendors to call (from your list)' : 'Vendors to call'}<input type="number" min={3} max={40} value={f.vendorTarget} onChange={set('vendorTarget')} /></label>
                     {!editing && <label>Requested by<input value={f.requestedBy} onChange={set('requestedBy')} placeholder="Defaults to you" /></label>}
                     <label>Send updates to WhatsApp<input value={f.notifyWhatsapp} onChange={set('notifyWhatsapp')} placeholder="+91 98xxxxxxxx" /></label>
                     <label className={s.full}>Notes<textarea rows={2} value={f.notes} onChange={set('notes')} /></label>
@@ -382,7 +401,7 @@ function RequirementForm({ orgId, existing, onClose, onDone }: {
 /* ======================================================================== */
 /* one requirement                                                           */
 
-function RequirementDetail({ orgId, id, onChange }: { orgId: string; id: string; onChange: () => void }) {
+function RequirementDetail({ orgId, id, onChange, onImproveScript }: { orgId: string; id: string; onChange: () => void; onImproveScript: (transcript: string) => void }) {
     const [d, setD] = useState<Detail | null>(null);
     const [err, setErr] = useState('');
     const [busy, setBusy] = useState('');
@@ -456,7 +475,19 @@ function RequirementDetail({ orgId, id, onChange }: { orgId: string; id: string;
 
                 {r.status === 'needs_clarification' && <Questions r={r} act={act} busy={!!busy} />}
 
-                <LiveBoard d={d} act={act} busy={busy} orgId={orgId} />
+                <LiveBoard d={d} act={act} busy={busy} orgId={orgId} reload={() => { void load(); onChange(); }} />
+
+                {r.status === 'failed' && r.brief && (
+                    <section className={s.card}>
+                        <h3>Call vendors you already know</h3>
+                        <p className={s.muted}>Satej found nobody callable on the web. Add or import your own vendors and the call list opens for approval.</p>
+                        <VendorIntake orgId={orgId} requirement={r} defaultOpen onAdded={() => { void load(); onChange(); }} />
+                    </section>
+                )}
+
+                {r.brief && r.status !== 'cancelled' && (
+                    <TestCall orgId={orgId} requirement={r} vendors={d.vendors} calls={d.calls} onChanged={() => void load()} onImproveScript={onImproveScript} />
+                )}
 
                 {d.summaryText && <SummaryCard text={d.summaryText} />}
 
@@ -551,7 +582,7 @@ function Questions({ r, act, busy }: { r: any; act: (a: string, x?: object) => v
 
 /* ---- the live board ------------------------------------------------------ */
 
-function LiveBoard({ d, act, busy, orgId }: { d: Detail; act: (a: string, x?: object) => void; busy: string; orgId: string }) {
+function LiveBoard({ d, act, busy, orgId, reload }: { d: Detail; act: (a: string, x?: object) => void; busy: string; orgId: string; reload: () => void }) {
     const r = d.requirement;
     const live = r.live;
 
@@ -610,7 +641,11 @@ function LiveBoard({ d, act, busy, orgId }: { d: Detail; act: (a: string, x?: ob
                 <div className={s.boardHead}>
                     <div>
                         <h3>Approve the call list · {toCall.length} vendors</h3>
-                        <p className={s.muted}>Remove anyone you don&apos;t want phoned. Meera calls between 10:00 and 18:30 IST, Monday to Saturday.</p>
+                        <p className={s.muted}>
+                            {toCall.length === 0
+                                ? 'No vendors yet. Add or import the vendors you want Meera to call.'
+                                : "Remove anyone you don't want phoned, or add your own. Meera calls between 10:00 and 18:30 IST, Monday to Saturday."}
+                        </p>
                     </div>
                     <button className={s.primary} disabled={!!busy || !toCall.length} onClick={() => act('approve_calls')}>
                         {busy.startsWith('approve_calls') ? <Loader2 size={14} className={s.spin} /> : <Play size={14} />} Start {toCall.length} calls
@@ -625,7 +660,7 @@ function LiveBoard({ d, act, busy, orgId }: { d: Detail; act: (a: string, x?: ob
                                     <button className={s.iconBtn} title="Remove from the call list" disabled={!!busy} onClick={() => act('exclude_vendor', { vendorId: v.id })}><X size={14} /></button>
                                 </div>
                                 <div className={s.muted}>{[v.area, v.city].filter(Boolean).join(', ') || '—'} · {v.phone}</div>
-                                <div className={s.vSells}>{v.sells}</div>
+                                <div className={s.vSells}>{v.source === 'manual' ? <span className={`${s.chip} ${s.info}`}>Your vendor</span> : v.sells}</div>
                                 <div className={s.vFoot}>
                                     <span className={s.meter} title={`Relevance ${v.relevance}/10`}><span style={{ width: `${v.relevance * 10}%` }} /></span>
                                     {(v.sourceUrls ?? []).slice(0, 1).map((u: string) => <a key={u} href={u} target="_blank" rel="noreferrer" className={s.link}>source</a>)}
@@ -635,6 +670,9 @@ function LiveBoard({ d, act, busy, orgId }: { d: Detail; act: (a: string, x?: ob
                     </AnimatePresence>
                 </div>
                 {removed.length > 0 && <p className={s.muted} style={{ marginTop: 8 }}>Removed: {removed.map((v) => v.name).join(', ')}</p>}
+                <div style={{ marginTop: 12 }}>
+                    <VendorIntake orgId={orgId} requirement={r} defaultOpen={toCall.length === 0} onAdded={reload} />
+                </div>
             </section>
         );
     }

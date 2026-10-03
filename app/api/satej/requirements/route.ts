@@ -77,6 +77,7 @@ export async function POST(request: NextRequest) {
                 requestedBy: String(body.requestedBy ?? '').trim() || caller.name,
                 requestedByUserId: caller.userId,
                 notifyWhatsapp: String(body.notifyWhatsapp ?? '').trim(),
+                vendorSource: body.vendorSource === 'own' || body.vendorSource === 'both' ? body.vendorSource : 'discover',
             },
             request.nextUrl.origin,
         );

@@ -1,3 +1,22 @@
+## 2026-10-03 — Saas.one: "Invisible Excellence", a 62-second brand film for the website
+
+**A premium, music-led film that descends from the clouds onto an Autopilot-branded office and down through five levels of the building, showing real people using the platform at each one.**
+
+- **Why:** The founder wants a premium website hero that explains, without words or narration, why a building on Autopilot feels effortless: every layer, from the CEO to the electrical room, is run by the platform. The film will later be cut into frames for a scroll-driven page.
+- **Structural decisions:**
+  - Built outside this repo, at `~/Downloads/fms-explainer/invisible-excellence/`, with the same video toolchain as the July explainer. Nothing in the FMS app changed.
+  - Real-looking footage is AI-generated (Higgsfield). The first version used a stylised glass tower; the founder rejected it as unrealistic and unbranded. It was replaced by a photoreal Bengaluru tech-park building with AUTOPILOT signage on the roof. The drone shot was generated rising away from the building and played in reverse, so it lands exactly on the branded frame.
+  - Each level shows a person mid-task (a CEO on a tablet, an employee raising a ticket, an admin dispatching on a radio, a technician closing a job, an engineer scanning a meter). The real FMS screens sit beside them and respond in step with their taps: typing, approvals, ticks and counters. The founder asked for people in action rather than static screens.
+  - Music and sound effects only, no voice-over, so the silent scroll version tells the same story through on-screen text.
+- **What works now:** A finished 62.5-second 1080p film, `renders/Invisible-Excellence.mp4`, in Autopilot's own colours and fonts, using real FMS components (Unified Dashboard, tenant app, Admin Console, Maintenance Portal, Command Center).
+- **Left undone:**
+  - The frame split for the scroll website. The film comes first, per the founder's instruction.
+  - The AI clips are 768p, upscaled to 1080p, to fit the remaining Higgsfield credits. They're sharp enough on the half-screen layout but softer than true 1080p.
+  - Numbers on screen (11 properties, 1,284 active people, 94.8% resolved and so on) are illustrative, not live data.
+- **Open questions for the founder:**
+  - Higgsfield credits are almost used up (about 9 left). Re-shooting any clip, or moving to 1080p, needs a top-up.
+  - The rooftop sign renders the "A" as an outline triangle, not the solid block of the real logo. Is that close enough?
+
 ## 2026-10-03 — Saas.one: Satej becomes a live dashboard you can talk to
 
 **The Satej page now shows what the agent is doing as it does it, lets the team edit a request after submitting it, and puts Satej in a chat panel with a voice call one click away.**
@@ -14,6 +33,7 @@
   - The Satej chat panel answers questions about the requirement, offers suggested questions for each stage, and shows proposed changes with Apply and Dismiss. The Call button opens a voice call with live captions; when it ends, the minutes appear in the chat.
   - Tested: all four stages and the edit dialog rendered in the browser with sample data and no errors; a real ElevenLabs session was opened with Satej's per-call prompt and Satej spoke its first line; the whole pipeline still passes its simulated end-to-end run. **Not tested:** a signed-in session against real data, and a full spoken conversation through a microphone.
 - **Caller script and recordings (added the same day):** a new tab shows exactly what Meera says to vendors — her live greeting (and how a given vendor hears it), how she introduces Autopilot and runs the call — read straight from Bolna. Her calls from the last 30 days play as MP3s with transcripts (her 165-second test call from 24 September plays). The team can write feedback and get a revised script back with a list of what changed, then an org super admin publishes it to Meera; the script that was live is saved first so any publish can be undone. A script that uses a placeholder Satej does not fill is refused before it reaches a vendor. The command-line setup script now refuses to overwrite a script edited from the console.
+- **Choose your own vendors and "call me first" (added the same day):** a requirement can now use Satej's web search, the team's own vendor list, or both. Vendors can be typed in, pasted as a rough list in any format, or imported from Excel, CSV or text; numbers are cleaned, duplicates and invalid numbers are skipped with a reason, and the team's own vendors survive an edit. Before any vendor is phoned, "Call me first" has Meera ring the team member's own phone with exactly what a vendor would hear for that requirement; the recording, transcript and Satej's read of the call appear on the page, test calls are never ranked, and one click takes the transcript to the Caller script tab to improve the script from it.
 - **Left undone:**
   - Two more migrations, written and not applied: `20261003000001_satej_chat.sql` (chat) and `20261003000002_satej_voice_versions.sql` (script versions — publishing is switched off until it runs, so no publish is ever unrecoverable).
   - Before deploying, `SATEJ_ELEVENLABS_AGENT_ID` (and the ElevenLabs key, if missing) must be added in Vercel.

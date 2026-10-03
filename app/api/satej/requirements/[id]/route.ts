@@ -9,7 +9,9 @@
 import { after, NextRequest, NextResponse } from 'next/server';
 import { requireSatejCaller } from '@/backend/lib/satej/access';
 import {
+    addVendors,
     advance,
+    analyseRehearsal,
     answerClarification,
     approveCalls,
     buildCallCsv,
@@ -18,8 +20,10 @@ import {
     excludeVendor,
     reanalyze,
     resendSummary,
+    refreshRehearsals,
     retryFailed,
     runAgain,
+    startRehearsal,
 } from '@/backend/lib/satej/pipeline';
 import { getRepo } from '@/backend/lib/satej/repo';
 import { fullSummary } from '@/backend/lib/satej/summary';
@@ -45,6 +49,7 @@ export async function GET(request: NextRequest, ctx: Ctx) {
         const r = await load(id, organizationId!);
         if (!r) return NextResponse.json({ error: 'Requirement not found' }, { status: 404 });
         const repo = getRepo();
+        await refreshRehearsals(r);
         const [vendors, calls] = await Promise.all([repo.listVendors(r.id), repo.listCalls(r.id)]);
 
         if (request.nextUrl.searchParams.get('format') === 'csv') {
@@ -64,6 +69,7 @@ export async function POST(request: NextRequest, ctx: Ctx) {
     const { id } = await ctx.params;
     const body = (await request.json().catch(() => ({}))) as {
         organizationId?: string; action?: string; answers?: unknown; changes?: Record<string, unknown>; vendorId?: string;
+        vendors?: unknown; phone?: string; asVendor?: string; callId?: string;
     };
     const caller = await requireSatejCaller(body.organizationId);
     if (caller instanceof NextResponse) return caller;
@@ -89,6 +95,15 @@ export async function POST(request: NextRequest, ctx: Ctx) {
                 after(() => advance(r.id, { trigger: 'manual' }).then(() => undefined));
                 return NextResponse.json({ ok: true, newRound });
             }
+            case 'add_vendors': {
+                const list = Array.isArray(body.vendors) ? (body.vendors as { name?: string; phone?: string; area?: string }[]) : [];
+                if (!list.length) return NextResponse.json({ error: 'No vendors in the request' }, { status: 400 });
+                return NextResponse.json({ ok: true, ...(await addVendors(r, list, caller.name)) });
+            }
+            case 'rehearse':
+                return NextResponse.json({ ok: true, call: await startRehearsal(r, String(body.phone ?? ''), String(body.asVendor ?? ''), caller.name) });
+            case 'analyze_rehearsal':
+                return NextResponse.json({ ok: true, call: await analyseRehearsal(r, String(body.callId ?? '')) });
             case 'exclude_vendor':
                 await excludeVendor(r, String(body.vendorId ?? ''), caller.name);
                 return NextResponse.json({ ok: true });

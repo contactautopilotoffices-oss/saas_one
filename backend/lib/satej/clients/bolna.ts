@@ -234,3 +234,18 @@ export async function recordingUrlFor(agentId: string, executionId: string): Pro
     if (String(e.agent_id ?? '') !== agentId) return null;
     return e.telephony_data?.recording_url ?? null;
 }
+
+/** One outbound call outside a batch (the team's test call). Returns Bolna's execution id. */
+export async function placeCall(agentId: string, to: string, userData: Record<string, string>): Promise<string> {
+    if (satejConfig.mockMode) return `mock-call-${Date.now()}`;
+    const body: Json = { agent_id: agentId, recipient_phone_number: to, user_data: userData, bypass_call_guardrails: true };
+    if (satejConfig.bolnaFromNumbers[0]) body.from_phone_number = satejConfig.bolnaFromNumbers[0];
+    const res = await bolnaJson('POST', '/call', body);
+    if (!res.execution_id) throw new Error('Bolna did not return a call id');
+    return String(res.execution_id);
+}
+
+/** One execution, as the webhook would have delivered it. */
+export async function getExecutionRaw(executionId: string): Promise<Json> {
+    return bolnaJson('GET', `/executions/${encodeURIComponent(executionId)}`);
+}

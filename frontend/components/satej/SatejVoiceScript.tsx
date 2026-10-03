@@ -47,7 +47,7 @@ function Highlighted({ text }: { text: string }) {
     );
 }
 
-export default function SatejVoiceScript({ orgId }: { orgId: string }) {
+export default function SatejVoiceScript({ orgId, seedTranscript }: { orgId: string; seedTranscript?: string | null }) {
     const [d, setD] = useState<Payload | null>(null);
     const [err, setErr] = useState('');
     const [editing, setEditing] = useState(false);
@@ -72,6 +72,13 @@ export default function SatejVoiceScript({ orgId }: { orgId: string }) {
     }, [orgId, editing]);
 
     useEffect(() => { void load(); }, [load]);
+
+    // Arrived from a test call's "Improve the script": quote it and put the cursor in the feedback box.
+    useEffect(() => {
+        if (!seedTranscript) return;
+        setQuoted((q) => [...q.filter((x) => x !== seedTranscript), seedTranscript].slice(-3));
+        setTimeout(() => (document.querySelector('textarea[placeholder^="e.g. Introduce"]') as HTMLTextAreaElement | null)?.focus(), 300);
+    }, [seedTranscript]);
 
     const dirty = !!d && (welcome !== d.script.welcome || prompt !== d.script.prompt);
     const draftVars = useMemo(() => {

@@ -30,7 +30,7 @@ async function main() {
     // Loaded here, not at the top: static imports are hoisted above the env lines,
     // and supabaseAdmin reads its env the moment its module loads.
     const { MemoryRepo, setRepo } = await import('../backend/lib/satej/repo');
-    const { advance, answerClarification, approveCalls, buildCallCsv, createRequirement, ingestExecution, runAgain, spokenName } =
+    const { addVendors, advance, answerClarification, approveCalls, buildCallCsv, createRequirement, editRequirement, ingestExecution, runAgain, spokenName } =
         await import('../backend/lib/satej/pipeline');
     const { mockBolna, mockWhatsapp } = await import('../backend/lib/satej/clients/mocks');
     const { CALL_VARIABLES } = await import('../backend/lib/satej/prompts/voiceAgent');
@@ -116,12 +116,40 @@ async function main() {
     console.log('\n6) "Find more vendors": everyone found was just called, so nobody is re-dialled');
     await runAgain(r);
     r = (await advance(r.id))!;
-    const round2 = (await repo.listVendors(r.id)).filter((v) => v.status === 'excluded');
-    console.log('   status:', r.status, '| excluded:', round2.length, '|', round2[0]?.excludeReason);
-    assert.equal(r.status, 'failed');
-    assert.ok(round2.length > 0 && round2.every((v) => /Called in the last/.test(v.excludeReason ?? '')));
+    const all = await repo.listVendors(r.id);
+    console.log('   status:', r.status, '| vendors on the requirement:', all.length, '| newly queued to call:', all.filter((v) => v.status === 'found').length);
+    assert.equal(r.status, 'failed', 'nobody new to call');
+    assert.equal(all.filter((v) => v.status === 'found').length, 0, 'no vendor already called is put back on the list');
 
-    console.log('\n7) Spoken names');
+    console.log('\n7) "Use my list": no web search, the team adds vendors (messy input on purpose)');
+    const own = await createRequirement(ORG, {
+        title: 'Pantry supplies, Indore', spendType: 'opex', itemDescription: 'Monthly pantry supplies', quantity: '1', unit: 'month',
+        scope: 'Supply only', locationCity: 'Indore', locationArea: 'Vijay Nagar', requestedBy: 'Satej', notifyWhatsapp: '9000000001', vendorSource: 'own',
+    }, 'https://fms.example');
+    let o = (await advance(own.id))!;
+    console.log('   status:', o.status);
+    assert.equal(o.status, 'awaiting_call_approval', 'own list skips discovery');
+    assert.equal((await repo.listVendors(o.id)).length, 0, 'nothing was searched');
+    const res = await addVendors(o, [
+        { name: 'Annapurna Traders', phone: '098262 11111' },
+        { name: 'Annapurna again', phone: '+91 98262 11111' },
+        { name: 'Bad number', phone: '12345' },
+        { name: 'Malwa Supplies', phone: '919826322222', area: 'Palasia' },
+    ], 'Satej');
+    console.log('   added:', res.added, '| skipped:', res.skipped.map((x) => x.reason).join('; '));
+    assert.equal(res.added, 2);
+    assert.equal(res.skipped.length, 2);
+    await editRequirement(o, { timeline: 'by Monday' }, 'Satej');
+    o = (await advance(o.id))!;
+    assert.equal(o.status, 'awaiting_call_approval');
+    assert.equal((await repo.listVendors(o.id)).filter((v) => v.status === 'found').length, 2, 'an edit keeps the team\'s own vendors');
+    await approveCalls(o, 'Satej');
+    o = (await repo.getRequirement(o.id))!;
+    const ownCsv = buildCallCsv(o, (await repo.listVendors(o.id)).filter((v) => v.status !== 'excluded'));
+    assert.ok(ownCsv.includes('+919826211111') && ownCsv.includes('+919826322222'), 'only the team\'s vendors are called');
+    console.log('   calls scheduled for the team\'s 2 vendors only');
+
+    console.log('\n8) Spoken names');
     for (const [raw, want] of [
         ['Shree Ganesh Interiors Pvt. Ltd.', 'Shree Ganesh Interiors'],
         ['Prime Drywall Systems LLP', 'Prime Drywall Systems'],

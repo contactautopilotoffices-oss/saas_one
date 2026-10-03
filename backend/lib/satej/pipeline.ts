@@ -32,7 +32,7 @@ import { satejConfig } from './config';
 import { getRepo, DuplicateCodeError } from './repo';
 import { chatJSON, llmSpendUsd } from './clients/llm';
 import { exaSearch, type ExaPage } from './clients/exa';
-import { createBatch, getBatch, listBatchExecutions, scheduleBatch } from './clients/bolna';
+import { createBatch, getBatch, getExecutionRaw, listBatchExecutions, placeCall, scheduleBatch } from './clients/bolna';
 import { sendTemplate } from './clients/whatsapp';
 import { STRUCTURER_SYSTEM, structurerUser } from './prompts/structurer';
 import { DISCOVERY_SYSTEM, discoveryUser } from './prompts/discovery';
@@ -284,9 +284,16 @@ async function structure(r: Requirement, step: StepFn) {
         await tellTeam(r, step, satejConfig.waInputTemplate, inputNeededTemplateParams(r, questionsAsk(r)), 'questions');
         return;
     }
+    log(r, `Brief ready: ${brief.itemSummary}, ${brief.quantityText}, ${brief.locationText}`);
+    if (r.input.vendorSource === 'own') {
+        // The team brings its own vendors: no web search. They add or import them and approve.
+        r.status = 'awaiting_call_approval';
+        const mine = (await getRepo().listVendors(r.id)).filter((v) => v.status === 'found').length;
+        log(r, mine ? `Using your list of ${mine} vendor(s). Check it and approve the calls.` : 'Using your own vendor list. Add or import the vendors to call.');
+        return;
+    }
     if (!brief.searchQueries.length) throw new Error('The brief came back with no search queries');
     r.status = 'structured';
-    log(r, `Brief ready: ${brief.itemSummary}, ${brief.quantityText}, ${brief.locationText}`);
 }
 
 export async function answerClarification(r: Requirement, answers: string[]): Promise<void> {
@@ -458,7 +465,10 @@ async function discover(r: Requirement, step: StepFn) {
         byName.set(key, c);
     }
 
-    let candidates = [...byPhone.values()];
+    const existing = await repo.listVendors(r.id);
+    const onList = new Set(existing.filter((v) => v.status !== 'excluded').map((v) => v.phone));
+    const mineCount = existing.filter((v) => v.status === 'found').length;
+    let candidates = [...byPhone.values()].filter((c) => !onList.has(c.phone));
     const blocked = new Set(satejConfig.blockedNumbers.map((n) => normaliseIndianPhone(n)).filter(Boolean) as string[]);
     const recent = await repo.recentlyCalledPhones(r.organizationId, candidates.map((c) => c.phone), satejConfig.doNotRecallDays);
     const skipped = candidates.filter((c) => blocked.has(c.phone) || recent.has(c.phone));
@@ -472,7 +482,7 @@ async function discover(r: Requirement, step: StepFn) {
             || Number(!!y.website) - Number(!!x.website)
             || (y.years ?? 0) - (x.years ?? 0),
     );
-    const chosen = candidates.slice(0, r.input.vendorTarget || satejConfig.vendorTarget);
+    const chosen = candidates.slice(0, Math.max(0, (r.input.vendorTarget || satejConfig.vendorTarget) - mineCount));
 
     const now = nowIso();
     const toVendor = (c: Candidate, status: Vendor['status'], excludeReason?: string): Vendor => ({
@@ -492,6 +502,7 @@ async function discover(r: Requirement, step: StepFn) {
         sourceUrls: [...c.urls],
         status,
         excludeReason,
+        source: 'web',
         createdAt: now,
     });
     await repo.saveVendors([
@@ -502,7 +513,7 @@ async function discover(r: Requirement, step: StepFn) {
     r.live = null;
     log(r, `Found ${chosen.length} vendors to call${skipped.length ? `, skipped ${skipped.length} (blocked or called recently)` : ''}`);
 
-    if (!chosen.length) {
+    if (!chosen.length && !mineCount) {
         r.status = 'failed';
         r.error = 'No callable vendors found. Use "Find more vendors" for a wider search.';
         await tellTeam(r, step, satejConfig.waSummaryTemplate, noVendorsTemplateParams(r), 'no-vendors notice');
@@ -515,7 +526,7 @@ async function discover(r: Requirement, step: StepFn) {
             r,
             step,
             satejConfig.waInputTemplate,
-            inputNeededTemplateParams(r, `${chosen.length} vendors are ready to call. Please check the list and approve the calls.`),
+            inputNeededTemplateParams(r, `${chosen.length + mineCount} vendors are ready to call. Please check the list and approve the calls.`),
             'approval request',
         );
         return;
@@ -644,7 +655,8 @@ export async function ingestExecution(ex: BolnaExecution): Promise<Requirement |
 
     const toNumber = normaliseIndianPhone(String(ex.telephony_data?.to_number ?? recipient.contact_number ?? ex.user_number ?? '')) ?? '';
     const vendors = await repo.listVendors(r.id);
-    const vendor = vendors.find((v) => v.id === recipient.vendor_ref) ?? vendors.find((v) => v.phone === toNumber && v.status !== 'excluded');
+    const rehearsal = recipient.vendor_ref === 'rehearsal';
+    const vendor = rehearsal ? undefined : vendors.find((v) => v.id === recipient.vendor_ref) ?? vendors.find((v) => v.phone === toNumber && v.status !== 'excluded');
 
     const prev = await repo.getCallByExecution(execId);
     const now = nowIso();
@@ -667,6 +679,8 @@ export async function ingestExecution(ex: BolnaExecution): Promise<Requirement |
         score: prev?.score,
         analysisAttempts: prev?.analysisAttempts,
         analysisError: prev?.analysisError,
+        rehearsal: rehearsal || prev?.rehearsal,
+        rehearsalAs: prev?.rehearsalAs ?? (rehearsal ? String(recipient.vendor_name ?? '') : undefined),
         createdAt: prev?.createdAt ?? (typeof ex.created_at === 'string' ? ex.created_at : now),
         updatedAt: now,
     };
@@ -685,7 +699,7 @@ async function callsFinished(r: Requirement): Promise<boolean> {
     const repo = getRepo();
     const [vendors, calls] = await Promise.all([repo.listVendors(r.id), repo.listCalls(r.id)]);
     const inBatch = vendors.filter((v) => ['queued', 'called', 'not_reached'].includes(v.status));
-    const anyLive = calls.some((c) => !isFinal(c.status));
+    const anyLive = calls.some((c) => !c.rehearsal && !isFinal(c.status));
     if (inBatch.length > 0 && inBatch.every((v) => v.status === 'called') && !anyLive) return true;
 
     // Every vendor has a final result and nothing changed for a while: retries are over.
@@ -770,7 +784,7 @@ async function analyze(r: Requirement, step: StepFn) {
     const [vendors, calls] = await Promise.all([repo.listVendors(r.id), repo.listCalls(r.id)]);
     const reqLine = `${b.itemSummary}. Quantity: ${b.quantityText}. Scope: ${b.scopeType}. Location: ${b.locationText}. Timeline: ${b.timelineText || 'not set'}. Spend: ${r.input.spendType}.`;
 
-    const todo = calls.filter((c) => isFinal(c.status) && !c.score);
+    const todo = calls.filter((c) => !c.rehearsal && isFinal(c.status) && !c.score);
     const s = await step(`Analysing ${todo.length} call transcript(s)`, 'llm');
     let failed = 0;
     let analysed = 0;
@@ -824,7 +838,7 @@ async function analyze(r: Requirement, step: StepFn) {
     await s.ok({ detail: { analysed: todo.length - failed, failed } });
 
     const fresh = await repo.listCalls(r.id);
-    if (fresh.some((c) => isFinal(c.status) && !c.score)) return; // retried on the next pass
+    if (fresh.some((c) => !c.rehearsal && isFinal(c.status) && !c.score)) return; // retried on the next pass
 
     const s2 = await step('Ranking vendors with the fixed rulebook', 'decide');
     r.ranking = rankVendors(fresh, await repo.listVendors(r.id));
@@ -876,7 +890,7 @@ async function notify(r: Requirement, step: StepFn) {
 
 /** Before calls go out an edit re-plans from scratch; after, it starts a new round. */
 const PRE_CALL: RequirementStatus[] = ['submitted', 'needs_clarification', 'structured', 'discovering', 'awaiting_call_approval', 'failed'];
-const EDITABLE_FIELDS = ['title', 'itemDescription', 'quantity', 'unit', 'scope', 'locationCity', 'locationArea', 'siteName', 'timeline', 'budgetHint', 'notes', 'vendorTarget', 'spendType', 'notifyWhatsapp'] as const;
+const EDITABLE_FIELDS = ['title', 'itemDescription', 'quantity', 'unit', 'scope', 'locationCity', 'locationArea', 'siteName', 'timeline', 'budgetHint', 'notes', 'vendorTarget', 'spendType', 'notifyWhatsapp', 'vendorSource'] as const;
 type EditableField = (typeof EDITABLE_FIELDS)[number];
 
 export async function editRequirement(r: Requirement, changes: Partial<Record<EditableField, unknown>>, by: string): Promise<{ newRound: boolean; changed: string[] }> {
@@ -897,6 +911,8 @@ export async function editRequirement(r: Requirement, changes: Partial<Record<Ed
                 next = Number.isFinite(n) ? Math.min(40, Math.max(3, Math.round(n))) : input.vendorTarget;
             } else if (key === 'spendType') {
                 next = next === 'capex' ? 'capex' : 'opex';
+            } else if (key === 'vendorSource') {
+                next = next === 'own' || next === 'both' ? next : 'discover';
             } else if (key === 'notifyWhatsapp') {
                 const raw = String(next ?? '').trim();
                 const norm = raw ? normaliseIndianPhone(raw) : '';
@@ -923,7 +939,7 @@ export async function editRequirement(r: Requirement, changes: Partial<Record<Ed
             fresh.lastSyncAt = undefined;
         } else {
             // Vendors found for the old version were never called; they describe the wrong job.
-            await repo.deleteVendors(fresh.id, ['found']);
+            await repo.deleteVendorIds((await repo.listVendors(fresh.id)).filter((v) => v.status === 'found' && v.source !== 'manual').map((v) => v.id));
         }
         fresh.brief = undefined;
         fresh.live = null;
@@ -954,6 +970,134 @@ export async function excludeVendor(r: Requirement, vendorId: string, by: string
     log(r, `${by} removed ${v.name} from the call list`);
     await repo.saveRequirement(r);
     return v.name;
+}
+
+const ADDABLE: RequirementStatus[] = ['submitted', 'needs_clarification', 'structured', 'awaiting_call_approval', 'failed'];
+
+/**
+ * Add vendors the team chose — typed, pasted or imported. Numbers are cleaned
+ * to +91; duplicates (in the list or already on the requirement) are skipped
+ * with a reason. A vendor called recently is still added — the team chose it —
+ * but the reply says so.
+ */
+export async function addVendors(r: Requirement, entries: { name?: string; phone?: string; area?: string }[], by: string) {
+    if (!ADDABLE.includes(r.status)) throw new Error(`Vendors can be added before calls start; this requirement is ${r.status.replace(/_/g, ' ')}`);
+    if (entries.length > 200) throw new Error('At most 200 vendors at a time');
+    const repo = getRepo();
+    const existing = await repo.listVendors(r.id);
+    const seen = new Map(existing.map((v) => [v.phone, v]));
+    const added: Vendor[] = [];
+    const skipped: { name: string; phone: string; reason: string }[] = [];
+    const now = nowIso();
+    for (const e of entries) {
+        const raw = String(e.phone ?? '').trim();
+        const phone = normaliseIndianPhone(raw);
+        const name = String(e.name ?? '').trim().slice(0, 120);
+        if (!phone) { skipped.push({ name, phone: raw, reason: 'not a callable Indian number' }); continue; }
+        const dup = seen.get(phone);
+        if (dup && dup.status !== 'excluded') { skipped.push({ name: name || dup.name, phone, reason: `already on the list as ${dup.name}` }); continue; }
+        if (dup) {
+            dup.status = 'found';
+            dup.excludeReason = undefined;
+            added.push(dup);
+            continue;
+        }
+        const v: Vendor = {
+            id: newId(), organizationId: r.organizationId, requirementId: r.id,
+            name: name || phone, phone, phoneRaw: raw, address: '', area: String(e.area ?? '').trim(), city: r.input.locationCity,
+            website: '', sells: 'Added by the team', webYearsInBusiness: null, relevance: 10, sourceUrls: [],
+            status: 'found', source: 'manual', createdAt: now,
+        };
+        seen.set(phone, v);
+        added.push(v);
+    }
+    await repo.saveVendors(added);
+    const recent = await repo.recentlyCalledPhones(r.organizationId, added.map((v) => v.phone), satejConfig.doNotRecallDays);
+    if (added.length) {
+        log(r, `${by} added ${added.length} vendor(s) to the call list${skipped.length ? `; ${skipped.length} skipped` : ''}`);
+        // A requirement that found nobody on the web becomes callable once the team supplies vendors.
+        if (r.status === 'failed' && r.brief) {
+            r.status = 'awaiting_call_approval';
+            r.error = undefined;
+        }
+        await repo.saveRequirement(r);
+    }
+    return { added: added.length, skipped, calledRecently: added.filter((v) => recent.has(v.phone)).map((v) => v.name) };
+}
+
+/**
+ * Ring a team member's own phone with exactly what a vendor would hear: this
+ * requirement's call row, Meera's live script, outside calling hours if need
+ * be. Kept out of ranking, do-not-recall and the batch.
+ */
+export async function startRehearsal(r: Requirement, phoneRaw: string, asVendor: string, by: string): Promise<CallRecord> {
+    if (!r.brief) throw new Error('Satej has not written the brief yet; try again in a moment');
+    if (!satejConfig.mockMode && !satejConfig.bolnaAgentId) throw new Error('SATEJ_BOLNA_AGENT_ID is not set');
+    const phone = normaliseIndianPhone(phoneRaw);
+    if (!phone) throw new Error('Enter a valid Indian mobile number for the test call');
+    const repo = getRepo();
+    const live = (await repo.listCalls(r.id)).find((c) => c.rehearsal && !isFinal(c.status));
+    if (live) throw new Error('A test call is already in progress');
+
+    const pretend: Vendor = {
+        id: 'rehearsal', organizationId: r.organizationId, requirementId: r.id, name: asVendor.trim() || 'Test Vendor', phone, phoneRaw,
+        address: '', area: '', city: '', website: '', sells: '', webYearsInBusiness: null, relevance: 0, sourceUrls: [], status: 'found', createdAt: nowIso(),
+    };
+    const [header, line] = buildCallCsv(r, [pretend]).trim().split('\n');
+    const cols = header.split(',');
+    const cells = line.match(/("([^"]|"")*"|[^,]*)(,|$)/g)?.map((c) => c.replace(/,$/, '').replace(/^"|"$/g, '').replace(/""/g, '"')) ?? [];
+    const row = Object.fromEntries(cols.map((c, i) => [c, cells[i] ?? ''])) as Record<string, string>;
+    row.vendor_ref = 'rehearsal';
+    delete row.contact_number;
+
+    const executionId = await placeCall(satejConfig.bolnaAgentId, phone, row);
+    const now = nowIso();
+    const call: CallRecord = {
+        id: newId(), organizationId: r.organizationId, requirementId: r.id, vendorId: null, executionId, toNumber: phone,
+        status: 'queued', durationSec: null, transcript: '', bolnaSummary: '', extracted: null, recordingUrl: '', retried: 0,
+        rehearsal: true, rehearsalAs: pretend.name, createdAt: now, updatedAt: now,
+    };
+    await repo.saveCall(call);
+    log(r, `${by} placed a test call to ${phone}; Meera is speaking as if to ${pretend.name}`);
+    await repo.saveRequirement(r);
+    return call;
+}
+
+/** Pull test-call progress straight from Bolna — works even where the webhook cannot reach (a laptop). */
+export async function refreshRehearsals(r: Requirement): Promise<void> {
+    if (satejConfig.mockMode) return;
+    const pending = (await getRepo().listCalls(r.id)).filter((c) => c.rehearsal && (!isFinal(c.status) || (c.status === 'completed' && !c.recordingUrl)));
+    for (const c of pending.slice(0, 3)) {
+        try {
+            const ex = await getExecutionRaw(c.executionId);
+            await ingestExecution({ ...(ex as BolnaExecution), context_details: { recipient_data: { vendor_ref: 'rehearsal', requirement_code: r.code, vendor_name: c.rehearsalAs } } });
+        } catch (e) {
+            console.warn('[satej] rehearsal refresh failed', c.executionId, e instanceof Error ? e.message : e);
+        }
+    }
+}
+
+/** Satej's read of a test call: the same analysis a vendor call gets, so the team sees what would be scored. */
+export async function analyseRehearsal(r: Requirement, callId: string): Promise<CallRecord> {
+    const repo = getRepo();
+    const c = (await repo.listCalls(r.id)).find((x) => x.id === callId && x.rehearsal);
+    if (!c) throw new Error('Test call not found');
+    if (c.transcript.length < 40) throw new Error('This call has no transcript to read yet');
+    const b = r.brief!;
+    c.analysis = sanitiseAnalysis(await chatJSON<CallAnalysis>({
+        task: 'analyze',
+        system: CALL_ANALYST_SYSTEM,
+        user: callAnalystUser({
+            requirement: `${b.itemSummary}. Quantity: ${b.quantityText}. Location: ${b.locationText}. Timeline: ${b.timelineText || 'not set'}.`,
+            vendor: { name: c.rehearsalAs ?? 'Test', area: '', city: '', website: '', sells: '', webYearsInBusiness: null },
+            bolnaExtracted: c.extracted,
+            transcript: c.transcript,
+        }),
+        model: 'smart',
+    }));
+    c.score = scoreCall(c.analysis, b, undefined);
+    await repo.saveCall(c);
+    return c;
 }
 
 export async function resendSummary(r: Requirement) {
