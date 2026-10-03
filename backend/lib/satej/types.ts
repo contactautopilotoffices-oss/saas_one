@@ -163,6 +163,7 @@ export interface CallRecord {
     /** A test call to a team member's own phone. Never ranked, never counted as a vendor call. */
     rehearsal?: boolean;
     rehearsalAs?: string;
+    rehearsalAgent?: 'main' | 'graph';
     analysisError?: string;
     createdAt: string;
     updatedAt: string;

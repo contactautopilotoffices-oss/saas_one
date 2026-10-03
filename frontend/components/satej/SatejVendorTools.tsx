@@ -194,9 +194,12 @@ export function VendorIntake({ orgId, requirement, onAdded, defaultOpen }: {
 
 const FINAL = ['completed', 'call-disconnected', 'no-answer', 'busy', 'failed', 'canceled', 'stopped', 'error', 'balance-low'];
 
-export function TestCall({ orgId, requirement, vendors, calls, onChanged, onImproveScript }: {
+export function TestCall({ orgId, requirement, vendors, calls, onChanged, onImproveScript, graphAgent }: {
     orgId: string; requirement: any; vendors: any[]; calls: any[]; onChanged: () => void; onImproveScript: (transcript: string) => void;
+    /** "Meera (graph)" is configured: offer it alongside the live Meera. */
+    graphAgent?: boolean;
 }) {
+    const [agent, setAgent] = useState<'main' | 'graph'>('main');
     const named = vendors.filter((v) => v.status === 'found');
     const [phone, setPhone] = useState<string>(requirement.input.notifyWhatsapp || '');
     const [asVendor, setAsVendor] = useState<string>(named[0]?.name ?? 'Test Vendor');
@@ -207,7 +210,7 @@ export function TestCall({ orgId, requirement, vendors, calls, onChanged, onImpr
 
     const call = async () => {
         setBusy('call'); setErr('');
-        try { await post(requirement.id, orgId, { action: 'rehearse', phone, asVendor }); onChanged(); }
+        try { await post(requirement.id, orgId, { action: 'rehearse', phone, asVendor, agent }); onChanged(); }
         catch (e: any) { setErr(e.message); } finally { setBusy(''); }
     };
     const read = async (callId: string) => {
@@ -226,6 +229,14 @@ export function TestCall({ orgId, requirement, vendors, calls, onChanged, onImpr
                     <input list="satej-test-as" value={asVendor} onChange={(e) => setAsVendor(e.target.value)} />
                     <datalist id="satej-test-as">{named.map((v) => <option key={v.id} value={v.name} />)}</datalist>
                 </label>
+                {graphAgent && (
+                    <label>Which Meera
+                        <select value={agent} onChange={(e) => setAgent(e.target.value as 'main' | 'graph')}>
+                            <option value="main">Meera — live (one prompt)</option>
+                            <option value="graph">Meera (graph) — step by step, testing</option>
+                        </select>
+                    </label>
+                )}
                 <button className={s.primary} disabled={!!busy || !!live || !phone.trim()} onClick={() => void call()}>
                     {busy === 'call' ? <Loader2 size={14} className={s.spin} /> : <PhoneCall size={14} />} {live ? 'Calling you…' : 'Call me now'}
                 </button>
@@ -236,7 +247,7 @@ export function TestCall({ orgId, requirement, vendors, calls, onChanged, onImpr
                 <div key={c.id} className={s.testResult}>
                     <div className={s.boardHead} style={{ marginBottom: 6 }}>
                         <div>
-                            <b>Test call · as {c.rehearsalAs}</b>
+                            <b>Test call · as {c.rehearsalAs}{c.rehearsalAgent === 'graph' ? ' · Meera (graph)' : ''}</b>
                             <div className={s.muted}>{new Date(c.createdAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })} · {c.toNumber}</div>
                         </div>
                         <span className={`${s.chip} ${c.status === 'completed' ? s.good : FINAL.includes(c.status) ? s.bad : s.info}`}>

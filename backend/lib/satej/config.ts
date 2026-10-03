@@ -85,6 +85,14 @@ export const satejConfig = {
     get bolnaAgentId() {
         return env('SATEJ_BOLNA_AGENT_ID');
     },
+    /** "Meera (graph)": the same call as a Bolna graph agent, for side-by-side testing (scripts/satej-graph-agent.ts). */
+    get bolnaGraphAgentId() {
+        return env('SATEJ_BOLNA_GRAPH_AGENT_ID');
+    },
+    /** Every Bolna agent whose calls belong to Satej. */
+    get bolnaAgentIds(): string[] {
+        return [this.bolnaAgentId, this.bolnaGraphAgentId].filter(Boolean);
+    },
     get bolnaBaseUrl() {
         return env('BOLNA_BASE_URL', 'https://api.bolna.ai').replace(/\/$/, '');
     },

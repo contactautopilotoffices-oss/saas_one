@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
     const executionId = sp.get('executionId') ?? '';
     if (!/^[0-9a-f-]{16,64}$/i.test(executionId)) return NextResponse.json({ error: 'executionId is required' }, { status: 400 });
     try {
-        const url = await recordingUrlFor(satejConfig.bolnaAgentId, executionId);
+        const url = await recordingUrlFor(satejConfig.bolnaAgentIds, executionId);
         if (!url) return NextResponse.json({ error: 'No recording for this call' }, { status: 404 });
         const upstream = await fetch(url, { headers: { Authorization: `Bearer ${satejConfig.bolnaApiKey}` }, redirect: 'follow' });
         if (!upstream.ok || !upstream.body) return NextResponse.json({ error: `Recording unavailable (${upstream.status})` }, { status: 502 });

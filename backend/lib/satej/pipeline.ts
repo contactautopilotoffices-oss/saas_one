@@ -645,7 +645,7 @@ export async function ingestExecution(ex: BolnaExecution): Promise<Requirement |
     const execId = String(ex?.id ?? ex?.execution_id ?? '');
     if (!execId) return null;
     // Another agent on the same Bolna account (Ira, Radhika) is none of Satej's business.
-    if (satejConfig.bolnaAgentId && ex.agent_id && String(ex.agent_id) !== satejConfig.bolnaAgentId) return null;
+    if (satejConfig.bolnaAgentIds.length && ex.agent_id && !satejConfig.bolnaAgentIds.includes(String(ex.agent_id))) return null;
     const recipient = (ex.context_details?.recipient_data ?? {}) as Record<string, unknown>;
 
     let r: Requirement | null = null;
@@ -1030,7 +1030,7 @@ export async function addVendors(r: Requirement, entries: { name?: string; phone
  * requirement's call row, Meera's live script, outside calling hours if need
  * be. Kept out of ranking, do-not-recall and the batch.
  */
-export async function startRehearsal(r: Requirement, phoneRaw: string, asVendor: string, by: string): Promise<CallRecord> {
+export async function startRehearsal(r: Requirement, phoneRaw: string, asVendor: string, by: string, agent: 'main' | 'graph' = 'main'): Promise<CallRecord> {
     if (!r.brief) throw new Error('Satej has not written the brief yet; try again in a moment');
     if (!satejConfig.mockMode && !satejConfig.bolnaAgentId) throw new Error('SATEJ_BOLNA_AGENT_ID is not set');
     const phone = normaliseIndianPhone(phoneRaw);
@@ -1050,15 +1050,17 @@ export async function startRehearsal(r: Requirement, phoneRaw: string, asVendor:
     row.vendor_ref = 'rehearsal';
     delete row.contact_number;
 
-    const executionId = await placeCall(satejConfig.bolnaAgentId, phone, row);
+    const agentId = agent === 'graph' ? satejConfig.bolnaGraphAgentId : satejConfig.bolnaAgentId;
+    if (!satejConfig.mockMode && !agentId) throw new Error(agent === 'graph' ? 'SATEJ_BOLNA_GRAPH_AGENT_ID is not set' : 'SATEJ_BOLNA_AGENT_ID is not set');
+    const executionId = await placeCall(agentId, phone, row);
     const now = nowIso();
     const call: CallRecord = {
         id: newId(), organizationId: r.organizationId, requirementId: r.id, vendorId: null, executionId, toNumber: phone,
         status: 'queued', durationSec: null, transcript: '', bolnaSummary: '', extracted: null, recordingUrl: '', retried: 0,
-        rehearsal: true, rehearsalAs: pretend.name, createdAt: now, updatedAt: now,
+        rehearsal: true, rehearsalAs: pretend.name, rehearsalAgent: agent, createdAt: now, updatedAt: now,
     };
     await repo.saveCall(call);
-    log(r, `${by} placed a test call to ${phone}; Meera is speaking as if to ${pretend.name}`);
+    log(r, `${by} placed a test call to ${phone} with ${agent === 'graph' ? 'Meera (graph)' : 'Meera'}, speaking as if to ${pretend.name}`);
     await repo.saveRequirement(r);
     return call;
 }

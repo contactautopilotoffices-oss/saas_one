@@ -486,7 +486,7 @@ function RequirementDetail({ orgId, id, onChange, onImproveScript }: { orgId: st
                 )}
 
                 {r.brief && r.status !== 'cancelled' && (
-                    <TestCall orgId={orgId} requirement={r} vendors={d.vendors} calls={d.calls} onChanged={() => void load()} onImproveScript={onImproveScript} />
+                    <TestCall orgId={orgId} requirement={r} vendors={d.vendors} calls={d.calls} graphAgent={(d as any).graphAgent} onChanged={() => void load()} onImproveScript={onImproveScript} />
                 )}
 
                 {d.summaryText && <SummaryCard text={d.summaryText} />}

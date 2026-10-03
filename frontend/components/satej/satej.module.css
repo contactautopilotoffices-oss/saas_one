@@ -299,7 +299,7 @@
 .previewList { margin-top: 10px; display: grid; gap: 3px; max-height: 220px; overflow: auto; font-size: 13px; }
 .previewRow { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 8px; padding: 5px 8px; border-radius: 7px; background: var(--s-card); }
 .testCard { border-color: color-mix(in srgb, var(--s-good) 45%, var(--s-line)); }
-.testRow { display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; align-items: end; margin-top: 10px; }
+.testRow { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)) auto; gap: 10px; align-items: end; margin-top: 10px; }
 .testRow label { margin-bottom: 0; }
 @media (max-width: 700px) { .testRow { grid-template-columns: 1fr; } }
 .testResult { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--s-line); }

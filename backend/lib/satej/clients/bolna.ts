@@ -228,10 +228,10 @@ export async function listVoiceCalls(agentId: string, days = 30, limit = 60): Pr
     return out.filter((c) => !seen.has(c.id) && seen.add(c.id)).sort((x, y) => y.createdAt.localeCompare(x.createdAt)).slice(0, limit);
 }
 
-/** One execution's recording URL, only if it belongs to `agentId`. */
-export async function recordingUrlFor(agentId: string, executionId: string): Promise<string | null> {
+/** One execution's recording URL, only if it belongs to one of `agentIds`. */
+export async function recordingUrlFor(agentIds: string | string[], executionId: string): Promise<string | null> {
     const e = await bolnaJson('GET', `/executions/${encodeURIComponent(executionId)}`);
-    if (String(e.agent_id ?? '') !== agentId) return null;
+    if (![agentIds].flat().filter(Boolean).includes(String(e.agent_id ?? ''))) return null;
     return e.telephony_data?.recording_url ?? null;
 }
 

@@ -27,6 +27,7 @@ import {
 } from '@/backend/lib/satej/pipeline';
 import { getRepo } from '@/backend/lib/satej/repo';
 import { fullSummary } from '@/backend/lib/satej/summary';
+import { satejConfig } from '@/backend/lib/satej/config';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -58,7 +59,7 @@ export async function GET(request: NextRequest, ctx: Ctx) {
                 headers: { 'Content-Type': 'text/csv', 'Content-Disposition': `attachment; filename="${r.code}-vendors.csv"` },
             });
         }
-        return NextResponse.json({ requirement: r, vendors, calls, summaryText: r.ranking ? fullSummary(r) : null });
+        return NextResponse.json({ requirement: r, vendors, calls, summaryText: r.ranking ? fullSummary(r) : null, graphAgent: !!satejConfig.bolnaGraphAgentId });
     } catch (e) {
         console.error('[satej] detail failed', e);
         return NextResponse.json({ error: e instanceof Error ? e.message : 'Could not load the requirement' }, { status: 500 });
@@ -69,7 +70,7 @@ export async function POST(request: NextRequest, ctx: Ctx) {
     const { id } = await ctx.params;
     const body = (await request.json().catch(() => ({}))) as {
         organizationId?: string; action?: string; answers?: unknown; changes?: Record<string, unknown>; vendorId?: string;
-        vendors?: unknown; phone?: string; asVendor?: string; callId?: string;
+        vendors?: unknown; phone?: string; asVendor?: string; callId?: string; agent?: string;
     };
     const caller = await requireSatejCaller(body.organizationId);
     if (caller instanceof NextResponse) return caller;
@@ -101,7 +102,7 @@ export async function POST(request: NextRequest, ctx: Ctx) {
                 return NextResponse.json({ ok: true, ...(await addVendors(r, list, caller.name)) });
             }
             case 'rehearse':
-                return NextResponse.json({ ok: true, call: await startRehearsal(r, String(body.phone ?? ''), String(body.asVendor ?? ''), caller.name) });
+                return NextResponse.json({ ok: true, call: await startRehearsal(r, String(body.phone ?? ''), String(body.asVendor ?? ''), caller.name, body.agent === 'graph' ? 'graph' : 'main') });
             case 'analyze_rehearsal':
                 return NextResponse.json({ ok: true, call: await analyseRehearsal(r, String(body.callId ?? '')) });
             case 'exclude_vendor':

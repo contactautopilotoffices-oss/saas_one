@@ -63,7 +63,10 @@ const TASK_SETTINGS: Record<string, unknown> = {
     ambient_noise: true, // quiet office behind the voice instead of studio silence
     ambient_noise_track: 'office-ambience',
     discard_pre_welcome_utterance: true, // the vendor's "Hello?" no longer gets a second greeting
-    voicemail: true, // hang up on voicemail and IVRs instead of talking to them
+    // OFF: Plivo's detector hung up on real people within 2 s of "hello" (code 4010,
+    // voicemail_detected — every test call on 2026-10-03). The prompt already ends
+    // the call itself when a voicemail or IVR answers.
+    voicemail: false,
     call_hangup_message: { en: 'Okay, bye.', hi: 'Theek hai ji, bye.' }, // was "The call will now disconnect. Goodbye!"
     check_user_online_message: { en: 'Hello? Can you hear me?', hi: 'Hello? Aawaz aa rahi hai?' },
     call_cancellation_prompt: VOICE_HANGUP_PROMPT,
