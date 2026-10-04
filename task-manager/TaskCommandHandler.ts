@@ -5,7 +5,7 @@ import { Employee, TaskAssignment } from './types';
 
 export interface CommandExecutionResult {
     success: boolean;
-    command: 'tasks' | 'status' | 'done_single' | 'done_all' | 'cancel' | 'unknown' | 'unregistered';
+    command: 'tasks' | 'status' | 'done_single' | 'done_all' | 'cancel' | 'unknown' | 'unregistered' | 'team_status' | 'assign_task';
     taskNumber?: number;
     affectedTaskId?: string;
     employee?: Employee;
@@ -71,8 +71,228 @@ export class TaskCommandHandler {
             };
         }
 
+        // ── Command: Team Status / Department Overview ───────────────────────────
+        const isTeamQuery = lower === 'team' || lower === 'team status' || lower === 'view team tasks' || lower === 'dept' || lower === 'department';
+        const isManagerQueryingGeneralTasks = (employee.role === 'reporting_manager' || employee.role === 'superuser') && (lower === 'team' || lower === 'view team tasks' || (tasks.length === 0 && (lower === 'tasks' || lower === 'view tasks' || lower === 'status')));
+
+        if (isTeamQuery || isManagerQueryingGeneralTasks) {
+            if (!employee.department_id && employee.role !== 'superuser') {
+                const reply = `⚠️ You are marked as a Reporting Manager, but no department is assigned to your profile.`;
+                if (shouldSend) await TaskMessagingService.sendMessage(params.phone, reply);
+                return {
+                    success: false,
+                    command: 'team_status',
+                    employee,
+                    replyText: reply
+                };
+            }
+
+            const deptEmployees = employee.department_id
+                ? await TaskDatabaseService.getEmployeesByDepartment(employee.department_id)
+                : await TaskDatabaseService.getAllEmployees();
+
+            const deptName = employee.department_name || 'Department';
+
+            if (deptEmployees.length === 0) {
+                const reply = `📊 *${deptName} Department*\n\nNo employees found in this department.`;
+                if (shouldSend) await TaskMessagingService.sendMessage(params.phone, reply);
+                return {
+                    success: true,
+                    command: 'team_status',
+                    employee,
+                    replyText: reply
+                };
+            }
+
+            let totalDeptTasks = 0;
+            let totalDeptCompleted = 0;
+            const memberSections: string[] = [];
+
+            for (const member of deptEmployees) {
+                const memberTasks = await TaskDatabaseService.getDailyAssignments({
+                    employeeId: member.id,
+                    date: targetDate
+                });
+
+                const completed = memberTasks.filter(t => t.status === 'completed').length;
+                totalDeptTasks += memberTasks.length;
+                totalDeptCompleted += completed;
+
+                const roleBadge = member.role === 'reporting_manager' ? ' 👑 (Manager)' : '';
+                const taskLines = memberTasks.length === 0
+                    ? '   _No tasks assigned today_'
+                    : memberTasks.map((t, idx) => {
+                        const icon = t.status === 'completed' ? '✅' : '⏳';
+                        return `   ${idx + 1}. [${icon}] ${t.title}`;
+                    }).join('\n');
+
+                memberSections.push(`👤 *${member.name}*${roleBadge} (${completed}/${memberTasks.length} Completed)\n${taskLines}`);
+            }
+
+            const overallPercent = totalDeptTasks > 0 ? Math.round((totalDeptCompleted / totalDeptTasks) * 100) : 100;
+
+            const reply = [
+                `📊 *${deptName} Department — Today's Tasks*`,
+                `📅 ${targetDate}`,
+                ``,
+                memberSections.join('\n\n'),
+                ``,
+                `📈 *Department Progress:* ${totalDeptCompleted}/${totalDeptTasks} Tasks (${overallPercent}%)`,
+                ``,
+                `💡 *To assign a task:*`,
+                `Reply: *assign <name> <task title>*`,
+                `_Example: assign Harsh Test login flow_`
+            ].join('\n');
+
+            if (shouldSend) await TaskMessagingService.sendMessage(params.phone, reply);
+            return {
+                success: true,
+                command: 'team_status',
+                employee,
+                replyText: reply,
+                progress: { total: totalDeptTasks, completed: totalDeptCompleted, percent: overallPercent }
+            };
+        }
+
+        // ── Command: Assign Task Guide ──────────────────────────────────────────
+        if (lower === 'assign' || lower === 'assign task') {
+            const deptEmployees = employee.department_id
+                ? await TaskDatabaseService.getEmployeesByDepartment(employee.department_id)
+                : [];
+            const availableNames = deptEmployees.map(e => e.name.split(' ')[0]).join(', ');
+            const reply = [
+                `📝 *How to Assign a Task via WhatsApp:*`,
+                ``,
+                `Reply in this format:`,
+                `*assign <name> <task title>*`,
+                ``,
+                availableNames ? `👥 Your team members: *${availableNames}*` : '',
+                ``,
+                `_Examples:_`,
+                `• *assign Harsh Test WhatsApp integration*`,
+                `• *assign Sahil Review deployment checklist*`
+            ].filter(Boolean).join('\n');
+
+            if (shouldSend) await TaskMessagingService.sendMessage(params.phone, reply);
+            return {
+                success: true,
+                command: 'assign_task',
+                employee,
+                replyText: reply
+            };
+        }
+
+        // ── Command: Assign <Name> <Task Title> ──────────────────────────────────
+        const assignMatch = cleanText.match(/^assign\s+([a-zA-Z0-9_\.\-]+)\s+(.+)$/i);
+        if (assignMatch) {
+            const targetNameQuery = assignMatch[1].trim();
+            const taskTitle = assignMatch[2].trim();
+
+            if (employee.role !== 'reporting_manager' && employee.role !== 'superuser') {
+                const reply = `❌ *Permission Denied*\n\nOnly Reporting Managers and Superusers can assign tasks.`;
+                if (shouldSend) await TaskMessagingService.sendMessage(params.phone, reply);
+                return {
+                    success: false,
+                    command: 'assign_task',
+                    employee,
+                    replyText: reply
+                };
+            }
+
+            if (!employee.department_id && employee.role !== 'superuser') {
+                const reply = `⚠️ You are marked as a Reporting Manager, but have no department assigned.`;
+                if (shouldSend) await TaskMessagingService.sendMessage(params.phone, reply);
+                return {
+                    success: false,
+                    command: 'assign_task',
+                    employee,
+                    replyText: reply
+                };
+            }
+
+            // Fetch team members in manager's department
+            const deptEmployees = employee.department_id
+                ? await TaskDatabaseService.getEmployeesByDepartment(employee.department_id)
+                : await TaskDatabaseService.getAllEmployees();
+
+            // Match by first name, full name, or ID
+            const targetEmployee = deptEmployees.find(e => {
+                const fullName = e.name.toLowerCase();
+                const firstName = e.name.split(' ')[0].toLowerCase();
+                const query = targetNameQuery.toLowerCase();
+                return firstName === query || fullName.includes(query) || e.id === targetNameQuery;
+            });
+
+            if (!targetEmployee) {
+                const availableNames = deptEmployees.map(e => e.name.split(' ')[0]).join(', ');
+                const reply = `❌ *Employee Not Found*\n\nCould not find "${targetNameQuery}" in your department.\n\nAvailable team members: *${availableNames}*\n\n_Example: assign ${deptEmployees[0]?.name.split(' ')[0] || 'Name'} ${taskTitle}_`;
+                if (shouldSend) await TaskMessagingService.sendMessage(params.phone, reply);
+                return {
+                    success: false,
+                    command: 'assign_task',
+                    employee,
+                    replyText: reply
+                };
+            }
+
+            // Create task in database
+            const newTask = await TaskDatabaseService.createTaskAssignment({
+                employeeId: targetEmployee.id,
+                title: taskTitle,
+                assignedDate: targetDate,
+                assignedBy: employee.id
+            });
+
+            // Log audit
+            await TaskDatabaseService.logAudit({
+                eventType: 'task_assigned_whatsapp',
+                actorId: employee.id,
+                targetEmployeeId: targetEmployee.id,
+                taskId: newTask.id,
+                details: { title: taskTitle, channel: 'whatsapp', date: targetDate }
+            });
+
+            // Notify assigned employee via WhatsApp if they have a phone number
+            if (targetEmployee.phone_number && targetEmployee.phone_number.trim().length >= 10) {
+                const managerDept = employee.department_name ? ` (${employee.department_name})` : '';
+                const empAlert = [
+                    `🔔 *New Task Assigned!*`,
+                    ``,
+                    `*Task:* ${taskTitle}`,
+                    `*Assigned By:* ${employee.name}${managerDept}`,
+                    `*Date:* ${targetDate}`,
+                    ``,
+                    `Reply *tasks* to view your full list, or *done <number>* once completed!`
+                ].join('\n');
+
+                TaskMessagingService.sendMessage(targetEmployee.phone_number, empAlert).catch(err => {
+                    console.error('[WhatsAppAssign] Failed to notify target employee:', err);
+                });
+            }
+
+            // Confirm back to the Manager
+            const managerReply = [
+                `✅ *Task Assigned Successfully!*`,
+                ``,
+                `*Assigned To:* ${targetEmployee.name}`,
+                `*Task:* ${taskTitle}`,
+                `*Date:* ${targetDate}`,
+                ``,
+                `📲 ${targetEmployee.name} has been notified on WhatsApp.`
+            ].join('\n');
+
+            if (shouldSend) await TaskMessagingService.sendMessage(params.phone, managerReply);
+            return {
+                success: true,
+                command: 'assign_task',
+                affectedTaskId: newTask.id,
+                employee,
+                replyText: managerReply
+            };
+        }
+
         // ── Command 2: List Tasks / Status ────────────────────────────────────
-        if (lower === 'tasks' || lower === 'status' || lower === 'my tasks' || lower === 'today tasks' || lower === "today's tasks") {
+        if (lower === 'tasks' || lower === 'status' || lower === 'my tasks' || lower === 'view tasks' || lower === 'today tasks' || lower === "today's tasks") {
             if (tasks.length === 0) {
                 const reply = TaskErrorHandler.noTasksAssigned(targetDate);
                 if (shouldSend) await TaskMessagingService.sendMessage(params.phone, reply);

@@ -51,7 +51,7 @@ export class TaskMessageRouter {
         }
 
         // 2. Explicit System Switch Commands
-        if (/^(tasks|task|task\s*manager|my\s*tasks)$/i.test(lower)) {
+        if (/^(tasks|task|view\s*tasks|task\s*manager|my\s*tasks)$/i.test(lower)) {
             return {
                 system: 'TASK_MANAGER',
                 reason: 'explicit_task_switch',
@@ -103,6 +103,24 @@ export class TaskMessageRouter {
                 reason: 'task_status_pattern',
                 isExplicitSwitch: false,
                 confidence: 0.95
+            };
+        }
+
+        if (/^assign(?:\s+.*)?$/i.test(lower)) {
+            return {
+                system: 'TASK_MANAGER',
+                reason: 'assign_task_pattern',
+                isExplicitSwitch: false,
+                confidence: 0.99
+            };
+        }
+
+        if (/^(?:team|team\s*status|view\s*team\s*tasks|dept|department)$/i.test(lower)) {
+            return {
+                system: 'TASK_MANAGER',
+                reason: 'team_status_pattern',
+                isExplicitSwitch: false,
+                confidence: 0.99
             };
         }
 
@@ -185,25 +203,6 @@ export class TaskMessageRouter {
             }
         });
 
-        // Check test whitelist if active (Testing phase safeguard)
-        const testingConfig = await TaskDatabaseService.getTestingConfig();
-        if (testingConfig?.enabled) {
-            const senderLast10 = params.phone.replace(/\D/g, '').slice(-10);
-            const isManager = testingConfig.manager?.phone && testingConfig.manager.phone.replace(/\D/g, '').slice(-10) === senderLast10;
-            const isTestEmp = (testingConfig.employees || []).some(e => e.phone?.replace(/\D/g, '').slice(-10) === senderLast10);
-            if (!isManager && !isTestEmp) {
-                return {
-                    handledByTaskManager: false,
-                    system: 'FACILITY',
-                    classification: {
-                        system: 'FACILITY',
-                        reason: 'not_in_test_whitelist',
-                        isExplicitSwitch: false,
-                        confidence: 1.0
-                    }
-                };
-            }
-        }
 
         // ── Case A: Ambiguous Prompt (Phase 16 Specification) ─────────────────
         if (classification.system === 'AMBIGUOUS') {

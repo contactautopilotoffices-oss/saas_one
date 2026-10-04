@@ -20,7 +20,8 @@ import {
     User,
     Check,
     TrendingUp,
-    BarChart3
+    BarChart3,
+    Trash2
 } from 'lucide-react';
 
 interface Department {
@@ -290,6 +291,36 @@ export default function TaskAssignmentDashboard({ orgId }: { orgId?: string }) {
             setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: nextStatus, completed_at: nextStatus === 'completed' ? new Date().toISOString() : null } : t));
         } catch (err: any) {
             alert(`Action failed: ${err.message}`);
+        }
+    };
+
+    const [deletingTaskId, setDeletingTaskId] = useState<string | null>(null);
+
+    const handleDeleteTask = async (taskId: string, title: string) => {
+        if (!window.confirm(`Are you sure you want to delete task: "${title}"?`)) return;
+        setDeletingTaskId(taskId);
+        try {
+            const res = await fetch('/api/task-manager/tasks', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'delete_task',
+                    actorId,
+                    taskId
+                })
+            });
+
+            const data = await res.json();
+            if (!res.ok || !data.success) {
+                throw new Error(data.error || 'Failed to delete task');
+            }
+
+            // Remove task from state optimistically
+            setTasks(prev => prev.filter(t => t.id !== taskId));
+        } catch (err: any) {
+            alert(`Delete failed: ${err.message}`);
+        } finally {
+            setDeletingTaskId(null);
         }
     };
 
@@ -705,7 +736,7 @@ export default function TaskAssignmentDashboard({ orgId }: { orgId?: string }) {
                                             </div>
                                         </div>
 
-                                        <div className="flex-shrink-0">
+                                        <div className="flex items-center gap-2 flex-shrink-0">
                                             <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${
                                                 isDone
                                                     ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300'
@@ -714,6 +745,18 @@ export default function TaskAssignmentDashboard({ orgId }: { orgId?: string }) {
                                                 {isDone ? <CheckCircle2 className="w-3 h-3" /> : <Clock className="w-3 h-3" />}
                                                 {task.status.toUpperCase()}
                                             </span>
+
+                                            {(actor?.role === 'reporting_manager' || actor?.role === 'superuser' || task.assigned_by === actorId) && (
+                                                <button
+                                                    type="button"
+                                                    disabled={deletingTaskId === task.id}
+                                                    onClick={() => handleDeleteTask(task.id, task.title)}
+                                                    className="p-1.5 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-all"
+                                                    title="Delete task"
+                                                >
+                                                    <Trash2 className={`w-4 h-4 ${deletingTaskId === task.id ? 'animate-spin' : ''}`} />
+                                                </button>
+                                            )}
                                         </div>
                                     </div>
                                 );

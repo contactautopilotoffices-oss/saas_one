@@ -109,14 +109,15 @@ export class TaskDatabaseService {
             `)
             .or(`phone.eq.${digits},phone.ilike.%${last10}`)
             .eq('is_active', true)
-            .maybeSingle();
+            .order('updated_at', { ascending: false })
+            .limit(1);
 
         if (error) {
             console.error('[TaskDatabaseService] Error fetching employee by phone:', error);
             return null;
         }
-        if (!data) return null;
-        return mapProfileToEmployee(data);
+        if (!data || data.length === 0) return null;
+        return mapProfileToEmployee(data[0]);
     }
 
     static async getEmployeesByDepartment(departmentId: string): Promise<Employee[]> {

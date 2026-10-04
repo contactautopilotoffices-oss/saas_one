@@ -81,25 +81,6 @@ export class TaskNotificationService {
             employees = await TaskDatabaseService.getAllEmployees();
         }
 
-        // Apply testing whitelist if enabled (Testing phase safeguard)
-        if (!options.employeeId) {
-            const testingConfig = await TaskDatabaseService.getTestingConfig();
-            if (testingConfig?.enabled) {
-                const whitelistedPhones = new Set<string>();
-                (testingConfig.employees || []).forEach(e => {
-                    const d = e.phone?.replace(/\D/g, '').slice(-10);
-                    if (d) whitelistedPhones.add(d);
-                });
-                if (testingConfig.notifyManager && testingConfig.manager?.phone) {
-                    const md = testingConfig.manager.phone.replace(/\D/g, '').slice(-10);
-                    if (md) whitelistedPhones.add(md);
-                }
-                employees = employees.filter(emp => {
-                    const digits = emp.phone_number?.replace(/\D/g, '').slice(-10);
-                    return digits && whitelistedPhones.has(digits);
-                });
-            }
-        }
 
         let sentCount = 0;
         let skippedNoTasksCount = 0;
