@@ -1,3 +1,21 @@
+## 2026-10-05 — Saas.one: Three Whitefield slides — what the floor earns, who else is opening, and where our price sits
+
+**Three presentation slides for the Total Environment Whitefield "other half" deck, blending the founder's financial projection with the Whitefield Business Case Study: the money, the new competitors, and a price anchored between Simpliwork and 91springboard.**
+
+- **Why:** The founder wants one consistent story for the 20,000 sq ft floor. The deal terms were in one document, the cost and margin maths in another, and the old price slide still showed a ₹12,500 to ₹16,000 plan that no longer matches the numbers.
+- **Structural decisions:**
+  - Built outside this repo, at `~/Downloads/TE-Whitefield-Part2-Price-Slides/`, with the same page size, fonts and colours as the existing Part 2 deck. Nothing in the FMS app changed. The three slides are a separate 3-page PDF, not merged into the 21-page deck, so nothing already shared was altered.
+  - Our price is set at ₹11,200 a seat, the figure the projection says is needed for a 20% margin (₹11,208). The alternative was to pick a price from the competitor ladder and see what margin fell out. We started from the margin because it is the number the business must hit, and the ladder turned out to have an empty slot at that price, between ₹10,000 and ₹12,000.
+  - The old "Standard ₹12,500 / Blended ₹14,000 / Premium ₹16,000" lines were removed from the price slide. They belonged to the earlier 140-seat plan.
+- **What works now:** A reader can see in three pages what the floor costs each month (₹35.87 L), what we must bill (₹44.83 L), what we keep (₹8.97 L, about ₹1.08 Cr a year), how full the floor must be (63% to cover running costs, 80% to cover everything, against 83 to 93% for settled rivals), and why ₹11,200 is competitive without looking cheap.
+- **Left undone:**
+  - Not merged into the 21-page deck, because the order and page numbers are the founder's call. Page numbers are left off for the same reason.
+  - No month-by-month ramp or loss scenarios. The founder cut those from the deck earlier, so only the break-even fill levels are shown.
+  - One correction was made on the "more operators" slide: 2026 deals are about a fifth of the area's flex stock (9,500 of 45,700), not a sixth as the old slide said.
+- **Open questions for the founder:**
+  - The projection counts about 400 seats at one price of ₹11,208, anchor client included. Earlier work priced the Basilic deal at ₹8,570 per billable seat, with 1.6 billable seats per desk. If rivals' quotes are per desk and our 400 are billable seats, the like-for-like comparison changes. Which one do the 400 seats mean?
+  - Rivals' prices are list prices and ours is the price we must actually achieve. If volume discounts of up to 12% are given, the margin drops (each 5% off costs about ₹2.2 L a month). Are discounts allowed on this floor?
+
 ## 2026-10-03 — Saas.one: "Invisible Excellence", a 62-second brand film for the website
 
 **A premium, music-led film that descends from the clouds onto an Autopilot-branded office and down through five levels of the building, showing real people using the platform at each one.**
