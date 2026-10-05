@@ -4,12 +4,12 @@
 
 - **Why:** The founder wants one consistent story for the 20,000 sq ft floor. The deal terms were in one document, the cost and margin maths in another, and the old price slide still showed a ₹12,500 to ₹16,000 plan that no longer matches the numbers.
 - **Structural decisions:**
-  - Built outside this repo, at `~/Downloads/TE-Whitefield-Part2-Price-Slides/`, with the same page size, fonts and colours as the existing Part 2 deck. Nothing in the FMS app changed. The three slides are a separate 3-page PDF, not merged into the 21-page deck, so nothing already shared was altered.
+  - Built outside this repo, at `~/Downloads/TE-Whitefield-Part2-Price-Slides/`, with the same page size, fonts and colours as the existing Part 2 deck. Nothing in the FMS app changed. The three slides are also merged into a new 22-page copy of the deck, `~/Downloads/TE-Whitefield-Part2-Who-Buys-It-v3.pdf`: they replace pages 6 and 9, and the financial slide is page 21 so no other page number changes. The original 21-page file is untouched.
   - Our price is set at ₹11,200 a seat, the figure the projection says is needed for a 20% margin (₹11,208). The alternative was to pick a price from the competitor ladder and see what margin fell out. We started from the margin because it is the number the business must hit, and the ladder turned out to have an empty slot at that price, between ₹10,000 and ₹12,000.
   - The old "Standard ₹12,500 / Blended ₹14,000 / Premium ₹16,000" lines were removed from the price slide. They belonged to the earlier 140-seat plan.
 - **What works now:** A reader can see in three pages what the floor costs each month (₹35.87 L), what we must bill (₹44.83 L), what we keep (₹8.97 L, about ₹1.08 Cr a year), how full the floor must be (63% to cover running costs, 80% to cover everything, against 83 to 93% for settled rivals), and why ₹11,200 is competitive without looking cheap.
 - **Left undone:**
-  - Not merged into the 21-page deck, because the order and page numbers are the founder's call. Page numbers are left off for the same reason.
+  - Pages 2, 14, 15, 19, 20 and 21 of the deck still describe the earlier plan (140 seats, ₹8,570 a billable seat, ₹13,700 a desk). They now sit beside slides priced at ₹11,200, and are not rewritten because the price decision is the founder's.
   - No month-by-month ramp or loss scenarios. The founder cut those from the deck earlier, so only the break-even fill levels are shown.
   - One correction was made on the "more operators" slide: 2026 deals are about a fifth of the area's flex stock (9,500 of 45,700), not a sixth as the old slide said.
 - **Open questions for the founder:**
