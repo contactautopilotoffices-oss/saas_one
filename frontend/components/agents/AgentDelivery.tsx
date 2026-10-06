@@ -17,6 +17,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Check, Inbox, Loader2, MapPin, Users } from 'lucide-react';
 import SiteOwnersBuilder from './SiteOwnersBuilder';
 import MailAccounts from './MailAccounts';
+import MailArchivePanel from './MailArchivePanel';
 
 type Role = 'ceo' | 'procurement' | 'technical';
 
@@ -162,6 +163,7 @@ export default function AgentDelivery({
     return (
         <div className="flex flex-col gap-4">
             <MailAccounts orgId={orgId} />
+            <MailArchivePanel orgId={orgId} />
 
             {/* ---- mailboxes ------------------------------------------------ */}
             <section className="rounded-[14px] border border-border bg-card p-4">

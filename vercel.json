@@ -85,6 +85,10 @@
       "schedule": "0 * * * *"
     },
     {
+      "path": "/api/cron/mail-archive",
+      "schedule": "*/15 * * * *"
+    },
+    {
       "path": "/api/cron/sync-vendor-compliance",
       "schedule": "0 3 * * *"
     },

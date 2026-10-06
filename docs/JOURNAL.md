@@ -1,3 +1,28 @@
+## 2026-10-06 — Saas.one: Mail archive sandbox — purchase@ and three of the purchase team
+
+**FMS can now read every email in a chosen set of mailboxes, past and new, every 15 minutes, and keep each email once. The sandbox is purchase@, Vidya Pawar, Sahil Sitaprao and Satej Sadhye.**
+
+- **Why:** This is the first step towards an "organisational brain" built from company email. Before building anything that understands mail, the founder wanted the plumbing proven: does history come in, how fast, how much space it takes, and does it stay current without anyone exporting files.
+- **Structural decisions:**
+  - Fully automatic through the Zoho API, with no manual exports. Each run reads new mail first, then walks backwards through history a page at a time and saves its place, so it never starts over. Zoho's admin export was not used. It is only needed for mail people have deleted, and it is a manual download.
+  - Each email's text is kept once. The same email copied to four people is listed in each mailbox but fetched and stored only once. The alternative, a copy per mailbox, would have multiplied storage for a team that copies each other constantly.
+  - Duplicates are matched on sender, Zoho's sent-time field and subject, not the email's standard ID, because fetching that ID costs an extra call per email. Zoho's sent-time is exactly 7 hours off (measured today), so it is used only for matching and never shown as a date. If it shifts when US daylight saving ends, a few emails may be stored twice. None are lost.
+  - Spam, Trash, Drafts, Templates and Outbox are skipped. Newsletters and notifications keep their headers but not their text.
+  - No AI at this stage. It is a fixed workflow, not an agent (agent doctrine law 1), so no agent spec block applies.
+  - Only super admins can see the archive, and only as progress and counts. Nobody can read the stored mail through FMS yet. This is a deliberate change from the purchase digest, which never stored email text: personal work mailboxes are now being kept.
+  - A mailbox is archived only if it is on the archive's own list. Connecting a mailbox for an agent does not enrol it.
+  - Priyanka Pal's FMS login is purchase@worksquare.in, so her mail is covered by purchase@. "Sahil" was taken to mean Sahil Sitaprao in procurement, the one who appears on 285 purchase@ threads.
+- **What works now (once the migration is applied and the branch deployed):** A "Mail archive · sandbox" panel under Agent Console → Delivery shows each mailbox: whether it is connected, how far back history has been read, how many emails are listed and how many have their text saved. Super admins can add or pause mailboxes there. Measured live on purchase@ (read-only): 200 emails list in about 0.7 seconds, 6 email texts fetch together in about 0.3 seconds, and purchase@ holds more than 30,000 emails going back past March 2024. Expect purchase@'s history to be listed within a few hours and its text saved within about a day. That is an estimate, not yet measured end to end.
+- **Left undone:**
+  - Not run end to end. The tables do not exist until the migration is applied. The Zoho reading was tested live; the database writes and the panel were checked only by type checks, not in a browser.
+  - Vidya, Sahil and Satej must each connect their own mailbox, a Zoho sign-in as themselves. Until they do, the panel says "Waiting for the owner to connect this mailbox".
+  - Attachments are flagged but not stored. No search, no AI, no question-answering yet; those come after the pipe has proved itself.
+  - Zoho's rate limits are not published. The job stops for the run when asked to slow down and carries on next time.
+- **Open questions for the founder:**
+  - When someone deletes an email in Zoho, should it disappear from the archive too?
+  - Have Vidya, Sahil and Satej been told their work mail is being archived? India's data protection law (DPDP Act 2023) expects staff to be informed.
+  - Who besides super admins should eventually be able to ask the archive questions?
+
 ## 2026-10-06 — Saas.one: Meera moves to Sarvam, negotiates from our own purchase history, and answers vendors' real questions
 
 **Meera, the AI caller who phones vendors for Satej, now speaks with an Indian voice model (Sarvam), asks every vendor for a rate and pushes back once using what we have actually paid in Zoho. She answers the questions vendors kept asking from a new FAQ page. A rate checker lets the team look up any item's usual price.**
