@@ -9,7 +9,7 @@ import {
     ArrowUpRight, Scan, Truck, RefreshCw, Box, Clock,
     AlertCircle, ExternalLink, Trash2, Camera, Link2, Shield, User, Loader2, FileText, MessageSquarePlus, FileSpreadsheet, FileUp, Eye
 } from 'lucide-react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import NotificationBell from './NotificationBell';
 import HRTicketsContent from '@/frontend/components/hr/HRTicketsContent';
@@ -27,7 +27,7 @@ import ProcurementVendorTicketsTab from '../procurement/ProcurementVendorTickets
 import { ProcurementSettingsTab } from '../procurement/ProcurementSettingsTab';
 import PaymentUrgencyTrackerTab from '../procurement/payment-urgency/PaymentUrgencyTrackerTab';
 import { INITIAL_TEST_TASKS } from '../procurement/payment-urgency/mockData';
-import { Layers, DollarSign, PhoneCall } from 'lucide-react';
+import { Layers, DollarSign, PhoneCall, Mic } from 'lucide-react';
 import SatejConsole from '@/frontend/components/satej/SatejConsole';
 
 // --- Types ---
@@ -68,6 +68,7 @@ type Tab = 'overview' | 'vendor-discovery' | 'urgency-tracker' | 'task-sheet' | 
 export default function ProcurementDashboard() {
     const supabase = createClient();
     const searchParams = useSearchParams();
+    const router = useRouter();
     const [showFeedbackModal, setShowFeedbackModal] = useState(false);
     const [user, setUser] = useState<any>(null);
     const [requests, setRequests] = useState<MaterialRequest[]>([]);
@@ -614,8 +615,15 @@ export default function ProcurementDashboard() {
                                     {
                                         id: 'vendor-discovery',
                                         icon: PhoneCall,
-                                        label: 'Vendor Discovery (Satej)'
+                                        label: 'Vendor Discovery (Meera)'
                                     },
+                                    // A page of its own, not a tab: the meeting room needs the whole screen.
+                                    ...(user?.user_metadata?.organization_id ? [{
+                                        id: 'meetings',
+                                        icon: Mic,
+                                        label: 'Meetings (Ira)',
+                                        href: `/${user.user_metadata.organization_id}/meetings`,
+                                    }] : []),
                                     { 
                                         id: 'monthly-requisitions', 
                                         icon: FileSpreadsheet, 
@@ -655,7 +663,7 @@ export default function ProcurementDashboard() {
                                 ].map((item: any) => (
                                     <button
                                         key={item.id}
-                                        onClick={() => { setActiveTab(item.id as Tab); setSidebarOpen(false); }}
+                                        onClick={() => { if (item.href) { router.push(item.href); return; } setActiveTab(item.id as Tab); setSidebarOpen(false); }}
                                         className={`w-full flex items-center justify-between px-4 py-3 rounded-xl font-bold text-sm transition-all ${activeTab === item.id 
                                             ? 'bg-primary text-white shadow-md' 
                                             : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'}`}
@@ -748,7 +756,7 @@ export default function ProcurementDashboard() {
                             </h1>
                             <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">
                                 {activeTab === 'overview' ? 'Operational Overview' : 
-                                 activeTab === 'vendor-discovery' ? 'Satej finds, calls and ranks vendors' :
+                                 activeTab === 'vendor-discovery' ? 'Meera finds, calls and ranks vendors' :
                                  activeTab === 'manage-items' ? `Catalog · ${stats.total} Items` :
                                  activeTab === 'po-generator' ? 'AI Purchase Order Processor' :
                                  `Awaiting Fulfillment · ${stats.pending} Items`}
@@ -896,7 +904,7 @@ export default function ProcurementDashboard() {
                         {activeTab === 'vendor-discovery' && (
                             user?.user_metadata?.organization_id
                                 ? <SatejConsole orgId={user.user_metadata.organization_id} />
-                                : <p className="py-8 text-sm text-slate-500">Your account has no organisation, so Satej has nothing to work in.</p>
+                                : <p className="py-8 text-sm text-slate-500">Your account has no organisation, so Meera has nothing to work in.</p>
                         )}
                         {activeTab === 'po-generator' && (
                             <div className="py-8">

@@ -7,7 +7,7 @@ import {
     Search, Plus, Filter, LogOut, ChevronRight, MapPin, Edit, Trash2, X, Check, UsersRound,
     Coffee, IndianRupee, PhoneCall, FileDown, ChevronDown, Fuel, Menu, Upload, FileBarChart, Zap, Package, ClipboardCheck, Scan, Key,
     AlertCircle, CheckCircle2, Clock, GitBranch, DoorOpen, MessageCircle, Send, Loader2, CalendarDays, Calendar, Wrench, ShoppingCart, Sun, Moon, Droplets, TrendingUp, Smartphone,
-    MessageSquarePlus, Bot, Gauge, Cpu, FolderLock, Layers, ShieldCheck
+    MessageSquarePlus, Bot, Gauge, Cpu, FolderLock, Layers, ShieldCheck, Mic
 } from 'lucide-react';
 import SatejConsole from '@/frontend/components/satej/SatejConsole';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -1410,8 +1410,17 @@ const OrgAdminDashboard = () => {
                                     }`}
                             >
                                 <PhoneCall className="w-4 h-4" />
-                                Vendor Discovery (Satej)
+                                Vendor Discovery (Meera)
                             </button>
+                            {org && (
+                                <button
+                                    onClick={() => router.push(`/${org.id}/meetings`)}
+                                    className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
+                                >
+                                    <Mic className="w-4 h-4" />
+                                    Meetings (Ira)
+                                </button>
+                            )}
                             <button
                                 onClick={() => handleTabChange('checklist')}
                                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'checklist'

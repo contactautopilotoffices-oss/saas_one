@@ -1,3 +1,31 @@
+## 2026-10-06 — Saas.one: Meeting rooms inside FMS, with Ira running a review of stuck POs
+
+**People can now meet inside FMS. Ira, our procurement agent, joins the room, reads each purchase order stuck at "pending approval", asks who owns it and what should happen, and writes the decision down for an approver to confirm.**
+
+- **Why:** ₹1.32 crore of POs sit at "pending approval" in Zoho (123 POs; 64 of them, ₹53.6 lakh, older than 30 days), and nobody can tell which are stuck and which are dead. The founder wanted an agent in the room that asks the right people the right questions, so the answers come from conversation rather than from people adopting another screen.
+- **Structural decisions:**
+  - Meetings happen inside FMS, not in Google Meet. A bot in Google Meet needs either a paid bot service (Recall.ai) or our own always-running servers, and the open-source option the founder asked about (Vexa) cannot speak in a meeting yet. Inside FMS, the agent is a normal participant and every person is heard on their own microphone, so "who said what" comes from their login.
+  - The audio relay and the agent run on LiveKit Cloud (free plan: 5,000 meeting minutes and 1,000 agent minutes a month). A live meeting cannot run on Vercel functions, which stop after 5 minutes. FMS owns the rooms, the screens, the agent's code and every record; LiveKit only carries the audio. LiveKit is open source, so moving to our own servers later is the same code.
+  - Built generic, not purchase-only: a meeting names which of our agents runs it and its topic. The first topic is PO approvals with Ira. Other agents and topics are additions, not a new system.
+  - Sarvam end to end: listening (Saaras), thinking (`sarvam-105b-conversations`) and speaking (Bulbul, voice "kavya"). It is the stack Meera already uses, it handles Hinglish, and it needs one key. The Groq key in the local setup was rejected as invalid, so it was not used.
+  - Ira proposes, people decide. Every decision is read back aloud and lands as a proposal; an approver confirms or rejects each one on the decision sheet. Ira cannot approve or cancel anything in Zoho. Every number she says comes from the agenda FMS built from Zoho; she is told to quote nothing else.
+  - Ira talks to FMS through one private endpoint with a shared secret, rather than holding the database's master key on another company's servers.
+  - Nothing from the purchase@ mailbox goes on the agenda. Accounts, org admins and ops super admins can join meetings but are deliberately not allowed to read that mailbox, and Ira reads the agenda aloud to everyone in the room.
+  - A code review of the new routes found no way across organisations and no way into the agent's endpoint without its secret. It did find seven real problems, all fixed before commit. The biggest: POs imported from spreadsheets as "Pending Approval" or "Submitted" would have been missed, and a meeting the host had ended could have been reopened for up to three hours by an old join link.
+- **What works now (after the steps below):** An approver opens **Meetings (Ira)**, builds a review of the largest POs waiting 30+ days, and shares the link. People join from FMS with their microphone. They see the agenda move, a live transcript under each person's name, and decisions appear as they are made. After the meeting the same page is the decision sheet. Tested on 2026-10-06:
+  - on the real model, a scripted seven-turn meeting: Ira stayed quiet during side talk, recorded "cancel · owner Vidya · Friday", moved on when confirmed, noted a stated rule, parked a PO nobody owned, and answered a direct question from the agenda only;
+  - on a local LiveKit server, a full room: a scripted participant joined, Ira arrived automatically, gave the recording notice, presented the first PO, recorded the spoken decision and moved to the next PO. Ira starts replying about 3 seconds after a person stops talking.
+- **Who sees it:** approvers (org super admins, ops super admins, master admins) start, end and confirm meetings. The purchase team, org admins and accounts can join. Links were added to the org admin, ops (property admin) and procurement dashboards; accounts join through the shared link.
+- **Left undone:**
+  - Not tried with real people on LiveKit Cloud, because there is no LiveKit account yet. The screens were type-checked and linted, not opened in a browser.
+  - The agenda builder was not run against live data: Supabase stopped resolving from this machine's shell partway through the session. It is type-checked and its amount formatting was tested.
+  - No WhatsApp follow-ups after the meeting yet (needs an approved AiSensy template). No "any meeting" mode yet (minutes and actions without an agenda). Meetings in Google Meet do not get the agent.
+  - Confirmed rules are not yet fed back into Ira's instructions, and meetings do not yet show in the Agent Console's run log.
+- **Open questions for the founder:**
+  - Who should attend the first review, and should it start with the 18 POs older than 90 days?
+  - Should audio be recorded, or is the transcript enough? Today only the transcript is kept.
+  - Rushabh Shah has no FMS login, so he cannot join yet. Should he get one?
+
 ## 2026-10-06 — Saas.one: Mail archive sandbox — purchase@ and three of the purchase team
 
 **FMS can now read every email in a chosen set of mailboxes, past and new, every 15 minutes, and keep each email once. The sandbox is purchase@, Vidya Pawar, Sahil Sitaprao and Satej Sadhye.**

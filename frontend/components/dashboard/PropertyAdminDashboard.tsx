@@ -6,7 +6,7 @@ import {
     LayoutDashboard, Users, Ticket, Settings, UserCircle, UsersRound,
     Search, Plus, Filter, LogOut, ChevronRight, MapPin, Building2,
     Calendar, CheckCircle2, AlertCircle, Clock, Coffee, IndianRupee, FileDown, Fuel, Store, Activity, Upload, FileBarChart, Menu, X, Zap, RefreshCw,
-    Package, ClipboardCheck, Scan, ChevronDown, ChevronUp, Check, GitBranch, CalendarDays, ShoppingCart, Droplets, TrendingUp, QrCode, Smartphone, MessageSquarePlus, Bot, ShieldCheck
+    Package, ClipboardCheck, Scan, ChevronDown, ChevronUp, Check, GitBranch, CalendarDays, ShoppingCart, Droplets, TrendingUp, QrCode, Smartphone, MessageSquarePlus, Bot, ShieldCheck, Mic
 } from 'lucide-react';
 
 import { motion, AnimatePresence } from 'framer-motion';
@@ -896,6 +896,15 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                                 <Bot className={`w-4 h-4 transition-transform ${openTab === 'ai_tickets' ? '' : 'group-hover:scale-110'}`} />
                                 AI Automation
                             </button>
+                            {isElevatedRole && (property?.organization_id || membership?.org_id) && (
+                                <button
+                                    onClick={() => router.push(`/${property?.organization_id || membership?.org_id}/meetings`)}
+                                    className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm text-text-secondary hover:bg-primary/10 hover:text-primary group"
+                                >
+                                    <Mic className="w-4 h-4 group-hover:scale-110 transition-transform" />
+                                    Meetings (Ira)
+                                </button>
+                            )}
                             <button
                                 onClick={() => handleTabChange('grievance')}
                                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${openTab === 'grievance'
