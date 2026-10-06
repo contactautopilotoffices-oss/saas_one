@@ -303,3 +303,38 @@
 .testRow label { margin-bottom: 0; }
 @media (max-width: 700px) { .testRow { grid-template-columns: 1fr; } }
 .testResult { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--s-line); }
+
+/* ---- rate checker and price history (SatejRates.tsx) ------------------------------- */
+.rateForm { display: grid; grid-template-columns: minmax(0, 2.4fr) minmax(0, 0.8fr) minmax(0, 0.9fr) auto; gap: 10px; align-items: end; margin-top: 12px; }
+.rateForm label { margin-bottom: 0; }
+.rateForm .primary { height: 38px; }
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 12px 0 8px; }
+.stats > div { background: var(--s-sunken); border: 1px solid var(--s-line); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.stats span { font-size: 11.5px; color: var(--s-muted); }
+.stats b { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stats em { font-style: normal; font-size: 11.5px; color: var(--s-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.range { position: relative; height: 34px; margin: 6px 4px 10px; }
+.rangeTrack { position: absolute; left: 0; right: 0; top: 9px; height: 6px; border-radius: 99px; background: var(--s-sunken); border: 1px solid var(--s-line); }
+.rangeBand { position: absolute; top: 9px; height: 6px; border-radius: 99px; background: color-mix(in srgb, var(--s-accent) 35%, transparent); }
+.rangeMedian { position: absolute; top: 4px; width: 2px; height: 16px; margin-left: -1px; background: var(--s-accent); border-radius: 2px; }
+.rangePin { position: absolute; top: 5px; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%; border: 2px solid var(--s-card); box-shadow: 0 0 0 1px var(--s-line); }
+.rangeTarget { background: var(--s-good); }
+.rangeCeiling { background: var(--s-warn); }
+.rangeQuote { background: var(--s-ink); }
+.rangeEnds { position: absolute; left: 0; right: 0; top: 20px; display: flex; justify-content: space-between; font-size: 11px; color: var(--s-muted); font-variant-numeric: tabular-nums; }
+@media (max-width: 760px) {
+  .rateForm { grid-template-columns: 1fr 1fr; }
+  .rateForm label:first-child { grid-column: 1 / -1; }
+  .stats { grid-template-columns: 1fr 1fr; }
+}
+
+/* ---- FAQ (SatejFaq.tsx) ------------------------------------------------------------- */
+.faqList { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.faqItem { border: 1px solid var(--s-line); border-radius: 10px; padding: 10px 12px; background: var(--s-card); }
+.faqDraft { border-style: dashed; background: color-mix(in srgb, var(--s-warn) 4%, var(--s-card)); }
+.faqQ { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.faqQ b { font-weight: 600; }
+.faqA { margin: 6px 0; line-height: 1.5; }
+.faqMeta { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.faqMeta .link { display: inline-flex; align-items: center; gap: 4px; }
+.priceLine { margin: 4px 0 0; font-size: 12.5px; }

@@ -121,6 +121,65 @@ export interface CallAnalysis {
     redFlags: string[];
     summary: string;
     evidence: { field: string; quote: string }[];
+    /** The vendor's LAST rate on the call (after any negotiation), per unit, in rupees. Null when no rate was given. */
+    quotedRate: number | null;
+    /** Their first rate, before Meera pushed back. Equal to quotedRate when there was no back-and-forth. */
+    firstQuotedRate: number | null;
+    /** The unit they quoted in, as said ("per jar", "per sqft"). */
+    quotedUnit: string;
+    rateIncludesGst: GstStatus;
+    /** Their words, e.g. "38 rupaye jar, GST alag, transport free". */
+    rateText: string;
+}
+
+/** What we have paid for one product, pooled across its spelling variants (satej_rate_pool). */
+export interface RatePool {
+    label: string;
+    unit: string;
+    similarity: number;
+    unitMatch: boolean;
+    matched: { label: string; n: number; median: number }[];
+    nLines: number;
+    nVendors: number;
+    min: number;
+    p25: number;
+    median: number;
+    p75: number;
+    max: number;
+    median12m: number | null;
+    lastRate: number | null;
+    lastDate: string | null;
+    lastVendor: string | null;
+    taxPercentage: number | null;
+    vendors: { vendor: string; median: number; n: number; lastDate: string | null }[];
+    refreshedAt: string | null;
+}
+
+/** The requirement's price history and Meera's two negotiating numbers. Internal only. */
+export interface BenchmarkSnapshot {
+    query: string;
+    unit: string;
+    pool: RatePool;
+    /** What Meera aims for: the cheaper quarter of what we have paid. */
+    targetRate: number | null;
+    /** Above this she does not agree on the call; the team decides. */
+    walkAwayRate: number | null;
+    confidence: 'high' | 'medium';
+    checkedAt: string;
+}
+
+/** One quoted rate against history (satej_quote_verdict). */
+export interface PriceCheck {
+    rate: number;
+    unit: string;
+    verdict: 'good' | 'fair' | 'slightly_high' | 'high' | 'no_benchmark';
+    confidence: 'high' | 'medium' | 'low';
+    deltaPct: number | null;
+    median: number | null;
+    p25: number | null;
+    p75: number | null;
+    nLines: number;
+    label: string;
 }
 
 export interface ScoreBreakdown {
@@ -157,6 +216,7 @@ export interface CallRecord {
     recordingUrl: string;
     retried: number;
     analysis?: CallAnalysis;
+    priceCheck?: PriceCheck | null;
     score?: ScoreBreakdown;
     /** Failed analysis attempts. After 3 the call is ranked unanalysed rather than retried (and paid for) forever. */
     analysisAttempts?: number;
@@ -183,6 +243,9 @@ export interface RankedVendor {
     usps: string[];
     turnaroundText: string;
     redFlags: string[];
+    /** "₹38 per jar, GST extra — in line with what we pay (₹36.5 usual)". Empty when no rate was given. */
+    priceText: string;
+    priceVerdict: PriceCheck['verdict'] | null;
     contactedAt: string;
 }
 
@@ -200,6 +263,9 @@ export interface Requirement {
     /** Origin of the FMS the form was submitted from — links and the Bolna webhook are built on it. */
     appOrigin: string | null;
     brief?: StructuredBrief;
+    /** Price history for this item and Meera's target/ceiling. Null = looked, nothing close enough. */
+    benchmark?: BenchmarkSnapshot | null;
+    benchmarkCheckedAt?: string;
     clarifications: { question: string; answer: string }[];
     bolnaBatchId?: string;
     callsScheduledAt?: string;

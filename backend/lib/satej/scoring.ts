@@ -3,39 +3,60 @@
  *
  * The LLM only extracts facts from the transcript. The points below decide the
  * rank, so the same answers always produce the same score, and the team can see
- * exactly why. Rubric: Procurement_Agent_Plan.md §3 step 5.
+ * exactly why. Rubric: Procurement_Agent_Plan.md §3 step 5, re-weighted on
+ * 2026-10-06 to give price 20 of the 100 points: Meera now asks for a rate and
+ * the rate is checked against what we have paid (benchmark.ts). The 20 came
+ * from the parts that say least about whether a vendor is a good bet for this
+ * order: website/profile (10 → 5), turnover (10 → 5), experience (15 → 10)
+ * and clientele (20 → 15).
  */
 
-import type { CallAnalysis, CallRecord, RankedVendor, ScoreBreakdown, StructuredBrief, Vendor } from './types';
+import type { CallAnalysis, CallRecord, PriceCheck, RankedVendor, ScoreBreakdown, StructuredBrief, Vendor } from './types';
+import { formatRate, spokenUnit, VERDICT_LABEL } from './rates';
 
 type Part = ScoreBreakdown['parts'][number];
 
 export const RUBRIC_MAX = {
-    experience: 15,
-    clientele: 20,
+    price: 20,
+    experience: 10,
+    clientele: 15,
     specialisation: 20,
     turnaround: 10,
-    presence: 10,
-    scale: 10,
+    presence: 5,
+    scale: 5,
     authenticity: 15,
 };
 
-export function scoreCall(a: CallAnalysis, brief: StructuredBrief, vendor: Vendor | undefined): ScoreBreakdown {
+/** Points for a quoted rate. A rate with no trustworthy history is neutral, not rewarded or punished. */
+const PRICE_POINTS: Record<PriceCheck['verdict'], number> = { good: 20, fair: 15, slightly_high: 8, high: 2, no_benchmark: 10 };
+
+export function scoreCall(a: CallAnalysis, brief: StructuredBrief, vendor: Vendor | undefined, price?: PriceCheck | null): ScoreBreakdown {
     if (!a.reachedRightPerson) {
         return { total: 0, qualification: 'not_reached', parts: [] };
     }
     const parts: Part[] = [];
 
-    // Years of experience (15). What they said on the call; the web if they were silent.
+    // Price against what we have paid (20)
+    if (a.quotedRate === null) {
+        parts.push({ label: 'Price', points: 0, max: RUBRIC_MAX.price, why: 'No rate given on the call' });
+    } else {
+        const verdict = price && price.confidence !== 'low' ? price.verdict : 'no_benchmark';
+        const delta = verdict !== 'no_benchmark' && price?.deltaPct !== null && price?.deltaPct !== undefined
+            ? ` (${price.deltaPct > 0 ? '+' : ''}${price.deltaPct}% vs ₹${formatRate(price.median ?? 0)} usual)`
+            : '';
+        parts.push({ label: 'Price', points: PRICE_POINTS[verdict], max: RUBRIC_MAX.price, why: `₹${formatRate(a.quotedRate)}: ${VERDICT_LABEL[verdict]}${delta}` });
+    }
+
+    // Years of experience (10). What they said on the call; the web if they were silent.
     const years = a.yearsExperience ?? vendor?.webYearsInBusiness ?? null;
-    const expPts = years === null ? 0 : years >= 10 ? 15 : years >= 5 ? 11 : years >= 2 ? 6 : 2;
+    const expPts = years === null ? 0 : years >= 10 ? 10 : years >= 5 ? 7 : years >= 2 ? 4 : 1;
     parts.push({ label: 'Experience', points: expPts, max: RUBRIC_MAX.experience, why: years === null ? 'Not stated' : `${years} years` });
 
-    // Clientele and testimonials (20)
+    // Clientele and testimonials (15)
     const named = a.clients.filter((c) => c.name.trim().length > 1).length;
-    let cliPts = named >= 3 ? 14 : named === 2 ? 11 : named === 1 ? 7 : a.testimonialsText ? 3 : 0;
-    if (a.referencesOffered) cliPts += 6;
-    cliPts = Math.min(cliPts, 20);
+    let cliPts = named >= 3 ? 10 : named === 2 ? 8 : named === 1 ? 5 : a.testimonialsText ? 2 : 0;
+    if (a.referencesOffered) cliPts += 5;
+    cliPts = Math.min(cliPts, RUBRIC_MAX.clientele);
     parts.push({
         label: 'Clientele',
         points: cliPts,
@@ -67,9 +88,9 @@ export function scoreCall(a: CallAnalysis, brief: StructuredBrief, vendor: Vendo
     }
     parts.push({ label: 'Turnaround', points: tatPts, max: RUBRIC_MAX.turnaround, why: tatWhy });
 
-    // Web presence and documents (10)
+    // Web presence and documents (5)
     const hasSite = a.hasWebsite === 'yes' || !!vendor?.website;
-    const presPts = (hasSite ? 6 : 0) + (a.hasCompanyProfile === 'yes' ? 4 : 0);
+    const presPts = (hasSite ? 3 : 0) + (a.hasCompanyProfile === 'yes' ? 2 : 0);
     parts.push({
         label: 'Website / profile',
         points: presPts,
@@ -77,9 +98,9 @@ export function scoreCall(a: CallAnalysis, brief: StructuredBrief, vendor: Vendo
         why: `${hasSite ? 'website' : 'no website'}, ${a.hasCompanyProfile === 'yes' ? 'profile' : 'no profile'}`,
     });
 
-    // Scale by annual turnover (10)
+    // Scale by annual turnover (5). Small is fine for small orders; this only separates the very large.
     const t = a.annualTurnoverLakhs;
-    const scalePts = t === null ? 0 : t >= 500 ? 10 : t >= 100 ? 7 : t >= 25 ? 4 : 2;
+    const scalePts = t === null ? 0 : t >= 500 ? 5 : t >= 100 ? 4 : t >= 25 ? 2 : 1;
     parts.push({ label: 'Turnover', points: scalePts, max: RUBRIC_MAX.scale, why: a.annualTurnoverText || 'Not stated' });
 
     // Authenticity from the call (15), minus 2 per red flag (max 6)
@@ -125,6 +146,8 @@ export function rankVendors(calls: CallRecord[], vendors: Vendor[]): RankedVendo
             usps: a?.usps ?? [],
             turnaroundText: a?.turnaroundText ?? '',
             redFlags: a?.redFlags ?? [],
+            priceText: a ? priceLine(a, c.priceCheck ?? null) : '',
+            priceVerdict: a?.quotedRate != null ? (c.priceCheck?.confidence !== 'low' ? c.priceCheck?.verdict ?? 'no_benchmark' : 'no_benchmark') : null,
             contactedAt: c.createdAt,
         };
     });
@@ -145,6 +168,8 @@ export function rankVendors(calls: CallRecord[], vendors: Vendor[]): RankedVendo
             usps: [],
             turnaroundText: '',
             redFlags: [],
+            priceText: '',
+            priceVerdict: null,
             contactedAt: v.createdAt,
         });
     }
@@ -156,4 +181,17 @@ export function rankVendors(calls: CallRecord[], vendors: Vendor[]): RankedVendo
     );
     rows.forEach((r, i) => (r.rank = i + 1));
     return rows;
+}
+
+/** "₹38 per jar, GST extra, came down from ₹42 — in line with what we pay (₹36.5 usual)". */
+export function priceLine(a: CallAnalysis, pc: PriceCheck | null): string {
+    if (a.quotedRate === null) return '';
+    const unit = pc?.unit && pc.unit !== '-' ? ` per ${spokenUnit(pc.unit)}` : a.quotedUnit ? ` ${a.quotedUnit}` : '';
+    const bits = [`₹${formatRate(a.quotedRate)}${unit}`];
+    if (a.rateIncludesGst === 'yes') bits.push('incl. GST');
+    else if (a.rateIncludesGst === 'no') bits.push('GST extra');
+    if (a.firstQuotedRate !== null && a.firstQuotedRate > a.quotedRate) bits.push(`came down from ₹${formatRate(a.firstQuotedRate)}`);
+    const verdict = pc && pc.confidence !== 'low' ? pc.verdict : 'no_benchmark';
+    const usual = verdict !== 'no_benchmark' && pc?.median ? ` (₹${formatRate(pc.median)} usual)` : '';
+    return `${bits.join(', ')} — ${VERDICT_LABEL[verdict]}${usual}`;
 }

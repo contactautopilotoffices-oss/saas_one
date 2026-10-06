@@ -59,6 +59,9 @@ export function fullSummary(r: Requirement): string {
 
     lines.push('*Next steps*');
     if (qualified.length) {
+        const top = qualified[0];
+        const why = [top.priceText && top.priceVerdict && top.priceVerdict !== 'no_benchmark' ? top.priceText.split(' — ')[1] : '', `${top.score.total}/100`].filter(Boolean).join(', ');
+        lines.push(`Satej's pick: ${top.vendorName} (${why}). A person decides.`);
         const picks = qualified.slice(0, 3).map((v) => `#${v.rank} ${v.vendorName}`).join(', ');
         lines.push(`1. Send the BOQ / detailed requirement to ${picks} for quotation.`);
         lines.push('2. Collect company profile and GST certificate on WhatsApp.');
@@ -75,6 +78,7 @@ function vendorBlock(v: RankedVendor): string {
     const out: string[] = [];
     out.push(`*${v.rank}. ${v.vendorName}*  ${v.score.total}/100  (${QUAL_LABEL[v.score.qualification]})`);
     out.push(`${v.phone}${v.area ? ` | ${v.area}` : ''}`);
+    if (v.priceText) out.push(`Rate: ${v.priceText}`);
     const facts: string[] = [];
     if (v.yearsExperience !== null) facts.push(`${v.yearsExperience} yrs`);
     if (v.turnaroundText) facts.push(`delivery ${v.turnaroundText}`);

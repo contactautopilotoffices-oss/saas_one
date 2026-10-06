@@ -131,6 +131,10 @@
     {
       "path": "/api/cron/satej-worker",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/satej-benchmark",
+      "schedule": "30 2 1,11,21,31 * *"
     }
   ]
 }

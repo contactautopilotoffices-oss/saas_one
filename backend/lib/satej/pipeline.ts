@@ -39,6 +39,8 @@ import { DISCOVERY_SYSTEM, discoveryUser } from './prompts/discovery';
 import { CALL_ANALYST_SYSTEM, callAnalystUser } from './prompts/callAnalyst';
 import { CALL_VARIABLES } from './prompts/voiceAgent';
 import { rankVendors, scoreCall } from './scoring';
+import { ensureBenchmark, priceCheck } from './benchmark';
+import { formatRate, meeraUnit } from './rates';
 import { inputNeededTemplateParams, noVendorsTemplateParams, questionsAsk, summaryTemplateParams } from './summary';
 import {
     FINAL_CALL_STATUSES,
@@ -277,6 +279,8 @@ async function structure(r: Requirement, step: StepFn) {
     r.brief = brief;
     r.live = null;
     await s.ok({ detail: { questions: brief.questions.length, queries: brief.searchQueries.length } });
+    const priceNote = await ensureBenchmark(r, true);
+    if (priceNote) log(r, priceNote);
 
     if (brief.questions.length) {
         r.status = 'needs_clarification';
@@ -569,6 +573,10 @@ export function buildCallCsv(r: Requirement, vendors: Vendor[]): string {
         location_text: b.locationText,
         spend_type_text: r.input.spendType === 'capex' ? 'a one-time project' : 'a recurring requirement',
         timeline_text: b.timelineText || 'as early as possible',
+        // Meera's negotiating numbers. Empty when there is no trustworthy history: she then asks for a rate and does not push.
+        target_rate_text: r.benchmark?.targetRate ? `${formatRate(r.benchmark.targetRate)} रुपये` : '',
+        max_rate_text: r.benchmark?.walkAwayRate ? `${formatRate(r.benchmark.walkAwayRate)} रुपये` : '',
+        rate_unit_text: r.benchmark ? meeraUnit(r.benchmark.unit) : '',
     }));
     return toCsv(rows, [...CALL_VARIABLES]);
 }
@@ -590,6 +598,8 @@ async function startCalls(r: Requirement, step: StepFn) {
     if (!satejConfig.mockMode && !satejConfig.bolnaAgentId) throw new Error('SATEJ_BOLNA_AGENT_ID is not set, so there is no voice agent to call with');
     const vendors = (await repo.listVendors(r.id)).filter((v) => v.status === 'found');
     if (!vendors.length) throw new Error('No vendors to call');
+    const priceNote = await ensureBenchmark(r);
+    if (priceNote) log(r, priceNote);
     const s = await step(`Scheduling ${vendors.length} calls on Bolna`, 'tool');
     const batchId = await createBatch(buildCallCsv(r, vendors), batchWebhookUrl(r));
     const at = nextCallSlot(new Date(), satejConfig.callWindowStart, satejConfig.callWindowEnd, satejConfig.callDays);
@@ -771,7 +781,17 @@ function sanitiseAnalysis(a: CallAnalysis): CallAnalysis {
         redFlags: list(a.redFlags),
         summary: String(a.summary ?? ''),
         evidence: Array.isArray(a.evidence) ? a.evidence.map((e) => ({ field: String(e?.field ?? ''), quote: String(e?.quote ?? '') })) : [],
+        quotedRate: positive(a.quotedRate),
+        firstQuotedRate: positive(a.firstQuotedRate) ?? positive(a.quotedRate),
+        quotedUnit: String(a.quotedUnit ?? ''),
+        rateIncludesGst: tri(a.rateIncludesGst),
+        rateText: String(a.rateText ?? ''),
     };
+}
+
+function positive(x: unknown): number | null {
+    const n = typeof x === 'string' ? Number(x.replace(/[₹,\s]/g, '')) : x;
+    return typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : null;
 }
 
 async function analyze(r: Requirement, step: StepFn) {
@@ -814,7 +834,11 @@ async function analyze(r: Requirement, step: StepFn) {
                         model: 'smart',
                     }),
                 );
-                c.score = scoreCall(c.analysis, b, v);
+                c.priceCheck = await priceCheck(r, c.analysis.quotedRate, null).catch((e) => {
+                    log(r, `Could not check ${v?.name ?? c.toNumber}'s rate against history: ${e instanceof Error ? e.message : e}`);
+                    return null;
+                });
+                c.score = scoreCall(c.analysis, b, v, c.priceCheck);
                 c.analysisError = undefined;
             } catch (e) {
                 failed++;
@@ -1039,6 +1063,8 @@ export async function startRehearsal(r: Requirement, phoneRaw: string, asVendor:
     const live = (await repo.listCalls(r.id)).find((c) => c.rehearsal && !isFinal(c.status));
     if (live) throw new Error('A test call is already in progress');
 
+    const priceNote = await ensureBenchmark(r);
+    if (priceNote) log(r, priceNote);
     const pretend: Vendor = {
         id: 'rehearsal', organizationId: r.organizationId, requirementId: r.id, name: asVendor.trim() || 'Test Vendor', phone, phoneRaw,
         address: '', area: '', city: '', website: '', sells: '', webYearsInBusiness: null, relevance: 0, sourceUrls: [], status: 'found', createdAt: nowIso(),
@@ -1097,7 +1123,8 @@ export async function analyseRehearsal(r: Requirement, callId: string): Promise<
         }),
         model: 'smart',
     }));
-    c.score = scoreCall(c.analysis, b, undefined);
+    c.priceCheck = await priceCheck(r, c.analysis.quotedRate, null).catch(() => null);
+    c.score = scoreCall(c.analysis, b, undefined, c.priceCheck);
     await repo.saveCall(c);
     return c;
 }

@@ -1,3 +1,35 @@
+## 2026-10-06 — Saas.one: Meera moves to Sarvam, negotiates from our own purchase history, and answers vendors' real questions
+
+**Meera, the AI caller who phones vendors for Satej, now speaks with an Indian voice model (Sarvam), asks every vendor for a rate and pushes back once using what we have actually paid in Zoho. She answers the questions vendors kept asking from a new FAQ page. A rate checker lets the team look up any item's usual price.**
+
+- **Why:** Meera sounded scripted and dodged basic questions: "where are you calling from?", "how old is your company?", "where exactly is the site?". She refused to share job details, and once told a small vendor their turnover was too low. She never asked for a price, so the shortlist could not say who was cheap. The founder asked for her to sound human, to understand the requirement, the vendor and the cost, and to make the right bets. The founder also wanted a benchmark from the Zoho purchase history that refreshes itself every 10 days.
+- **Structural decisions:**
+  - **Bolna only dials; Sarvam does the talking.** Meera's voice (Bulbul "Priya"), hearing (Saaras) and thinking (sarvam-105b) are now all Sarvam. Calls still go out through Bolna on our own Plivo number. The alternative was to drop Bolna and dial Plivo ourselves. That would mean building and running an always-on audio server, which Vercel cannot host. Sarvam's own calling platform does not say how outbound numbers or call reports work. Sarvam's voice and hearing are already included in Bolna's flat per-minute price. Only the thinking model runs on our Sarvam key. Meera's replies now start in about 0.1 seconds instead of about 0.4.
+  - **Hindi is written in Devanagari, English words in English.** A voice test showed Sarvam reads Hinglish more cleanly this way than in Roman letters.
+  - **The benchmark is built from the product description, not the Zoho item name.** Zoho item names are accounting buckets. "Housekeeping Material (3402)" covers ₹25 urinal pads and ₹870 cleaning liquid. Spelling variants ("20 ltr jar", "water jar 20l") are pooled when looked up, and only within the same unit. Prices more than three times away from the usual are left out as pack or unit mistakes. It is all done in the database and rebuilds in about 3 seconds.
+  - **Meera only gets two numbers:** a target (what we have managed to pay) and a ceiling (the usual price plus 5%). She pushes back once at most, never says where the numbers come from, and never agrees a final price. If the history is too thin (fewer than 3 past orders, or a different unit), she just asks for a rate.
+  - **Price now counts for 20 of the 100 points** when vendors are ranked. The 20 points came from website (10 → 5), turnover (10 → 5), experience (15 → 10) and client list (20 → 15). Each summary now opens with Satej's pick and its reason, and a person still decides.
+  - **FAQ answers must be approved.** Procurement can draft answers. Only org super admins and master admins can approve them and publish them to Meera. Each publish is saved as a version that can be undone.
+- **What works now:**
+  - The team can type any item into the **Rate checker** and see the usual price, the middle range, the last price paid and who sold it cheapest. They can also type a quoted rate and get a verdict. There are 11,880 products from 20,000+ purchase lines.
+  - Each requirement shows the **price history** Satej matched and the target and ceiling Meera will use.
+  - The ranked list shows each vendor's rate ("₹38 per jar, GST extra — in line with what we pay").
+  - The **FAQ** tab holds 22 answers drawn from real calls and Zoho. 20 are ready; 2 drafts wait for the founder.
+  - The live Meera has been switched to Sarvam with the new script. Bolna re-read the agent and confirmed every change.
+- **Something found on the way:** On 3 October someone replaced Meera's script in Bolna's dashboard with a long older one. It used variables Satej never sends (`{project_work_type}`, `{project_city}`). Any Satej call after that would have had blanks where the job details should be. It has been replaced; the old version is kept in `docs/satej/`.
+- **Left undone:**
+  - The database change (`supabase/migrations/20261006000001_satej_rate_benchmark.sql`) is written and was tested on a local copy of the real purchase data, but is not applied. Until it is applied, the Rate checker and FAQ tabs show "not set up" and Meera calls without a target. Applying it builds the first benchmark and loads the FAQ.
+  - Meera's FAQ section is empty until the migration is applied and someone presses **Publish to Meera**.
+  - No real phone call has been made on the new Sarvam setup. Four conversation turns were tested against the model directly. Use "Call me first" before calling vendors. If anything misbehaves, one command puts the thinking back on Azure.
+  - "Meera (graph)", the test-only agent, is still on the old ElevenLabs/Deepgram setup.
+  - The new screens were type-checked, but not seen in a signed-in browser.
+  - Satej does not yet keep a do-not-call list. Meera promises "you won't be called again", but the team must note it from the call log.
+  - Some repeat services (pest control, manpower) vary a lot with scope, so their benchmark is a rough guide, not a price.
+- **Open questions for the founder:**
+  - Two FAQ drafts need your words. How long has the company been operating? And what may Meera say about advance payment? (Zoho shows 343 orders on "100% advance".)
+  - Voice: Meera now uses "Priya". Five other voices are in `docs/satej/voice-samples/`. Pick another if you prefer it.
+  - Should Meera ever negotiate on services like manpower or AMC, where scope changes the price? Today she negotiates whenever there are at least 3 comparable past orders.
+
 ## 2026-10-06 — Saas.one: Why the purchase@ mailbox stopped updating, and getting it back
 
 **The live purchase@ mailbox sync has not run on its own since 10 August, because one setting was missing. Today's mail was pulled in by hand, and the sync now fails loudly instead of quietly.**

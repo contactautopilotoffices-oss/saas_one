@@ -27,6 +27,8 @@ import {
 } from 'lucide-react';
 import AgentActivity from '@/frontend/components/agents/AgentActivity';
 import SatejChat from './SatejChat';
+import SatejFaq from './SatejFaq';
+import { PriceHistoryCard, RateChecker, verdictChip } from './SatejRates';
 import SatejVoiceScript from './SatejVoiceScript';
 import { TestCall, VendorIntake } from './SatejVendorTools';
 import s from './satej.module.css';
@@ -110,7 +112,7 @@ export default function SatejConsole({ orgId }: { orgId: string }) {
     const [selected, setSelected] = useState<string | null>(null);
     const [showForm, setShowForm] = useState(false);
     const [error, setError] = useState('');
-    const [view, setView] = useState<'requirements' | 'script' | 'runs'>('requirements');
+    const [view, setView] = useState<'requirements' | 'rates' | 'faq' | 'script' | 'runs'>('requirements');
     /** A test-call transcript handed to the Caller script tab as feedback evidence. */
     const [scriptSeed, setScriptSeed] = useState<string | null>(null);
 
@@ -159,11 +161,15 @@ export default function SatejConsole({ orgId }: { orgId: string }) {
 
             <div className={s.tabs} role="tablist">
                 <button role="tab" aria-selected={view === 'requirements'} className={`${s.tab} ${view === 'requirements' ? s.tabActive : ''}`} onClick={() => setView('requirements')}>Requirements</button>
+                <button role="tab" aria-selected={view === 'rates'} className={`${s.tab} ${view === 'rates' ? s.tabActive : ''}`} onClick={() => setView('rates')}>Rate checker</button>
+                <button role="tab" aria-selected={view === 'faq'} className={`${s.tab} ${view === 'faq' ? s.tabActive : ''}`} onClick={() => setView('faq')}>FAQ</button>
                 <button role="tab" aria-selected={view === 'script'} className={`${s.tab} ${view === 'script' ? s.tabActive : ''}`} onClick={() => setView('script')}>Caller script &amp; recordings</button>
                 <button role="tab" aria-selected={view === 'runs'} className={`${s.tab} ${view === 'runs' ? s.tabActive : ''}`} onClick={() => setView('runs')}>Run log</button>
             </div>
 
             {view === 'runs' && <AgentActivity orgId={orgId} agentKey="satej" />}
+            {view === 'rates' && <RateChecker orgId={orgId} />}
+            {view === 'faq' && <SatejFaq orgId={orgId} />}
             {view === 'script' && <SatejVoiceScript orgId={orgId} seedTranscript={scriptSeed} />}
             {view === 'requirements' && error && <div className={s.errorBox}>{error}</div>}
 
@@ -491,6 +497,8 @@ function RequirementDetail({ orgId, id, onChange, onImproveScript }: { orgId: st
 
                 {d.summaryText && <SummaryCard text={d.summaryText} />}
 
+                <PriceHistoryCard r={r} />
+
                 <div className={s.twoCol}>
                     {r.brief && <BriefCard r={r} />}
                     <section className={s.card}>
@@ -737,7 +745,7 @@ function Leaderboard({ d, orgId }: { d: Detail; orgId: string }) {
                     <Fragment key={v.vendorId}>
                         <button className={`${s.rankRow} ${open === v.vendorId ? s.rankOpen : ''}`} onClick={() => setOpen(open === v.vendorId ? null : v.vendorId)}>
                             <span className={s.rankNo}>{v.rank}</span>
-                            <span className={s.rankName}><b>{v.vendorName}</b><span className={s.muted}>{v.area}</span></span>
+                            <span className={s.rankName}><b>{v.vendorName}</b><span className={s.muted}>{v.priceText ? v.priceText.split(' — ')[0] : v.area}</span></span>
                             <span className={s.scoreBar}><span style={{ width: `${v.score.total}%` }} /><b>{v.score.total}</b></span>
                             <span className={`${s.chip} ${v.score.qualification === 'qualified' ? s.good : v.score.qualification === 'verify_gst' ? s.warn : s.bad}`}>{v.score.qualification.replace('_', ' ')}</span>
                             <ChevronDown size={15} className={open === v.vendorId ? s.rotated : ''} />
@@ -754,6 +762,7 @@ function VendorCalls({ v, calls, orgId }: { v: any; calls: any[]; orgId: string 
     return (
         <div className={s.callBox}>
             <p>{v.summary}</p>
+            {v.priceText && <p className={s.priceLine}><b>Rate:</b> {v.priceText} {verdictChip(v.priceVerdict)}</p>}
             {v.score.parts.length > 0 && (
                 <div className={s.parts}>
                     {v.score.parts.map((p: any) => (
