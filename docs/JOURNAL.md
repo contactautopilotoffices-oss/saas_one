@@ -1,3 +1,22 @@
+## 2026-10-06 — Saas.one: "The Sensory Studio", three redesign directions for the Basilic Fly floor
+
+**A 15-page PDF that re-imagines the four current Basilic Fly views in three directions (a calm grading room, a visible production pipeline, a warm film-set backlot), each designed around the five senses with an IoT layer behind it.**
+
+- **Why:** The founder wants the Basilic Fly floor, a VFX-first studio, to look and feel like one. Today it reads as a good coworking space. The founder asked for something that "talks the walk", using sight, hearing, touch, smell and taste, with sensors and automation where they help.
+- **Structural decisions:**
+  - Built outside this repo, at `~/Downloads/Basilic Fly Playbook/Sensory Studio/`, in the style of the existing Basilic Fly playbook (same size, fonts and logos). Nothing in the FMS app changed. I could not find a separate "Invesco brief" document, so the playbook was used as the template.
+  - The renders are AI edits of the four existing views, not rebuilt from the CAD. The alternative was to rebuild each direction in 3D first. That would keep every desk exactly in place, but takes far longer, so it is offered as the step after the founder picks a direction. The PDF says this plainly on page 14.
+  - Taste was added as the fifth sense, because the request named smell twice.
+- **What works now:** The founder can compare today's floor against three clear options on the same four camera views, see what each does for each sense, and see the shared sensor-to-scene IoT layer and the privacy rules (no cameras, no recording, counts not names).
+- **Left undone:**
+  - Nothing is priced and no supplier is named. Sound, scent, touch and taste are described, not visible in the pictures; the PDF marks which is which.
+  - Desk counts were not re-checked against drawing R05. In Direction B, the far wall in the centre-table view turned into a dark screen wall, which is more change than asked for.
+  - The Higgsfield account balance changed from 9 to about 600 credits during the session (the plan shows as Pro). I did not make that change; the 12 renders and one redo cost roughly 7 credits.
+- **Open questions for the founder:**
+  - Which direction (or a mix of A and B)?
+  - Does the studio have a real render system that can feed status screens? Without it, Direction B is decoration.
+  - How far should scent and wearables go? Plain, clean air is the safe default.
+
 ## 2026-10-05 — Saas.one: Three Whitefield slides — what the floor earns, who else is opening, and where our price sits
 
 **Three presentation slides for the Total Environment Whitefield "other half" deck, blending the founder's financial projection with the Whitefield Business Case Study: the money, the new competitors, and a price anchored between Simpliwork and 91springboard.**
