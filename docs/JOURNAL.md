@@ -42,7 +42,7 @@
 - **Open questions for the founder:**
   - Who should attend the first review, and should it start with the 18 POs older than 90 days?
   - Should audio be recorded, or is the transcript enough? Today only the transcript is kept.
-  - Rushabh Shah has no FMS login, so he cannot join yet. Should he get one?
+  - Rushabh Shah's FMS login is `rushab@worksquare.in` (no "h"), named "Rushab shah", while his address is rushabh@worksquare.in. He can already host meetings (org super admin). Is the login a typo to correct, or is `rushab@` also his?
 
 ## 2026-10-06 — Saas.one: Mail archive sandbox — purchase@ and three of the purchase team
 
