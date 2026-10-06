@@ -3,8 +3,8 @@
  *
  * Streamed through FMS rather than linked: Bolna's recording URL redirects to
  * a signed S3 link, which the site's CSP (media-src) does not allow, and going
- * through here keeps recordings behind the Satej access check. Only calls made
- * by Satej's own Bolna agent are served.
+ * through here keeps recordings behind the Meera access check. Only calls made
+ * by Meera's own Bolna agent are served.
  */
 
 import { NextRequest, NextResponse } from 'next/server';

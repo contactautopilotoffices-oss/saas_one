@@ -1,3 +1,21 @@
+## 2026-10-06 — Saas.one: One name, Meera, for the procurement agent; quote requests from the purchase inbox go straight to her
+
+**The vendor-discovery agent formerly called Satej is now Meera everywhere people see it. Its console also lists colleagues' quote-request emails from purchase@, and turns each one into a pre-filled request with one click.**
+
+- **Why:** The founder found the names confusing. The agent was "Satej", her phone voice was "Meera", and Satej Sadhye is a real person on the purchase team whose mailbox is now being archived. The founder also asked what the newly connected purchase@ mailbox could teach the agent. The clearest finding was that colleagues already ask purchase@ for vendor quotes by email (for example: Digitide BOQ, Sion; Coimbatore renovation; pest control at Skymark, Noida). Someone then has to retype each one.
+- **Structural decisions:**
+  - **Only the visible names changed.** This covers screens, tabs, chat, the in-app voice call, WhatsApp text, activity messages and the Agent Console name. Code, database tables, web routes and settings keep the `satej` name. Renaming those would need database changes, new Vercel settings and a new Bolna webhook, and nobody would see any difference. A new `/meera` address opens the same console, and links already sent to `/satej` still work.
+  - **The in-app voice call is now a woman's voice** (ElevenLabs "Alka"), to match the name. It was the male voice "Amay".
+  - **Requests from email still need a person to submit them.** Meera drafts the form from the email (title, site, city, area, timeline) and a person checks and submits it. The purchase@ digest stores each message's opening lines, never full bodies or attachments, so a BOQ attached to the email is not read. The draft says so.
+  - Two Agent Console rows renamed from "Satej" to "Meera" directly in the database; old values saved before the change.
+- **What works now:** Requirements in the Meera console show "From the purchase inbox" with the asks of the last 30 days (7 found on the real inbox over 90 days). "Start with Meera" opens the request form already filled in, and the request remembers which email it came from. The FAQ payment draft now quotes the real milestone terms from an approval email.
+- **Left undone:**
+  - Matching vendors' emailed quotations back to Meera's calls (Fusion Furnish, KONE, Actis and others send quotes to purchase@). This needs full email text and attachments, which only arrive once the mail archive (`supabase/migrations/20261006000002_mail_archive.sql`) is applied. It is the natural next step.
+  - Team price targets written in approval emails ("try to achieve Rs 650–700/KVA") are not yet fed to Meera's negotiation.
+  - The new panel was type-checked and its route answers, but it was not seen in a signed-in browser.
+- **Open questions for the founder:**
+  - Should the WhatsApp template names also change from `satej_…` to `meera_…`? Only the AiSensy dashboard shows them. If the templates are not created yet, renaming now is free; once created, it means re-approval.
+
 ## 2026-10-06 — Saas.one: Meeting rooms inside FMS, with Ira running a review of stuck POs
 
 **People can now meet inside FMS. Ira, our procurement agent, joins the room, reads each purchase order stuck at "pending approval", asks who owns it and what should happen, and writes the decision down for an approver to confirm.**

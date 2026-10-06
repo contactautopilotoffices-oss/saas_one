@@ -1,5 +1,5 @@
 /**
- * The answers Meera may give vendors — the FAQ page in the Satej console.
+ * The answers Meera may give vendors — the FAQ page in the Meera console.
  *
  * Stored in satej_faq (supabase/migrations/20261006000001_satej_rate_benchmark.sql),
  * seeded from her real calls and the Zoho history. Only `approved` entries reach

@@ -7,7 +7,7 @@
  *     (benchmarkFor → Requirement.benchmark → the call CSV);
  *   · after calls: where each quoted rate sits against history (priceCheck →
  *     CallRecord.priceCheck → the "Price" part of the score);
- *   · the rate checker in the Satej console (lookupRates).
+ *   · the rate checker in the Meera console (lookupRates).
  *
  * The numbers never leave FMS except as Meera's two negotiating figures, and she
  * is told never to say where they come from.
@@ -138,7 +138,7 @@ export async function refreshBenchmark(organizationId?: string): Promise<number>
 /**
  * The benchmark for one requirement, or null when there is nothing trustworthy.
  * Tries the team's own description first (it carries the product words), then
- * Satej's spoken summary and category.
+ * Meera's spoken summary and category.
  */
 export async function benchmarkFor(r: Requirement): Promise<BenchmarkSnapshot | null> {
     const unit = r.input.unit || r.brief?.unit || null;

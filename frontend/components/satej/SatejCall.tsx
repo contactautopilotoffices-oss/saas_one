@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * A voice call with Satej about one requirement — the Agent Council's
+ * A voice call with Meera about one requirement — the Agent Council's
  * Teams-shaped call (dial → live call with captions → minutes), on ElevenLabs
  * Conversational AI instead of OpenAI Realtime.
  *
@@ -179,10 +179,10 @@ export default function SatejCall({ orgId, requirementId, title, onClose, onMinu
     };
 
     const mm = `${String(Math.floor(elapsed / 60)).padStart(2, '0')}:${String(elapsed % 60).padStart(2, '0')}`;
-    const statusText = state === 'dialing' ? 'Connecting…' : state === 'live' ? (speaking ? 'Satej is speaking' : 'Listening') : state === 'summarising' ? 'Writing the minutes…' : state === 'error' ? 'Call failed' : 'Call ended';
+    const statusText = state === 'dialing' ? 'Connecting…' : state === 'live' ? (speaking ? 'Meera is speaking' : 'Listening') : state === 'summarising' ? 'Writing the minutes…' : state === 'error' ? 'Call failed' : 'Call ended';
 
     const view = (
-        <div className={s.callBack} role="dialog" aria-modal aria-label={`Call with Satej about ${title}`}>
+        <div className={s.callBack} role="dialog" aria-modal aria-label={`Call with Meera about ${title}`}>
             <motion.div
                 className={s.callCard}
                 initial={reduce ? false : { opacity: 0, y: 18, scale: 0.98 }}
@@ -192,7 +192,7 @@ export default function SatejCall({ orgId, requirementId, title, onClose, onMinu
                 <header className={s.callHead}>
                     <span className={`${s.dot} ${state === 'live' ? s.dotLive : state === 'error' ? s.dotBad : s.dotWait}`} />
                     <div style={{ minWidth: 0 }}>
-                        <b>1:1 with Satej</b>
+                        <b>1:1 with Meera</b>
                         <div className={s.muted} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</div>
                     </div>
                     <span className={s.callTimer}>{state === 'live' ? mm : ''}</span>
@@ -213,7 +213,7 @@ export default function SatejCall({ orgId, requirementId, title, onClose, onMinu
                     <div className={s.captions} aria-live="polite">
                         {lines.length === 0 && <span className={s.muted}>Captions appear here as you talk.</span>}
                         {lines.map((l) => (
-                            <p key={l.id}><b className={l.role === 'satej' ? s.capSatej : s.capYou}>{l.role === 'satej' ? 'Satej' : 'You'}:</b> {l.text}</p>
+                            <p key={l.id}><b className={l.role === 'satej' ? s.capSatej : s.capYou}>{l.role === 'satej' ? 'Meera' : 'You'}:</b> {l.text}</p>
                         ))}
                         <div ref={endRef} />
                     </div>

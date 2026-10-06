@@ -1,5 +1,5 @@
 /**
- * Stage 3 — the Bolna voice agent Satej dials through: Meera.
+ * Stage 3 — Meera on the phone: the Bolna voice agent that calls vendors.
  *
  * Bolna runs the call; FMS hands it one CSV row per vendor. This file is the
  * source of truth for what Meera says. scripts/satej-sync-bolna.ts pushes it,
@@ -30,7 +30,7 @@
  *   · she now asks for a rate and pushes back once, using what we have actually
  *     paid (backend/lib/satej/benchmark.ts) — never saying the number's source.
  *
- * The "# Common questions" section is filled from the Satej FAQ page
+ * The "# Common questions" section is filled from the Meera FAQ page
  * (backend/lib/satej/faq.ts); only approved entries are spoken.
  */
 
@@ -121,7 +121,7 @@ d. Experience: how long they have been doing this, and one or two places they ha
 - End with one short line: "ठीक है जी, thank you। मैं details भेज देती हूँ।"
 
 ${FAQ_HEADING}
-(Filled from the Satej FAQ page when it is published. Use these answers in your own words.)
+(Filled from the Meera FAQ page when it is published. Use these answers in your own words.)
 
 # Rules
 - Never promise an order, a meeting or a decision date. The team decides after comparing quotes.

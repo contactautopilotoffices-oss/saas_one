@@ -1,9 +1,9 @@
 /**
- * Meera's caller script, from the Satej console: read it, preview it, get a
+ * Meera's caller script, from the Meera console: read it, preview it, get a
  * revision from feedback, publish it to Bolna, and keep every version.
  *
  * Two guarantees:
- *   · A script may only use the {variables} Satej's call CSV supplies
+ *   · A script may only use the {variables} Meera's call CSV supplies
  *     (CALL_VARIABLES) plus Bolna's own. Anything else would be spoken as a
  *     blank — refused before publishing, not discovered on a vendor's phone.
  *   · The script that was live is saved BEFORE the new one goes out, so any
@@ -39,7 +39,7 @@ export function validateScript(welcome: string, prompt: string): string[] {
     if (prompt.trim().length < 200) errs.push('The prompt is too short to run a call');
     if (prompt.length > 20000) errs.push('The prompt is longer than 20,000 characters, which slows every reply');
     const bad = unknownVariables(`${welcome}\n${prompt}`);
-    if (bad.length) errs.push(`Uses variables Satej does not send, which would be spoken as blanks: ${bad.join(', ')}. Allowed: ${CALL_VARIABLES.slice(1).join(', ')}`);
+    if (bad.length) errs.push(`Uses variables Meera does not send, which would be spoken as blanks: ${bad.join(', ')}. Allowed: ${CALL_VARIABLES.slice(1).join(', ')}`);
     return errs;
 }
 

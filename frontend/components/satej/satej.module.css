@@ -1,5 +1,5 @@
 /*
- * Satej console. Every colour is an app token from app/globals.css, so the page
+ * Meera console. Every colour is an app token from app/globals.css, so the page
  * follows the app's light and dark themes (.dark on <html>) instead of the OS.
  * Motion means state: only things that are actually working pulse.
  */
@@ -338,3 +338,8 @@
 .faqMeta { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .faqMeta .link { display: inline-flex; align-items: center; gap: 4px; }
 .priceLine { margin: 4px 0 0; font-size: 12.5px; }
+
+/* ---- quote requests from the purchase inbox ------------------------------------------ */
+.inboxList { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.inboxList li { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; border: 1px solid var(--s-line); border-radius: 10px; padding: 10px 12px; }
+.inboxList li > button { flex-shrink: 0; }

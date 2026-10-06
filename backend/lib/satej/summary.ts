@@ -1,9 +1,9 @@
 /**
- * Everything Satej says to the purchase team, built by code — no LLM — so
+ * Everything Meera says to the purchase team, built by code — no LLM — so
  * nothing in a summary can be made up.
  *
- *   · *TemplateParams — the two AiSensy templates (WHATSAPP_META_TEMPLATES.md, Satej section)
- *   · fullSummary     — the complete ranked write-up, shown on the Satej page with a
+ *   · *TemplateParams — the two AiSensy templates (WHATSAPP_META_TEMPLATES.md, Meera section)
+ *   · fullSummary     — the complete ranked write-up, shown on the Meera page with a
  *                       copy button, formatted to paste straight into WhatsApp
  */
 
@@ -13,9 +13,9 @@ import { clip, formatIst } from './util';
 
 const QUAL_LABEL = { qualified: 'Qualified', verify_gst: 'Verify GST', disqualified: 'Not GST registered', not_reached: 'Not reached' } as const;
 
-/** Path of a requirement on the Satej page, relative to the app origin. */
+/** Path of a requirement on the Meera page, relative to the app origin. */
 export function consolePath(r: Requirement): string {
-    return `${r.organizationId}/satej?req=${encodeURIComponent(r.code)}`;
+    return `${r.organizationId}/meera?req=${encodeURIComponent(r.code)}`;
 }
 
 /** Absolute link, or null when no origin is known — never a guessed URL. */
@@ -61,13 +61,13 @@ export function fullSummary(r: Requirement): string {
     if (qualified.length) {
         const top = qualified[0];
         const why = [top.priceText && top.priceVerdict && top.priceVerdict !== 'no_benchmark' ? top.priceText.split(' — ')[1] : '', `${top.score.total}/100`].filter(Boolean).join(', ');
-        lines.push(`Satej's pick: ${top.vendorName} (${why}). A person decides.`);
+        lines.push(`Meera's pick: ${top.vendorName} (${why}). A person decides.`);
         const picks = qualified.slice(0, 3).map((v) => `#${v.rank} ${v.vendorName}`).join(', ');
         lines.push(`1. Send the BOQ / detailed requirement to ${picks} for quotation.`);
         lines.push('2. Collect company profile and GST certificate on WhatsApp.');
         lines.push('3. Call one client reference for the top pick before the PO.');
     } else {
-        lines.push('1. No vendor qualified. Use "Find more vendors" on the Satej page for a wider search and a fresh round of calls.');
+        lines.push('1. No vendor qualified. Use "Find more vendors" on the Meera page for a wider search and a fresh round of calls.');
     }
     const link = consoleLink(r);
     if (link) lines.push(`Full call notes and recordings: ${link}`);

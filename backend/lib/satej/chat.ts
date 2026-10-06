@@ -1,10 +1,10 @@
 /**
- * Talking to Satej about one requirement.
+ * Talking to Meera about one requirement.
  *
- * Satej answers from the requirement's own record — the form, the brief, every
+ * Meera answers from the requirement's own record — the form, the brief, every
  * vendor it found, every call and score, the activity log — and nothing else.
  * When the person asks for a change ("make it 1,500 sq ft", "drop the Dadar
- * one", "search again"), Satej PROPOSES it as a structured action. The model
+ * one", "search again"), Meera PROPOSES it as a structured action. The model
  * never applies anything: the proposal is shown with an Apply button, and only
  * a person pressing it runs the same pipeline function the page's own buttons
  * use. Calls cost money and reach real businesses; a sentence typed into a chat
@@ -26,7 +26,7 @@ const TABLE = 'satej_messages';
 function chatError(error: { message: string; code?: string }): Error {
     return new Error(isMissingSchemaError(error)
         ? 'The chat is not set up in this database yet. Apply supabase/migrations/20261003000001_satej_chat.sql.'
-        : `Satej chat: ${error.message}`);
+        : `Meera chat: ${error.message}`);
 }
 
 type Row = {
@@ -85,7 +85,7 @@ export function allowedActions(r: Requirement): SatejActionType[] {
     return a;
 }
 
-/** The requirement as Satej sees it in conversation. Compact, factual, no phone numbers beyond the vendors'. */
+/** The requirement as Meera sees it in conversation. Compact, factual, no phone numbers beyond the vendors'. */
 export function requirementContext(r: Requirement, vendors: Vendor[], calls: CallRecord[]): string {
     const b = r.brief;
     const lines: string[] = [];
@@ -125,7 +125,7 @@ export function requirementContext(r: Requirement, vendors: Vendor[], calls: Cal
 }
 
 const CHAT_SYSTEM = (allowed: SatejActionType[]) => `
-You are Satej, the vendor-discovery agent of Autopilot Offices, talking with a member of the purchase team about ONE requirement. You found the vendors, had Meera (the voice agent) call them, and ranked them with a fixed 100-point rulebook.
+You are Meera, the procurement agent of Autopilot Offices, talking with a member of the purchase team about ONE requirement. You found the vendors, phoned them yourself, checked their rates against what we have paid before, and ranked them with a fixed 100-point rulebook.
 
 Rules, in order. Do not skip any.
 1. Answer only from the REQUIREMENT record you are given. If the answer is not in it, say you do not know and what would tell us. Never invent vendors, numbers, quotes or call outcomes.
@@ -163,7 +163,7 @@ function cleanAction(raw: unknown, allowed: SatejActionType[], vendors: Vendor[]
     return { type, summary };
 }
 
-/** Satej's answer to one message. Persists both sides. */
+/** Meera's answer to one message. Persists both sides. */
 export async function converse(r: Requirement, text: string, author: { userId: string; name: string }): Promise<SatejMessage[]> {
     const repo = getRepo();
     const [vendors, calls, history] = await Promise.all([repo.listVendors(r.id), repo.listCalls(r.id), listMessages(r.id)]);

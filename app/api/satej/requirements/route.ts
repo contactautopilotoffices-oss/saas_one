@@ -1,7 +1,7 @@
 /**
- * Satej requirements.
+ * Meera requirements.
  *   GET  ?organizationId=  → the organisation's requirements, newest first
- *   POST { organizationId, ...form } → raise a requirement; Satej starts on it straight after the response
+ *   POST { organizationId, ...form } → raise a requirement; Meera starts on it straight after the response
  */
 
 import { after, NextRequest, NextResponse } from 'next/server';
@@ -48,10 +48,10 @@ export async function POST(request: NextRequest) {
 
     const missing = missingKeys();
     if (missing.length) {
-        return NextResponse.json({ error: `Satej is not configured on this server yet. Missing: ${missing.join(', ')}` }, { status: 503 });
+        return NextResponse.json({ error: `Meera is not configured on this server yet. Missing: ${missing.join(', ')}` }, { status: 503 });
     }
     if (await isSatejPaused(organizationId)) {
-        return NextResponse.json({ error: 'Satej is paused in the Agent Console. Resume it there to raise new requirements.' }, { status: 409 });
+        return NextResponse.json({ error: 'Meera is paused in the Agent Console. Resume it there to raise new requirements.' }, { status: 409 });
     }
     const errors = validateInput(body);
     if (errors.length) return NextResponse.json({ error: errors.join('; ') }, { status: 400 });
@@ -78,6 +78,7 @@ export async function POST(request: NextRequest) {
                 requestedByUserId: caller.userId,
                 notifyWhatsapp: String(body.notifyWhatsapp ?? '').trim(),
                 vendorSource: body.vendorSource === 'own' || body.vendorSource === 'both' ? body.vendorSource : 'discover',
+                sourceThreadId: /^\d{6,30}$/.test(String(body.sourceThreadId ?? '')) ? String(body.sourceThreadId) : undefined,
             },
             request.nextUrl.origin,
         );

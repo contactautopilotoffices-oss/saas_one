@@ -143,10 +143,10 @@ export default function SatejVoiceScript({ orgId, seedTranscript }: { orgId: str
                         : <pre className={s.promptView}><Highlighted text={d.script.prompt} /></pre>}
 
                     <p className={s.muted} style={{ marginTop: 8 }}>
-                        Filled in for each vendor from Satej&apos;s call list: {d.variables.map((v) => <code key={v} className={s.varChip}>{`{${v}}`}</code>)}
+                        Filled in for each vendor from Meera&apos;s call list: {d.variables.map((v) => <code key={v} className={s.varChip}>{`{${v}}`}</code>)}
                     </p>
                     {strayVars.length > 0 && (
-                        <div className={s.errorBox}>These are not filled by Satej and would be spoken as blanks: {strayVars.join(', ')}</div>
+                        <div className={s.errorBox}>These are not filled by Meera and would be spoken as blanks: {strayVars.join(', ')}</div>
                     )}
                     {d.problems.length > 0 && !editing && <div className={s.noteBox}>{d.problems.join(' · ')}</div>}
                 </section>

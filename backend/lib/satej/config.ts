@@ -4,7 +4,7 @@
  *
  * Everything that already exists in FMS is reused rather than duplicated:
  *   · LLM      → backend/lib/council/llm.ts (Engy via COUNCIL_PROVIDER=custom)
- *   · Bolna    → the account's BOLNA_API_KEY; only the agent id is Satej's own
+ *   · Bolna    → the account's BOLNA_API_KEY; only the agent id is Meera's own
  *   · Exa      → the `EXA` key already in .env (EXA_API_KEY also accepted)
  *   · WhatsApp → AiSensy (AISENSY_API_KEY), the sender every other module uses
  *
@@ -81,7 +81,7 @@ export const satejConfig = {
     get bolnaApiKey() {
         return env('BOLNA_API_KEY');
     },
-    /** Satej's own voice agent. BOLNA_AGENT_ID is Ira's and is never used here. */
+    /** Meera's own voice agent. BOLNA_AGENT_ID is Ira's and is never used here. */
     get bolnaAgentId() {
         return env('SATEJ_BOLNA_AGENT_ID');
     },
@@ -89,7 +89,7 @@ export const satejConfig = {
     get bolnaGraphAgentId() {
         return env('SATEJ_BOLNA_GRAPH_AGENT_ID');
     },
-    /** Every Bolna agent whose calls belong to Satej. */
+    /** Every Bolna agent whose calls belong to Meera. */
     get bolnaAgentIds(): string[] {
         return [this.bolnaAgentId, this.bolnaGraphAgentId].filter(Boolean);
     },
@@ -164,7 +164,7 @@ export const satejConfig = {
 };
 
 /**
- * Names of the settings without which Satej cannot run end to end. Names only —
+ * Names of the settings without which Meera cannot run end to end. Names only —
  * this list is shown in the console, so it must never carry a value.
  */
 export function missingKeys(): string[] {

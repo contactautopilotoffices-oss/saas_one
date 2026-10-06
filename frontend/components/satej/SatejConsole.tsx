@@ -3,17 +3,17 @@
 /**
  * SATEJ — the vendor discovery console.
  *
- * Raise a requirement; Satej structures it, finds local vendors on the web,
+ * Raise a requirement; Meera structures it, finds local vendors on the web,
  * has Meera (Bolna) phone them, scores every call with a fixed rulebook and
  * sends the ranked shortlist on WhatsApp.
  *
  * The page is built to be WATCHED, not refreshed:
- *   · a live board shows what Satej is doing this second — the queries it is
+ *   · a live board shows what Meera is doing this second — the queries it is
  *     running, the pages it is reading, every vendor it spots, each call's state;
  *   · the call list can be trimmed before anyone is dialled;
  *   · the request can be edited after submitting (re-plans before calls, starts
  *     a new round after);
- *   · Satej sits in a chat panel on the right, with a voice call one click away.
+ *   · Meera sits in a chat panel on the right, with a voice call one click away.
  *
  * Data shapes: backend/lib/satej/types.ts. Kept loose here so this client file
  * pulls in no server code.
@@ -113,6 +113,8 @@ export default function SatejConsole({ orgId }: { orgId: string }) {
     const [showForm, setShowForm] = useState(false);
     const [error, setError] = useState('');
     const [view, setView] = useState<'requirements' | 'rates' | 'faq' | 'script' | 'runs'>('requirements');
+    /** A requirement form pre-filled from a purchase@ email. */
+    const [draft, setDraft] = useState<Record<string, any> | null>(null);
     /** A test-call transcript handed to the Caller script tab as feedback evidence. */
     const [scriptSeed, setScriptSeed] = useState<string | null>(null);
 
@@ -148,7 +150,7 @@ export default function SatejConsole({ orgId }: { orgId: string }) {
                 <div className={s.headTitle}>
                     <div className={s.avatarLg}>S<span className={`${s.presence} ${working ? s.presenceBusy : ''}`} /></div>
                     <div>
-                        <h1>Satej · Vendor discovery</h1>
+                        <h1>Meera · Vendor discovery</h1>
                         <p className={s.muted}>
                             {list === null ? 'Loading…' : `${working} in progress${needsYou ? ` · ${needsYou} waiting for you` : ''} · Meera makes the calls`}
                         </p>
@@ -171,6 +173,7 @@ export default function SatejConsole({ orgId }: { orgId: string }) {
             {view === 'rates' && <RateChecker orgId={orgId} />}
             {view === 'faq' && <SatejFaq orgId={orgId} />}
             {view === 'script' && <SatejVoiceScript orgId={orgId} seedTranscript={scriptSeed} />}
+            {view === 'requirements' && <InboxAsks orgId={orgId} onDraft={(d) => { setDraft(d); setShowForm(true); }} onOpen={(code) => { const hit = (list ?? []).find((r) => r.code === code); if (hit) setSelected(hit.id); }} />}
             {view === 'requirements' && error && <div className={s.errorBox}>{error}</div>}
 
             {view === 'requirements' && (
@@ -218,15 +221,63 @@ export default function SatejConsole({ orgId }: { orgId: string }) {
             {showForm && (
                 <RequirementForm
                     orgId={orgId}
-                    onClose={() => setShowForm(false)}
+                    draft={draft}
+                    onClose={() => { setShowForm(false); setDraft(null); }}
                     onDone={(id) => {
                         setShowForm(false);
+                        setDraft(null);
                         if (id) setSelected(id);
                         void load();
                     }}
                 />
             )}
         </div>
+    );
+}
+
+/* ======================================================================== */
+/* quote requests that came to purchase@ by email                            */
+
+function InboxAsks({ orgId, onDraft, onOpen }: { orgId: string; onDraft: (d: Record<string, any>) => void; onOpen: (code: string) => void }) {
+    const [asks, setAsks] = useState<any[] | null>(null);
+    const [busy, setBusy] = useState('');
+    const [err, setErr] = useState('');
+    useEffect(() => {
+        let live = true;
+        api(`/api/satej/inbox?organizationId=${orgId}`).then((j) => { if (live) setAsks(j.asks); }).catch((e) => { if (live) setErr(e.message); });
+        return () => { live = false; };
+    }, [orgId]);
+    const open = (asks ?? []).filter((a) => !a.startedAs);
+    if (err) return <div className={s.errorBox}>Purchase inbox: {err}</div>;
+    if (!asks?.length) return null;
+    return (
+        <details className={s.card} open={open.length > 0}>
+            <summary className={s.detailsSummary}>From the purchase inbox · {open.length} quote request{open.length === 1 ? '' : 's'} not yet with Meera</summary>
+            <p className={s.muted}>Colleagues&apos; emails to purchase@ asking for vendor quotes, last 30 days. Meera drafts the form from the email; you check it and submit.</p>
+            <ul className={s.inboxList}>
+                {asks.map((a) => (
+                    <li key={a.threadId}>
+                        <div style={{ minWidth: 0 }}>
+                            <b>{a.subject}</b>
+                            <div className={s.muted}>{a.from} · {fmt(a.at)}{a.hasAttachment ? ' · has attachment' : ''}</div>
+                            {a.snippet && <div className={s.vSells}>{a.snippet}</div>}
+                        </div>
+                        {a.startedAs
+                            ? <button className={s.link} onClick={() => onOpen(a.startedAs)}>{a.startedAs}</button>
+                            : (
+                                <button className={s.ghost} disabled={!!busy} onClick={async () => {
+                                    setBusy(a.threadId); setErr('');
+                                    try { onDraft((await api('/api/satej/inbox', { method: 'POST', body: JSON.stringify({ organizationId: orgId, action: 'draft', threadId: a.threadId }) })).draft); }
+                                    catch (e: any) { setErr(e.message); }
+                                    finally { setBusy(''); }
+                                }}>
+                                    {busy === a.threadId ? <Loader2 size={14} className={s.spin} /> : <Plus size={14} />} Start with Meera
+                                </button>
+                            )}
+                    </li>
+                ))}
+            </ul>
+        </details>
     );
 }
 
@@ -241,20 +292,20 @@ function SetupPanel({ orgId }: { orgId: string }) {
         api(`/api/satej/setup?organizationId=${orgId}`).then(setSetup).catch((e) => setErr(e.message));
     }, [orgId]);
 
-    if (err) return <div className={s.errorBox}>Could not check Satej&apos;s setup: {err}</div>;
+    if (err) return <div className={s.errorBox}>Could not check Meera&apos;s setup: {err}</div>;
     if (!setup) return null;
 
     const v = setup.voice;
     const problems: string[] = [];
-    if (!setup.database.ready) problems.push(`Satej's database tables are not ready: ${setup.database.error ?? 'unknown error'}`);
+    if (!setup.database.ready) problems.push(`Meera's database tables are not ready: ${setup.database.error ?? 'unknown error'}`);
     if (setup.missing.length) problems.push(`Missing on this server: ${setup.missing.join(', ')}.`);
-    if (setup.paused) problems.push('Satej is paused in the Agent Console, so nothing new will run.');
+    if (setup.paused) problems.push('Meera is paused in the Agent Console, so nothing new will run.');
     if (v.error && !setup.mockMode) problems.push(`Could not reach the Bolna voice agent: ${v.error}`);
     if (v.checked && !v.found) problems.push('The Bolna voice agent in SATEJ_BOLNA_AGENT_ID does not exist on this Bolna account.');
     if (v.found && !v.webhookMapped) {
         problems.push(`Bolna call results are not wired to this server${v.webhookHost ? ` (they go to ${v.webhookHost})` : ''}. Run scripts/satej-sync-bolna.ts --apply.`);
     }
-    if (v.unfilledVariables?.length) problems.push(`The voice prompt uses variables Satej does not send: ${v.unfilledVariables.join(', ')}.`);
+    if (v.unfilledVariables?.length) problems.push(`The voice prompt uses variables Meera does not send: ${v.unfilledVariables.join(', ')}.`);
     if (!setup.whatsappConfigured) problems.push('AiSensy is not configured, so WhatsApp updates will not go out. Everything still shows here.');
 
     if (!problems.length && !setup.mockMode) {
@@ -266,7 +317,7 @@ function SetupPanel({ orgId }: { orgId: string }) {
     }
     return (
         <details className={s.noteBox}>
-            <summary><b>{setup.mockMode ? 'Mock mode: no real searches, calls or messages.' : `Satej is not fully set up yet (${problems.length})`}</b></summary>
+            <summary><b>{setup.mockMode ? 'Mock mode: no real searches, calls or messages.' : `Meera is not fully set up yet (${problems.length})`}</b></summary>
             {problems.length > 0 && <ul className={s.setupList} style={{ marginTop: 6 }}>{problems.map((p) => <li key={p}>{p}</li>)}</ul>}
         </details>
     );
@@ -282,20 +333,25 @@ const EMPTY_FORM = {
     requestedBy: '', notifyWhatsapp: '', vendorSource: 'discover',
 };
 const SOURCES = [
-    { key: 'discover', label: 'Find vendors for me', hint: 'Satej searches the web' },
+    { key: 'discover', label: 'Find vendors for me', hint: 'Meera searches the web' },
     { key: 'own', label: 'Use my list', hint: 'Only the vendors you add or import' },
-    { key: 'both', label: 'Both', hint: 'Your list plus Satej\'s search' },
+    { key: 'both', label: 'Both', hint: 'Your list plus Meera\'s search' },
 ];
 
-function RequirementForm({ orgId, existing, onClose, onDone }: {
+function RequirementForm({ orgId, existing, draft, onClose, onDone }: {
     orgId: string;
     /** Present when editing. */
     existing?: any;
+    /** A form pre-filled from a purchase@ email (inbox.ts). */
+    draft?: Record<string, any> | null;
     onClose: () => void;
     onDone: (id?: string) => void;
 }) {
     const editing = !!existing;
     const [f, setF] = useState(() => {
+        if (!existing && draft) {
+            return { ...EMPTY_FORM, ...Object.fromEntries(Object.keys(EMPTY_FORM).map((k) => [k, draft[k] ? String(draft[k]) : (EMPTY_FORM as any)[k]])) } as typeof EMPTY_FORM;
+        }
         if (!existing) return EMPTY_FORM;
         const i = existing.input;
         return {
@@ -326,7 +382,7 @@ function RequirementForm({ orgId, existing, onClose, onDone }: {
                 await api(`${API}/${existing.id}`, { method: 'POST', body: JSON.stringify({ organizationId: orgId, action: 'edit', changes }) });
                 onDone();
             } else {
-                const r = await api(API, { method: 'POST', body: JSON.stringify({ ...f, organizationId: orgId, vendorTarget: Number(f.vendorTarget) || undefined }) });
+                const r = await api(API, { method: 'POST', body: JSON.stringify({ ...f, organizationId: orgId, vendorTarget: Number(f.vendorTarget) || undefined, sourceThreadId: draft?.sourceThreadId }) });
                 onDone(r.id);
             }
         } catch (e: any) {
@@ -352,8 +408,8 @@ function RequirementForm({ orgId, existing, onClose, onDone }: {
                 {editing && (
                     <div className={preCall ? s.infoBox : s.noteBox}>
                         {preCall
-                            ? 'No vendor has been called yet. Saving makes Satej re-plan from the start with these details; vendors found for the old version are dropped.'
-                            : `Calls have already been made. Saving starts round ${existing.round + 1}: Satej searches again with these details and skips every vendor already called. Results so far are kept.`}
+                            ? 'No vendor has been called yet. Saving makes Meera re-plan from the start with these details; vendors found for the old version are dropped.'
+                            : `Calls have already been made. Saving starts round ${existing.round + 1}: Meera searches again with these details and skips every vendor already called. Results so far are kept.`}
                     </div>
                 )}
                 <div className={s.grid}>
@@ -366,7 +422,7 @@ function RequirementForm({ orgId, existing, onClose, onDone }: {
                                 </button>
                             ))}
                         </div>
-                        {!editing && f.vendorSource !== 'discover' && <p className={s.muted} style={{ marginTop: 6 }}>You add or import your vendors on the next screen, once Satej has written the brief.</p>}
+                        {!editing && f.vendorSource !== 'discover' && <p className={s.muted} style={{ marginTop: 6 }}>You add or import your vendors on the next screen, once Meera has written the brief.</p>}
                     </div>
                     <label className={s.full}>Title<input required value={f.title} onChange={set('title')} placeholder="Gypsum false ceiling, Lower Parel office" /></label>
                     <label>Type
@@ -423,7 +479,7 @@ function RequirementDetail({ orgId, id, onChange, onImproveScript }: { orgId: st
         }
     }, [id, orgId]);
 
-    // Fast polling while Satej is working, so the board moves as it does.
+    // Fast polling while Meera is working, so the board moves as it does.
     const status = d?.requirement.status;
     useEffect(() => {
         void load();
@@ -469,7 +525,7 @@ function RequirementDetail({ orgId, id, onChange, onImproveScript }: { orgId: st
                     </div>
                     <div className={s.actions}>
                         {r.status !== 'cancelled' && <button className={s.ghost} onClick={() => setEditing(true)}><Pencil size={14} /> Edit</button>}
-                        <button className={s.ghost} onClick={() => setChatOpen((v) => !v)}><MessageSquare size={14} /> {chatOpen ? 'Hide Satej' : 'Talk to Satej'}</button>
+                        <button className={s.ghost} onClick={() => setChatOpen((v) => !v)}><MessageSquare size={14} /> {chatOpen ? 'Hide Meera' : 'Talk to Meera'}</button>
                         <MoreActions r={r} busy={!!busy} act={act} orgId={orgId} />
                     </div>
                 </div>
@@ -486,7 +542,7 @@ function RequirementDetail({ orgId, id, onChange, onImproveScript }: { orgId: st
                 {r.status === 'failed' && r.brief && (
                     <section className={s.card}>
                         <h3>Call vendors you already know</h3>
-                        <p className={s.muted}>Satej found nobody callable on the web. Add or import your own vendors and the call list opens for approval.</p>
+                        <p className={s.muted}>Meera found nobody callable on the web. Add or import your own vendors and the call list opens for approval.</p>
                         <VendorIntake orgId={orgId} requirement={r} defaultOpen onAdded={() => { void load(); onChange(); }} />
                     </section>
                 )}
@@ -576,7 +632,7 @@ function Questions({ r, act, busy }: { r: any; act: (a: string, x?: object) => v
     const [answers, setAnswers] = useState<string[]>([]);
     return (
         <section className={`${s.card} ${s.cardAttention}`}>
-            <h3>Satej needs a few answers before it searches</h3>
+            <h3>Meera needs a few answers before it searches</h3>
             {(r.brief?.questions ?? []).map((q: string, i: number) => (
                 <label key={i} className={s.full}>
                     {q}
@@ -624,7 +680,7 @@ function LiveBoard({ d, act, busy, orgId, reload }: { d: Detail; act: (a: string
                     <div className={s.progress}><div style={{ width: `${pct}%` }} /><span>{live.pagesRead} / {live.pagesTotal} pages read</span></div>
                 )}
                 <h4 className={s.subhead}>Picked up so far · {spotted.length}</h4>
-                {spotted.length === 0 && <p className={s.muted}>Vendors appear here the moment Satej spots them on a page.</p>}
+                {spotted.length === 0 && <p className={s.muted}>Vendors appear here the moment Meera spots them on a page.</p>}
                 <ul className={s.feed}>
                     <AnimatePresence initial={false}>
                         {spotted.slice(0, 30).map((v: any, i: number) => (

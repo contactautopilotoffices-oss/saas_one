@@ -257,7 +257,7 @@ export function TestCall({ orgId, requirement, vendors, calls, onChanged, onImpr
                     {c.recordingUrl && <audio controls preload="none" className={s.audio} src={`/api/satej/voice/recording?organizationId=${orgId}&executionId=${c.executionId}`} />}
                     {c.analysis && (
                         <div className={s.callBox}>
-                            <p><Sparkles size={13} style={{ verticalAlign: -2 }} /> <b>Satej&apos;s read:</b> {c.analysis.summary}</p>
+                            <p><Sparkles size={13} style={{ verticalAlign: -2 }} /> <b>Meera&apos;s read:</b> {c.analysis.summary}</p>
                             <p className={s.muted}>
                                 As a vendor this would score {c.score?.total ?? '—'}/100 ({String(c.score?.qualification ?? '').replace('_', ' ')}) · GST {c.analysis.gstRegistered} · {c.analysis.yearsExperience ?? '—'} yrs · turnaround {c.analysis.turnaroundText || '—'}
                             </p>
@@ -269,7 +269,7 @@ export function TestCall({ orgId, requirement, vendors, calls, onChanged, onImpr
                         <div className={s.actions} style={{ justifyContent: 'flex-start', marginTop: 8 }}>
                             {!c.analysis && (
                                 <button className={s.ghost} disabled={!!busy} onClick={() => void read(c.id)}>
-                                    {busy === c.id ? <Loader2 size={14} className={s.spin} /> : <Check size={14} />} Get Satej&apos;s read
+                                    {busy === c.id ? <Loader2 size={14} className={s.spin} /> : <Check size={14} />} Get Meera&apos;s read
                                 </button>
                             )}
                             <button className={s.ghost} onClick={() => onImproveScript(c.transcript)}><Wand2 size={14} /> Improve the script from this call</button>

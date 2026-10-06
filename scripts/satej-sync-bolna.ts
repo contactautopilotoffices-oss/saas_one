@@ -1,5 +1,5 @@
 /**
- * Push Satej's voice agent (Meera) onto Bolna: prompt, greeting, voice, engine
+ * Push Meera's phone agent onto Bolna: prompt, greeting, voice, engine
  * settings and the per-call webhook. The text comes from
  * backend/lib/satej/prompts/voiceAgent.ts, so the repo — not the Bolna
  * dashboard — is where Meera's words are edited.
@@ -208,12 +208,12 @@ async function main() {
     const faq = await approvedFaq();
     const prompt = withFaq(VOICE_AGENT_PROMPT, faq);
     const before = await bolna('GET', `/v2/agent/${AGENT_ID}`);
-    // The Satej console can publish Meera's script. If the live one is not the
+    // The Meera console can publish Meera's script. If the live one is not the
     // repo's (FAQ aside — that comes from the FAQ page), someone changed it there:
     // do not silently put it back.
     const livePrompt: string = before.agent_prompts?.task_1?.system_prompt ?? '';
     if (withoutFaq(livePrompt) !== withoutFaq(VOICE_AGENT_PROMPT) && !process.argv.includes('--force')) {
-        throw new Error('Meera\'s live prompt differs from backend/lib/satej/prompts/voiceAgent.ts — it was probably edited from the Satej console '
+        throw new Error('Meera\'s live prompt differs from backend/lib/satej/prompts/voiceAgent.ts — it was probably edited from the Meera console '
             + '(Caller script tab, which keeps every version). Copy that version into voiceAgent.ts first, or re-run with --force to overwrite it.');
     }
     const body = desired(before, webhookUrl, prompt);

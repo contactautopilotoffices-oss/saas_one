@@ -1,5 +1,5 @@
 /**
- * Bolna → Satej webhook. Receives two kinds of POST:
+ * Bolna → Meera webhook. Receives two kinds of POST:
  *   · per call, from the voice agent's webhook_url — every status change and,
  *     at the end, the transcript, recording and extraction (the execution object);
  *   · per batch, from the batch's webhook_url — once, when the whole batch ends.

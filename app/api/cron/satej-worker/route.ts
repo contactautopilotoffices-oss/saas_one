@@ -1,5 +1,5 @@
 /**
- * Satej worker — every minute (vercel.json). Advances every requirement that
+ * Meera worker — every minute (vercel.json). Advances every requirement that
  * has work waiting: new requirements, answered questions, finished calls,
  * pending WhatsApp. Also the safety net for a Bolna webhook that never came.
  */

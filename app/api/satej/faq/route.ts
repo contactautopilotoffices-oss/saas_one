@@ -1,5 +1,5 @@
 /**
- * The FAQ page in the Satej console: the answers Meera may give vendors.
+ * The FAQ page in the Meera console: the answers Meera may give vendors.
  *   GET  ?organizationId=                                      → entries, the section as Meera will read it, canPublish
  *   POST { organizationId, action:'create', entry }            → new draft
  *   POST { organizationId, action:'update', id, entry }        → edit; approving or archiving needs publish rights

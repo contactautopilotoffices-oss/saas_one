@@ -14,7 +14,7 @@
 
 export type RequirementStatus =
     | 'submitted' // form received, not yet structured
-    | 'needs_clarification' // Satej asked the purchase team questions
+    | 'needs_clarification' // Meera asked the purchase team questions
     | 'structured' // brief ready, discovery not started
     | 'discovering' // searching the web for vendors
     | 'awaiting_call_approval' // SATEJ_AUTO_START_CALLS is off (the default)
@@ -45,8 +45,10 @@ export interface RequirementInput {
     requestedBy: string; // name of the team member
     requestedByUserId?: string; // users.id of whoever submitted the form
     notifyWhatsapp: string; // purchase team number that gets the summary
-    /** Where the vendors come from: Satej's web search, the team's own list, or both. Default 'discover'. */
+    /** Where the vendors come from: Meera's web search, the team's own list, or both. Default 'discover'. */
     vendorSource?: 'discover' | 'own' | 'both';
+    /** The purchase@ mail thread this request was started from (mailbox_threads.thread_id), if any. */
+    sourceThreadId?: string;
 }
 
 export type ScopeType = 'supply_only' | 'supply_and_install' | 'service' | 'amc' | 'works_contract';
@@ -275,7 +277,7 @@ export interface Requirement {
     notifyAttempts?: number;
     lastSyncAt?: string;
     round: number; // 1 for the first search; "Find more vendors" starts round 2 with wider queries
-    /** What Satej is doing right now, for the live board. Overwritten as it works; cleared when the stage ends. */
+    /** What Meera is doing right now, for the live board. Overwritten as it works; cleared when the stage ends. */
     live?: LiveProgress | null;
     error?: string;
     events: RequirementEvent[];
@@ -297,7 +299,7 @@ export interface LiveProgress {
 
 export type SatejActionType = 'edit' | 'find_more' | 'approve_calls' | 'exclude_vendor' | 'reanalyze' | 'resend_whatsapp' | 'cancel';
 
-/** A change Satej proposes in chat. Applied only when a person presses Apply. */
+/** A change Meera proposes in chat. Applied only when a person presses Apply. */
 export interface SatejAction {
     type: SatejActionType;
     /** For 'edit': only the form fields to change. */

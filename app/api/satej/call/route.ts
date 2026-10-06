@@ -1,7 +1,7 @@
 /**
- * POST { organizationId, requirementId } — open a voice call with Satej about one requirement.
+ * POST { organizationId, requirementId } — open a voice call with Meera about one requirement.
  *
- * Returns a short-lived ElevenLabs signed URL for the Satej voice agent
+ * Returns a short-lived ElevenLabs signed URL for the Meera voice agent
  * (SATEJ_ELEVENLABS_AGENT_ID, set up by scripts/satej-sync-elevenlabs.ts) and
  * the per-call prompt: the requirement's live record, written for speech. The
  * API key never leaves the server; the signed URL expires within minutes.
@@ -20,7 +20,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 const VOICE_RULES = `
-You are Satej, the vendor-discovery agent of Autopilot Offices, on a live voice call with a member of the purchase team about the requirement below.
+You are Meera, the vendor-discovery agent of Autopilot Offices, on a live voice call with a member of the purchase team about the requirement below.
 Follow these rules in order. Do not skip any.
 1. Answer only from the requirement record. If something is not in it, say you don't know.
 2. This is speech: short sentences, no lists, no markdown, no ids or codes read aloud unless asked. Say numbers naturally.
@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({
             signedUrl,
             prompt: `${VOICE_RULES}\n\n${requirementContext(r, vendors, calls)}`,
-            firstMessage: `Hi ${firstName}, Satej here. I'm looking at ${r.input.title}. What would you like to know?`,
+            firstMessage: `Hi ${firstName}, Meera here. I'm looking at ${r.input.title}. What would you like to know?`,
             requirement: { id: r.id, code: r.code, title: r.input.title },
         });
     } catch (e) {

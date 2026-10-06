@@ -1,6 +1,6 @@
 /**
  * POST { organizationId, decision: 'apply' | 'dismiss' } — a person's answer to
- * a change Satej proposed in chat. Apply runs the same pipeline function the
+ * a change Meera proposed in chat. Apply runs the same pipeline function the
  * page's own buttons use; nothing is applied any other way.
  */
 

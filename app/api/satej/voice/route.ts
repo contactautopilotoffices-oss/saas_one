@@ -1,5 +1,5 @@
 /**
- * Meera's caller script in the Satej console.
+ * Meera's caller script in the Meera console.
  *   GET  ?organizationId=                     → live script, greeting preview, versions, last 7 days of calls
  *   POST { organizationId, action:'suggest', welcome, prompt, feedback, transcripts? } → a revision to review
  *   POST { organizationId, action:'publish', welcome, prompt, note? }                 → push to Bolna (admins)

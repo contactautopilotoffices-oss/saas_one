@@ -1,5 +1,5 @@
 /**
- * Bolna — batch calling for Satej, plus the two agent calls the webhook
+ * Bolna — batch calling for Meera, plus the two agent calls the webhook
  * mapping needs. Shapes checked against Bolna's API reference on 2026-09-28:
  *
  *   POST  /batches                     multipart: agent_id, file, webhook_url?, retry_config?, from_phone_numbers[]
@@ -11,12 +11,12 @@
  *
  * Two different webhooks, easy to confuse:
  *   · the AGENT's webhook_url receives every call's status changes and its final
- *     transcript — this is the one Satej depends on, set via setAgentWebhook();
+ *     transcript — this is the one Meera depends on, set via setAgentWebhook();
  *   · a BATCH's webhook_url is posted once, when the whole batch finishes.
  * Both point at /api/satej/bolna, which tells them apart.
  *
  * Ira's lifecycle helpers live in backend/services/bolnaService.ts; that client
- * is JSON-only, and batches need multipart, so Satej keeps this small one.
+ * is JSON-only, and batches need multipart, so Meera keeps this small one.
  */
 
 import { satejConfig } from '../config';

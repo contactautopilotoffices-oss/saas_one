@@ -1,5 +1,5 @@
 /**
- * Rebuild Satej's rate benchmark from the Zoho PO lines — days 1, 11, 21 and 31
+ * Rebuild Meera's rate benchmark from the Zoho PO lines — days 1, 11, 21 and 31
  * of each month at 08:00 IST (vercel.json), i.e. about every 10 days. The PO
  * lines themselves sync every 15 minutes. ~3 s for 25k lines.
  */

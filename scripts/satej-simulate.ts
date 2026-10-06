@@ -1,5 +1,5 @@
 /**
- * Satej end to end with canned Engy / Exa / Bolna / WhatsApp. No keys, no
+ * Meera end to end with canned Engy / Exa / Bolna / WhatsApp. No keys, no
  * database, no calls, no messages — an in-memory store stands in for Supabase.
  *
  *   npx tsx scripts/satej-simulate.ts
@@ -52,7 +52,7 @@ async function main() {
             locationCity: 'Mumbai',
             locationArea: 'Lower Parel',
             timeline: 'within 15 days',
-            requestedBy: 'Satej',
+            requestedBy: 'Meera',
             notifyWhatsapp: '9000000001',
         },
         'https://fms.example',
@@ -63,7 +63,7 @@ async function main() {
     assert.equal(r.status, 'needs_clarification');
     assert.equal(mockWhatsapp.sent.at(-1)?.template, 'satej_input_needed_v1');
 
-    console.log('\n2) The team answers; Satej structures, searches and stops for approval');
+    console.log('\n2) The team answers; Meera structures, searches and stops for approval');
     await answerClarification(r, ['About 1200 sqft']);
     r = (await advance(r.id))!;
     const found = await repo.listVendors(r.id);
@@ -76,7 +76,7 @@ async function main() {
     assert.equal(mockWhatsapp.sent.at(-1)?.template, 'satej_input_needed_v1', 'the team is asked to approve on WhatsApp');
 
     console.log('\n3) A person approves; the Bolna batch is created and scheduled');
-    await approveCalls(r, 'Satej');
+    await approveCalls(r, 'Meera');
     r = (await repo.getRequirement(r.id))!;
     assert.equal(r.status, 'calling');
     assert.ok(r.bolnaBatchId);
@@ -107,9 +107,9 @@ async function main() {
     assert.equal(summary.template, 'satej_vendor_summary_v1');
     assert.equal(summary.params.length, 8);
     assert.ok(summary.params.every((p) => !/[\n\t]/.test(p)), 'template params carry no new lines');
-    assert.equal(summary.params[7], `${ORG}/satej?req=${r.code}`, 'the button opens this requirement');
+    assert.equal(summary.params[7], `${ORG}/meera?req=${r.code}`, 'the button opens this requirement');
 
-    console.log('\n----- Summary on the Satej page (copy button) -----\n');
+    console.log('\n----- Summary on the Meera page (copy button) -----\n');
     console.log(fullSummary(r));
     console.log('\n---------------------------------------------------');
 
@@ -124,7 +124,7 @@ async function main() {
     console.log('\n7) "Use my list": no web search, the team adds vendors (messy input on purpose)');
     const own = await createRequirement(ORG, {
         title: 'Pantry supplies, Indore', spendType: 'opex', itemDescription: 'Monthly pantry supplies', quantity: '1', unit: 'month',
-        scope: 'Supply only', locationCity: 'Indore', locationArea: 'Vijay Nagar', requestedBy: 'Satej', notifyWhatsapp: '9000000001', vendorSource: 'own',
+        scope: 'Supply only', locationCity: 'Indore', locationArea: 'Vijay Nagar', requestedBy: 'Meera', notifyWhatsapp: '9000000001', vendorSource: 'own',
     }, 'https://fms.example');
     let o = (await advance(own.id))!;
     console.log('   status:', o.status);
@@ -135,15 +135,15 @@ async function main() {
         { name: 'Annapurna again', phone: '+91 98262 11111' },
         { name: 'Bad number', phone: '12345' },
         { name: 'Malwa Supplies', phone: '919826322222', area: 'Palasia' },
-    ], 'Satej');
+    ], 'Meera');
     console.log('   added:', res.added, '| skipped:', res.skipped.map((x) => x.reason).join('; '));
     assert.equal(res.added, 2);
     assert.equal(res.skipped.length, 2);
-    await editRequirement(o, { timeline: 'by Monday' }, 'Satej');
+    await editRequirement(o, { timeline: 'by Monday' }, 'Meera');
     o = (await advance(o.id))!;
     assert.equal(o.status, 'awaiting_call_approval');
     assert.equal((await repo.listVendors(o.id)).filter((v) => v.status === 'found').length, 2, 'an edit keeps the team\'s own vendors');
-    await approveCalls(o, 'Satej');
+    await approveCalls(o, 'Meera');
     o = (await repo.getRequirement(o.id))!;
     const ownCsv = buildCallCsv(o, (await repo.listVendors(o.id)).filter((v) => v.status !== 'excluded'));
     assert.ok(ownCsv.includes('+919826211111') && ownCsv.includes('+919826322222'), 'only the team\'s vendors are called');

@@ -1,7 +1,7 @@
 /**
- * The conversation with Satej on one requirement.
+ * The conversation with Meera on one requirement.
  *   GET  ?organizationId=              → every message, oldest first
- *   POST { organizationId, text }      → the person's message and Satej's reply (with any proposal)
+ *   POST { organizationId, text }      → the person's message and Meera's reply (with any proposal)
  */
 
 import { NextRequest, NextResponse } from 'next/server';

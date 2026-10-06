@@ -178,7 +178,7 @@ const MAX_OUTPUT_TOKENS: Record<CouncilPurpose, number> = {
     // its budget reasoning before it emits the JSON; 3000 was eaten entirely
     // and nothing parseable came back. Sized so the answer survives the thinking.
     vet: 6000,
-    // Satej's JSON stages (structure a brief, read a vendor page, analyse a call
+    // Meera's JSON stages (structure a brief, read a vendor page, analyse a call
     // transcript). Same reasoning-then-JSON shape as `vet`, so the same headroom.
     procure: 6000,
     // The Agent Console workflow planner. Measured 2026-09-28: a nine-step plan

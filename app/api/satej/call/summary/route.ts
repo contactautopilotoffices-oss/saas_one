@@ -1,7 +1,7 @@
 /**
  * POST { organizationId, requirementId, transcript: [{role:'you'|'satej', text}], duration_s }
  *
- * Minutes of a voice call with Satej, posted into the requirement's chat. If
+ * Minutes of a voice call with Meera, posted into the requirement's chat. If
  * the caller asked for a change on the call, it is attached as a PROPOSAL —
  * the same Apply/Dismiss card as a typed request. Summarised from the
  * transcript only; a thin call gives thin minutes.
@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
             [
                 {
                     role: 'system',
-                    content: `You write minutes of a ${mins}-minute voice call between ${caller.name} and Satej about requirement ${r.code}. `
+                    content: `You write minutes of a ${mins}-minute voice call between ${caller.name} and Meera about requirement ${r.code}. `
                         + 'Use ONLY what the transcript says. Return ONLY JSON: '
                         + '{ "minutes": string (markdown: 2-6 bullet points of what was discussed and decided), '
                         + `"action": null | { "type": one of ${JSON.stringify(allowed)}, "summary": string, "changes"?: object } }. `

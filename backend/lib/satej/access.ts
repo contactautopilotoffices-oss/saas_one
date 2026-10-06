@@ -1,5 +1,5 @@
 /**
- * Who may use Satej, for the /api/satej routes.
+ * Who may use Meera, for the /api/satej routes.
  *
  * The same rule as the procurement catalogue (backend/lib/procurement/catalogAccess.ts):
  * an active membership of the organisation with the procurement, org super
@@ -25,7 +25,7 @@ export async function requireSatejCaller(organizationId: string | null | undefin
     const { data: { user }, error } = await supabase.auth.getUser();
     if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     if (!(await isProcurementUser(user.id, organizationId))) {
-        return NextResponse.json({ error: 'Satej is available to the procurement team and org super admins.' }, { status: 403 });
+        return NextResponse.json({ error: 'Meera is available to the procurement team and org super admins.' }, { status: 403 });
     }
     const meta = (user.user_metadata ?? {}) as { full_name?: string; name?: string };
     return { userId: user.id, name: meta.full_name || meta.name || user.email || 'Team member' };

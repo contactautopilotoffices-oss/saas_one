@@ -1,9 +1,9 @@
 'use client';
 
 /**
- * Talk to Satej about one requirement — a Teams-style side panel.
+ * Talk to Meera about one requirement — a Teams-style side panel.
  *
- * Satej answers from the requirement's own record. Asked for a change, it
+ * Meera answers from the requirement's own record. Asked for a change, it
  * proposes one; the proposal card's Apply button is the only thing that acts.
  * The phone button opens a voice call (SatejCall), whose minutes land back here.
  */
@@ -90,7 +90,7 @@ export default function SatejChat({ orgId, requirement, onChanged }: {
         setSending(true);
         setErr('');
         setText('');
-        // Show the person's message at once; Satej's answer follows.
+        // Show the person's message at once; Meera's answer follows.
         setMessages((m) => [...(m ?? []), { id: `tmp-${Date.now()}`, role: 'user', kind: 'chat', authorName: 'You', body: msg, action: null, actionStatus: null, actionResult: null, createdAt: new Date().toISOString() }]);
         try {
             const res = await fetch(base, {
@@ -138,10 +138,10 @@ export default function SatejChat({ orgId, requirement, onChanged }: {
             <header className={s.chatHead}>
                 <div className={s.avatar}>S<span className={`${s.presence} ${working ? s.presenceBusy : ''}`} /></div>
                 <div style={{ minWidth: 0, flex: 1 }}>
-                    <b>Satej</b>
+                    <b>Meera</b>
                     <div className={s.muted}>{working ? (requirement.live?.detail ?? 'Working on this requirement') : 'Vendor discovery agent'}</div>
                 </div>
-                <button className={s.callBtn} onClick={() => setCalling(true)} title="Talk to Satej by voice">
+                <button className={s.callBtn} onClick={() => setCalling(true)} title="Talk to Meera by voice">
                     <Phone size={15} /> Call
                 </button>
             </header>
@@ -151,7 +151,7 @@ export default function SatejChat({ orgId, requirement, onChanged }: {
                 {messages?.length === 0 && (
                     <div className={s.emptyChat}>
                         <Sparkles size={18} />
-                        <p>Ask Satej anything about this requirement — who it found, why a vendor ranked where it did, or ask it to change the request. It proposes changes; you apply them.</p>
+                        <p>Ask Meera anything about this requirement — who it found, why a vendor ranked where it did, or ask it to change the request. It proposes changes; you apply them.</p>
                     </div>
                 )}
                 <AnimatePresence initial={false}>
@@ -163,7 +163,7 @@ export default function SatejChat({ orgId, requirement, onChanged }: {
                             className={`${s.msg} ${m.role === 'user' ? s.msgMine : s.msgTheirs} ${m.kind === 'call_minutes' ? s.msgMinutes : ''}`}
                         >
                             <div className={s.msgMeta}>
-                                {m.role === 'user' ? (m.authorName ?? 'You') : m.kind === 'call_minutes' ? 'Satej · call minutes' : 'Satej'}
+                                {m.role === 'user' ? (m.authorName ?? 'You') : m.kind === 'call_minutes' ? 'Meera · call minutes' : 'Meera'}
                                 {' · '}
                                 {new Date(m.createdAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
                             </div>
@@ -192,7 +192,7 @@ export default function SatejChat({ orgId, requirement, onChanged }: {
                 </AnimatePresence>
                 {sending && (
                     <div className={`${s.msg} ${s.msgTheirs}`}>
-                        <div className={s.msgMeta}>Satej</div>
+                        <div className={s.msgMeta}>Meera</div>
                         <div className={`${s.bubble} ${s.typing}`}><span /><span /><span /></div>
                     </div>
                 )}
@@ -210,7 +210,7 @@ export default function SatejChat({ orgId, requirement, onChanged }: {
                 <textarea
                     rows={1}
                     value={text}
-                    placeholder="Message Satej…"
+                    placeholder="Message Meera…"
                     onChange={(e) => setText(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(text); } }}
                 />

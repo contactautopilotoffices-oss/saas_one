@@ -29,7 +29,7 @@ const MEERA = process.env.SATEJ_BOLNA_AGENT_ID || '';
 const EXISTING = process.env.SATEJ_BOLNA_GRAPH_AGENT_ID || '';
 const APPLY = process.argv.includes('--apply');
 
-/** Graph prompts take {{double}} braces; every one of these comes from Satej's CSV row. */
+/** Graph prompts take {{double}} braces; every one of these comes from Meera's CSV row. */
 const CALL = `
 This call: business {{vendor_name}}; work: {{item_summary}} ({{item_category}}); quantity {{quantity_text}}; scope {{scope_text}}; site {{location_text}}; {{spend_type_text}}; timeline {{timeline_text}}.
 About us, if asked: Autopilot Offices runs managed and flexible offices in Mumbai, Bengaluru, Noida, Hyderabad, Indore and Kolkata. The procurement team sends a detailed requirement or BOQ on WhatsApp for a quotation; orders go by formal purchase order.`.trim();

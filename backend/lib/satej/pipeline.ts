@@ -10,7 +10,7 @@
  * same requirement, and every stage is idempotent.
  *
  * Every stage that does work (LLM, search, a Bolna batch, WhatsApp) runs inside
- * withAgentRun, so it appears on Satej's trace in the Agent Console. The one
+ * withAgentRun, so it appears on Meera's trace in the Agent Console. The one
  * stage that is only waiting — 'calling', polled every minute — is not traced,
  * or the console would drown in empty runs.
  *
@@ -84,7 +84,7 @@ function log(r: Requirement, msg: string) {
 
 /**
  * The live board's snapshot. Saved at most every 1.5 s while a stage runs, so
- * the page (polling every few seconds) watches Satej search, read and pick
+ * the page (polling every few seconds) watches Meera search, read and pick
  * vendors as it happens instead of seeing only the end result.
  */
 const lastLiveSave = new Map<string, number>();
@@ -103,7 +103,7 @@ const hostOf = (url: string) => {
 // ------------------------------------------------------------------ kill switch
 
 /**
- * Satej's row in the Agent Console registry. 'paused' or 'retired' there stops
+ * Meera's row in the Agent Console registry. 'paused' or 'retired' there stops
  * new work here. A failed read does NOT stop work — it is logged — because the
  * registry is telemetry-grade infrastructure and must not take procurement down.
  */
@@ -284,7 +284,7 @@ async function structure(r: Requirement, step: StepFn) {
 
     if (brief.questions.length) {
         r.status = 'needs_clarification';
-        log(r, `Satej asked ${brief.questions.length} question(s) before searching`);
+        log(r, `Meera asked ${brief.questions.length} question(s) before searching`);
         await tellTeam(r, step, satejConfig.waInputTemplate, inputNeededTemplateParams(r, questionsAsk(r)), 'questions');
         return;
     }
@@ -631,7 +631,7 @@ export async function approveCalls(r: Requirement, approvedBy: string): Promise<
     await getRepo().saveRequirement(r);
 }
 
-/** Only the parts of a Bolna execution Satej reads. */
+/** Only the parts of a Bolna execution Meera reads. */
 interface BolnaExecution {
     id?: unknown;
     execution_id?: unknown;
@@ -649,12 +649,12 @@ interface BolnaExecution {
     batch_run_details?: { retried?: unknown };
 }
 
-/** Stores one Bolna execution (webhook or sync). Returns the requirement it belongs to, or null if it is not Satej's. */
+/** Stores one Bolna execution (webhook or sync). Returns the requirement it belongs to, or null if it is not Meera's. */
 export async function ingestExecution(ex: BolnaExecution): Promise<Requirement | null> {
     const repo = getRepo();
     const execId = String(ex?.id ?? ex?.execution_id ?? '');
     if (!execId) return null;
-    // Another agent on the same Bolna account (Ira, Radhika) is none of Satej's business.
+    // Another agent on the same Bolna account (Ira, Radhika) is none of Meera's business.
     if (satejConfig.bolnaAgentIds.length && ex.agent_id && !satejConfig.bolnaAgentIds.includes(String(ex.agent_id))) return null;
     const recipient = (ex.context_details?.recipient_data ?? {}) as Record<string, unknown>;
 
@@ -875,7 +875,7 @@ async function analyze(r: Requirement, step: StepFn) {
 
 // ------------------------------------------------------------------ 5. tell the purchase team
 
-/** Best-effort WhatsApp; the Satej page is the record either way. */
+/** Best-effort WhatsApp; the Meera page is the record either way. */
 async function tellTeam(r: Requirement, step: StepFn, template: string, params: string[], what: string): Promise<boolean> {
     if (!r.input.notifyWhatsapp) return false;
     const s = await step(`WhatsApp ${what} to the purchase team`, 'notify');
@@ -894,7 +894,7 @@ async function notify(r: Requirement, step: StepFn) {
     if (!r.input.notifyWhatsapp) {
         r.status = 'notified';
         r.notifiedAt = nowIso();
-        log(r, 'No WhatsApp number on this requirement; the ranked summary is on the Satej page');
+        log(r, 'No WhatsApp number on this requirement; the ranked summary is on the Meera page');
         return;
     }
     r.notifyAttempts = (r.notifyAttempts ?? 0) + 1;
@@ -921,7 +921,7 @@ export async function editRequirement(r: Requirement, changes: Partial<Record<Ed
     if (r.status === 'cancelled') throw new Error('This requirement is cancelled');
     const repo = getRepo();
     if (!(await repo.tryLock(r.id, 120))) {
-        throw new Error('Satej is in the middle of a step on this requirement. Try again in a minute.');
+        throw new Error('Meera is in the middle of a step on this requirement. Try again in a minute.');
     }
     try {
         const fresh = (await repo.getRequirement(r.id))!;
@@ -972,7 +972,7 @@ export async function editRequirement(r: Requirement, changes: Partial<Record<Ed
         log(fresh, `${by} edited the requirement (${changed.join('; ')}). `
             + (newRound
                 ? `Calls already made stand; round ${fresh.round} searches again with the new details and skips vendors already called.`
-                : 'Satej is re-planning from the start.'));
+                : 'Meera is re-planning from the start.'));
         await repo.saveRequirement(fresh);
         Object.assign(r, fresh);
         return { newRound, changed };
@@ -1055,7 +1055,7 @@ export async function addVendors(r: Requirement, entries: { name?: string; phone
  * be. Kept out of ranking, do-not-recall and the batch.
  */
 export async function startRehearsal(r: Requirement, phoneRaw: string, asVendor: string, by: string, agent: 'main' | 'graph' = 'main'): Promise<CallRecord> {
-    if (!r.brief) throw new Error('Satej has not written the brief yet; try again in a moment');
+    if (!r.brief) throw new Error('Meera has not written the brief yet; try again in a moment');
     if (!satejConfig.mockMode && !satejConfig.bolnaAgentId) throw new Error('SATEJ_BOLNA_AGENT_ID is not set');
     const phone = normaliseIndianPhone(phoneRaw);
     if (!phone) throw new Error('Enter a valid Indian mobile number for the test call');
@@ -1105,7 +1105,7 @@ export async function refreshRehearsals(r: Requirement): Promise<void> {
     }
 }
 
-/** Satej's read of a test call: the same analysis a vendor call gets, so the team sees what would be scored. */
+/** Meera's read of a test call: the same analysis a vendor call gets, so the team sees what would be scored. */
 export async function analyseRehearsal(r: Requirement, callId: string): Promise<CallRecord> {
     const repo = getRepo();
     const c = (await repo.listCalls(r.id)).find((x) => x.id === callId && x.rehearsal);

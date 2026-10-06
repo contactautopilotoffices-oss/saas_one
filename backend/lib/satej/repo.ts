@@ -1,5 +1,5 @@
 /**
- * Storage for Satej. Supabase (service role) in the app; in-memory for the
+ * Storage for Meera. Supabase (service role) in the app; in-memory for the
  * simulation script. Each table keeps a few indexed columns plus the full
  * record as JSON in `data`, exactly as the procurement-agent package did — only
  * the driver changed, from a raw `postgres` connection (DATABASE_URL) to the
@@ -142,9 +142,9 @@ export const SATEJ_MIGRATION = '20260928000001_satej_vendor_discovery.sql';
 /** A read that failed is not "no rows". Every query goes through this. */
 function must<T>(res: { data: T | null; error: { message: string; code?: string } | null }, what: string): T | null {
     if (res.error && isMissingSchemaError(res.error)) {
-        throw new Error(`Satej's tables are not in this database yet. Apply supabase/migrations/${SATEJ_MIGRATION}.`);
+        throw new Error(`Meera's tables are not in this database yet. Apply supabase/migrations/${SATEJ_MIGRATION}.`);
     }
-    if (res.error) throw new Error(`Satej ${what}: ${res.error.message}`);
+    if (res.error) throw new Error(`Meera ${what}: ${res.error.message}`);
     return res.data;
 }
 

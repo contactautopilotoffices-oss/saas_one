@@ -1,10 +1,10 @@
 /**
  * WhatsApp to the purchase team, through AiSensy — the sender every other FMS
- * module uses. AiSensy only sends approved templates, so Satej sends two short
+ * module uses. AiSensy only sends approved templates, so Meera sends two short
  * ones (questions waiting, summary ready) and the full ranked detail stays on
- * the Satej page, which the template's button opens.
+ * the Meera page, which the template's button opens.
  *
- * Templates: WHATSAPP_META_TEMPLATES.md, "Satej" section. AiSensyService never
+ * Templates: WHATSAPP_META_TEMPLATES.md, "Meera" section. AiSensyService never
  * throws, and neither does this.
  */
 

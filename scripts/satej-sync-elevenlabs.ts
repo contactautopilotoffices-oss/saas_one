@@ -1,7 +1,7 @@
 /**
- * Create or update Satej's in-app voice — the ElevenLabs Conversational AI
- * agent the "Call Satej" button talks to. (Vendors are phoned by Meera on
- * Bolna; this is the team talking to Satej about a requirement.)
+ * Create or update Meera's in-app voice — the ElevenLabs Conversational AI
+ * agent the "Call Meera" button talks to. (Vendors are phoned by Meera on
+ * Bolna, with a Sarvam voice; this is the team talking to Meera about a requirement.)
  *
  *   npx tsx scripts/satej-sync-elevenlabs.ts            # dry run
  *   npx tsx scripts/satej-sync-elevenlabs.ts --apply    # create/update, print the agent id
@@ -24,18 +24,22 @@ const EXISTING = process.env.SATEJ_ELEVENLABS_AGENT_ID || '';
 const APPLY = process.argv.includes('--apply');
 const BASE = 'https://api.elevenlabs.io';
 
-/** "Amay - Professional Indian English", shared library, conversational. */
-const VOICE = { id: 'w2VczpnpJO48HDyBg1xV', name: 'Amay - Professional Indian English' };
+/**
+ * "Alka S - Natural, Warm, Ecom-Ready", shared library, Indian English, conversational.
+ * Female since 2026-10-06: the whole procurement agent is now called Meera, so the
+ * team's in-app call should not be a man's voice (was "Amay").
+ */
+const VOICE = { id: 'Z1oY2Vw237R6ALt5CZcD', name: 'Alka S - Natural, Warm, Ecom-Ready' };
 
 const FALLBACK_PROMPT =
-    'You are Satej, the vendor-discovery assistant of Autopilot Offices. Speak briefly and plainly. '
+    'You are Meera, the procurement agent of Autopilot Offices. You are a woman. Speak briefly and plainly. '
     + 'If you were not given a requirement to discuss, say so and ask the caller to open one in FMS.';
 
 const AGENT_CONFIG = {
-    name: 'Satej (FMS vendor discovery)',
+    name: 'Meera (FMS procurement agent)',
     conversation_config: {
         agent: {
-            first_message: 'Hi, Satej here. What would you like to know?',
+            first_message: 'Hi, Meera here. What would you like to know?',
             language: 'en',
             prompt: { prompt: FALLBACK_PROMPT, llm: 'gemini-2.5-flash', temperature: 0.3 },
         },
@@ -76,9 +80,9 @@ async function main() {
     }
 
     if (!have) {
-        const shared = await el('GET', `/v1/shared-voices?page_size=5&search=${encodeURIComponent('Amay')}`);
+        const shared = await el('GET', `/v1/shared-voices?page_size=5&search=${encodeURIComponent(VOICE.name.split(' - ')[0])}`);
         const hit = (shared.voices ?? []).find((v: { voice_id: string }) => v.voice_id === VOICE.id);
-        if (!hit) throw new Error('Amay was not found in the shared voice library');
+        if (!hit) throw new Error(`${VOICE.name} was not found in the shared voice library`);
         await el('POST', `/v1/voices/add/${hit.public_owner_id}/${VOICE.id}`, { new_name: VOICE.name });
         console.log('Voice added.');
     }

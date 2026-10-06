@@ -1,13 +1,13 @@
 'use client';
 
 /**
- * Satej's rate checker and price-history card: what we have actually paid,
+ * Meera's rate checker and price-history card: what we have actually paid,
  * from the Zoho PO lines (backend/lib/satej/benchmark.ts, /api/satej/rates).
  *
  *   · RateChecker      — the "Rate checker" tab: type an item, optionally a unit
  *                        and a quoted rate, see the usual price, the range, who
  *                        sold it cheapest, and every past description it matched.
- *   · PriceHistoryCard — on a requirement: the history Satej found for it and the
+ *   · PriceHistoryCard — on a requirement: the history Meera found for it and the
  *                        target / ceiling Meera negotiates with.
  */
 
@@ -213,7 +213,7 @@ export function RateChecker({ orgId }: { orgId: string }) {
     );
 }
 
-/** On a requirement: the history Satej matched and Meera's negotiating numbers. */
+/** On a requirement: the history Meera matched and Meera's negotiating numbers. */
 export function PriceHistoryCard({ r }: { r: any }) {
     if (r.benchmark === undefined) return null;
     const b = r.benchmark;

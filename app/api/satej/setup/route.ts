@@ -1,7 +1,7 @@
 /**
- * GET ?organizationId= → is Satej ready to run end to end on this server?
+ * GET ?organizationId= → is Meera ready to run end to end on this server?
  *
- * The Satej page shows this, so a missing key or an unmapped webhook is named
+ * The Meera page shows this, so a missing key or an unmapped webhook is named
  * on screen instead of surfacing as a requirement that silently never moves.
  * Names only — no value of any setting is ever returned.
  */
@@ -74,7 +74,7 @@ async function readiness(organizationId: string) {
         }
     }
 
-    // Are Satej's tables there? A HEAD count is enough; nothing is read.
+    // Are Meera's tables there? A HEAD count is enough; nothing is read.
     const probe = satejConfig.mockMode
         ? { error: null }
         : await supabaseAdmin.from('satej_requirements').select('id', { count: 'exact', head: true }).limit(1);

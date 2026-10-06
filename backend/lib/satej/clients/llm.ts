@@ -1,6 +1,6 @@
 /**
  * Engy, through the one LLM client FMS already has (backend/lib/council/llm.ts,
- * COUNCIL_PROVIDER=custom → Engy's OpenAI-compatible endpoint). Satej adds no
+ * COUNCIL_PROVIDER=custom → Engy's OpenAI-compatible endpoint). Meera adds no
  * second LLM client, key or retry policy of its own.
  *
  * No retry on unparseable output, matching councilChat's stance: re-rolling a
@@ -13,7 +13,7 @@ import { satejConfig } from '../config';
 import { parseJsonLoose } from '../util';
 import { mockLlm } from './mocks';
 
-export type SatejTask = 'structure' | 'discover' | 'analyze';
+export type SatejTask = 'structure' | 'discover' | 'analyze' | 'inbox';
 
 export async function chatJSON<T>(opts: {
     task: SatejTask;
