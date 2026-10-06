@@ -1,3 +1,21 @@
+## 2026-10-06 — Saas.one: Why the purchase@ mailbox stopped updating, and getting it back
+
+**The live purchase@ mailbox sync has not run on its own since 10 August, because one setting was missing. Today's mail was pulled in by hand, and the sync now fails loudly instead of quietly.**
+
+- **Why:** The founder asked why the purchase email was not connected. The Zoho login for purchase@worksquare.in works: a fresh token was issued and the mailbox is visible. But the hourly job that reads it needs to be told which organisation owns the inbox (`ZOHO_MAIL_ORG_ID`). That setting was added as a safety rule on 10 August and never filled in on the live site. Every hour since, the job stopped at that step and still reported success, so nobody noticed. The newest mail on the dashboard was from 1 August.
+- **Structural decisions:**
+  - The rule that the inbox must be pinned to one named organisation stays. The alternative was to guess the organisation from the database. That is safe while there is one organisation, but would copy one client's purchase mail into another's account the day a second one is added.
+  - A missing pin now counts as a failure (shown red in Vercel's job log), not as "nothing to do". "Nothing to do" is now only used when no Zoho login is set at all.
+  - The dashboard's mailbox card now shows when the mailbox was last actually read ("mailbox read 3h ago", in red after 3 hours), not when the card last loaded. Before, it said "synced just now" over two-month-old mail.
+- **What works now:** The purchase team's digest has today's mail: 300 threads read, newest from this afternoon. 9 need a reply and 169 were never acted on, as judged by simple rules. The local setup has the organisation pinned, so the job runs end to end when started by hand.
+- **Left undone:**
+  - The live site still lacks `ZOHO_MAIL_ORG_ID`. Until it is added in Vercel and the site redeployed, today's mail is a one-off snapshot and will go stale again.
+  - Ira's reply reader has a separate problem. It watches ira.mehta@autopilotoffices.com and lohitaksha.ranganathan@worksquare.in, and no connected Zoho login can read either one. Only purchase@ (with eb@ and purchase@autopilotoffices.com) is connected. So replies to Ira are not being seen. Fixing this needs the mailbox owner to sign in to Zoho; it cannot be done from code.
+  - The dashboard card change was checked with type checks and a live call to the job, not in a signed-in browser.
+- **Open questions for the founder:**
+  - The AI sorting of purchase mail is switched off, so simple rules decide what counts as "never acted on". 169 of those looks high. Should AI sorting be turned on? It costs a little per run.
+  - Should Ira read replies at her own address, or at purchase@? If purchase@, Ira's settings can point there and nothing new needs connecting.
+
 ## 2026-10-06 — Saas.one: "The Sensory Studio", three redesign directions for the Basilic Fly floor
 
 **A 15-page PDF that re-imagines the four current Basilic Fly views in three directions (a calm grading room, a visible production pipeline, a warm film-set backlot), each designed around the five senses with an IoT layer behind it.**

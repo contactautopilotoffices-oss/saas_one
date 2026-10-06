@@ -29,6 +29,7 @@ interface ThreadRow {
     category: string;
     is_resolved: boolean;
     waiting_on: string | null;
+    synced_at: string | null;
 }
 
 export async function GET(request: NextRequest) {
@@ -44,7 +45,7 @@ export async function GET(request: NextRequest) {
     // 1000-row default.
     const { data, error } = await supabaseAdmin
         .from('mailbox_threads')
-        .select('id, subject, from_address, participants, last_message_at, category, is_resolved, waiting_on')
+        .select('id, subject, from_address, participants, last_message_at, category, is_resolved, waiting_on, synced_at')
         .eq('organization_id', access.organizationId)
         .range(0, 999);
 
@@ -98,8 +99,14 @@ export async function GET(request: NextRequest) {
             waiting_days: days(t.last_message_at),
         }));
 
+    // When the mailbox was last actually read, as opposed to when this endpoint answered.
+    // Without it a digest that stopped syncing still looked fresh on the dashboard.
+    const lastSyncedAt = all.reduce<string | null>(
+        (m, t) => (t.synced_at && (!m || t.synced_at > m) ? t.synced_at : m), null);
+
     return NextResponse.json({
         provisioned: true,
+        last_synced_at: lastSyncedAt,
         filtered_by: from || null,
         totals: {
             threads: scoped.length,
