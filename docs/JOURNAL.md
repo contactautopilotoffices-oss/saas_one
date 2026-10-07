@@ -7,7 +7,7 @@
   - Built outside this repo, at `~/Downloads/TE-Workcations-Brochure/`, as a single page in the same fonts and colours as the Whitefield decks. Nothing in the FMS app changed.
   - The pictures are the clean Total Environment renders already in the Part 2 deck (tower, garden lounge, workspace). The Business Case deck's copies were not used because they have "Artist's impression" printed into the image. The label is added by us on every picture instead.
 - **What works now:** A finished PDF, `Total-Environment-Workcations-Brochure.pdf`, with all the supplied copy. The site-visit button opens an email to Harshini Ranganathan.
-- **Left undone:** No Total Environment logo, because we have none. The brochure carries their name in text and the Autopilot logo. No web address was supplied, so the button is an email link.
+- **Left undone:** No web address was supplied, so the button is an email link. After review the brochure got the real Total Environment logo (from the founder's image), the building spec 3B + G + 19, plainer wording, and the "major residential catchments" line was removed because the founder said the data was wrong.
 - **Open questions for the founder:**
   - Total Environment's written permission is needed before this goes out, as with the earlier ad kit. Has it been given?
   - The two phone numbers are shown as 94946 08123 and 86553 59880, exactly as supplied. Please check them.
