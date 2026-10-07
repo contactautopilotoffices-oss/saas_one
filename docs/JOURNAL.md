@@ -1,3 +1,35 @@
+## 2026-10-07 — Saas.one: Andheri Business Case Study 2026 (Privilon vs 723 Avenue)
+
+**A 33-page, Autopilot-branded business case for a managed office in Marol, Andheri East. It follows the Whitefield case study's structure and compares the two buildings in the Andheri costing workbook.**
+
+- **Why:** The founder is weighing two Andheri East floors: Privilon (15,343 sq ft carpet) and 723 Avenue (12,950 sq ft carpet). The case needed the same depth as Whitefield: what each floor costs and must earn, the market, the rivals, and a recommendation.
+- **Structural decisions:**
+  - Built outside this repo, at `~/Downloads/Andheri-Business-Case-2026/` (build.py, pages.py, research_pages.py, research.md). Same fonts, colours and section order as the Whitefield deck. The finished PDF is `~/Downloads/Andheri_Business_Case_Study_2026.pdf`. Nothing in the FMS app changed.
+  - Every costing number reproduces the workbook's formulas exactly and is checked in code (₹21,560 a seat at Privilon, ₹18,410 at 723 Avenue).
+  - Added pages the workbook implies but does not show: how full each floor must be to break even, profit or loss at 70–100% full, what each negotiating lever is worth per seat, and a one-page scorecard.
+  - Background photographs were generated in Higgsfield (9 images, about 25 credits). Every page that shows one says "AI-generated illustration", because none of them shows either building.
+  - The Knight Frank rent chart from the pasted slide is shown next to Cushman & Wakefield's area average. The research could not match the Knight Frank figures to any published Knight Frank series; they read like rents for the best buildings.
+- **What works now:** One PDF the founder can read or share, with:
+  - section 01: the two options, the costing line by line, break-even, and negotiation levers;
+  - section 02: building facts and a metro map;
+  - section 03: vacancy, rents, deals, flex demand, and named occupiers by sector;
+  - sections 04–07: infrastructure, why Andheri East, sales pipelines and risks;
+  - section 08: all 31 surveyed rivals, with prices and how full they are;
+  - section 09: the decision on one page.
+- **What the research found that changes the case:**
+  - Privilon is still under construction. Its RERA completion date is 31 Jan 2030, and it is about 19% built.
+  - 723 Avenue passed its RERA completion date (31 May 2026), and no occupancy certificate was found. RERA lists G + 8 floors against a marketed G + 14.
+  - At the workbook's prices, both floors cover every cost only above 83% full. 14 of the 30 rival centres that shared figures run 75–80% full, and none runs above 85%.
+  - IA Spaces already sells desks inside 723 Avenue at ₹18,000, and WeWork next door charges ₹26,500.
+- **Left undone:**
+  - The RERA facts come from property-portal copies. They were not checked on MahaRERA itself; the registration numbers are on page 11.
+  - No real photographs or floor plans of either building were supplied, so there is no floor-plate page.
+  - Rent escalation, deposit, CAM and GST are not in the workbook, so they are not in the numbers.
+- **Open questions for the founder:**
+  - Is Privilon meant as a pre-lease for 2029–30, or has the landlord offered an earlier handover?
+  - Which floors at 723 Avenue would we take, and do they have an occupancy certificate?
+  - Keep 35 sq ft of carpet a seat, or plan denser?
+
 ## 2026-10-07 — Saas.one: One-page brochure for Total Environment Workcations, Hoodi
 
 **A one-page A4 brochure that puts the supplied copy together with Total Environment's own renders, branded Total Environment Workcations × Autopilot Offices.**
