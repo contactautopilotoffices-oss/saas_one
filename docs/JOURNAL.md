@@ -1,3 +1,17 @@
+## 2026-10-07 — Saas.one: One-page brochure for Total Environment Workcations, Hoodi
+
+**A one-page A4 brochure that puts the supplied copy together with Total Environment's own renders, branded Total Environment Workcations × Autopilot Offices.**
+
+- **Why:** The sales team needs one sheet to send to prospects that sells the building and the 30 to 300+ seat offer, with two named contacts and a site-visit call to action.
+- **Structural decisions:**
+  - Built outside this repo, at `~/Downloads/TE-Workcations-Brochure/`, as a single page in the same fonts and colours as the Whitefield decks. Nothing in the FMS app changed.
+  - The pictures are the clean Total Environment renders already in the Part 2 deck (tower, garden lounge, workspace). The Business Case deck's copies were not used because they have "Artist's impression" printed into the image. The label is added by us on every picture instead.
+- **What works now:** A finished PDF, `Total-Environment-Workcations-Brochure.pdf`, with all the supplied copy. The site-visit button opens an email to Harshini Ranganathan.
+- **Left undone:** No Total Environment logo, because we have none. The brochure carries their name in text and the Autopilot logo. No web address was supplied, so the button is an email link.
+- **Open questions for the founder:**
+  - Total Environment's written permission is needed before this goes out, as with the earlier ad kit. Has it been given?
+  - The two phone numbers are shown as 94946 08123 and 86553 59880, exactly as supplied. Please check them.
+
 ## 2026-10-06 — Saas.one: One name, Meera, for the procurement agent; quote requests from the purchase inbox go straight to her
 
 **The vendor-discovery agent formerly called Satej is now Meera everywhere people see it. Its console also lists colleagues' quote-request emails from purchase@, and turns each one into a pre-filled request with one click.**
