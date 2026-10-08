@@ -1,3 +1,26 @@
+## 2026-10-08 — Saas.one: Malad West Business Case Study 2026 (Interface 11)
+
+**A 19-page Malad West business case for the 3rd floor of Interface 11, Mindspace, in the same format as the Andheri deck. It includes all 13 sections of the founder's document.**
+
+- **Why:** The founder is weighing a 35,674 sq ft carpet floor in Interface 11 and wanted the Andheri treatment: terms, financials, market, sectors, competitors, broker plan, risks and a decision.
+- **Structural decisions:**
+  - Built outside this repo, at `~/Downloads/Malad-Business-Case-2026/`, reusing the Andheri page system and style. The PDF is `~/Downloads/Malad_West_Business_Case_Study_2026.pdf`. Nothing in the FMS app changed.
+  - There is no costing workbook for Malad, so the financials use the Andheri costing method with two stated assumptions: fit-out at ₹1,800 a sq ft and running costs at ₹75 a sq ft. The result is 1,019 seats at ₹13,146 a seat, every cost covered at 83% full (849 seats), and ₹10.7 Cr of cash before opening.
+  - The price ladder uses the Whitefield layout. The document's notes and cautions (for example "don't call Smartworks a 2025 launch") became deck wording.
+  - Two background images were generated in Higgsfield (about 6 credits). Both are labelled as AI illustrations.
+- **What works now:** One PDF the founder can read or share. Research added: competitor seat counts and positioning, Malad–Goregaon vacancy and rent, Metro Line 2A details, and a rent check against listings for the same building.
+- **What the research found that changes the case:**
+  - Broker listings for bare-shell space in Interface 11 itself ask ₹80–88 a sq ft of carpet (May 2026), against our ₹200 offer. At the listed rent the price needed would fall to about ₹8,442 a seat.
+  - The building's grade is closer to B+ than Grade A: it was built in 2008 and no green rating was found.
+  - The Western Suburbs flex figures come from CBRE, not Cushman & Wakefield, and the latest count is 25+ centres.
+  - Love & Latte inside the building is a work café, not an office competitor.
+  - Toutle Space's "Mindspace" listing is the same centre as its Aditya Industrial Estate one.
+- **Left undone:** Fit-out and running costs are assumptions. Floor availability, the IT/ITES permission and the grade are not confirmed. No floor layout was supplied.
+- **Open questions for the founder:**
+  - What does the ₹200 rent include (furnished space, fit-out, services)? Listings in the same building ask ₹80–88 for bare shell.
+  - Is an anchor client or a phased take-up possible for a 1,019-seat floor?
+  - Can BFSI and consulting members sit in an IT/ITES building?
+
 ## 2026-10-08 — Saas.one: Andheri case study updated to the landlords' latest terms, cut to 20 pages
 
 **The Andheri case study was rebuilt around the founder's updated document. All 14 of its sections stay, and the deck went from 33 pages to 20.**
