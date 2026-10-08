@@ -110,6 +110,7 @@ export async function GET(request: NextRequest) {
             }
         }
 
+        // Explicit user_id embeds select the member, not audit fields such as updated_by.
         // Fetch users using admin client (bypasses RLS)
         if (propertyId) {
             const { data, error } = await adminClient
@@ -121,7 +122,7 @@ export async function GET(request: NextRequest) {
                     approval_status,
                     created_at,
                     property:properties (id, name, organization_id),
-                    user:users (*)
+                    user:users!user_id (*)
                 `)
                 .eq('property_id', propertyId);
 
@@ -206,7 +207,7 @@ export async function GET(request: NextRequest) {
                 is_active,
                 approval_status,
                 created_at,
-                user:users (*)
+                user:users!user_id (*)
             `)
             .eq('organization_id', orgId!);
 
@@ -221,7 +222,7 @@ export async function GET(request: NextRequest) {
                 approval_status,
                 created_at,
                 property:properties!inner (id, name, organization_id),
-                user:users (*)
+                user:users!user_id (*)
             `)
             .eq('property.organization_id', orgId!);
 

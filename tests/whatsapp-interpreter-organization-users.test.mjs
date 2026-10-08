@@ -7,7 +7,10 @@ test('organization picker scopes both membership sources, deduplicates and reads
     const alice={id:'alice',full_name:'Alice',email:'alice@example.com',phone:'9000000000',is_approved:true};
     const bob={id:'bob',full_name:'Bob',phone:null,approval_status:'pending'};
     const rows={organization_memberships:Array.from({length:500},()=>({user:alice})),property_memberships:[{user:alice},{user:bob},{user:{id:'deleted',deleted_at:'today'}}]};
-    const admin={from(table){const filters={};const q={select(){return q;},eq(k,v){filters[k]=v;return q;},order(column){
+    const admin={from(table){const filters={};const q={select(selection){
+        // updated_by also references users; embedding must choose the member's user_id.
+        assert.match(selection, /user:users!user_id\(/);return q;
+    },eq(k,v){filters[k]=v;return q;},order(column){
         // Memberships use composite keys, with no synthetic id column.
         assert.ok(['user_id',...(table==='property_memberships'?['property_id']:[])].includes(column),`Unknown membership column: ${column}`);return q;
     },async range(start,end){
