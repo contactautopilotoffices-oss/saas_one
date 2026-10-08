@@ -1,3 +1,27 @@
+## 2026-10-08 — Saas.one: Andheri case study updated to the landlords' latest terms, cut to 20 pages
+
+**The Andheri case study was rebuilt around the founder's updated document. All 14 of its sections stay, and the deck went from 33 pages to 20.**
+
+- **Why:** The founder supplied updated landlord terms and new market, sector, competitor, broker-plan and risk content, with floor layouts. They asked to keep those 14 sections and cut the deck to 20 pages.
+- **Structural decisions:**
+  - The deck keeps the earlier style and build folder (`~/Downloads/Andheri-Business-Case-2026/`). Pages are now picked and ordered by one list, so content can be added or dropped without rewriting.
+  - Only two of the earlier analysis pages survive: "what each floor must earn and how full it must be", and the one-page decision. Dividers, contents, infrastructure, the rent-history pages and the separate break-even and lever pages were cut to reach 20. Their key numbers were folded into the remaining pages.
+  - The new terms split rent from CAM: Privilon ₹375 + ₹30 on carpet, 723 Avenue ₹190 + ₹10 on built-up. Each split adds up to the workbook's original rate, so the price we need per seat is unchanged (₹21,560 and ₹18,410). New figures come from the 36-month lock-in, the 6-month deposit and the 5% escalation: cash before opening is ₹6.52 Cr and ₹4.79 Cr, and the lock-in commits ₹22.4 Cr and ₹15.5 Cr.
+  - The document asked for each rival's offer, positioning, price ladder and seat count. New research found seat counts for 27 of the 31 rival centres, about 17,000 seats in total. These are shown on a positioning chart and in the competitor table.
+- **What works now:** A 20-page PDF, `~/Downloads/Andheri_Business_Case_Study_2026_Updated.pdf`, that carries every section of the updated document plus the financials and a decision page with what to ask both landlords for.
+- **Corrections to the updated document, shown in the deck:**
+  - 91springboard LightHall opened at 23,000 sq ft, not the 40,000 announced.
+  - Dextrus MINT launched in July 2026 at 25,000 sq ft, not September 2025 at 37,000.
+  - The landlord says Privilon's occupancy certificate (OC) comes by end-December, but the RERA filing still shows completion on 31 Jan 2030. The deck says so on both Privilon pages.
+- **Left undone:**
+  - The RERA dates were read from property portals, not from MahaRERA directly.
+  - Seat counts are listing figures, not audited.
+  - The rent-history and infrastructure pages are still in the build and can be switched back on in the page list.
+- **Open questions for the founder:**
+  - Will both landlords write the OC and Fire NOC dates into the agreement?
+  - Is the 5% escalation yearly or every three years?
+  - Do we keep 35 sq ft a seat, or plan denser?
+
 ## 2026-10-07 — Saas.one: Andheri Business Case Study 2026 (Privilon vs 723 Avenue)
 
 **A 33-page, Autopilot-branded business case for a managed office in Marol, Andheri East. It follows the Whitefield case study's structure and compares the two buildings in the Andheri costing workbook.**
