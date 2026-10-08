@@ -13,6 +13,36 @@
   - The branch also carries a handful of journal-only commits about other work (brochure, business cases). They change only this file.
 - **Open questions for the founder:** Should this go to review as one pull request, or be split into Satej and calling, meeting rooms, and the mail archive?
 
+## 2026-10-08 — Saas.one: Andheri decision paper, 15 simple pages (Privilon or 723 Avenue?)
+
+**The Andheri case study was rewritten as a 15-page yes-or-no paper in plain words. It rebuilds the numbers from the new workbook, compounds the 5% rent rise every year, and assumes no anchor client.**
+
+- **Why:** The founder found the earlier decks too long to decide from, and some numbers wrong or misplaced. For example, escalation was treated as simple (15% over three years) when it compounds. He asked for about 15 pages a ten-year-old could follow, charts with proper axes, a break-even analysis, a BCG matrix and a SWOT, data as of September 2026, and every doubtful number flagged.
+- **Structural decisions:**
+  - A new build at `~/Downloads/Andheri-Simple-2026/`. `model.py` traces each number to its source and `NUMBERS.md` lists them. The PDF is `~/Downloads/Andheri_Privilon_vs_723Avenue_Decision_15p.pdf`.
+  - **Three pricing structures, from the workbook:** MOS (₹21,560 / ₹18,410); MOS + marketing (₹21,902 / ₹18,815); MOS + marketing + brokerage (₹24,058 / ₹20,656).
+  - **A fourth, separate price from our own ad data:** read-only from the CRM tables that Meta and LinkedIn sync into. ₹12.58 L of office ads, Jan–Sep 2026, bought deals worth 200 seats, about ₹6,289 a seat. The existing prices are unchanged.
+  - **Compounding:** rent rises are compounded each year, so year 5 is 21.6% above year 1, not 20%.
+  - **Break-even:** a classic chart of costs against what members pay, by seats sold; a table by year; payback in cash; and the levers that would turn either floor into a yes.
+  - **BCG matrix:** market growth against relative share, with labelled axes. Flex growth (+37%) puts both floors at Question Mark. Measured by all Andheri office take-up (−44%), they would be Dog.
+  - **SWOT:** one page per building, led by strengths and weaknesses.
+  - **Marks:** every number is marked ✓ (sure) or ⚑ (check).
+- **What the numbers say:**
+  - The workbook's 20% on cost means year-1 break-even is always 83% full. Rent compounding pushes it to 97–98% by year 5 if our price stays flat. Most rivals here run 75–80% full.
+  - With no anchor client, a 3-month fit-out and a 12-month fill to 85%, neither floor pays back within 5 years. Deepest cash hole: ₹8.6 Cr (Privilon) and ₹6.3 Cr (723 Avenue), plus deposits.
+  - Either floor works with rent + CAM about 11% lower (₹179 at 723 Avenue, ₹362 at Privilon), or with 5 rent-free months plus a fast fill.
+  - Andheri–Kurla, Q3 2026 (data to 25 Sep): vacancy 11.5% (up from 10.3%), net take-up Jan–Sep down 44%, rent ₹170.73 (up 11%).
+  - Our Andheri ads: ₹3.45 L spent, 288 leads, 18 hot or warm, no deal signed yet.
+- **Left undone:**
+  - Malad West in the same format; the founder asked for Andheri first.
+  - The fill speed, fit-out time and member tenure are assumptions, flagged in the deck.
+  - The CRM may be missing some signed deals.
+  - Q2 FY27 results from listed operators are not out yet (late October).
+- **Open questions for the founder:**
+  - Is the 5% escalation really every year?
+  - Will either landlord give rent-free months or a lower rent?
+  - Is an anchor client in sight?
+
 ## 2026-10-08 — Saas.one: Malad West Business Case Study 2026 (Interface 11)
 
 **A 19-page Malad West business case for the 3rd floor of Interface 11, Mindspace, in the same format as the Andheri deck. It includes all 13 sections of the founder's document.**
