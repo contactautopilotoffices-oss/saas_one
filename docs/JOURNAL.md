@@ -1,3 +1,18 @@
+## 2026-10-08 — Saas.one: Satej, Meera calling and LiveKit meetings put on their own branch, up to date with main
+
+**All the unpushed procurement-agent work is now on one new branch, `feat/satej-meera-livekit-meetings`, brought level with the latest main and pushed. Main itself was not touched.**
+
+- **Why:** The Satej vendor-discovery agent, Meera's phone calling and the in-FMS meeting rooms (LiveKit) had only ever lived on one laptop. They needed to be on GitHub, and they needed to sit on top of the last 121 changes the team made to main so they can be reviewed without surprises.
+- **Structural decisions:**
+  - A new branch was cut instead of pushing the old working branch, and the latest main was merged into it. The alternative was to replay each commit on top of main one at a time. That would have meant resolving the same conflicts many times and testing code in a state nobody had run.
+  - Five files clashed with main and were resolved by keeping both sides: the cron schedule list, two dashboards' icon lists, the procurement dashboard (Satej's vendor-discovery tab sits beside main's new task board, and the fix for tabs snapping back to Grievances is kept), and the dependency lock file (main's, plus the voice and meeting libraries added here). The merged code passes the type check.
+- **What works now:** Anyone on the team can fetch the branch and open a pull request. Nothing is merged into main yet.
+- **Left undone:**
+  - No pull request was opened and nothing was merged into main, on the founder's instruction.
+  - The database migrations in this branch are still not applied anywhere. Four of them share a date-and-sequence number with a migration from main (for example 20261006000001), as many older ones already do, so the apply order needs a look before they are run.
+  - The branch also carries a handful of journal-only commits about other work (brochure, business cases). They change only this file.
+- **Open questions for the founder:** Should this go to review as one pull request, or be split into Satej and calling, meeting rooms, and the mail archive?
+
 ## 2026-10-08 — Saas.one: Malad West Business Case Study 2026 (Interface 11)
 
 **A 19-page Malad West business case for the 3rd floor of Interface 11, Mindspace, in the same format as the Andheri deck. It includes all 13 sections of the founder's document.**
