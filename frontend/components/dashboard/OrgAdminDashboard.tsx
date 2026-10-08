@@ -532,7 +532,7 @@ const OrgAdminDashboard = () => {
                 user_id,
                 role,
                 is_active,
-                user:users (
+                user:users!user_id (
                     id,
                     full_name,
                     email
@@ -556,13 +556,13 @@ const OrgAdminDashboard = () => {
                     organization_id,
                     name
                 ),
-                user:users (
+                user:users!user_id (
                     id,
                     full_name,
                     email
                 )
             `)
-            .eq('properties.organization_id', org.id)
+            .eq('property.organization_id', org.id)
             .eq('is_active', true);
 
         if (propError) console.error('Error fetching property users:', propError);
@@ -4182,7 +4182,7 @@ const SuperTenantOrgTab = ({ orgId, properties }: { orgId: string; properties: S
         try {
             const { data: stMems } = await supabase
                 .from('organization_memberships')
-                .select('user_id, users(id, full_name, email)')
+                .select('user_id, users!user_id(id, full_name, email)')
                 .eq('organization_id', orgId)
                 .eq('role', 'super_tenant')
                 .eq('is_active', true);
@@ -4200,7 +4200,7 @@ const SuperTenantOrgTab = ({ orgId, properties }: { orgId: string; properties: S
 
             const { data: members } = await supabase
                 .from('organization_memberships')
-                .select('user_id, role, users(id, full_name, email)')
+                .select('user_id, role, users!user_id(id, full_name, email)')
                 .eq('organization_id', orgId)
                 .eq('is_active', true)
                 .neq('role', 'super_tenant');

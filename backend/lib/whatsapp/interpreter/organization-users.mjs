@@ -3,7 +3,7 @@ import { canonicalPhone } from '../assistant/protocol.mjs';
 // Caller must authorize the organization Super Admin before using this admin query.
 export async function getOrganizationUsers(admin, organizationId) {
     const pageSize = 500;
-    const profile = 'user:users(id,full_name,email,phone,is_approved,approval_status,is_master_admin,deleted_at)';
+    const profile = 'user:users!user_id(id,full_name,email,phone,is_approved,approval_status,is_master_admin,deleted_at)';
     async function memberships(table) {
         const rows = [];
         for (let offset = 0; ; offset += pageSize) {
