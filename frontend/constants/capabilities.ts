@@ -27,6 +27,18 @@ export const CAPABILITY_MATRIX: Record<RoleKey, CapabilityMatrix> = {
         petty_cash: ['view', 'create', 'update', 'approve'],
         accounts: ['view', 'approve']
     },
+    hr: {
+        users: ['view', 'create', 'update', 'assign'],
+        tickets: ['view', 'create', 'update', 'approve', 'assign', 'delete'],
+        dashboards: ['view'],
+        reports: ['view']
+    },
+    hr_head: {
+        users: ['view', 'create', 'update', 'approve', 'assign', 'delete', 'suspend'],
+        tickets: ['view', 'create', 'update', 'approve', 'assign', 'delete'],
+        dashboards: ['view'],
+        reports: ['view']
+    },
     ops_super_admin: {
         users: ['view', 'create', 'update', 'approve', 'assign', 'delete', 'suspend'],
         properties: ['view', 'create', 'update', 'delete'],
@@ -38,7 +50,6 @@ export const CAPABILITY_MATRIX: Record<RoleKey, CapabilityMatrix> = {
         dashboards: ['view'],
         reports: ['view'],
         vendors: ['view', 'create', 'update', 'delete'],
-        crm: ['view', 'create', 'update', 'approve', 'assign', 'delete', 'suspend'],
         petty_cash: ['view', 'create', 'update', 'approve', 'delete'],
         accounts: ['view', 'create', 'update', 'approve', 'delete']
     },

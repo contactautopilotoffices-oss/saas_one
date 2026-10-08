@@ -7,6 +7,7 @@ import { Wallet, IndianRupee, ArrowLeft, LogOut, Menu, X, Lock, Target, Siren } 
 import { useAuth } from '@/frontend/context/AuthContext';
 import { accountsCaps } from '@/frontend/lib/accounts/roles';
 import { canSeeAop } from '@/frontend/lib/aop/access';
+import { pettyCashCaps } from '@/frontend/lib/pettyCash/roles';
 import { FMS_ROLES } from '@/frontend/lib/auth/silos';
 
 /**
@@ -24,10 +25,10 @@ export default function AccountsWorkspace({ children }: { children: React.ReactN
     const { membership, signOut } = useAuth();
     const [mobileOpen, setMobileOpen] = useState(false);
 
-    const caps = accountsCaps(membership);
-    const tenantLike = new Set(['tenant', 'tenant_user', 'super_tenant', 'vendor']);
+    const pettyCashWorkspace = pathname?.split('/').includes('petty-cash');
+    const caps = accountsCaps(membership, orgId);
     const roles = [membership?.org_role, ...(membership?.properties?.map((p) => p.role) || [])].filter(Boolean) as string[];
-    const canSeePettyCash = !!membership?.is_master_admin || roles.some((r) => !tenantLike.has(r));
+    const canSeePettyCash = pettyCashCaps(membership, orgId).canSee;
 
     // A siloed finance user has no FMS dashboard to go back to — offering the link would
     // bounce them into a screen they cannot access.
@@ -44,19 +45,18 @@ export default function AccountsWorkspace({ children }: { children: React.ReactN
 
     const links = [
         caps.canSee && { href: `/${orgId}/accounts`, label: 'Payment Tracker', icon: IndianRupee },
-        canSeePettyCash && { href: `/${orgId}/petty-cash`, label: 'Petty Cash', icon: Wallet },
         canSeeAopTracker && { href: `/${orgId}/aop`, label: 'AOP Budget vs Actual', icon: Target },
         canEditEscalation && { href: `/${orgId}/settings/escalation`, label: 'Escalation SPOCs', icon: Siren },
     ].filter(Boolean) as { href: string; label: string; icon: React.ComponentType<{ className?: string }> }[];
 
     const sidebar = (
-        <div className="flex flex-col h-full">
-            <div className="px-5 py-5 border-b border-border">
+        <div className="flex flex-col flex-1 min-h-0">
+            <div className="px-5 py-5 border-b border-border shrink-0">
                 <p className="text-[10px] font-black uppercase tracking-[0.18em] text-primary">Accounts</p>
                 <p className="text-sm font-bold text-text-primary mt-0.5">Finance workspace</p>
             </div>
 
-            <nav className="flex-1 px-3 pt-4 space-y-1 overflow-y-auto">
+            <nav className="flex-1 min-h-0 px-3 py-4 space-y-1 overflow-y-auto" aria-label="Accounts navigation">
                 {links.map((l) => {
                     const active = pathname?.startsWith(l.href);
                     const Icon = l.icon;
@@ -74,9 +74,13 @@ export default function AccountsWorkspace({ children }: { children: React.ReactN
                         </Link>
                     );
                 })}
+                {canSeePettyCash && <div className="pt-5" data-navigation-section="management-hub">
+                    <p className="px-3 mb-2 text-[10px] font-bold uppercase tracking-widest text-text-secondary">Management Hub</p>
+                    <Link href={`/${orgId}/petty-cash`} onClick={() => setMobileOpen(false)} aria-current={pettyCashWorkspace ? 'page' : undefined} className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold ${pettyCashWorkspace ? 'bg-primary text-white' : 'text-text-secondary hover:bg-surface-elevated'}`}><Wallet className="w-4 h-4" />Petty Cash</Link>
+                </div>}
             </nav>
 
-            <div className="px-3 py-4 border-t border-border space-y-1">
+            <div className="px-3 py-4 border-t border-border space-y-1 shrink-0">
                 {hasFmsHome && (
                     <Link
                         href={`/${orgId}/dashboard`}
@@ -117,7 +121,7 @@ export default function AccountsWorkspace({ children }: { children: React.ReactN
     return (
         <div className="flex min-h-screen bg-background">
             {/* Desktop sidebar */}
-            <aside className="hidden lg:flex w-64 shrink-0 bg-surface border-r border-border flex-col">{sidebar}</aside>
+            <aside className="hidden lg:flex fixed inset-y-0 left-0 z-40 h-dvh w-64 bg-surface border-r border-border flex-col">{sidebar}</aside>
 
             {/* Mobile top bar */}
             <div className="lg:hidden fixed top-0 inset-x-0 z-40 h-14 bg-surface border-b border-border flex items-center justify-between px-4">
@@ -136,7 +140,7 @@ export default function AccountsWorkspace({ children }: { children: React.ReactN
             {mobileOpen && (
                 <div className="lg:hidden fixed inset-0 z-50 flex">
                     <div className="absolute inset-0 bg-black/40" onClick={() => setMobileOpen(false)} />
-                    <aside className="relative w-64 bg-surface border-r border-border flex flex-col">
+                    <aside className="relative h-dvh w-64 min-h-0 bg-surface border-r border-border flex flex-col">
                         <div className="flex justify-end p-2">
                             <button onClick={() => setMobileOpen(false)} className="p-2" aria-label="Close menu">
                                 <X className="w-5 h-5 text-text-secondary" />
@@ -148,7 +152,7 @@ export default function AccountsWorkspace({ children }: { children: React.ReactN
             )}
 
             {/* Main content */}
-            <main className="flex-1 min-w-0 pt-14 lg:pt-0 overflow-x-hidden">
+            <main className="flex-1 min-w-0 pt-14 lg:pt-0 lg:ml-64 overflow-x-hidden">
                 <div className="responsive-container py-4 lg:py-6">{children}</div>
             </main>
         </div>

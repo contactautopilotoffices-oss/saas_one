@@ -40,6 +40,22 @@ export default function CrmOnboardingGate({ children }: { children: React.ReactN
     const [released, setReleased] = useState(false);
     useEffect(() => { setReleased(false); }, [completedCount === 0]);
 
+    const userRole = (user?.user_metadata?.role || membership?.org_role || membership?.properties?.[0]?.role || '').toLowerCase();
+    const isMasterAdmin = user?.email === 'ranganathanlohitaksha@gmail.com' || Boolean((user as any)?.is_master_admin);
+    const ALLOWED_CRM_ROLES = ['bd_rep', 'bd_admin', 'bd_super_admin', 'org_admin', 'org_super_admin', 'master_admin'];
+    const isCrmAllowed = isBdSuperAdmin(user?.email, membership?.org_role) || isMasterAdmin || ALLOWED_CRM_ROLES.includes(userRole);
+
+    useEffect(() => {
+        if (!isLoaded) return;
+        if (user && !isCrmAllowed) {
+            router.replace(`/${orgId || 'default'}/dashboard`);
+        }
+    }, [user, isCrmAllowed, isLoaded, orgId, router]);
+
+    if (user && !isCrmAllowed) {
+        return null;
+    }
+
     // BD Super Admins (CEO portal) skip the rep onboarding tour entirely — it
     // teaches the rep workflow, which is not their dashboard. (Placed after all
     // hooks to respect the Rules of Hooks.)

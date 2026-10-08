@@ -45,7 +45,7 @@ export default function MailDigest() {
     const { membership } = useAuth();
     const params = useParams();
     const orgId = (params?.orgId as string | undefined) || membership?.org_id || undefined;
-    const caps = useMemo(() => accountsCaps(membership), [membership]);
+    const caps = useMemo(() => accountsCaps(membership, orgId), [membership, orgId]);
     const [supabase] = useState(() => createClient());
 
     const [threads, setThreads] = useState<MailThread[]>([]);

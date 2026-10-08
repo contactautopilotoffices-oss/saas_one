@@ -31,6 +31,12 @@ export interface ResolveWhatsAppRecipientsOptions {
     propertyId?: string | null;
     featureKey: string;
     contextualUserIds?: (string | null | undefined)[];
+    contextualUsers?: {
+        assigneeId?: string | null;
+        requesterId?: string | null;
+        approverId?: string | null;
+        extraUserIds?: string[];
+    };
 }
 
 export interface ResolveWhatsAppRecipientsResult {
@@ -60,43 +66,56 @@ const ALIAS_MAP: Record<string, string> = {
     visitor_approval_requested: 'visitor_approval_requested',
     visitor_approved: 'visitor_approved',
     visitor_rejected: 'visitor_rejected',
-    hr_grievance_created: 'hr_grievance_created_emp',
+    hr_grievance_created: 'hr_ticket_created_submitter_v2',
+    hr_ticket_created: 'hr_ticket_created_submitter_v2',
     hr_ticket_created_submitter_v2: 'hr_ticket_created_submitter_v2',
     hr_ticket_submitted_v2: 'hr_ticket_created_submitter_v2',
     hr_ticket_created_submitter: 'hr_ticket_created_submitter_v2',
-    hr_grievance_assigned: 'hr_grievance_assigned_mgr',
+    hr_grievance_created_emp: 'hr_ticket_created_submitter_v2',
+    hr_grievance_assigned: 'hr_ticket_assigned_handler_v2',
+    hr_grievance_assigned_mgr: 'hr_ticket_assigned_handler_v2',
+    hr_ticket_assigned: 'hr_ticket_assigned_handler_v2',
     hr_ticket_assigned_handler_v2: 'hr_ticket_assigned_handler_v2',
     hr_ticket_assigned_v2: 'hr_ticket_assigned_handler_v2',
     hr_ticket_assigned_handler: 'hr_ticket_assigned_handler_v2',
-    hr_grievance_escalated: 'hr_grievance_level_escalated',
+    hr_confidential_director_alert: 'hr_ticket_assigned_handler_v2',
+    hr_grievance_escalated: 'hr_ticket_escalated_handler',
+    hr_grievance_level_escalated: 'hr_ticket_escalated_handler',
     hr_ticket_escalated_handler: 'hr_ticket_escalated_handler',
-    hr_grievance_sla_warning: 'hr_grievance_sla_warning',
-    hr_ticket_sla_warning: 'hr_grievance_sla_warning',
-    hr_grievance_sla_breached: 'hr_grievance_sla_breached',
-    hr_confidential_director_alert: 'hr_confidential_director_alert',
-    hr_grievance_resolved: 'hr_grievance_status_resolved',
+    hr_grievance_sla_warning: 'hr_ticket_sla_warning',
+    hr_ticket_sla_warning: 'hr_ticket_sla_warning',
+    hr_ticket_sla_reminder: 'hr_ticket_sla_warning',
+    hr_grievance_sla_breached: 'hr_ticket_sla_warning',
+    hr_grievance_resolved: 'hr_ticket_resolved_ack',
+    hr_grievance_status_resolved: 'hr_ticket_resolved_ack',
     hr_ticket_resolved_ack: 'hr_ticket_resolved_ack',
     hr_ticket_acknowledged_closed: 'hr_ticket_acknowledged_closed',
-    hr_grievance_comment_added: 'hr_grievance_comment_added',
-    hr_ticket_comment_added: 'hr_ticket_comment_added'
+    hr_ticket_status_updated: 'hr_ticket_status_updated',
+    hr_grievance_comment_added: 'hr_ticket_comment_added',
+    hr_ticket_comment_added: 'hr_ticket_comment_added',
+    hr_ticket_reportee_alert: 'hr_ticket_reportee_alert'
 };
 
 export const DEFAULT_WHATSAPP_SERVICE_CONFIG: Record<string, FeatureWhatsAppConfig> = {
-    // Approved HR Templates Omnichannel Configs
+    // Approved HR Canonical Matrix Configs
+    hr_ticket_created: { enabled: true, roles: ['hr', 'hr_head'], user_ids: [], notify_requester: true, notify_assignee: true },
+    hr_ticket_assigned: { enabled: true, roles: ['hr', 'hr_head'], user_ids: [], notify_assignee: true },
+    hr_ticket_escalated_handler: { enabled: true, roles: [], user_ids: [], notify_assignee: true },
+    hr_ticket_sla_reminder: { enabled: true, roles: ['hr', 'hr_head'], user_ids: [], notify_assignee: true },
+    hr_ticket_status_updated: { enabled: true, roles: [], user_ids: [], notify_requester: true },
     hr_ticket_created_submitter_v2: { enabled: true, roles: ['hr', 'hr_head'], user_ids: [], notify_requester: true, notify_assignee: false },
-    hr_ticket_assigned_handler_v2: { enabled: true, roles: ['hr', 'hr_head', 'reporting_manager'], user_ids: [], notify_assignee: true },
-    hr_ticket_escalated_handler: { enabled: true, roles: ['hr_head', 'org_super_admin', 'director'], user_ids: [], notify_assignee: true },
+    hr_ticket_assigned_handler_v2: { enabled: true, roles: ['hr', 'hr_head'], user_ids: [], notify_assignee: true },
     hr_ticket_resolved_ack: { enabled: true, roles: [], user_ids: [], notify_requester: true },
     hr_ticket_comment_added: { enabled: true, roles: [], user_ids: [], notify_requester: true, notify_assignee: true },
     hr_ticket_acknowledged_closed: { enabled: true, roles: [], user_ids: [], notify_assignee: true },
 
     // Legacy / Alias mappings
     hr_grievance_created_emp: { enabled: true, roles: ['hr', 'hr_head'], user_ids: [], notify_requester: true, notify_assignee: true },
-    hr_grievance_assigned_mgr: { enabled: true, roles: ['hr', 'hr_head', 'reporting_manager'], user_ids: [], notify_assignee: true },
+    hr_grievance_assigned_mgr: { enabled: true, roles: ['hr', 'hr_head'], user_ids: [], notify_assignee: true },
     hr_grievance_level_escalated: { enabled: true, roles: ['hr_head', 'org_super_admin', 'director'], user_ids: [], notify_assignee: true },
-    hr_grievance_sla_warning: { enabled: true, roles: ['hr', 'reporting_manager'], user_ids: [], notify_assignee: true },
+    hr_grievance_sla_warning: { enabled: true, roles: ['hr'], user_ids: [], notify_assignee: true },
     hr_grievance_sla_breached: { enabled: true, roles: ['hr_head', 'org_super_admin', 'director'], user_ids: [], notify_assignee: true },
-    hr_confidential_director_alert: { enabled: true, roles: ['director', 'org_super_admin'], user_ids: [] },
+    hr_confidential_director_alert: { enabled: true, roles: [], user_ids: [], notify_assignee: true },
     hr_grievance_status_resolved: { enabled: true, roles: [], user_ids: [], notify_requester: true },
     hr_grievance_comment_added: { enabled: true, roles: [], user_ids: [], notify_requester: true, notify_assignee: true },
 
@@ -167,8 +186,9 @@ export const WhatsAppRecipientResolver = {
         const matrix = orgData?.notification_matrix || {};
         const orgConfigMap = (orgData as any)?.whatsapp_service_config || {};
 
-        // Find matrix rule for this featureKey across all modules
-        const searchKeys = [featureKey, ALIAS_MAP[featureKey]].filter(Boolean);
+        // Find matrix rule for this featureKey across all modules, prioritizing canonical v2 key
+        const canonicalKey = ALIAS_MAP[featureKey] || featureKey;
+        const searchKeys = Array.from(new Set([canonicalKey, featureKey].filter(Boolean)));
         let matrixRule: any = null;
         for (const key of searchKeys) {
             for (const mod of Object.values(matrix)) {
@@ -250,13 +270,24 @@ export const WhatsAppRecipientResolver = {
             }
         });
 
-        // Include contextual users only if relevant notify flag is enabled
-        if (featureConfig.notify_requester !== false || featureConfig.notify_assignee !== false || featureConfig.notify_approver !== false) {
-            contextualUserIds.forEach(id => {
-                if (id && typeof id === 'string' && id.trim()) {
-                    recipientIds.add(id.trim());
-                }
-            });
+        // Include contextual users strictly according to each individual flag in the Omnichannel matrix
+        if (options.contextualUsers) {
+            const { assigneeId, requesterId, approverId, extraUserIds } = options.contextualUsers;
+            if (featureConfig.notify_assignee && assigneeId) recipientIds.add(assigneeId.trim());
+            if (featureConfig.notify_requester && requesterId) recipientIds.add(requesterId.trim());
+            if (featureConfig.notify_approver && approverId) recipientIds.add(approverId.trim());
+            if ((featureConfig.notify_assignee || featureConfig.notify_requester) && extraUserIds) {
+                extraUserIds.forEach(id => { if (id?.trim()) recipientIds.add(id.trim()); });
+            }
+        } else if (contextualUserIds && contextualUserIds.length > 0) {
+            // Fallback for legacy calls passing an un-tagged array
+            if (featureConfig.notify_requester !== false || featureConfig.notify_assignee !== false || featureConfig.notify_approver !== false) {
+                contextualUserIds.forEach(id => {
+                    if (id && typeof id === 'string' && id.trim()) {
+                        recipientIds.add(id.trim());
+                    }
+                });
+            }
         }
 
         // 2. Parallel Database Lookups

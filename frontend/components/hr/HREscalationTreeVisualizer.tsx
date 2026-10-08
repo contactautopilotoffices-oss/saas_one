@@ -403,9 +403,12 @@ export default function HREscalationTreeVisualizer({
         };
     });
     const [editingNodeKey, setEditingNodeKey] = React.useState<string | null>(null);
+    // Per-flow toggle: shows the current handler an "Escalate to next level" button before TAT expires
+    const [manualEscalation, setManualEscalation] = React.useState<Record<string, boolean>>({});
 
     const [localSaveMsg, setLocalSaveMsg] = React.useState<string>('');
     const [isSavingLocal, setIsSavingLocal] = React.useState<boolean>(false);
+    const [isSavingToggle, setIsSavingToggle] = React.useState<boolean>(false);
 
     React.useEffect(() => {
         if (initialFlowAssignees) {
@@ -440,6 +443,9 @@ export default function HREscalationTreeVisualizer({
                     setDirectors(data.data.designated_directors || (data.data.designated_director ? [data.data.designated_director] : []));
                     if (data.data.flow_assignees) {
                         setFlowAssignees(data.data.flow_assignees);
+                    }
+                    if (data.data.manual_escalation) {
+                        setManualEscalation(data.data.manual_escalation);
                     }
                     if (data.data.flow_levels && typeof data.data.flow_levels === 'object') {
                         const loadedLevels: Record<string, EscalationLevel[]> = {};
@@ -654,7 +660,7 @@ export default function HREscalationTreeVisualizer({
             });
 
             if (onSaveAuthorities) {
-                await onSaveAuthorities({ organization_id: orgId, flow_assignees: payloadAssignees, flow_levels: cleanFlowLevels });
+                await onSaveAuthorities({ organization_id: orgId, flow_assignees: payloadAssignees, flow_levels: cleanFlowLevels, manual_escalation: manualEscalation });
                 setLocalSaveMsg('All escalation levels & step assignees saved successfully!');
             } else {
                 const res = await fetch('/api/hr/admin/escalation-config', {
@@ -663,7 +669,8 @@ export default function HREscalationTreeVisualizer({
                     body: JSON.stringify({
                         organization_id: orgId,
                         flow_assignees: payloadAssignees,
-                        flow_levels: cleanFlowLevels
+                        flow_levels: cleanFlowLevels,
+                        manual_escalation: manualEscalation
                     })
                 });
                 const data = await res.json();
@@ -776,6 +783,80 @@ export default function HREscalationTreeVisualizer({
                         <span>{localSaveMsg}</span>
                     </div>
                 )}
+
+                {/* Manual Escalation Toggle (per ticket type) */}
+                {(() => {
+                    const isManualOn = manualEscalation[selectedFlowId] === true;
+
+                    const handleToggleManualEscalation = async () => {
+                        const nextVal = !isManualOn;
+                        const updated = { ...manualEscalation, [selectedFlowId]: nextVal };
+                        setManualEscalation(updated);
+                        setIsSavingToggle(true);
+
+                        try {
+                            const res = await fetch('/api/hr/admin/escalation-config', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    organization_id: orgId || '211e1330-ad83-446d-941f-dcea48396798',
+                                    manual_escalation: updated
+                                })
+                            });
+                            const data = await res.json();
+                            if (data.success) {
+                                setLocalSaveMsg(`Manual escalation button ${nextVal ? 'ENABLED' : 'DISABLED'} for ${currentFlow.title} and saved to database!`);
+                            } else {
+                                console.error('Failed to save manual escalation toggle:', data.error);
+                                setManualEscalation(prev => ({ ...prev, [selectedFlowId]: isManualOn }));
+                            }
+                        } catch (err) {
+                            console.error('Error saving manual escalation toggle:', err);
+                            setManualEscalation(prev => ({ ...prev, [selectedFlowId]: isManualOn }));
+                        } finally {
+                            setIsSavingToggle(false);
+                            setTimeout(() => setLocalSaveMsg(''), 4000);
+                        }
+                    };
+
+                    return (
+                        <div className="flex items-center justify-between gap-4 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/40">
+                            <div className="min-w-0">
+                                <div className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1.5">
+                                    <ArrowDown className="w-3.5 h-3.5 text-amber-500" />
+                                    Manual &quot;Escalate to Next Level&quot; Button
+                                    {isSavingToggle && (
+                                        <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 animate-pulse ml-1.5">
+                                            Saving to DB...
+                                        </span>
+                                    )}
+                                </div>
+                                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                                    When on, the current handler of a {currentFlow.title} ticket can escalate it to the next level without waiting for the TAT to expire. Toggling automatically updates the database.
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                role="switch"
+                                disabled={isSavingToggle}
+                                aria-checked={isManualOn}
+                                aria-label={`Manual escalation for ${currentFlow.title}`}
+                                onClick={handleToggleManualEscalation}
+                                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#587e85] ${
+                                    isSavingToggle ? 'opacity-75 cursor-wait' : 'cursor-pointer'
+                                } ${
+                                    isManualOn ? 'bg-[#587e85]' : 'bg-slate-300 dark:bg-slate-600'
+                                }`}
+                            >
+                                <span
+                                    className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+                                        isManualOn ? 'translate-x-5' : 'translate-x-0.5'
+                                    }`}
+                                />
+                            </button>
+                        </div>
+                    );
+                })()}
 
                 {/* Vertical Graphical Flow Chart Tree */}
                 <div className="max-w-3xl mx-auto space-y-0 relative">

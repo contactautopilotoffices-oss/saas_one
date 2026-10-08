@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { createClient } from '@/frontend/utils/supabase/client';
 import {
     FileText, Upload, CheckCircle2, Clock, Download, Filter,
@@ -10,17 +10,20 @@ import {
     IndianRupee
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import ModalPortal from '../ui/ModalPortal';
 import SiteRequisitionSheet from './SiteRequisitionSheet';
 import ApproverRequisitionModal from './ApproverRequisitionModal';
 import PropertyBudgetManagerModal from './PropertyBudgetManagerModal';
 import BulkApproverUploadModal from './BulkApproverUploadModal';
 import MonthlyFeedbackFormModal from './MonthlyFeedbackFormModal';
 import { SHOW_LEGACY_PER_PROPERTY_CONTROLS } from './procurementFeatureFlags';
+import RequisitionApproverSelect, { type RequisitionApprover } from './RequisitionApproverSelect';
 
 interface Property {
     id: string;
     name: string;
     location?: string;
+    organization_id?: string;
 }
 
 interface MonthlyRequisition {
@@ -70,15 +73,28 @@ const MONTH_NAMES = [
 ];
 
 export default function MonthlyRequisitionsTab({ user, organizationId, propertyId, userRole, onNavigateToBudgets, onNavigateToFeedback }: MonthlyRequisitionsTabProps) {
-    const supabase = createClient();
+    const supabase = useMemo(() => createClient(), []);
+
+    const [hasPropertyMembershipAdmin, setHasPropertyMembershipAdmin] = useState(false);
+    const [requisitions, setRequisitions] = useState<MonthlyRequisition[]>([]);
+    const [properties, setProperties] = useState<Property[]>([]);
+    const [approverUsers, setApproverUsers] = useState<RequisitionApprover[]>([]);
+    const [approversLoading, setApproversLoading] = useState(false);
+    const [approversError, setApproversError] = useState('');
+    const approverRequest = useRef(0);
+    const approverOrganizationId = organizationId || user?.user_metadata?.organization_id || '';
+    const [isLoading, setIsLoading] = useState(true);
+    const [isRefreshing, setIsRefreshing] = useState(false);
+    const [viewMode, setViewMode] = useState<'list' | 'create_sheet'>('list');
 
     const userRoleLower = (userRole || user?.user_metadata?.role || '').toLowerCase();
 
-    // Permissions
+    // Permissions: support both org-level and property-membership-level property_admin
     const isPropertyAdmin =
         userRoleLower.includes('property_admin') ||
         userRoleLower.includes('property_manager') ||
-        userRoleLower === 'property_admin';
+        userRoleLower === 'property_admin' ||
+        hasPropertyMembershipAdmin;
 
     const isProcurementRole =
         userRoleLower.includes('procurement') ||
@@ -91,13 +107,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
         userRoleLower === 'ops_super_admin' ||
         userRoleLower === 'master_admin';
 
-    const canCreateRequisition = isPropertyAdmin || isSuperAdmin || isProcurementRole;
-
-    const [requisitions, setRequisitions] = useState<MonthlyRequisition[]>([]);
-    const [properties, setProperties] = useState<Property[]>([]);
-    const [approverUsers, setApproverUsers] = useState<any[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
-    const [viewMode, setViewMode] = useState<'list' | 'create_sheet'>('list');
+    const canCreateRequisition = isPropertyAdmin || isSuperAdmin || isProcurementRole || properties.length > 0;
 
     // Modals
     const [approverModalReq, setApproverModalReq] = useState<MonthlyRequisition | null>(null);
@@ -207,22 +217,23 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
             } else if (user?.id) {
                 const { data: memberships } = await supabase
                     .from('property_memberships')
-                    .select('property_id, property:properties(id, name, location)')
+                    .select('property_id, role, property:properties(id, name, location, organization_id)')
                     .eq('user_id', user.id)
                     .eq('is_active', true);
 
                 if (memberships && memberships.length > 0) {
+                    if (memberships.some((m: any) => m.role === 'property_admin' || m.role === 'property_manager' || m.role === 'manager')) {
+                        setHasPropertyMembershipAdmin(true);
+                    }
                     const userProps: Property[] = memberships
                         .map((m: any) => m.property)
                         .filter(Boolean);
                     const uniqueProps = Array.from(new Map(userProps.map(p => [p.id, p])).values());
                     setProperties(uniqueProps);
                     
-                    // Set default selected property: prioritize current route propertyId if user has access to it, otherwise first assigned property
+                    // Set default selected property only if an explicit route propertyId was requested
                     if (propertyId && uniqueProps.some(p => p.id === propertyId)) {
                         setSelectedPropertyFilter(propertyId);
-                    } else if (uniqueProps.length > 0) {
-                        setSelectedPropertyFilter(uniqueProps[0].id);
                     }
                 } else if (propertyId) {
                     const { data: propData } = await supabase
@@ -244,38 +255,48 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
         } catch (err) {
             console.error('Failed to fetch properties:', err);
         }
-    }, [supabase, organizationId, propertyId, user, isSuperAdmin, isProcurementRole]);
+    }, [supabase, organizationId, propertyId, user?.id, isSuperAdmin, isProcurementRole]);
 
-    // Load Approvers (Admins & Directors)
+    // Load eligible approvers through an organization-authorized server lookup.
     const fetchApprovers = useCallback(async () => {
-        try {
-            if (!organizationId) return;
-            const { data: members } = await supabase
-                .from('organization_memberships')
-                .select('user:users!user_id(id, full_name, email, phone), role')
-                .eq('organization_id', organizationId)
-                .in('role', ['org_super_admin', 'master_admin', 'org_admin', 'property_admin'])
-                .eq('is_active', true);
-
-            if (members) {
-                const usersList = members.map((m: any) => m.user).filter(Boolean);
-                const uniqueUsers = Array.from(new Map(usersList.map((u: any) => [u.id, u])).values());
-                setApproverUsers(uniqueUsers);
-                if (uniqueUsers.length > 0 && !selectedApproverId) {
-                    setSelectedApproverId(uniqueUsers[0].id);
-                }
-            }
-        } catch (e) {
-            console.error('Failed to fetch approvers:', e);
+        const requestId = ++approverRequest.current;
+        setApproverUsers([]);
+        setApproversError('');
+        if (!approverOrganizationId) {
+            setSelectedApproverId('');
+            setApproversLoading(false);
+            setApproversError('Select an organization to load approvers.');
+            return;
         }
-    }, [supabase, organizationId, selectedApproverId]);
-
-    // Load Requisitions
-    const fetchRequisitions = useCallback(async () => {
-        setIsLoading(true);
+        setApproversLoading(true);
         try {
+            const response = await fetch(`/api/procurement/requisitions/approvers?organization_id=${encodeURIComponent(approverOrganizationId)}`, { cache: 'no-store' });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || 'Could not load approvers.');
+            if (requestId !== approverRequest.current) return;
+            const users: RequisitionApprover[] = data.approvers || [];
+            setApproverUsers(users);
+            setSelectedApproverId(prev => users.some(user => user.id === prev) ? prev : '');
+        } catch (error) {
+            if (requestId !== approverRequest.current) return;
+            setSelectedApproverId('');
+            setApproversError(error instanceof Error ? error.message : 'Could not load approvers. Please retry.');
+        } finally {
+            if (requestId === approverRequest.current) setApproversLoading(false);
+        }
+    }, [approverOrganizationId]);
+
+    // Load Requisitions without jarring skeleton flicker
+    const fetchRequisitions = useCallback(async (showSkeleton: boolean = false) => {
+        if (showSkeleton || requisitions.length === 0) {
+            setIsLoading(true);
+        } else {
+            setIsRefreshing(true);
+        }
+        try {
+            const effectiveOrg = organizationId || user?.user_metadata?.organization_id || (properties[0] as any)?.organization_id || '';
             const params = new URLSearchParams();
-            if (organizationId) params.append('organization_id', organizationId);
+            if (effectiveOrg) params.append('organization_id', effectiveOrg);
             
             // Strict scoping for Property Admins so they never see other properties
             if (selectedPropertyFilter !== 'all') {
@@ -303,8 +324,9 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
             console.error('Error fetching requisitions:', err);
         } finally {
             setIsLoading(false);
+            setIsRefreshing(false);
         }
-    }, [organizationId, selectedPropertyFilter, propertyId, isPropertyAdmin, isSuperAdmin, isProcurementRole, properties, selectedStatusFilter, selectedMonthFilter, selectedYearFilter]);
+    }, [organizationId, user?.user_metadata?.organization_id, selectedPropertyFilter, propertyId, isPropertyAdmin, isSuperAdmin, isProcurementRole, properties.length, selectedStatusFilter, selectedMonthFilter, selectedYearFilter, requisitions.length]);
 
     useEffect(() => {
         fetchProperties();
@@ -319,6 +341,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
     const handleVendorQuotationSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!vendorQuoteModalReq) return;
+        if (approversLoading || approversError || !approverUsers.some(user => user.id === selectedApproverId)) return;
 
         setIsSubmittingVendorQuote(true);
         try {
@@ -442,10 +465,12 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
     // If in Create Sheet mode, render the full-screen interactive dual-table sheet
     if (viewMode === 'create_sheet') {
         const effectivePropertyId = propertyId || (selectedPropertyFilter !== 'all' ? selectedPropertyFilter : properties[0]?.id);
+        const effectiveOrgId = organizationId || user?.user_metadata?.organization_id || (properties[0] as any)?.organization_id || '';
         return (
             <SiteRequisitionSheet
+                key={`${user?.id}:${effectiveOrgId}`}
                 user={user}
-                organizationId={organizationId || ''}
+                organizationId={effectiveOrgId}
                 properties={properties}
                 initialPropertyId={effectivePropertyId}
                 onSubmitted={() => {
@@ -474,11 +499,11 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                     <button
-                        onClick={fetchRequisitions}
+                        onClick={() => fetchRequisitions(false)}
                         className="h-9 w-9 inline-flex items-center justify-center rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors cursor-pointer shrink-0"
                         title="Refresh List"
                     >
-                        <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+                        <RefreshCw className={`w-3.5 h-3.5 ${isLoading || isRefreshing ? 'animate-spin' : ''}`} />
                     </button>
 
                     {(isProcurementRole || isSuperAdmin) && (
@@ -691,7 +716,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
 
             {/* Requisitions List Table & Enhanced Empty State with Drag-and-Drop Dropzone */}
             <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700 shadow-xs overflow-hidden">
-                {isLoading ? (
+                {isLoading && requisitions.length === 0 ? (
                     <div className="p-4 space-y-3 animate-pulse">
                         <div className="h-10 bg-slate-100 dark:bg-slate-700/50 rounded-xl w-full mb-4" />
                         {[1, 2, 3, 4, 5].map((i) => (
@@ -999,6 +1024,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
             </div>
 
             {/* Modal: Upload Vendor Quotation & Assign Approver */}
+            <ModalPortal>
             <AnimatePresence>
                 {vendorQuoteModalReq && (
                     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
@@ -1026,18 +1052,9 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                     <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                                         Select Designated Approver <span className="text-red-500">*</span>
                                     </label>
-                                    <select
-                                        value={selectedApproverId}
-                                        onChange={e => setSelectedApproverId(e.target.value)}
-                                        required
-                                        className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-sky-500"
-                                    >
-                                        {approverUsers.map(u => (
-                                            <option key={u.id} value={u.id}>
-                                                {u.full_name || u.email} ({u.email})
-                                            </option>
-                                        ))}
-                                    </select>
+                                    <RequisitionApproverSelect approvers={approverUsers} value={selectedApproverId}
+                                        onChange={setSelectedApproverId} loading={approversLoading}
+                                        error={approversError} onRetry={fetchApprovers} />
                                 </div>
 
                                 <div>
@@ -1075,7 +1092,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                     </button>
                                     <button
                                         type="submit"
-                                        disabled={isSubmittingVendorQuote}
+                                        disabled={isSubmittingVendorQuote || approversLoading || !!approversError || !selectedApproverId}
                                         className="h-9 px-4.5 inline-flex items-center gap-1.5 rounded-xl text-xs font-black text-white bg-sky-600 hover:bg-sky-700 shadow-md shadow-sky-600/20 transition-all disabled:opacity-50 cursor-pointer"
                                     >
                                         {isSubmittingVendorQuote ? (
@@ -1091,8 +1108,10 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                     </div>
                 )}
             </AnimatePresence>
+            </ModalPortal>
 
             {/* Modal: Issue Purchase Order (PO) */}
+            <ModalPortal>
             <AnimatePresence>
                 {issuePoModalReq && (
                     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
@@ -1239,6 +1258,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                     </div>
                 )}
             </AnimatePresence>
+            </ModalPortal>
 
             {/* In-App Approver Review Modal */}
             <ApproverRequisitionModal
@@ -1270,7 +1290,10 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                 onClose={() => setShowBulkApprovalModal(false)}
                 requisitions={requisitions}
                 approvers={approverUsers}
-                organizationId={organizationId || ''}
+                approversLoading={approversLoading}
+                approversError={approversError}
+                onRetryApprovers={fetchApprovers}
+                organizationId={approverOrganizationId}
                 currentUser={user}
                 onSuccess={() => {
                     fetchRequisitions();

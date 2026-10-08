@@ -27,7 +27,7 @@ function AuthContent() {
     const searchParams = useSearchParams();
     const initialMode = searchParams.get('mode');
     const urlError = searchParams.get('error');
-    const redirectPath = searchParams.get('redirect');
+    const redirectPath = searchParams.get('redirect') || searchParams.get('redirectTo') || searchParams.get('returnUrl');
 
     const [authMode, setAuthMode] = useState<'signin' | 'otp-verify' | 'signup' | 'forgot' | 'reset-success' | 'update-password'>('signin');
     const [mounted, setMounted] = useState(false);
@@ -230,6 +230,11 @@ function AuthContent() {
                     router.replace('/waiting-approval');
                     return;
                 }
+
+                if (redirectPath && redirectPath !== '/' && !redirectPath.startsWith('/login')) {
+                    router.replace(redirectPath);
+                    return;
+                }
                 
                 // Refresh window location to let AuthProvider handle route resolution cleanly
                 window.location.reload();
@@ -295,6 +300,12 @@ function AuthContent() {
                 const isApproved = userProfile.is_approved === true || userProfile.approval_status === 'approved';
                 if (!isApproved) {
                     router.replace('/waiting-approval');
+                    return;
+                }
+
+                // ✅ If explicit target URL was requested (e.g., from email deep link), route directly there
+                if (redirectPath && redirectPath !== '/' && !redirectPath.startsWith('/login')) {
+                    router.replace(redirectPath);
                     return;
                 }
 

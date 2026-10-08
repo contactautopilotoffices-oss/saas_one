@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import type { Metadata } from 'next';
 import PettyCashDashboard from '@/frontend/components/pettyCash/PettyCashDashboard';
 
@@ -9,7 +10,7 @@ export const metadata: Metadata = {
 export default function PettyCashPage() {
     return (
         <div className="p-4 sm:p-6 lg:p-8">
-            <PettyCashDashboard />
+            <Suspense fallback={<p role="status">Loading petty cash…</p>}><PettyCashDashboard /></Suspense>
         </div>
     );
 }

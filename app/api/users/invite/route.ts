@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/frontend/utils/supabase/server'
 import { createAdminClient } from '@/frontend/utils/supabase/admin'
+import { isOrganizationUserManager } from '@/backend/lib/users/managementRoles'
 
 interface InviteUserRequest {
     email: string
@@ -37,6 +38,10 @@ export async function POST(request: NextRequest) {
             )
         }
 
+        if (!['member', 'admin', 'owner'].includes(role)) {
+            return NextResponse.json({ error: 'Invalid invitation role' }, { status: 400 });
+        }
+
         // Get the current user's session to verify permissions
         const supabase = await createClient()
         const { data: { user: currentUser }, error: authError } = await supabase.auth.getUser()
@@ -54,9 +59,10 @@ export async function POST(request: NextRequest) {
             .select('role')
             .eq('organization_id', organization_id)
             .eq('user_id', currentUser.id)
-            .single();
+            .eq('is_active', true)
+            .maybeSingle();
 
-        const isOrgAdmin = membership && ['org_super_admin', 'admin', 'owner'].includes(membership.role);
+        const isOrgAdmin = isOrganizationUserManager(membership?.role);
 
         if (permError || !isOrgAdmin) {
             return NextResponse.json(
@@ -97,6 +103,8 @@ export async function POST(request: NextRequest) {
                     organization_id,
                     user_id: inviteData.user.id,
                     role,
+                    is_active: true,
+                    approval_status: 'approved',
                 }, {
                     onConflict: 'organization_id,user_id'
                 })

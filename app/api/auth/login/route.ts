@@ -19,6 +19,7 @@ export async function POST(request: NextRequest) {
         });
 
         if (error) {
+            console.error(`[Auth Login 400] Login failed for ${email}:`, error.message);
             const isFetchError = error.message?.toLowerCase().includes('fetch failed') || error.message?.toLowerCase().includes('network');
             return NextResponse.json(
                 { error: isFetchError ? 'Unable to reach authentication server. Please try again.' : error.message },

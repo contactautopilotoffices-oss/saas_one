@@ -20,6 +20,20 @@ const transporter = nodemailer.createTransport({
 const recentlySentEmails = new Map<string, number>();
 
 export const EmailService = {
+    /** Outbox delivery uses durable identity; no subject cache or cross-provider fallback. */
+    async sendTransactionalEmail({to,subject,html,text,idempotencyKey}:{to:string;subject:string;html:string;text:string;idempotencyKey:string}):Promise<{success:boolean;ambiguous?:boolean;error?:string;providerReference?:string}> {
+        const sender=process.env.RESEND_FROM_EMAIL||process.env.SMTP_SENDER_EMAIL||smtpUser||'onboarding@resend.dev';
+        if(resendApiKey){
+            try {
+                const response=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${resendApiKey}`,'Content-Type':'application/json','Idempotency-Key':`petty-cash-${idempotencyKey}`},body:JSON.stringify({from:sender.includes('<')?sender:`"Autopilot FMS" <${sender}>`,to:[to],subject,html,text}),signal:AbortSignal.timeout(15_000)});
+                const body=await response.json().catch(()=>({}));
+                return response.ok?{success:true,providerReference:typeof body.id==='string'?body.id:undefined}:{success:false,ambiguous:response.status>=500,error:`Email provider HTTP ${response.status}`};
+            }catch{return {success:false,ambiguous:true,error:'Email provider outcome unknown; reconcile before retry'};}
+        }
+        if(!smtpUser||!smtpPass)return {success:false,error:'Email provider credentials are not configured'};
+        try {const result=await transporter.sendMail({from:sender.includes('<')?sender:`"Autopilot FMS" <${sender}>`,to,subject,html,text,messageId:`<petty-cash-${idempotencyKey}@autopilot.local>`});return {success:true,providerReference:result.messageId};}
+        catch(reason:any){return {success:false,ambiguous:!['EAUTH','EENVELOPE','ECONNECTION'].includes(reason?.code),error:'Email provider failed'+(reason?.code?` (${reason.code})`:'')};}
+    },
     // Generic sender — supports Resend API (RESEND_API_KEY) and SMTP credentials.
     async sendEmail({ to, subject, html, attachments }: {
         to: string | string[];
@@ -161,43 +175,67 @@ export const EmailService = {
         assignedToName?: string;
         items: any[];
     }) {
-        if (!process.env.SMTP_USER) {
-            console.warn('[EmailService] SMTP credentials not found, skipping email send.');
+        if (!process.env.SMTP_USER && !process.env.RESEND_API_KEY) {
+            console.warn('[EmailService] SMTP/Resend credentials not found, skipping email send.');
             return false;
         }
 
+        const appUrl = (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'https://fms-dev-saas-one.vercel.app').replace(/\/$/, '');
+        const ticketUrl = `${appUrl}/tickets/${ticket.id || ticket.ticket_number}#section-materials`;
+        const procurementUrl = `${appUrl}/procurement?tab=orders`;
+
         const propertyName = property?.name ? ` - ${property.name}` : '';
         const subject = `Material Request for Ticket #${ticket.ticket_number}${propertyName}`;
-        const itemsHtml = items.map(
-            img => `<li><b>${img.name}</b> - Qty: ${img.quantity} ${img.notes ? `(Notes: ${img.notes})` : ''}</li>`
-        ).join('');
+        
+        const itemsHtml = (items && items.length > 0)
+            ? items.map(
+                img => `<li><b>${img.name || img.title || img.item_name || 'Item'}</b> - Qty: ${img.quantity || img.qty || 1} ${img.notes || img.description ? `(Notes: ${img.notes || img.description})` : ''}</li>`
+            ).join('')
+            : '<li><i>Requested items list pending details</i></li>';
 
         const recipients = Array.isArray(emailTo) ? emailTo.join(', ') : emailTo;
 
         const html = `
-            <h2>New Material Request Submitted</h2>
-            <p>A new material request has been submitted for a maintenance ticket.</p>
-            
-            <h3>Ticket Details</h3>
-            <ul>
-                <li><b>Ticket:</b> ${ticket.ticket_number} - ${ticket.title}</li>
-                <li><b>Property:</b> ${property?.name || 'N/A'}</li>
-                <li><b>Requested By:</b> ${requestedBy?.full_name || requestedBy?.email || 'System'} (${requesterRole?.toUpperCase() || 'Support'})</li>
-                <li><b>Assigned Procurement User:</b> ${assignedToName || 'Unassigned'}</li>
-            </ul>
+            <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; background-color: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; line-height: 1.6;">
+                <h2 style="color: #0f172a; margin-top: 0;">🛒 New Material Request Submitted</h2>
+                <p>A new material request has been submitted by the site team for a maintenance ticket.</p>
+                
+                <div style="background-color: #f8fafc; padding: 16px; border-radius: 8px; border: 1px solid #e2e8f0; margin: 16px 0;">
+                    <h3 style="margin-top: 0; color: #334155; font-size: 15px;">Ticket Details</h3>
+                    <ul style="padding-left: 20px; margin: 0; font-size: 14px;">
+                        <li><b>Ticket ID:</b> #${ticket.ticket_number} - ${ticket.title || 'Maintenance Request'}</li>
+                        <li><b>Property:</b> ${property?.name || 'N/A'}</li>
+                        <li><b>Requested By:</b> ${requestedBy?.full_name || requestedBy?.email || 'Site Team'} (${requesterRole?.toUpperCase() || 'Support'})</li>
+                        <li><b>Assigned Procurement User:</b> ${assignedToName || 'Unassigned'}</li>
+                    </ul>
+                </div>
 
-            <h3>Requested Materials</h3>
-            <ul>
-                ${itemsHtml}
-            </ul>
+                <div style="background-color: #f8fafc; padding: 16px; border-radius: 8px; border: 1px solid #e2e8f0; margin: 16px 0;">
+                    <h3 style="margin-top: 0; color: #334155; font-size: 15px;">📦 Requested Materials</h3>
+                    <ul style="padding-left: 20px; margin: 0; font-size: 14px;">
+                        ${itemsHtml}
+                    </ul>
+                </div>
 
-            <p>Please check the Procurement Dashboard or view the ticket directly to fulfill this request.</p>
+                <p style="font-size: 14px; color: #334155;">Please review the material requirements and upload comparative quotations.</p>
+
+                <div style="margin: 28px 0; text-align: center;">
+                    <a href="${ticketUrl}" style="background-color: #2563eb; color: #ffffff; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: bold; display: inline-block; font-size: 14px;">
+                        View Material Request
+                    </a>
+                </div>
+
+                <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
+                <p style="font-size: 12px; color: #64748b;">
+                    Direct link: <a href="${ticketUrl}" style="color: #2563eb;">${ticketUrl}</a><br/>
+                    Procurement orders dashboard: <a href="${procurementUrl}" style="color: #2563eb;">${procurementUrl}</a>
+                </p>
+            </div>
         `;
 
         try {
-            await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
-                to: recipients,
+            await this.sendEmail({
+                to: emailTo,
                 subject,
                 html,
             });

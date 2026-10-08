@@ -111,6 +111,7 @@ export async function GET(request: NextRequest) {
                     const { WhatsAppEventProcessor } = await import('@/backend/services/WhatsAppEventProcessor');
                     await WhatsAppEventProcessor.processEvent(claimData);
                 } catch (waErr) {
+                    if(claimData.event_type?.startsWith('PETTY_CASH_'))throw waErr;
                     console.error(`[SweepOutbox] WhatsAppEventProcessor error for event ${event.id}:`, waErr);
                 }
                 

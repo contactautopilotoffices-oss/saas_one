@@ -1,5 +1,4 @@
-import AccountsWorkspace from '@/frontend/components/layout/AccountsWorkspace';
-
+// The persistent role shell is owned by the parent dashboard layout.
 export default function PettyCashWorkspaceLayout({ children }: { children: React.ReactNode }) {
-    return <AccountsWorkspace>{children}</AccountsWorkspace>;
+    return <>{children}</>;
 }

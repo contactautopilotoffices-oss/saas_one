@@ -7,6 +7,7 @@ import {
     Loader2, ShieldCheck, MessageSquare, Search, Filter
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import ModalPortal from '../ui/ModalPortal';
 
 interface ApproverRequisitionModalProps {
     isOpen: boolean;
@@ -122,7 +123,8 @@ export default function ApproverRequisitionModal({
     };
 
     return (
-        <AnimatePresence>
+        <ModalPortal>
+            <AnimatePresence>
             <div className="fixed inset-0 z-[9999] flex items-center justify-center p-3 sm:p-6 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
                 <motion.div
                     initial={{ opacity: 0, scale: 0.96, y: 15 }}
@@ -582,6 +584,7 @@ export default function ApproverRequisitionModal({
                     </div>
                 </motion.div>
             </div>
-        </AnimatePresence>
+            </AnimatePresence>
+        </ModalPortal>
     );
 }

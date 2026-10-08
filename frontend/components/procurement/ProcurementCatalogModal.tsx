@@ -64,22 +64,63 @@ interface Props {
     isProcurementUser?: boolean; // Controls catalog management features & price visibility
 }
 
-// Simple session cache to speed up repeated opens
-let catalogCache: Record<string, CatalogItem[]> = {};
-let usersCache: any[] | null = null;
+// SWR Stale-While-Revalidate In-Memory & Session Caches
+const swrCatalogCache: Record<string, CatalogItem[]> = {};
+let swrUsersCache: any[] | null = null;
+const swrPropertiesCache: Record<string, any[]> = {};
+const swrSettingsCache: Record<string, any> = {};
 
-export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, propertyId, organizationId, isProcurementUser = false }: Props) {
+function getCatalogCacheKey(orgId: string, propId?: string, isMgmt?: boolean): string {
+    if (isMgmt) return `mgmt_${orgId}`;
+    return `${orgId}_${propId || 'all'}`;
+}
+
+function getCachedCatalog(key: string): CatalogItem[] | null {
+    if (swrCatalogCache[key] && swrCatalogCache[key].length > 0) {
+        return swrCatalogCache[key];
+    }
+    if (typeof window !== 'undefined') {
+        try {
+            const raw = sessionStorage.getItem(`swr_cat_${key}`);
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                    swrCatalogCache[key] = parsed;
+                    return parsed;
+                }
+            }
+        } catch {}
+    }
+    return null;
+}
+
+function setCachedCatalog(key: string, data: CatalogItem[]) {
+    swrCatalogCache[key] = data;
+    if (typeof window !== 'undefined') {
+        try {
+            sessionStorage.setItem(`swr_cat_${key}`, JSON.stringify(data));
+        } catch {}
+    }
+}
+
+export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, propertyId, organizationId: propOrgId, isProcurementUser = false }: Props) {
     const { user, membership } = useAuth();
+    const organizationId = propOrgId || membership?.org_id || '';
     const isManagementMode = ticketId === "dashboard_catalog_management";
-    
+    const cacheKey = getCatalogCacheKey(organizationId, propertyId, isManagementMode);
+
     // Stricter permission check for Material Request mode
     // If we are on a ticket, ONLY Super Admin or Procurement can edit the catalog.
     const canManageCatalog = isManagementMode 
         ? isProcurementUser 
         : (membership?.org_role !== 'tenant');
 
-    const [items, setItems] = useState<CatalogItem[]>(catalogCache[organizationId] || []);
-    const [isLoading, setIsLoading] = useState(!catalogCache[organizationId]);
+    const initialCached = organizationId ? getCachedCatalog(cacheKey) : null;
+    const initialProps = organizationId ? swrPropertiesCache[organizationId] : null;
+
+    const [items, setItems] = useState<CatalogItem[]>(initialCached || []);
+    const [isLoading, setIsLoading] = useState<boolean>(!initialCached || initialCached.length === 0);
+    const [isValidating, setIsValidating] = useState<boolean>(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedCategory, setSelectedCategory] = useState('All');
     const [cart, setCart] = useState<CartItem[]>([]);
@@ -138,10 +179,11 @@ export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, pro
                 body: JSON.stringify({ id: itemId, organization_id: organizationId })
             });
             if (res.ok) {
-                setItems(prev => prev.filter(i => i.id !== itemId));
-                if (catalogCache[organizationId]) {
-                    catalogCache[organizationId] = catalogCache[organizationId].filter(i => i.id !== itemId);
-                }
+                setItems(prev => {
+                    const next = prev.filter(i => i.id !== itemId);
+                    setCachedCatalog(cacheKey, next);
+                    return next;
+                });
             }
         } catch (err) {
             console.error('Failed to delete item:', err);
@@ -152,92 +194,140 @@ export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, pro
 
     /** Pull the catalog again after a template import so the grid reflects the new standard list. */
     const refreshCatalogAfterImport = async () => {
-        delete catalogCache[`${organizationId}-${propertyId}`];
-        try {
-            const fresh = await fetch(`/api/procurement/catalog?organizationId=${organizationId}${propertyId ? `&propertyId=${propertyId}` : ''}`).then(r => r.json());
-            if (Array.isArray(fresh)) {
-                setItems(fresh);
-                catalogCache[`${organizationId}-${propertyId}`] = fresh;
-            }
-        } catch (err) {
-            console.error('Failed to refresh catalog after template import:', err);
+        delete swrCatalogCache[cacheKey];
+        if (typeof window !== 'undefined') {
+            try { sessionStorage.removeItem(`swr_cat_${cacheKey}`); } catch {}
         }
+        await initData(true);
     };
 
     useEffect(() => {
         if (isOpen && organizationId) {
+            // Check if we have cached items to immediately display
+            const cached = getCachedCatalog(cacheKey);
+            if (cached && cached.length > 0) {
+                setItems(cached);
+                setIsLoading(false);
+            }
             initData();
         }
-    }, [isOpen, organizationId, propertyId]);
+    }, [isOpen, organizationId, propertyId, cacheKey]);
 
-    const initData = async () => {
-        // Only show loading if we don't have cached data
-        if (!catalogCache[organizationId] || !usersCache) {
+    const initData = async (forceRefresh = false) => {
+        const cached = getCachedCatalog(cacheKey);
+        const hasCachedItems = !forceRefresh && cached && cached.length > 0;
+
+        // SWR Strategy:
+        // If we already have items cached, show them IMMEDIATELY (0 loading latency)
+        // and revalidate in the background. Only show full loading spinner on true cold starts.
+        if (hasCachedItems) {
+            setItems(cached);
+            setIsLoading(false);
+            setIsValidating(true);
+        } else {
             setIsLoading(true);
         }
 
         try {
-            const [catalogData, usersData, budgetsData, settingsData, propertiesData] = await Promise.all([
-                // Fetch catalog only if not cached for this property
-                catalogCache[`${organizationId}-${propertyId}`] 
-                    ? Promise.resolve(catalogCache[`${organizationId}-${propertyId}`]) 
-                    : fetch(`/api/procurement/catalog?organizationId=${organizationId}${propertyId ? `&propertyId=${propertyId}` : ''}`).then(res => res.json()),
-                
-                // Fetch users only if not cached
-                usersCache 
-                    ? Promise.resolve(usersCache) 
-                    : fetch('/api/procurement/users').then(res => res.json()),
-                
-                // Budgets are property-specific and should always be fresh
-                propertyId 
-                    ? fetch(`/api/procurement/budgets?propertyId=${propertyId}`).then(res => res.json())
-                    : Promise.resolve([]),
+            // Background revalidation of catalog
+            const fetchCatalogPromise = fetch(`/api/procurement/catalog?organizationId=${organizationId}${propertyId ? `&propertyId=${propertyId}` : ''}`)
+                .then(res => res.json())
+                .then(freshCatalog => {
+                    if (Array.isArray(freshCatalog)) {
+                        setItems(freshCatalog);
+                        setCachedCatalog(cacheKey, freshCatalog);
+                    }
+                })
+                .catch(err => {
+                    console.error('[SWR Catalog Revalidation Error]:', err);
+                });
 
-                // Fetch visibility settings
-                fetch(`/api/procurement/settings?organizationId=${organizationId}${propertyId ? `&propertyId=${propertyId}` : ''}`)
-                    .then(res => res.json()),
+            // Parallel auxiliary metadata fetches with memory caching
+            const metaPromises = [];
 
-                // Fetch organization properties
-                organizationId
-                    ? fetch(`/api/properties?organizationId=${organizationId}`).then(res => res.json()).catch(() => [])
-                    : Promise.resolve([])
-            ]);
-
-            if (Array.isArray(catalogData)) {
-                setItems(catalogData);
-                catalogCache[`${organizationId}-${propertyId}`] = catalogData;
-            }
-            
-            if (Array.isArray(usersData)) {
-                setProcurementUsers(usersData);
-                usersCache = usersData;
-                if (usersData.length > 0 && !selectedProcurementId) {
-                    setSelectedProcurementId(usersData[0].id);
+            if (!swrUsersCache) {
+                metaPromises.push(
+                    fetch('/api/procurement/users')
+                        .then(res => res.json())
+                        .then(usersData => {
+                            if (Array.isArray(usersData)) {
+                                setProcurementUsers(usersData);
+                                swrUsersCache = usersData;
+                                if (usersData.length > 0 && !selectedProcurementId) {
+                                    setSelectedProcurementId(usersData[0].id);
+                                }
+                            }
+                        })
+                        .catch(() => {})
+                );
+            } else {
+                setProcurementUsers(swrUsersCache);
+                if (swrUsersCache.length > 0 && !selectedProcurementId) {
+                    setSelectedProcurementId(swrUsersCache[0].id);
                 }
             }
 
-            if (Array.isArray(budgetsData)) {
-                setBudgets(budgetsData);
+            if (propertyId && !isManagementMode) {
+                metaPromises.push(
+                    fetch(`/api/procurement/budgets?propertyId=${propertyId}`)
+                        .then(res => res.json())
+                        .then(budgetsData => {
+                            if (Array.isArray(budgetsData)) setBudgets(budgetsData);
+                        })
+                        .catch(() => {})
+                );
             }
 
-            if (Array.isArray(propertiesData)) {
-                setOrgProperties(propertiesData.map((p: any) => ({
-                    id: p.id,
-                    name: p.name,
-                    location: p.location || p.address || p.city || null
-                })));
+            if (!swrPropertiesCache[organizationId]) {
+                metaPromises.push(
+                    fetch(`/api/properties?organizationId=${organizationId}`)
+                        .then(res => res.json())
+                        .then(propertiesData => {
+                            if (Array.isArray(propertiesData)) {
+                                const formatted = propertiesData.map((p: any) => ({
+                                    id: p.id,
+                                    name: p.name,
+                                    location: p.location || p.address || p.city || null
+                                }));
+                                setOrgProperties(formatted);
+                                swrPropertiesCache[organizationId] = formatted;
+                            }
+                        })
+                        .catch(() => {})
+                );
+            } else {
+                setOrgProperties(swrPropertiesCache[organizationId]);
             }
 
-            if (settingsData && (settingsData.price_visibility_roles || settingsData.price_visibility_users)) {
+            if (!swrSettingsCache[organizationId]) {
+                metaPromises.push(
+                    fetch(`/api/procurement/settings?organizationId=${organizationId}${propertyId ? `&propertyId=${propertyId}` : ''}`)
+                        .then(res => res.json())
+                        .then(settingsData => {
+                            if (settingsData) {
+                                swrSettingsCache[organizationId] = settingsData;
+                                setVisibilitySettings({
+                                    roles: settingsData.price_visibility_roles || ['procurement', 'admin'],
+                                    users: settingsData.price_visibility_users || []
+                                });
+                            }
+                        })
+                        .catch(() => {})
+                );
+            } else {
+                const settingsData = swrSettingsCache[organizationId];
                 setVisibilitySettings({
                     roles: settingsData.price_visibility_roles || ['procurement', 'admin'],
                     users: settingsData.price_visibility_users || []
                 });
             }
+
+            await Promise.all([fetchCatalogPromise, ...metaPromises]);
         } catch (err) {
             console.error('Initialization failed:', err);
         } finally {
             setIsLoading(false);
+            setIsValidating(false);
         }
     };
 
@@ -387,15 +477,17 @@ export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, pro
                 const result = await res.json();
                 
                 if (editingItemId) {
-                    setItems(prev => prev.map(i => i.id === editingItemId ? result : i));
-                    // Update cache
-                    if (catalogCache[organizationId]) {
-                        catalogCache[organizationId] = catalogCache[organizationId].map(i => i.id === editingItemId ? result : i);
-                    }
+                    setItems(prev => {
+                        const next = prev.map(i => i.id === editingItemId ? result : i);
+                        setCachedCatalog(cacheKey, next);
+                        return next;
+                    });
                 } else {
-                    setItems(prev => [result, ...prev]);
-                    // Update cache
-                    catalogCache[organizationId] = [result, ...(catalogCache[organizationId] || [])];
+                    setItems(prev => {
+                        const next = [result, ...prev];
+                        setCachedCatalog(cacheKey, next);
+                        return next;
+                    });
                 }
 
                 setNewItem({
@@ -577,18 +669,18 @@ export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, pro
                                     canManage={canManageCatalog}
                                     properties={orgProperties}
                                     onItemUpdated={updated => {
-                                        setItems(prev => prev.map(i => (i.id === updated.id ? { ...i, ...updated } as CatalogItem : i)));
-                                        const key = `${organizationId}-${propertyId}`;
-                                        if (catalogCache[key]) {
-                                            catalogCache[key] = catalogCache[key].map(i => (i.id === updated.id ? { ...i, ...updated } as CatalogItem : i));
-                                        }
+                                        setItems(prev => {
+                                            const next = prev.map(i => (i.id === updated.id ? { ...i, ...updated } as CatalogItem : i));
+                                            setCachedCatalog(cacheKey, next);
+                                            return next;
+                                        });
                                     }}
                                     onItemDeleted={id => {
-                                        setItems(prev => prev.filter(i => i.id !== id));
-                                        const key = `${organizationId}-${propertyId}`;
-                                        if (catalogCache[key]) {
-                                            catalogCache[key] = catalogCache[key].filter(i => i.id !== id);
-                                        }
+                                        setItems(prev => {
+                                            const next = prev.filter(i => i.id !== id);
+                                            setCachedCatalog(cacheKey, next);
+                                            return next;
+                                        });
                                     }}
                                 />
                             </div>

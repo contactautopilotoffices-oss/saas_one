@@ -18,3 +18,9 @@
      - ALWAYS pause and ask the user to confirm:
        *"Which account should I use to create the test tickets/data? (Defaulting to `mst.ho@gmail.com` unless specified otherwise)"*
    - Never proceed with automated creation of tickets under an assumed account without confirmation.
+
+4. **Omnichannel Notification Platform Switch-Off Reminder (MANDATORY)**:
+   - **Whenever the user asks to "do regression testing" or create test tickets/comments**:
+     - **ALWAYS remind and confirm with the user before triggering tests**:
+       *"⚠️ Please ensure you have switched off the Omnichannel notification platform (WhatsApp, Email, SMS) so recipient inboxes do not get flooded with test messages before we run the tests. Have you switched it off and are we good to proceed?"*
+     - Never initiate ticket creation or comment generation during regression runs until this reminder has been communicated.

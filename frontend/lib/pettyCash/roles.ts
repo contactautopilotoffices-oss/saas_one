@@ -2,14 +2,8 @@
 // Mirrors backend/lib/pettyCash/access.ts so the UI shows the right tabs/actions.
 // (The API still enforces permissions server-side.)
 
-const TENANT_LIKE = new Set(['tenant', 'tenant_user', 'super_tenant', 'vendor']);
-const ORG_ADMIN = new Set(['org_super_admin', 'org_admin', 'master_admin', 'ops_super_admin']);
-const APPROVER = new Set([
-    'org_super_admin', 'org_admin', 'master_admin', 'ops_super_admin',
-    'property_admin', 'manager_executive', 'soft_service_manager', 'soft_service_supervisor',
-]);
-const FINANCE = new Set(['accounts', 'org_super_admin', 'master_admin', 'ops_super_admin']);
-
+export const isInternalPettyCashRole = (role: string | null | undefined) => Boolean(role && !/tenant|vendor/i.test(role));
+const ORG_ADMIN = new Set(['org_super_admin', 'ops_super_admin']);
 export interface PettyCashCaps {
     canSee: boolean;
     isAdmin: boolean;
@@ -19,27 +13,34 @@ export interface PettyCashCaps {
 }
 
 interface MembershipLike {
+    org_id?: string | null;
+    all_org_memberships?: { org_id: string; role: string }[];
     org_role?: string | null;
     is_master_admin?: boolean;
     properties?: { id: string; name: string; code?: string; role?: string; organization_id?: string | null }[];
 }
 
-export function pettyCashCaps(membership: MembershipLike | null | undefined): PettyCashCaps {
-    const roles = [membership?.org_role, ...(membership?.properties?.map(p => p.role) || [])].filter(Boolean) as string[];
+export function pettyCashCaps(membership: MembershipLike | null | undefined, organizationId?: string): PettyCashCaps {
+    const orgRoles = organizationId
+        ? [...(membership?.all_org_memberships?.filter(m => m.org_id === organizationId).map(m => m.role) || []), ...(membership?.org_id === organizationId ? [membership.org_role] : [])]
+        : [membership?.org_role];
+    const properties = (membership?.properties || []).filter(p => !organizationId || p.organization_id === organizationId);
+    const roles = [...orgRoles, ...properties.map(p => p.role)].filter(Boolean) as string[];
     const isMaster = !!membership?.is_master_admin;
     const isAdmin = isMaster || roles.some(r => ORG_ADMIN.has(r));
     return {
-        canSee: isMaster || roles.some(r => !TENANT_LIKE.has(r)),
+        canSee: isMaster || roles.some(isInternalPettyCashRole),
         isAdmin,
-        canApprove: isAdmin || roles.some(r => APPROVER.has(r)),
-        canDisburse: isMaster || roles.some(r => FINANCE.has(r)),
-        properties: membership?.properties || [],
+        canApprove: false, // Assigned actions come from the server context, never a role label.
+        canDisburse: roles.includes('accounts'),
+        properties: properties.filter(p => isInternalPettyCashRole(p.role)),
     };
 }
 
 export const PC_STATUS_META: Record<string, { label: string; color: string }> = {
     draft: { label: 'Draft', color: '#6B7280' },
-    submitted: { label: 'Pending Approval', color: '#F59E0B' },
+    submitted: { label: 'Pending Allocation', color: '#F59E0B' },
+    pending_approval: { label: 'Pending Approval', color: '#F59E0B' },
     approved: { label: 'Approved', color: '#3B82F6' },
     rejected: { label: 'Rejected', color: '#EF4444' },
     sent_back: { label: 'Sent Back', color: '#F97316' },
@@ -59,6 +60,11 @@ export const PC_DEPARTMENTS = ['Operations', 'Admin', 'Projects', 'HR', 'IT', 'F
 export interface PettyCashRequest {
     id: string;
     request_no: string;
+    workflow_version: number;
+    version: number;
+    assigned_allocator_id?: string | null;
+    allocated_amount?: number | null;
+    assigned_allocator?: { id: string; full_name?: string; email?: string } | null;
     organization_id: string;
     property_id: string;
     requester_id: string;
@@ -82,6 +88,7 @@ export interface PettyCashRequest {
     paid_mode?: string | null;
     payment_ref?: string | null;
     paid_at?: string | null;
+    payment_date?: string | null;
     actual_spent?: number | null;
     amount_returned?: number | null;
     extra_claimed?: number | null;

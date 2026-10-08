@@ -64,6 +64,8 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
     const isOpsSuperAdmin = userRole === 'ops_super_admin';
     const isScopedRole = !isOrgSuperAdmin && !isHrRole;
     const canViewOrgWide = isOrgSuperAdmin || isHrRole;
+    // Only Org Super Admin & HR may inspect every assignee; everyone else (incl. Ops Super Admin) inspects only their reportee tree
+    const canInspectAllAssignees = ['org_super_admin', 'master_admin', 'super_admin'].includes(userRole) || isHrRole;
     const isHrAdmin = canViewOrgWide;
     const isManager = ['manager', 'reporting_manager', 'soft_service_manager', 'soft_service_supervisor', 'property_admin', 'building_admin', 'mst_manager', 'supervisor', 'ops_super_admin', 'org_admin'].includes(userRole);
 
@@ -378,16 +380,18 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         const tAssignedEmail = (t.assigned_to_email || t.assigned_to?.email || t.assigned_to_user_email || '').toLowerCase().trim();
         const tAssignedCode = (t.assigned_to_code || t.assigned_to?.employee_code || '').toLowerCase().trim();
 
+        const isConfOrAnon = Boolean(t.is_confidential || t.is_anonymous || t.ticket_type === 'confidential_feedback' || t.ticket_type === 'anonymous_feedback' || t.ticket_type === 'confidential');
+
         if (uid) {
             if (tAssignedId === uid || t.assigned_to_user_id === uid) return true;
-            if (t.manager_user_id === uid || t.employee_snapshot?.manager_user_id === uid) return true;
-            if (Array.isArray(t.assigned_history) && t.assigned_history.includes(uid)) return true;
-            if (Array.isArray(t.employee_snapshot?.assigned_history) && t.employee_snapshot.assigned_history.includes(uid)) return true;
+            if (!isConfOrAnon && (t.manager_user_id === uid || t.employee_snapshot?.manager_user_id === uid)) return true;
+            if (Array.isArray(t.assigned_history) && t.assigned_history.includes(uid) && (!isConfOrAnon || (uid !== t.manager_user_id && uid !== t.employee_snapshot?.manager_user_id))) return true;
+            if (Array.isArray(t.employee_snapshot?.assigned_history) && t.employee_snapshot.assigned_history.includes(uid) && (!isConfOrAnon || (uid !== t.manager_user_id && uid !== t.employee_snapshot?.manager_user_id))) return true;
         }
         if (pId) {
             if (tAssignedId === pId || tAssignedId.includes(pId)) return true;
-            if (Array.isArray(t.assigned_history) && t.assigned_history.includes(pId)) return true;
-            if (Array.isArray(t.employee_snapshot?.assigned_history) && t.employee_snapshot.assigned_history.includes(pId)) return true;
+            if (Array.isArray(t.assigned_history) && t.assigned_history.includes(pId) && (!isConfOrAnon || (pId !== t.manager_user_id && pId !== t.employee_snapshot?.manager_user_id))) return true;
+            if (Array.isArray(t.employee_snapshot?.assigned_history) && t.employee_snapshot.assigned_history.includes(pId) && (!isConfOrAnon || (pId !== t.manager_user_id && pId !== t.employee_snapshot?.manager_user_id))) return true;
         }
         if (uEmail && (tAssignedEmail === uEmail || tAssignedId.toLowerCase() === uEmail)) return true;
         if (pEmail && (tAssignedEmail === pEmail || tAssignedId.toLowerCase() === pEmail)) return true;
@@ -400,14 +404,14 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         return isTicketAssignedToUser(t, user?.id, user?.email, userEmpProfile);
     }, [user, userEmpProfile, isTicketAssignedToUser]);
 
-    // Checks if the logged-in user is the CURRENT active assignee of this ticket (excludes past escalated levels)
-    const isCurrentlyAssignedToMe = React.useCallback((t: any) => {
-        if (!t || !user) return false;
-        const uid = user.id;
-        const uEmail = (user.email || '').toLowerCase().trim();
-        const pId = userEmpProfile?.id || '';
-        const pCode = (userEmpProfile?.employee_code || '').toLowerCase().trim();
-        const pEmail = (userEmpProfile?.email || '').toLowerCase().trim();
+    // Checks if a specific user is the CURRENT active assignee of this ticket (excludes past escalated levels)
+    const isTicketCurrentlyAssignedToUser = React.useCallback((t: any, targetUserId?: string, targetEmail?: string, empProfile?: any) => {
+        if (!t) return false;
+        const uid = targetUserId || '';
+        const uEmail = (targetEmail || '').toLowerCase().trim();
+        const pId = empProfile?.id || '';
+        const pCode = (empProfile?.employee_code || '').toLowerCase().trim();
+        const pEmail = (empProfile?.email || '').toLowerCase().trim();
 
         const tAssignedId = (t.assigned_to_user_id || '').trim();
         const tAssignedEmail = (t.assigned_to_email || t.assigned_to?.email || t.assigned_to_user_email || '').toLowerCase().trim();
@@ -420,7 +424,12 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         if (pCode && (tAssignedCode === pCode || tAssignedId.toLowerCase() === pCode)) return true;
 
         return false;
-    }, [user, userEmpProfile]);
+    }, []);
+
+    // Checks if the logged-in user is the CURRENT active assignee of this ticket (excludes past escalated levels)
+    const isCurrentlyAssignedToMe = React.useCallback((t: any) => {
+        return isTicketCurrentlyAssignedToUser(t, user?.id, user?.email, userEmpProfile);
+    }, [user, userEmpProfile, isTicketCurrentlyAssignedToUser]);
 
     const isGrievance = React.useCallback((t: any) => {
         if (!t) return false;
@@ -522,12 +531,16 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                 }, employeesList) : [];
 
                 const targetUserIds = new Set([selectedReporteeId, ...subReps.map(s => s.user_id || s.id).filter(Boolean)]);
-                const isTargetAssigned = Array.from(targetUserIds).some(tu => {
-                    const profileObj = employeesList.find(e => (e.user_id || e.id) === tu);
-                    return isTicketAssignedToUser(t, tu, profileObj?.email, profileObj);
+                const isTargetInvolved = Array.from(targetUserIds).some(tu => {
+                    const profileObj = employeesList.find(e => (e.user_id || e.id) === tu || e.employee_code === tu);
+                    return isTicketAssignedToUser(t, tu, profileObj?.email, profileObj) ||
+                           t.raised_by_user_id === tu ||
+                           (profileObj?.user_id && t.raised_by_user_id === profileObj.user_id) ||
+                           (profileObj?.email && t.raised_by?.email?.toLowerCase() === profileObj.email.toLowerCase()) ||
+                           (profileObj?.employee_code && t.employee_snapshot?.code === profileObj.employee_code);
                 });
 
-                if (!isTargetAssigned && !targetUserIds.has(t.assigned_to_user_id)) {
+                if (!isTargetInvolved && !targetUserIds.has(t.assigned_to_user_id) && !targetUserIds.has(t.raised_by_user_id)) {
                     return false;
                 }
             } else if (selectedDepartmentUserId !== 'all') {
@@ -696,15 +709,35 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
 
     // Memoized Dropdown Options for Searchable Interactive Select Dropdowns
     const reporteeDropdownOptions = useMemo(() => {
+        // Fast lookup map for reportee names
+        const getReporteeName = (rep: any) => {
+            return `${rep.first_name || ''} ${rep.last_name || ''}`.trim() || rep.full_name || rep.name || rep.email || 'Reportee';
+        };
+
+        // 1. Team-wide tickets (tickets where reportees are either assigned, involved, or raised)
         const teamTickets = tickets.filter(t => 
             Array.from(reporteeUserIds).some(rid => { 
-                const p = employeesList.find(e => (e.user_id || e.id) === rid); 
-                return isTicketAssignedToUser(t, rid, p?.email, p); 
+                const p = employeesList.find(e => (e.user_id || e.id) === rid || e.employee_code === rid); 
+                return isTicketAssignedToUser(t, rid, p?.email, p) ||
+                       t.raised_by_user_id === rid ||
+                       (p?.user_id && t.raised_by_user_id === p.user_id);
             })
         );
-        const teamPendingTickets = teamTickets.filter(t => !['resolved', 'closed'].includes(t.status));
+
+        // Active pending tickets that are CURRENTLY assigned to one of our reportees
+        const teamPendingTickets = tickets.filter(t => 
+            !['resolved', 'closed'].includes(t.status) &&
+            myDepartmentReportees.some(r => isTicketCurrentlyAssignedToUser(t, r.user_id || r.id, r.email, r))
+        );
+
+        // Pending assignees names: ONLY REPORTEES!
         const teamPendingAssignees = Array.from(
-            new Set(teamPendingTickets.map(t => getTicketAssigneeName(t)).filter(Boolean))
+            new Set(
+                myDepartmentReportees
+                    .filter(r => teamPendingTickets.some(t => isTicketCurrentlyAssignedToUser(t, r.user_id || r.id, r.email, r)))
+                    .map(r => getReporteeName(r))
+                    .filter(Boolean)
+            )
         );
 
         const allOpt = {
@@ -718,7 +751,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
 
         const repOpts = myDepartmentReportees.map(rep => {
             const rUid = rep.user_id || rep.id;
-            const rName = `${rep.first_name || ''} ${rep.last_name || ''}`.trim() || rep.full_name || rep.name || rep.email;
+            const rName = getReporteeName(rep);
             const subReps = getReporteesForManager({
                 userId: rep.user_id || rep.id,
                 id: rep.id,
@@ -727,16 +760,33 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                 email: rep.email
             }, employeesList);
 
-            const subUserIds = new Set([rUid, ...subReps.map(s => s.user_id || s.id).filter(Boolean)]);
+            // Sub-tree includes rep and their direct/indirect reportees
+            const branchReportees = [rep, ...subReps];
+            const subUserIds = new Set(branchReportees.map(s => s.user_id || s.id).filter(Boolean));
+
             const repBranchTickets = tickets.filter(t => 
                 Array.from(subUserIds).some(suid => {
-                    const profileObj = employeesList.find(e => (e.user_id || e.id) === suid);
-                    return isTicketAssignedToUser(t, suid, profileObj?.email, profileObj);
+                    const profileObj = employeesList.find(e => (e.user_id || e.id) === suid || e.employee_code === suid);
+                    return isTicketAssignedToUser(t, suid, profileObj?.email, profileObj) ||
+                           t.raised_by_user_id === suid ||
+                           (profileObj?.user_id && t.raised_by_user_id === profileObj.user_id);
                 })
             );
-            const repPendingTickets = repBranchTickets.filter(t => !['resolved', 'closed'].includes(t.status));
+
+            // Active pending tickets currently assigned to this reportee or their sub-reportees
+            const repPendingTickets = tickets.filter(t => 
+                !['resolved', 'closed'].includes(t.status) &&
+                branchReportees.some(s => isTicketCurrentlyAssignedToUser(t, s.user_id || s.id, s.email, s))
+            );
+
+            // ONLY reportee names within this branch
             const repPendingAssignees = Array.from(
-                new Set(repPendingTickets.map(t => getTicketAssigneeName(t)).filter(Boolean))
+                new Set(
+                    branchReportees
+                        .filter(s => repPendingTickets.some(t => isTicketCurrentlyAssignedToUser(t, s.user_id || s.id, s.email, s)))
+                        .map(s => getReporteeName(s))
+                        .filter(Boolean)
+                )
             );
 
             return {
@@ -751,10 +801,34 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         });
 
         return [allOpt, ...repOpts];
-    }, [myDepartmentReportees, tickets, isDirectlyAssignedToMe, user, reporteeUserIds, employeesList, isTicketAssignedToUser, getTicketAssigneeName]);
+    }, [myDepartmentReportees, tickets, reporteeUserIds, employeesList, isTicketAssignedToUser, isTicketCurrentlyAssignedToUser]);
 
     const assigneeDropdownOptions = useMemo(() => {
-        const allPendingTickets = tickets.filter(t => !['resolved', 'closed'].includes(t.status));
+        // If canInspectAllAssignees (Org Super Admin / HR): inspect org-wide
+        // Otherwise (Ops Super Admin, Managers, etc.): inspect only direct & indirect reportees (and self)
+        const allowedReporteeIds = new Set(myDepartmentReportees.map((r: any) => r.user_id || r.id).filter(Boolean));
+        if (user?.id) allowedReporteeIds.add(user.id);
+        if (userEmpProfile?.id) allowedReporteeIds.add(userEmpProfile.id);
+
+        const isUserReporteeOrSelf = (targetId?: string, targetEmail?: string, targetCode?: string) => {
+            if (canInspectAllAssignees) return true;
+            if (!targetId && !targetEmail && !targetCode) return false;
+            if (targetId && (allowedReporteeIds.has(targetId) || targetId === user?.id || targetId === userEmpProfile?.id)) return true;
+            if (targetEmail && (targetEmail.toLowerCase() === user?.email?.toLowerCase() || myDepartmentReportees.some((r: any) => r.email?.toLowerCase() === targetEmail.toLowerCase()))) return true;
+            if (targetCode && myDepartmentReportees.some((r: any) => r.employee_code === targetCode)) return true;
+            return false;
+        };
+
+        const relevantTickets = canInspectAllAssignees 
+            ? tickets 
+            : tickets.filter(t => {
+                const uid = t.assigned_to_user_id || t.assigned_to_id;
+                const uEmail = t.assigned_to?.email;
+                const uCode = t.assigned_to?.employee_code;
+                return isUserReporteeOrSelf(uid, uEmail, uCode);
+            });
+
+        const allPendingTickets = relevantTickets.filter(t => !['resolved', 'closed'].includes(t.status));
         const allPendingAssignees = Array.from(
             new Set(allPendingTickets.map(t => getTicketAssigneeName(t)).filter(Boolean))
         );
@@ -762,17 +836,17 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         const allOpt = {
             id: 'all',
             label: 'All Assignees',
-            subLabel: 'Entire organization tickets',
+            subLabel: canInspectAllAssignees ? 'Entire organization tickets' : 'Reportees with tickets',
             pendingCount: allPendingTickets.length,
             pendingAssignees: allPendingAssignees,
-            totalCount: tickets.length
+            totalCount: relevantTickets.length
         };
 
         // Dynamically collect all potential assignees from tickets as well as employeesList
         const assigneeMap = new Map<string, { id: string; name: string; email?: string; code?: string; role?: string; department?: string }>();
 
-        // 1. Add employees (for Org Super Admin & HR: whole org; for scoped users: self & team reportees)
-        const sourceEmps = canViewOrgWide ? employeesList : [userEmpProfile, ...myDepartmentReportees].filter(Boolean);
+        // 1. Add employees (Org Super Admin & HR: whole org; everyone else: only direct & indirect reportees)
+        const sourceEmps = canInspectAllAssignees ? employeesList : myDepartmentReportees;
         sourceEmps.forEach((emp: any) => {
             const uid = emp.user_id || emp.id;
             if (!uid) return;
@@ -787,8 +861,8 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
             });
         });
 
-        // 2. Dynamically add any assignee referenced in tickets
-        tickets.forEach(t => {
+        // 2. Dynamically add any assignee referenced in tickets (org-wide inspectors only, so scoped users never see non-reportees)
+        (canInspectAllAssignees ? tickets : []).forEach(t => {
             const uid = t.assigned_to_user_id || t.assigned_to_id;
             if (uid && !assigneeMap.has(uid)) {
                 const name = getTicketAssigneeName(t);
@@ -805,10 +879,8 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         const empOpts = Array.from(assigneeMap.values()).map(emp => {
             const uid = emp.id;
             const empTickets = tickets.filter(t => isTicketAssignedToUser(t, uid, emp.email, emp));
-            const empPendingTickets = empTickets.filter(t => !['resolved', 'closed'].includes(t.status));
-            const empPendingAssignees = Array.from(
-                new Set(empPendingTickets.map(t => getTicketAssigneeName(t)).filter(Boolean))
-            );
+            const empPendingTickets = tickets.filter(t => !['resolved', 'closed'].includes(t.status) && isTicketCurrentlyAssignedToUser(t, uid, emp.email, emp));
+            const empPendingAssignees = empPendingTickets.length > 0 ? [emp.name] : [];
 
             return {
                 id: uid,
@@ -833,7 +905,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         });
 
         return [allOpt, ...empOpts];
-    }, [employeesList, tickets, isTicketAssignedToUser, getTicketAssigneeName]);
+    }, [employeesList, tickets, isTicketAssignedToUser, getTicketAssigneeName, canInspectAllAssignees, myDepartmentReportees, user, userEmpProfile]);
 
     // Helper to toggle expand/collapse state in Tree View
     const toggleTreeNodeExpand = (nodeId: string) => {

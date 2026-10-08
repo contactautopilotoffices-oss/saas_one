@@ -398,8 +398,11 @@ export default function TicketDetailPage() {
     skipRoleCheck = false,
   ) => {
     try {
-      // Fetch Ticket
-      const { data: t, error } = await supabase
+      const targetId = Array.isArray(ticketId) ? ticketId[0] : (ticketId || '');
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetId);
+      const cleanNum = targetId.replace(/^#/, '').replace(/^TKT-?/i, '');
+
+      let ticketQuery = supabase
         .from("tickets")
         .select(
           `
@@ -410,9 +413,15 @@ export default function TicketDetailPage() {
                     creator:users!raised_by(id, full_name, email),
                     assignee:users!assigned_to(id, full_name, email)
                 `,
-        )
-        .eq("id", ticketId)
-        .maybeSingle();
+        );
+
+      if (isUuid) {
+        ticketQuery = ticketQuery.eq("id", targetId);
+      } else {
+        ticketQuery = ticketQuery.or(`ticket_number.eq.${targetId},ticket_number.eq.${cleanNum},ticket_number.eq.TKT-${cleanNum}`);
+      }
+
+      const { data: t, error } = await ticketQuery.maybeSingle();
 
       if (error) throw error;
       if (!t) throw { message: "Ticket not found", code: "NOT_FOUND" };

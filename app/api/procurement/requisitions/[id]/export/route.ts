@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { generateRequisitionExcelWorkbook, RequisitionItemData } from '@/backend/lib/excel/requisitionExcelGenerator';
+import { PricingAndAliasService, normalizeText } from '@/backend/lib/procurement/pricingAndAliasService';
 
 export async function GET(
     request: NextRequest,
@@ -48,6 +49,31 @@ export async function GET(
             }
         } catch {
             // Notes was plain text
+        }
+
+        // If items are missing unit_price, resolve from catalog with site prices
+        if (req.organization_id && parsedItems.some(i => !i.unit_price || i.unit_price <= 0)) {
+            try {
+                const siteCatalog = await PricingAndAliasService.getCatalogWithSitePrices(req.organization_id, req.property_id);
+                const verifiedPriceMap = new Map<string, number>();
+                siteCatalog.forEach((catItem: any) => {
+                    verifiedPriceMap.set(normalizeText(catItem.name), catItem.unit_price);
+                });
+
+                parsedItems = parsedItems.map(item => {
+                    const normalized = normalizeText(item.name);
+                    const serverPrice = verifiedPriceMap.get(normalized);
+                    const finalPrice = (item.unit_price && item.unit_price > 0)
+                        ? item.unit_price
+                        : (serverPrice !== undefined ? serverPrice : (item.unit_price || 0));
+                    return {
+                        ...item,
+                        unit_price: finalPrice
+                    };
+                });
+            } catch (pErr) {
+                console.warn('[Export Price Resolution Warning]:', pErr);
+            }
         }
 
         const MONTH_NAMES = [

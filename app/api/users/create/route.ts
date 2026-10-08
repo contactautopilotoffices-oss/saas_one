@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/frontend/utils/supabase/server'
 import { createAdminClient } from '@/frontend/utils/supabase/admin'
+import { isOrganizationUserManager, isOrganizationWideUserRole } from '@/backend/lib/users/managementRoles'
 import { WhatsAppService } from '@/backend/services/WhatsAppService'
 import { buildWelcomeMessage } from '@/backend/lib/whatsapp/welcomeMessage'
 
@@ -40,7 +41,7 @@ export async function POST(request: NextRequest) {
 
         // Validation: email and full_name are always required.
         // organization_id is required UNLESS we are creating a master admin.
-        const createMasterAdmin = body.create_master_admin === true;
+        const createMasterAdmin = body.create_master_admin === true || role === 'master_admin';
 
         if (!email || !full_name || (!organization_id && !createMasterAdmin)) {
             return NextResponse.json(
@@ -59,7 +60,7 @@ export async function POST(request: NextRequest) {
         // Role enum guard — reject any value not in the allowed set to prevent privilege escalation
         const ALLOWED_ROLES = [
             'master_admin', 'org_super_admin', 'ops_super_admin', 'property_admin',
-            'staff', 'mst', 'tenant', 'procurement', 'vendor', 'super_tenant',
+            'staff', 'mst', 'tenant', 'procurement', 'accounts', 'vendor', 'super_tenant',
             'hr', 'hr_head', 'security', 'soft_service_staff', 'soft_service_supervisor', 'soft_service_manager'
         ] as const;
         if (!ALLOWED_ROLES.includes(role as any)) {
@@ -89,52 +90,40 @@ export async function POST(request: NextRequest) {
 
         const isCurrentMasterAdmin = !!masterAdminData?.is_master_admin
 
-        // Permission Check
-        if (createMasterAdmin) {
-            if (!isCurrentMasterAdmin) {
-                return NextResponse.json(
-                    { error: 'Forbidden. Only Master Admins can create other Master Admins.' },
-                    { status: 403 }
-                )
-            }
-        } else {
-            // If not creating master admin, check if org admin (or master admin)
-            if (!isCurrentMasterAdmin) {
-                // 1. Check Org Admin roles
-                const { data: orgMembership } = await supabase
-                    .from('organization_memberships')
-                    .select('role')
-                    .eq('organization_id', organization_id)
-                    .eq('user_id', currentUser.id)
-                    .maybeSingle();
-
-                const isOrgAdmin = orgMembership && ['org_super_admin', 'admin', 'owner'].includes(orgMembership.role);
-
-                // 2. Check Property Admin role (if property_id is provided)
-                let isPropertyAdmin = false;
-                const { property_id } = body;
-                if (property_id) {
-                    const { data: propMembership } = await supabase
-                        .from('property_memberships')
-                        .select('role')
-                        .eq('property_id', property_id)
-                        .eq('user_id', currentUser.id)
-                        .maybeSingle();
-
-                    isPropertyAdmin = !!(propMembership && propMembership.role === 'property_admin');
-                }
-
-                if (!isOrgAdmin && !isPropertyAdmin) {
-                    return NextResponse.json(
-                        { error: 'Forbidden. You must be an organization admin, property admin, or master admin to create users.' },
-                        { status: 403 }
-                    )
-                }
+        // Validate the supplied workspace even for master admins before creating an account.
+        const adminClient = createAdminClient();
+        if (body.property_id && role !== 'accounts') {
+            const { data: property, error } = await adminClient.from('properties')
+                .select('organization_id').eq('id', body.property_id).maybeSingle();
+            if (error) throw error;
+            if (!property || property.organization_id !== organization_id) {
+                return NextResponse.json({ error: 'Property does not belong to the supplied organization' }, { status: 400 });
             }
         }
 
-        // Use admin client for user creation (bypasses RLS)
-        const adminClient = createAdminClient()
+        if (createMasterAdmin) {
+            if (!isCurrentMasterAdmin) {
+                return NextResponse.json({ error: 'Forbidden. Only Master Admins can create other Master Admins.' }, { status: 403 });
+            }
+        } else if (!isCurrentMasterAdmin) {
+            const { data: orgMembership, error: orgPermissionError } = await supabase
+                .from('organization_memberships').select('role')
+                .eq('organization_id', organization_id).eq('user_id', currentUser.id)
+                .eq('is_active', true).maybeSingle();
+            if (orgPermissionError) throw orgPermissionError;
+            let isPropertyAdmin = false;
+            if (body.property_id && !isOrganizationWideUserRole(role)) {
+                const { data: propMembership, error: propertyPermissionError } = await supabase
+                    .from('property_memberships').select('role')
+                    .eq('property_id', body.property_id).eq('user_id', currentUser.id)
+                    .eq('is_active', true).maybeSingle();
+                if (propertyPermissionError) throw propertyPermissionError;
+                isPropertyAdmin = propMembership?.role === 'property_admin';
+            }
+            if (!isOrganizationUserManager(orgMembership?.role) && !isPropertyAdmin) {
+                return NextResponse.json({ error: 'Forbidden. You must administer this organization or property to create users.' }, { status: 403 });
+            }
+        }
 
         // Generate a secure temporary password if not provided
         const userPassword = password || generateTempPassword()
@@ -193,26 +182,27 @@ export async function POST(request: NextRequest) {
             }
         }
 
-        const { property_id } = body
+        // Accounts is organization-wide, even if an old client supplies a property.
+        const property_id = role === 'accounts' ? undefined : body.property_id
 
         // Membership logic:
-        // org_super_admin, ops_super_admin, procurement, hr, hr_head & super_tenant → organization_memberships
+        // org_super_admin, ops_super_admin, procurement, accounts, hr, hr_head & super_tenant → organization_memberships
         // all other roles               → property_memberships
         // On failure: delete the auth user to avoid stranded accounts (partial state cleanup)
-        const IS_ORG_WIDE_ROLE = ['org_super_admin', 'ops_super_admin', 'procurement', 'hr', 'hr_head', 'super_tenant'].includes(role);
+        const IS_ORG_WIDE_ROLE = isOrganizationWideUserRole(role);
 
         if (IS_ORG_WIDE_ROLE) {
             if (organization_id) {
                 let { error: memberError } = await adminClient
                     .from('organization_memberships')
-                    .insert({ organization_id, user_id: userData.user.id, role });
+                    .insert({ organization_id, user_id: userData.user.id, role, is_active: true, approval_status: 'approved' });
 
                 // If DB enum public.app_role doesn't contain 'hr' or 'hr_head' yet, fallback to 'staff' membership so creation succeeds!
-                if (memberError && memberError.message.includes('enum app_role')) {
+                if (memberError && role !== 'accounts' && memberError.message.includes('enum app_role')) {
                     console.warn(`Role "${role}" not found in app_role enum, falling back to "staff" in organization_memberships`);
                     const fallback = await adminClient
                         .from('organization_memberships')
-                        .insert({ organization_id, user_id: userData.user.id, role: 'staff' });
+                        .insert({ organization_id, user_id: userData.user.id, role: 'staff', is_active: true, approval_status: 'approved' });
                     memberError = fallback.error;
                 }
 
@@ -241,6 +231,7 @@ export async function POST(request: NextRequest) {
                     user_id: userData.user.id,
                     role: 'ops_super_admin',
                     is_active: true,
+                    approval_status: 'approved',
                 }));
                 const { error: opsPropErr } = await adminClient
                     .from('property_memberships')
@@ -262,6 +253,7 @@ export async function POST(request: NextRequest) {
                     user_id: userData.user.id,
                     role,
                     is_active: true,
+                    approval_status: 'approved',
                 })
             if (propMemberError) {
                 // If it's not a procurement user (who already has org membership), delete the user on error

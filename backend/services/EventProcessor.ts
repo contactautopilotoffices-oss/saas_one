@@ -1,10 +1,17 @@
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { EmailService } from '@/backend/services/EmailService';
 import { EmailRecipientResolver } from '@/backend/services/EmailRecipientResolver';
+import { PettyCashNotificationService } from '@/backend/services/PettyCashNotificationService';
 
 export const EventProcessor = {
     async processEvent(event: any) {
         const { event_type, payload } = event;
+
+        if(event_type?.startsWith('PETTY_CASH_')) {
+            await PettyCashNotificationService.dispatch(event,'email');
+            await PettyCashNotificationService.dispatch(event,'push');
+            return;
+        }
 
         if (['MEETING_ROOM_BOOKED', 'MEETING_ROOM_CANCELLED', 'ROOM_BOOKED', 'ROOM_CANCELLED', 'ROOM_BOOKING_CANCELLED'].includes(event_type)) {
             await this.handleMeetingRoomEvent(event_type, payload);
@@ -227,7 +234,30 @@ export const EventProcessor = {
 
         const { data: ticket } = await supabaseAdmin.from('tickets').select('*, property:properties(name)').eq('id', ticketId).single();
         const { data: requester } = await supabaseAdmin.from('users').select('id, full_name, email').eq('id', userId).single();
-        const { data: items } = await supabaseAdmin.from('material_request_items').select('*').eq('request_id', requestId);
+        
+        let itemsList: any[] = [];
+        if (Array.isArray(payload.items) && payload.items.length > 0) {
+            itemsList = payload.items;
+        } else if (requestId) {
+            const { data: mr } = await supabaseAdmin.from('material_requests').select('items').eq('id', requestId).maybeSingle();
+            if (mr && Array.isArray(mr.items) && mr.items.length > 0) {
+                itemsList = mr.items;
+            } else {
+                const { data: separateItems } = await supabaseAdmin.from('material_request_items').select('*').eq('request_id', requestId);
+                if (separateItems && separateItems.length > 0) {
+                    itemsList = separateItems;
+                } else {
+                    await new Promise(res => setTimeout(res, 500));
+                    const { data: mrRetry } = await supabaseAdmin.from('material_requests').select('items').eq('id', requestId).maybeSingle();
+                    if (mrRetry && Array.isArray(mrRetry.items) && mrRetry.items.length > 0) {
+                        itemsList = mrRetry.items;
+                    } else {
+                        const { data: sepRetry } = await supabaseAdmin.from('material_request_items').select('*').eq('request_id', requestId);
+                        if (sepRetry) itemsList = sepRetry;
+                    }
+                }
+            }
+        }
 
         if (ticket) {
             console.log(`[EventProcessor] Sending Material Request email for Request ID ${requestId} to: ${emails.join(', ')}`);
@@ -237,7 +267,7 @@ export const EventProcessor = {
                 property: ticket.property,
                 requestedBy: requester,
                 assignedToName: assigneeName || 'Unassigned',
-                items: items || []
+                items: itemsList
             });
         }
     },
@@ -499,7 +529,7 @@ export const EventProcessor = {
     },
 
     async handleRequisitionUploadedEvent(payload: any) {
-        const { organization_id, property_id, requisition_month, requisition_year, file_name, uploaded_by } = payload;
+        const { organization_id, property_id, requisition_month, requisition_year, file_name, uploaded_by, floor_tag } = payload;
 
         const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
         const monthName = months[requisition_month - 1] || `Month ${requisition_month}`;
@@ -527,11 +557,14 @@ export const EventProcessor = {
             return;
         }
 
+        const floorDisplay = floor_tag && floor_tag !== 'All Floors' ? ` (${floor_tag})` : '';
+        const propertyDisplayName = `${property?.name || 'Property'}${floorDisplay}`;
+
         console.log(`[EventProcessor] Sending requisition uploaded alert to ${emails.length} recipient(s): ${emails.join(', ')}`);
 
         await EmailService.sendRequisitionUploadedEmail({
             emailTo: emails,
-            propertyName: property?.name || 'Property',
+            propertyName: propertyDisplayName,
             monthName,
             year: requisition_year,
             fileName: file_name,
@@ -1170,4 +1203,3 @@ export const EventProcessor = {
         await NotificationService.afterFacilityRequestCreated(requestId);
     }
 };
-

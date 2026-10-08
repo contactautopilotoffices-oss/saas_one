@@ -1,4 +1,6 @@
 'use client';
+import { useDashboardContent } from '@/frontend/components/layout/DashboardContentSlot';
+import PettyCashNavLink from '@/frontend/components/pettyCash/PettyCashNavLink';
 import HRTicketsContent from '@/frontend/components/hr/HRTicketsContent';
 
 import { useState, useEffect } from 'react';
@@ -36,16 +38,18 @@ interface Property {
 }
 
 const SecurityDashboard = () => {
+    const { dashboardContent, dashboardPropertyId, navigateDashboard } = useDashboardContent();
     const { user, signOut } = useAuth();
     const params = useParams();
     const router = useRouter();
-    const propertyId = params?.propertyId as string;
+    const propertyId = (params?.propertyId as string) || dashboardPropertyId;
 
     // State
     const { getCachedData, setCachedData } = useDataCache();
     const cacheKeyPrefix = `security-${propertyId}`;
     
-    const [activeTab, setActiveTab] = useState<Tab>('overview');
+    const [dashboardTab, setActiveTab] = useState<Tab>('overview');
+    const activeTab = dashboardContent !== undefined ? 'petty-cash' as Tab : dashboardTab;
     const [property, setProperty] = useState<Property | null>(() => getCachedData(`${cacheKeyPrefix}-details`));
     const [isLoading, setIsLoading] = useState(!property);
     const [errorMsg, setErrorMsg] = useState('');
@@ -152,6 +156,7 @@ const SecurityDashboard = () => {
 
     // Helper to change tab with URL persistence
     const handleTabChange = (tab: Tab) => {
+        if (dashboardContent !== undefined) { navigateDashboard(tab); setSidebarOpen(false); return; }
         setActiveTab(tab);
         setSidebarOpen(false);
         const params = new URLSearchParams(window.location.search);
@@ -393,6 +398,7 @@ const SecurityDashboard = () => {
                             Management Hub
                         </p>
                         <div className="space-y-1">
+                            <PettyCashNavLink onNavigate={() => setSidebarOpen(false)} />
                             <button
                                 onClick={() => handleTabChange('visitors')}
                                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'visitors'
@@ -445,7 +451,7 @@ const SecurityDashboard = () => {
                         <div className="space-y-1">
                             <button
                                 onClick={() => {
-                                    setActiveTab('grievance');
+                                    if (dashboardContent !== undefined) navigateDashboard('grievance'); else setActiveTab('grievance');
                                     setSidebarOpen(false);
                                 }}
                                 className="w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 font-bold text-sm text-text-secondary hover:bg-muted hover:text-text-primary group"
@@ -507,6 +513,7 @@ const SecurityDashboard = () => {
 
             {/* Main Content */}
             <main id="main-scroll-container" className="flex-1 lg:ml-72 flex flex-col bg-white border-l border-slate-300 shadow-[-4px_0_12px_-4px_rgba(0,0,0,0.05)] relative z-10 overflow-y-auto">
+
                 {/* Top Header */}
                 <header className="h-16 bg-white border-b border-border flex items-center justify-between px-4 md:px-8 lg:px-12 sticky top-0 z-30">
                     <div className="flex items-center gap-4">
@@ -533,6 +540,8 @@ const SecurityDashboard = () => {
                         </div>
                     </div>
                 </header>
+                {dashboardContent ?? (<>
+
 
                 <div className="flex-1 p-2 sm:p-4 md:p-8 lg:p-12 pt-6">
                     <AnimatePresence mode="wait">
@@ -670,7 +679,9 @@ const SecurityDashboard = () => {
                         </motion.div>
                     </AnimatePresence>
                 </div>
-            </main>
+
+                </>)}
+</main>
 
             <SignOutModal
                 isOpen={showSignOutModal}

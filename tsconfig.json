@@ -75,6 +75,7 @@
     "scratch",
     "hyperframes",
     "Commercial Calculator*/**",
-    "onboarding-video-project"
+    "onboarding-video-project",
+    "task-manager/tests"
   ]
 }

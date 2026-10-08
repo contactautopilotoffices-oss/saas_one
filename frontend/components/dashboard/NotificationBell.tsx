@@ -191,6 +191,10 @@ export default function NotificationBell({ align = 'right' }: NotificationBellPr
                     const isSubmitterWaitingAck = Boolean(activeUserId && t.raised_by_user_id === activeUserId && t.status === 'pending_acknowledgement');
                     const isAssignedToUser = Boolean(activeUserId && t.assigned_to_user_id === activeUserId);
 
+                    // Strictly exclude tickets that are not actively assigned to this user and where user is not awaiting ack
+                    if (!isSubmitterWaitingAck && !isAssignedToUser) return;
+                    if (t.status === 'closed' || t.status === 'resolved') return;
+
                     let badgeVariant: 'amber' | 'purple' | 'blue' | 'rose' | 'emerald' = 'blue';
                     let statusLabel = t.status ? t.status.replace(/_/g, ' ') : 'Pending';
 
@@ -404,11 +408,21 @@ export default function NotificationBell({ align = 'right' }: NotificationBellPr
         }
         document.addEventListener("mousedown", handleClickOutside);
 
+        const handleTicketSync = () => {
+            fetchNotificationsAndActions();
+        };
+        window.addEventListener('hr-ticket-updated', handleTicketSync);
+        window.addEventListener('app-pending-actions-refresh', handleTicketSync);
+        window.addEventListener('focus', handleTicketSync);
+
         return () => {
             isMounted = false;
             channelsRef.current.forEach(c => supabase.removeChannel(c));
             channelsRef.current = [];
             document.removeEventListener("mousedown", handleClickOutside);
+            window.removeEventListener('hr-ticket-updated', handleTicketSync);
+            window.removeEventListener('app-pending-actions-refresh', handleTicketSync);
+            window.removeEventListener('focus', handleTicketSync);
         };
     }, [fetchNotificationsAndActions, supabase, user?.id]);
 
@@ -606,7 +620,11 @@ export default function NotificationBell({ align = 'right' }: NotificationBellPr
             {/* Header Bell Trigger Button - RED Icon */}
             <button
                 type="button"
-                onClick={() => setIsOpen(!isOpen)}
+                onClick={() => {
+                    const next = !isOpen;
+                    setIsOpen(next);
+                    if (next) fetchNotificationsAndActions();
+                }}
                 className={`relative p-2 rounded-xl transition-all duration-200 flex items-center justify-center cursor-pointer group ${
                     isOpen
                         ? 'bg-red-50 text-red-600 dark:bg-red-950/50 dark:text-red-400 ring-2 ring-red-500/20'
@@ -690,7 +708,10 @@ export default function NotificationBell({ align = 'right' }: NotificationBellPr
 
                                 <button
                                     type="button"
-                                    onClick={() => setActiveTab('pending_actions')}
+                                    onClick={() => {
+                                        setActiveTab('pending_actions');
+                                        fetchNotificationsAndActions();
+                                    }}
                                     className={`py-1.5 px-3 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                                         activeTab === 'pending_actions'
                                             ? 'bg-white dark:bg-slate-800 text-amber-600 dark:text-amber-400 shadow-xs'

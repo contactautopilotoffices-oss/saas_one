@@ -1,7 +1,6 @@
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { resolvePettyCashAccessForUser, isPettyCashAccessError } from '@/backend/lib/pettyCash/access';
-import { planPettyCashTransition, actorFromAccess } from '@/backend/lib/pettyCash/transitions';
-import { notifyPettyCash } from '@/backend/lib/pettyCash/notify';
+import { applyPettyCashAction } from '@/backend/lib/pettyCash/actions';
 import { resolveAccountsAccessForUser, isAccountsAccessError } from '@/backend/lib/accounts/access';
 import { planPaymentTransition, paymentActorFromAccess } from '@/backend/lib/accounts/transitions';
 import { logPoActivity } from '@/backend/lib/accounts/activity';
@@ -70,26 +69,12 @@ async function handlePettyCash(t: EmailActionToken, remark: string): Promise<Han
         .maybeSingle();
     if (!req) return notFound();
 
-    const now = new Date().toISOString();
-    const body = { ...(t.payload || {}), remark };
-    const plan = planPettyCashTransition({ req, actor: actorFromAccess(access), action: t.action, body, now });
-    if (!plan.ok) return planFailed(plan.error, plan.status);
-
-    const { data: updated, error } = await supabaseAdmin
-        .from('petty_cash_requests').update(plan.patch).eq('id', t.entity_id)
-        .select('*, requester:users!petty_cash_requests_requester_id_fkey(full_name)').single();
-    if (error) return saveFailed(error.message);
-
-    await supabaseAdmin.from('petty_cash_activity').insert({
-        request_id: t.entity_id, organization_id: t.organization_id, actor_id: t.user_id,
-        action: t.action, from_status: req.status, to_status: (plan.patch as any).status,
-        remark: `${remark} (via email)`,
+    // Old unversioned links must not authorize a newly allocated/revised v2 request.
+    if (req.workflow_version === 2 && t.payload?.expected_version == null) return planFailed('Open Petty Cash to review the current request.', 409);
+    const { error } = await applyPettyCashAction(access, t.entity_id, t.action, {
+        ...(t.payload || {}), expected_version: t.payload?.expected_version ?? req.version, remark: `${remark} (via email)`,
     });
-
-    if (plan.notifyKind) {
-        notifyPettyCash(plan.notifyKind, { ...updated, requester_name: (updated.requester as any)?.full_name }, remark)
-            .catch(() => {});
-    }
+    if (error) return planFailed(error.message, /Forbidden/i.test(error.message) ? 403 : 409);
 
     const verb = pastTense(t.action);
     return {

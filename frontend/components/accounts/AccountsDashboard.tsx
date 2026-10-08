@@ -24,7 +24,7 @@ export default function AccountsDashboard() {
     const { membership } = useAuth();
     const params = useParams();
     const orgId = params?.orgId as string | undefined;
-    const caps = useMemo(() => accountsCaps(membership), [membership]);
+    const caps = useMemo(() => accountsCaps(membership, orgId), [membership, orgId]);
     const [supabase] = useState(() => createClient());
 
     const [tab, setTab] = useState<Tab>('to_align');

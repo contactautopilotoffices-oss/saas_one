@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import ModalPortal from '../ui/ModalPortal';
 import {
     X, CheckCircle2, AlertCircle, Calendar, Sparkles,
     FileText, ThumbsUp, ShieldCheck, Clock, UserCheck, MessageSquare, Loader2
@@ -128,6 +129,7 @@ export default function MonthlyFeedbackFormModal({
     };
 
     return (
+        <ModalPortal>
         <AnimatePresence>
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto">
                 <motion.div
@@ -500,5 +502,6 @@ export default function MonthlyFeedbackFormModal({
                 </motion.div>
             </div>
         </AnimatePresence>
+        </ModalPortal>
     );
 }

@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, UserCheck, Edit2, Check, AlertCircle, RefreshCw, UserPlus, Eye, ShieldCheck, AlertTriangle, Info, X, Trash2, ChevronDown } from 'lucide-react';
+import { Search, UserCheck, Edit2, Edit3, UserCog, Check, AlertCircle, RefreshCw, UserPlus, Eye, ShieldCheck, AlertTriangle, Info, X, Trash2, ChevronDown } from 'lucide-react';
 import { formatAppRole } from '../../lib/accounts/roles';
 
 interface SearchableManagerDropdownProps {
@@ -223,6 +223,8 @@ interface HREmployeeDirectoryProps {
 export default function HREmployeeDirectory({ orgId, organizationId, onRefresh }: HREmployeeDirectoryProps) {
     const [employees, setEmployees] = useState<any[]>([]);
     const [allManagers, setAllManagers] = useState<any[]>([]);
+    const [unlinkedUsers, setUnlinkedUsers] = useState<any[]>([]);
+    const [departmentsList, setDepartmentsList] = useState<{ id: string; name: string; code: string }[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
     const [deptFilter, setDeptFilter] = useState('');
@@ -234,6 +236,86 @@ export default function HREmployeeDirectory({ orgId, organizationId, onRefresh }
     const [selectedEmpForInfo, setSelectedEmpForInfo] = useState<any | null>(null);
     const [deletingEmp, setDeletingEmp] = useState<{ id: string; name: string; code: string } | null>(null);
     const [deleting, setDeleting] = useState(false);
+    const [editingEmpData, setEditingEmpData] = useState<any | null>(null);
+    const [editFormData, setEditFormData] = useState({
+        id: '',
+        employee_code: '',
+        first_name: '',
+        last_name: '',
+        email: '',
+        contact_number: '',
+        department: '',
+        department_id: '',
+        designation: '',
+        location: '',
+        reporting_manager_id: ''
+    });
+    const [savingEdit, setSavingEdit] = useState(false);
+    const [editError, setEditError] = useState('');
+
+    const handleOpenEditModal = (emp: any) => {
+        setEditError('');
+        setEditingEmpData(emp);
+        setEditFormData({
+            id: emp.id,
+            employee_code: emp.employee_code || '',
+            first_name: emp.first_name || '',
+            last_name: emp.last_name || '',
+            email: emp.email || emp.user?.email || '',
+            contact_number: emp.contact_number || emp.phone || emp.user?.phone || '',
+            department: emp.department || '',
+            department_id: emp.department_id || '',
+            designation: emp.designation || '',
+            location: emp.location || '',
+            reporting_manager_id: emp.reporting_manager_id || ''
+        });
+    };
+
+    const handleSaveEdit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!editingEmpData) return;
+        setSavingEdit(true);
+        setEditError('');
+        try {
+            const payload = {
+                employee_id: editingEmpData.id,
+                employee_code: editFormData.employee_code.trim(),
+                first_name: editFormData.first_name.trim(),
+                last_name: editFormData.last_name.trim(),
+                email: editFormData.email.trim(),
+                contact_number: editFormData.contact_number.trim(),
+                phone: editFormData.contact_number.trim(),
+                department: editFormData.department.trim(),
+                department_id: editFormData.department_id || null,
+                designation: editFormData.designation.trim(),
+                location: editFormData.location.trim(),
+                reporting_manager_id: editFormData.reporting_manager_id || null,
+                sync_open_tickets: true
+            };
+
+            const res = await fetch('/api/hr/admin/employees', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            const data = await res.json();
+            if (data.success) {
+                setSuccessMsg(`Employee ${payload.first_name} ${payload.last_name} (${payload.employee_code}) updated successfully!`);
+                setEditingEmpData(null);
+                fetchEmployees();
+                fetchAllManagers();
+                onRefresh?.();
+            } else {
+                setEditError(data.error || 'Failed to update employee information');
+            }
+        } catch (err: any) {
+            console.error('Error saving employee edit:', err);
+            setEditError(err.message || 'An unexpected error occurred while saving.');
+        } finally {
+            setSavingEdit(false);
+        }
+    };
 
     // Normalize manager name variations for accurate reportees matching
     const normalizeManagerName = (str: string): string => {
@@ -315,6 +397,12 @@ export default function HREmployeeDirectory({ orgId, organizationId, onRefresh }
                 const data = text ? JSON.parse(text) : {};
                 if (data.success) {
                     setAllManagers(data.data || []);
+                    if (data.unlinked_users) {
+                        setUnlinkedUsers(data.unlinked_users);
+                    }
+                    if (data.departments) {
+                        setDepartmentsList(data.departments);
+                    }
                 }
             }
         } catch (err) {
@@ -343,6 +431,12 @@ export default function HREmployeeDirectory({ orgId, organizationId, onRefresh }
                 if (data.success) {
                     const list = data.data || [];
                     setEmployees(list);
+                    if (data.unlinked_users) {
+                        setUnlinkedUsers(data.unlinked_users);
+                    }
+                    if (data.departments) {
+                        setDepartmentsList(data.departments);
+                    }
                     if (!deptFilter && !searchQuery) {
                         setAllManagers(list);
                     }
@@ -423,12 +517,14 @@ export default function HREmployeeDirectory({ orgId, organizationId, onRefresh }
 
     const [showAddModal, setShowAddModal] = useState(false);
     const [newEmpData, setNewEmpData] = useState({
+        user_id: '',
         employee_code: '',
         first_name: '',
         last_name: '',
         email: '',
         contact_number: '',
         department: 'Operations',
+        department_id: '',
         designation: 'Senior Executive',
         location: 'Lower Parel',
         reporting_manager_id: '',
@@ -437,29 +533,71 @@ export default function HREmployeeDirectory({ orgId, organizationId, onRefresh }
     });
     const [adding, setAdding] = useState(false);
 
+    const selectedDeptObj = departmentsList.find(d => 
+        (newEmpData.department_id && d.id === newEmpData.department_id) ||
+        (newEmpData.department && d.name.toLowerCase() === newEmpData.department.toLowerCase())
+    );
+
+    const matchedAppUser = unlinkedUsers.find(u => 
+        (newEmpData.user_id && u.id === newEmpData.user_id) ||
+        (newEmpData.email && u.email && u.email.toLowerCase().trim() === newEmpData.email.toLowerCase().trim())
+    );
+
+    const handleSelectExistingUser = (userId: string) => {
+        if (!userId) {
+            setNewEmpData(prev => ({ ...prev, user_id: '', create_app_account: true }));
+            return;
+        }
+        const selected = unlinkedUsers.find(u => u.id === userId);
+        if (selected) {
+            const nameParts = (selected.full_name || '').trim().split(' ');
+            const fName = nameParts[0] || '';
+            const lName = nameParts.slice(1).join(' ') || '';
+            setNewEmpData(prev => ({
+                ...prev,
+                user_id: selected.id,
+                email: selected.email || prev.email,
+                first_name: fName || prev.first_name,
+                last_name: lName || prev.last_name,
+                contact_number: selected.phone || prev.contact_number,
+                create_app_account: false
+            }));
+        }
+    };
+
     const handleCreateEmployee = async (e: React.FormEvent) => {
         e.preventDefault();
         setAdding(true);
         setSuccessMsg('');
         try {
+            const payload = {
+                ...newEmpData,
+                user_id: newEmpData.user_id || matchedAppUser?.id || undefined,
+                organization_id: orgId || organizationId || '211e1330-ad83-446d-941f-dcea48396798'
+            };
+
             const res = await fetch('/api/hr/admin/employees', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(newEmpData)
+                body: JSON.stringify(payload)
             });
             const text = await res.text();
             let data: any = {};
             try { data = text ? JSON.parse(text) : {}; } catch {}
             if (data.success) {
-                setSuccessMsg(`Employee ${data.data.full_name} (${data.data.employee_code}) onboarded successfully!`);
+                const empName = data.data.full_name || `${data.data.first_name || ''} ${data.data.last_name || ''}`.trim();
+                const linkNotice = data.is_linked || data.data.user_id ? ' (Linked to App Account)' : '';
+                setSuccessMsg(`Employee ${empName} (${data.data.employee_code}) onboarded successfully!${linkNotice}`);
                 setShowAddModal(false);
                 setNewEmpData({
+                    user_id: '',
                     employee_code: '',
                     first_name: '',
                     last_name: '',
                     email: '',
                     contact_number: '',
                     department: 'Operations',
+                    department_id: '',
                     designation: 'Senior Executive',
                     location: 'Lower Parel',
                     reporting_manager_id: '',
@@ -749,6 +887,15 @@ export default function HREmployeeDirectory({ orgId, organizationId, onRefresh }
                                                         </button>
 
                                                         <button
+                                                            onClick={() => handleOpenEditModal(emp)}
+                                                            className="px-2 py-1 text-[#587e85] hover:text-[#3d5a5f] dark:text-teal-300 dark:hover:text-teal-200 rounded-lg hover:bg-[#587e85]/10 dark:hover:bg-teal-950/40 transition-colors inline-flex items-center gap-1 text-[11px] font-semibold border border-[#587e85]/30"
+                                                            title="Edit Employee Information (Code, Name, Department, etc.)"
+                                                        >
+                                                            <Edit3 className="w-3.5 h-3.5 text-[#587e85] dark:text-teal-400" />
+                                                            <span>Edit</span>
+                                                        </button>
+
+                                                        <button
                                                             onClick={() => {
                                                                 setEditingEmpId(emp.id);
                                                                 setSelectedManagerId(emp.reporting_manager_id || '');
@@ -782,7 +929,7 @@ export default function HREmployeeDirectory({ orgId, organizationId, onRefresh }
             {/* App Account Info Details Modal */}
             {selectedEmpForInfo && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-3 sm:p-4">
-                    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl sm:rounded-3xl shadow-2xl max-w-md w-full max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl sm:rounded-3xl shadow-2xl max-w-lg sm:max-w-xl w-full max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
                         {/* Header */}
                         <div className="shrink-0 flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50">
                             <div>
@@ -796,7 +943,7 @@ export default function HREmployeeDirectory({ orgId, organizationId, onRefresh }
                             </div>
                             <button
                                 onClick={() => setSelectedEmpForInfo(null)}
-                                className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg transition-colors"
+                                className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg transition-colors cursor-pointer"
                             >
                                 ✕
                             </button>
@@ -836,56 +983,70 @@ export default function HREmployeeDirectory({ orgId, organizationId, onRefresh }
                             )}
 
                             {/* Excel HR Database Info */}
-                            <div className="bg-slate-50 dark:bg-slate-800/60 p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 space-y-2">
+                            <div className="bg-slate-50 dark:bg-slate-800/60 p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 space-y-3">
                                 <div className="font-bold text-slate-900 dark:text-white uppercase tracking-wider text-[10px] text-slate-400">
                                     Master HR Database Record (Excel)
                                 </div>
-                                <div className="grid grid-cols-2 gap-3 text-xs">
-                                    <div>
-                                        <span className="text-slate-400 font-medium block text-[10px]">Full Name</span>
-                                        <span className="font-bold text-slate-800 dark:text-slate-200">{selectedEmpForInfo.first_name} {selectedEmpForInfo.last_name}</span>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                                    <div className="min-w-0">
+                                        <span className="text-slate-400 font-medium block text-[10px] uppercase tracking-wider mb-0.5">Full Name</span>
+                                        <span className="font-bold text-slate-800 dark:text-slate-200 block break-words">{selectedEmpForInfo.first_name} {selectedEmpForInfo.last_name}</span>
                                     </div>
-                                    <div>
-                                        <span className="text-slate-400 font-medium block text-[10px]">Employee Code</span>
-                                        <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400">{selectedEmpForInfo.employee_code}</span>
+                                    <div className="min-w-0">
+                                        <span className="text-slate-400 font-medium block text-[10px] uppercase tracking-wider mb-0.5">Employee Code</span>
+                                        <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400 block">{selectedEmpForInfo.employee_code}</span>
                                     </div>
-                                    <div>
-                                        <span className="text-slate-400 font-medium block text-[10px]">HR Email</span>
-                                        <span className="font-semibold text-slate-800 dark:text-slate-200">{selectedEmpForInfo.email || 'N/A'}</span>
+                                    <div className="min-w-0">
+                                        <span className="text-slate-400 font-medium block text-[10px] uppercase tracking-wider mb-0.5">HR Email</span>
+                                        <span className="font-semibold text-slate-800 dark:text-slate-200 block break-all leading-snug" title={selectedEmpForInfo.email}>
+                                            {selectedEmpForInfo.email || 'N/A'}
+                                        </span>
                                     </div>
-                                    <div>
-                                        <span className="text-slate-400 font-medium block text-[10px]">Contact Number</span>
-                                        <span className="font-semibold text-slate-800 dark:text-slate-200">{selectedEmpForInfo.contact_number || selectedEmpForInfo.phone || 'N/A'}</span>
+                                    <div className="min-w-0">
+                                        <span className="text-slate-400 font-medium block text-[10px] uppercase tracking-wider mb-0.5">Contact Number</span>
+                                        <span className="font-semibold text-slate-800 dark:text-slate-200 block break-words">
+                                            {selectedEmpForInfo.contact_number || selectedEmpForInfo.phone || 'N/A'}
+                                        </span>
                                     </div>
-                                    <div>
-                                        <span className="text-slate-400 font-medium block text-[10px]">Department</span>
-                                        <span className="font-semibold text-slate-800 dark:text-slate-200">{selectedEmpForInfo.department || 'N/A'}</span>
+                                    <div className="min-w-0">
+                                        <span className="text-slate-400 font-medium block text-[10px] uppercase tracking-wider mb-0.5">Department</span>
+                                        <span className="font-semibold text-slate-800 dark:text-slate-200 block break-words leading-snug">
+                                            {selectedEmpForInfo.department || 'N/A'}
+                                        </span>
                                     </div>
-                                    <div>
-                                        <span className="text-slate-400 font-medium block text-[10px]">Designation & Location</span>
-                                        <span className="font-semibold text-slate-800 dark:text-slate-200">{selectedEmpForInfo.designation} ({selectedEmpForInfo.location})</span>
+                                    <div className="min-w-0">
+                                        <span className="text-slate-400 font-medium block text-[10px] uppercase tracking-wider mb-0.5">Designation & Location</span>
+                                        <span className="font-semibold text-slate-800 dark:text-slate-200 block break-words leading-snug">
+                                            {selectedEmpForInfo.designation} ({selectedEmpForInfo.location})
+                                        </span>
                                     </div>
                                 </div>
                             </div>
 
                             {/* Live App Account Credentials */}
-                            <div className="bg-slate-50 dark:bg-slate-800/60 p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 space-y-2">
+                            <div className="bg-slate-50 dark:bg-slate-800/60 p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 space-y-3">
                                 <div className="font-bold text-slate-900 dark:text-white uppercase tracking-wider text-[10px] text-slate-400">
                                     Live App User Credentials
                                 </div>
                                 {selectedEmpForInfo.is_app_linked ? (
-                                    <div className="grid grid-cols-2 gap-3 text-xs">
-                                        <div>
-                                            <span className="text-slate-400 font-medium block text-[10px]">App Email</span>
-                                            <span className="font-semibold text-slate-900 dark:text-white">{selectedEmpForInfo.app_email || selectedEmpForInfo.user?.email}</span>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                                        <div className="min-w-0">
+                                            <span className="text-slate-400 font-medium block text-[10px] uppercase tracking-wider mb-0.5">App Email</span>
+                                            <span className="font-semibold text-slate-900 dark:text-white block break-all leading-snug">
+                                                {selectedEmpForInfo.app_email || selectedEmpForInfo.user?.email || 'N/A'}
+                                            </span>
                                         </div>
-                                        <div>
-                                            <span className="text-slate-400 font-medium block text-[10px]">App Role</span>
-                                            <span className="font-bold text-indigo-600 dark:text-indigo-400 uppercase">{selectedEmpForInfo.app_role || 'Staff'}</span>
+                                        <div className="min-w-0">
+                                            <span className="text-slate-400 font-medium block text-[10px] uppercase tracking-wider mb-0.5">App Role</span>
+                                            <span className="font-bold text-indigo-600 dark:text-indigo-400 uppercase block">
+                                                {selectedEmpForInfo.app_role || 'Staff'}
+                                            </span>
                                         </div>
-                                        <div className="col-span-2">
-                                            <span className="text-slate-400 font-medium block text-[10px]">App User ID</span>
-                                            <span className="font-mono text-[10px] text-slate-500 truncate block">{selectedEmpForInfo.user_id}</span>
+                                        <div className="col-span-1 sm:col-span-2 min-w-0 pt-1 border-t border-slate-100 dark:border-slate-700/60">
+                                            <span className="text-slate-400 font-medium block text-[10px] uppercase tracking-wider mb-0.5">App User ID</span>
+                                            <span className="font-mono text-[11px] text-slate-500 dark:text-slate-400 block break-all">
+                                                {selectedEmpForInfo.user_id}
+                                            </span>
                                         </div>
                                     </div>
                                 ) : (
@@ -928,36 +1089,52 @@ export default function HREmployeeDirectory({ orgId, organizationId, onRefresh }
 
                         {/* Footer */}
                         <div className="shrink-0 flex items-center justify-between px-5 py-3.5 bg-slate-50/50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800">
-                            {!selectedEmpForInfo.is_app_linked ? (
+                            <div className="flex items-center gap-2">
                                 <button
                                     onClick={() => {
-                                        const empToOnboard = selectedEmpForInfo;
+                                        const empToEdit = selectedEmpForInfo;
                                         setSelectedEmpForInfo(null);
-                                        setNewEmpData({
-                                            employee_code: empToOnboard.employee_code || '',
-                                            first_name: empToOnboard.first_name || '',
-                                            last_name: empToOnboard.last_name || '',
-                                            email: empToOnboard.email || '',
-                                            contact_number: empToOnboard.contact_number || empToOnboard.phone || '',
-                                            department: empToOnboard.department || 'Operations',
-                                            designation: empToOnboard.designation || 'Staff',
-                                            location: empToOnboard.location || 'Main Site',
-                                            reporting_manager_id: empToOnboard.reporting_manager_id || '',
-                                            create_app_account: true,
-                                            role: 'staff'
-                                        });
-                                        setShowAddModal(true);
+                                        handleOpenEditModal(empToEdit);
                                     }}
-                                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-sm"
+                                    className="px-3.5 py-2 bg-[#587e85] hover:bg-[#47676d] text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
                                 >
-                                    <UserPlus className="w-4 h-4" />
-                                    Onboard App User
+                                    <Edit3 className="w-3.5 h-3.5" />
+                                    Edit Details
                                 </button>
-                            ) : (
-                                <div className="text-[11px] text-slate-400 font-medium">
-                                    Synced with active user database
-                                </div>
-                            )}
+
+                                {!selectedEmpForInfo.is_app_linked ? (
+                                    <button
+                                        onClick={() => {
+                                            const empToOnboard = selectedEmpForInfo;
+                                            setSelectedEmpForInfo(null);
+                                            setNewEmpData({
+                                                user_id: empToOnboard.user_id || '',
+                                                employee_code: empToOnboard.employee_code || '',
+                                                first_name: empToOnboard.first_name || '',
+                                                last_name: empToOnboard.last_name || '',
+                                                email: empToOnboard.email || '',
+                                                contact_number: empToOnboard.contact_number || empToOnboard.phone || '',
+                                                department: empToOnboard.department || 'Operations',
+                                                department_id: empToOnboard.department_id || '',
+                                                designation: empToOnboard.designation || 'Staff',
+                                                location: empToOnboard.location || 'Main Site',
+                                                reporting_manager_id: empToOnboard.reporting_manager_id || '',
+                                                create_app_account: !empToOnboard.is_app_linked,
+                                                role: 'staff'
+                                            });
+                                            setShowAddModal(true);
+                                        }}
+                                        className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-sm"
+                                    >
+                                        <UserPlus className="w-3.5 h-3.5" />
+                                        Onboard App User
+                                    </button>
+                                ) : (
+                                    <div className="text-[11px] text-slate-400 font-medium">
+                                        Synced with active user database
+                                    </div>
+                                )}
+                            </div>
 
                             <button
                                 onClick={() => setSelectedEmpForInfo(null)}
@@ -990,6 +1167,47 @@ export default function HREmployeeDirectory({ orgId, organizationId, onRefresh }
 
                         <form onSubmit={handleCreateEmployee} className="flex flex-col flex-1 min-h-0 text-xs">
                             <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-3.5">
+                                {unlinkedUsers.length > 0 && (
+                                    <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200 dark:border-slate-700/80 space-y-1.5">
+                                        <label className="block text-slate-700 dark:text-slate-300 font-semibold text-xs">
+                                            Link Existing App User (Optional)
+                                        </label>
+                                        <select
+                                            value={newEmpData.user_id}
+                                            onChange={(e) => handleSelectExistingUser(e.target.value)}
+                                            className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500 text-xs"
+                                        >
+                                            <option value="">-- Manual Entry or Select App User --</option>
+                                            {unlinkedUsers.map(u => (
+                                                <option key={u.id} value={u.id}>
+                                                    {u.full_name || 'Unnamed'} ({u.email || 'No email'}) {u.phone ? `• ${u.phone}` : ''}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <div className="text-[11px] text-slate-400">
+                                            Select an existing user from the database to link their ID directly to this HR profile.
+                                        </div>
+                                    </div>
+                                )}
+
+                                {matchedAppUser && (
+                                    <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/80 rounded-xl flex items-center justify-between text-xs text-emerald-800 dark:text-emerald-300 animate-in fade-in duration-150">
+                                        <div className="flex items-center gap-2">
+                                            <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                                            <div>
+                                                <span className="font-bold">App User Found: </span>
+                                                <span>{matchedAppUser.full_name || matchedAppUser.email}</span>
+                                                <span className="text-[10px] text-emerald-600 dark:text-emerald-400 block font-mono">
+                                                    User ID: {matchedAppUser.id}
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <span className="text-[10px] bg-emerald-100 dark:bg-emerald-900/60 font-bold px-2 py-0.5 rounded-full text-emerald-700 dark:text-emerald-300 shrink-0">
+                                            Will Link ID
+                                        </span>
+                                    </div>
+                                )}
+
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                     <div>
                                         <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">First Name *</label>
@@ -1052,14 +1270,52 @@ export default function HREmployeeDirectory({ orgId, organizationId, onRefresh }
 
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                     <div>
-                                        <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Department</label>
-                                        <input
-                                            type="text"
-                                            value={newEmpData.department}
-                                            onChange={e => setNewEmpData({ ...newEmpData, department: e.target.value })}
-                                            placeholder="e.g. Operations"
-                                            className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500"
-                                        />
+                                        <div className="flex items-center justify-between mb-1">
+                                            <label className="block font-semibold text-slate-700 dark:text-slate-300">Department</label>
+                                            {selectedDeptObj && (
+                                                <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                                                    ID Linked ({selectedDeptObj.code || 'VALID'})
+                                                </span>
+                                            )}
+                                        </div>
+                                        {departmentsList.length > 0 ? (
+                                            <select
+                                                value={newEmpData.department_id || (departmentsList.find(d => d.name.toLowerCase() === (newEmpData.department || '').toLowerCase())?.id || '')}
+                                                onChange={e => {
+                                                    const chosenId = e.target.value;
+                                                    const chosen = departmentsList.find(d => d.id === chosenId);
+                                                    if (chosen) {
+                                                        setNewEmpData({
+                                                            ...newEmpData,
+                                                            department: chosen.name,
+                                                            department_id: chosen.id
+                                                        });
+                                                    } else {
+                                                        setNewEmpData({
+                                                            ...newEmpData,
+                                                            department: chosenId,
+                                                            department_id: ''
+                                                        });
+                                                    }
+                                                }}
+                                                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500 text-xs"
+                                            >
+                                                <option value="">Select Department...</option>
+                                                {departmentsList.map(d => (
+                                                    <option key={d.id} value={d.id}>
+                                                        {d.name} {d.code ? `(${d.code})` : ''}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        ) : (
+                                            <input
+                                                type="text"
+                                                value={newEmpData.department}
+                                                onChange={e => setNewEmpData({ ...newEmpData, department: e.target.value })}
+                                                placeholder="e.g. Operations, Tech..."
+                                                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500"
+                                            />
+                                        )}
                                     </div>
                                     <div>
                                         <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Designation</label>
@@ -1095,34 +1351,41 @@ export default function HREmployeeDirectory({ orgId, organizationId, onRefresh }
                                     </div>
                                 </div>
 
-                                <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl space-y-2 border border-slate-200 dark:border-slate-700">
-                                    <label className="flex items-center gap-2 cursor-pointer">
-                                        <input
-                                            type="checkbox"
-                                            checked={newEmpData.create_app_account}
-                                            onChange={e => setNewEmpData({ ...newEmpData, create_app_account: e.target.checked })}
-                                            className="w-4 h-4 text-emerald-600 rounded focus:ring-emerald-500"
-                                        />
-                                        <span className="font-bold text-slate-900 dark:text-white">Create Active App Account Now</span>
-                                    </label>
+                                {matchedAppUser ? (
+                                    <div className="p-3 bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-200/60 dark:border-emerald-800/40 rounded-xl text-xs flex items-center gap-2.5 text-emerald-800 dark:text-emerald-300">
+                                        <UserCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                                        <span>User account is already active. This HR profile will be linked directly to user ID: <span className="font-mono font-bold">{matchedAppUser.id}</span></span>
+                                    </div>
+                                ) : (
+                                    <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl space-y-2 border border-slate-200 dark:border-slate-700">
+                                        <label className="flex items-center gap-2 cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                checked={newEmpData.create_app_account}
+                                                onChange={e => setNewEmpData({ ...newEmpData, create_app_account: e.target.checked })}
+                                                className="w-4 h-4 text-emerald-600 rounded focus:ring-emerald-500"
+                                            />
+                                            <span className="font-bold text-slate-900 dark:text-white">Create Active App Account Now</span>
+                                        </label>
 
-                                    {newEmpData.create_app_account && (
-                                        <div>
-                                            <label className="block font-semibold text-slate-600 dark:text-slate-400 mb-1">Assign App Role</label>
-                                            <select
-                                                value={newEmpData.role}
-                                                onChange={e => setNewEmpData({ ...newEmpData, role: e.target.value })}
-                                                className="w-full px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
-                                            >
-                                                <option value="staff">Staff / Employee</option>
-                                                <option value="hr">HR Executive</option>
-                                                <option value="hr_head">HR Head</option>
-                                                <option value="property_admin">Property Admin</option>
-                                                <option value="org_super_admin">Org Super Admin</option>
-                                            </select>
-                                        </div>
-                                    )}
-                                </div>
+                                        {newEmpData.create_app_account && (
+                                            <div>
+                                                <label className="block font-semibold text-slate-600 dark:text-slate-400 mb-1">Assign App Role</label>
+                                                <select
+                                                    value={newEmpData.role}
+                                                    onChange={e => setNewEmpData({ ...newEmpData, role: e.target.value })}
+                                                    className="w-full px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                                                >
+                                                    <option value="staff">Staff / Employee</option>
+                                                    <option value="hr">HR Executive</option>
+                                                    <option value="hr_head">HR Head</option>
+                                                    <option value="property_admin">Property Admin</option>
+                                                    <option value="org_super_admin">Org Super Admin</option>
+                                                </select>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                             </div>
 
                             {/* Footer */}
@@ -1187,6 +1450,267 @@ export default function HREmployeeDirectory({ orgId, organizationId, onRefresh }
                                 {deleting ? 'Removing...' : 'Confirm Remove'}
                             </button>
                         </div>
+                    </div>
+                </div>
+            )}
+            {/* Edit Employee Info Modal */}
+            {editingEmpData && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-2 sm:p-4 animate-in fade-in duration-150">
+                    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl sm:rounded-3xl shadow-2xl max-w-lg w-full max-h-[92vh] sm:max-h-[85vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200 my-auto">
+                        {/* Header */}
+                        <div className="shrink-0 flex items-center justify-between px-4 sm:px-6 py-3.5 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50">
+                            <div className="flex items-center gap-2.5">
+                                <div className="p-2 bg-[#587e85]/10 dark:bg-[#587e85]/20 text-[#587e85] dark:text-teal-300 rounded-xl">
+                                    <UserCog className="w-5 h-5" />
+                                </div>
+                                <div>
+                                    <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white">
+                                        Edit Employee Information
+                                    </h3>
+                                    <p className="text-[11px] text-slate-500 font-mono mt-0.5">
+                                        {editingEmpData.employee_code} • {editingEmpData.first_name} {editingEmpData.last_name}
+                                    </p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => setEditingEmpData(null)}
+                                className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg transition-colors shrink-0"
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        <form onSubmit={handleSaveEdit} className="flex flex-col flex-1 min-h-0 text-xs">
+                            <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-3.5">
+                                {/* Error Banner */}
+                                {editError && (
+                                    <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800/80 rounded-xl flex items-center gap-2 text-xs text-red-700 dark:text-red-300">
+                                        <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
+                                        <span>{editError}</span>
+                                    </div>
+                                )}
+
+                                {/* App Link Status Notice */}
+                                {editingEmpData.is_app_linked ? (
+                                    <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 rounded-xl flex items-center justify-between text-xs text-emerald-800 dark:text-emerald-300">
+                                        <div className="flex items-center gap-2">
+                                            <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                                            <div>
+                                                <span className="font-bold">Linked App Account: </span>
+                                                <span>{editingEmpData.app_email || editingEmpData.user?.email || editingEmpData.email}</span>
+                                            </div>
+                                        </div>
+                                        <span className="text-[10px] bg-emerald-100 dark:bg-emerald-900/60 font-bold px-2 py-0.5 rounded-full text-emerald-700 dark:text-emerald-300 uppercase">
+                                            {formatAppRole(editingEmpData)}
+                                        </span>
+                                    </div>
+                                ) : (
+                                    <div className="p-2.5 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60 rounded-xl flex items-center gap-2 text-xs text-amber-800 dark:text-amber-300">
+                                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                                        <span>In Excel / Directory only (no linked app login).</span>
+                                    </div>
+                                )}
+
+                                {/* Employee Code & Location */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                                            Employee Code *
+                                        </label>
+                                        <input
+                                            type="text"
+                                            required
+                                            value={editFormData.employee_code}
+                                            onChange={e => setEditFormData({ ...editFormData, employee_code: e.target.value })}
+                                            placeholder="e.g. E005"
+                                            className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-bold outline-none focus:ring-2 focus:ring-[#587e85]"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                                            Location / Site
+                                        </label>
+                                        <input
+                                            type="text"
+                                            value={editFormData.location}
+                                            onChange={e => setEditFormData({ ...editFormData, location: e.target.value })}
+                                            placeholder="e.g. Lower Parel"
+                                            className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-[#587e85]"
+                                        />
+                                    </div>
+                                </div>
+
+                                {/* Name */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                                            First Name *
+                                        </label>
+                                        <input
+                                            type="text"
+                                            required
+                                            value={editFormData.first_name}
+                                            onChange={e => setEditFormData({ ...editFormData, first_name: e.target.value })}
+                                            placeholder="e.g. Sahil"
+                                            className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-[#587e85]"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                                            Last Name *
+                                        </label>
+                                        <input
+                                            type="text"
+                                            required
+                                            value={editFormData.last_name}
+                                            onChange={e => setEditFormData({ ...editFormData, last_name: e.target.value })}
+                                            placeholder="e.g. Sitaprao"
+                                            className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-[#587e85]"
+                                        />
+                                    </div>
+                                </div>
+
+                                {/* Email & Phone */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                                            Email Address *
+                                        </label>
+                                        <input
+                                            type="email"
+                                            required
+                                            value={editFormData.email}
+                                            onChange={e => setEditFormData({ ...editFormData, email: e.target.value })}
+                                            placeholder="e.g. employee@company.com"
+                                            className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-[#587e85]"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                                            Contact / Mobile Number
+                                        </label>
+                                        <input
+                                            type="tel"
+                                            value={editFormData.contact_number}
+                                            onChange={e => setEditFormData({ ...editFormData, contact_number: e.target.value })}
+                                            placeholder="e.g. 9820000000"
+                                            className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-[#587e85]"
+                                        />
+                                    </div>
+                                </div>
+
+                                {/* Department & Designation */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div>
+                                        <div className="flex items-center justify-between mb-1">
+                                            <label className="block font-semibold text-slate-700 dark:text-slate-300">
+                                                Department *
+                                            </label>
+                                            {departmentsList.some(d => d.name.toLowerCase() === (editFormData.department || '').toLowerCase() || d.id === editFormData.department_id) && (
+                                                <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded bg-teal-50 dark:bg-teal-950/60 text-[#587e85] dark:text-teal-300 border border-[#587e85]/30">
+                                                    Matched
+                                                </span>
+                                            )}
+                                        </div>
+                                        {departmentsList.length > 0 ? (
+                                            <select
+                                                value={editFormData.department_id || (departmentsList.find(d => d.name.toLowerCase() === (editFormData.department || '').toLowerCase())?.id || '')}
+                                                onChange={e => {
+                                                    const chosenId = e.target.value;
+                                                    const chosen = departmentsList.find(d => d.id === chosenId);
+                                                    if (chosen) {
+                                                        setEditFormData({
+                                                            ...editFormData,
+                                                            department: chosen.name,
+                                                            department_id: chosen.id
+                                                        });
+                                                    } else {
+                                                        setEditFormData({
+                                                            ...editFormData,
+                                                            department: chosenId,
+                                                            department_id: ''
+                                                        });
+                                                    }
+                                                }}
+                                                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-[#587e85] text-xs"
+                                            >
+                                                <option value="">Select Department...</option>
+                                                {departmentsList.map(d => (
+                                                    <option key={d.id} value={d.id}>
+                                                        {d.name} {d.code ? `(${d.code})` : ''}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        ) : (
+                                            <input
+                                                type="text"
+                                                value={editFormData.department}
+                                                onChange={e => setEditFormData({ ...editFormData, department: e.target.value })}
+                                                placeholder="e.g. Operations, Procurement..."
+                                                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-[#587e85]"
+                                            />
+                                        )}
+                                    </div>
+                                    <div>
+                                        <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                                            Designation
+                                        </label>
+                                        <input
+                                            type="text"
+                                            value={editFormData.designation}
+                                            onChange={e => setEditFormData({ ...editFormData, designation: e.target.value })}
+                                            placeholder="e.g. Executive, Senior Manager..."
+                                            className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-[#587e85]"
+                                        />
+                                    </div>
+                                </div>
+
+                                {/* Reporting Manager */}
+                                <div>
+                                    <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                                        Reporting Manager
+                                    </label>
+                                    <SearchableManagerDropdown
+                                        value={editFormData.reporting_manager_id}
+                                        onChange={(id) => setEditFormData({ ...editFormData, reporting_manager_id: id })}
+                                        employees={allManagers.length > 0 ? allManagers : employees}
+                                        currentEmpId={editingEmpData.id}
+                                        placeholder="Select Manager..."
+                                    />
+                                    <div className="text-[11px] text-slate-400 mt-1">
+                                        Reassigning will automatically route any new HR grievances or escalation workflows to this manager.
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Footer */}
+                            <div className="shrink-0 flex items-center justify-end gap-2 px-4 sm:px-6 py-3 bg-slate-50/50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800">
+                                <button
+                                    type="button"
+                                    onClick={() => setEditingEmpData(null)}
+                                    className="px-4 py-2 bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl font-semibold hover:bg-slate-300 transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={savingEdit}
+                                    className="px-5 py-2 bg-[#587e85] hover:bg-[#47676d] text-white rounded-xl font-bold shadow-md disabled:opacity-50 transition-colors flex items-center gap-1.5"
+                                >
+                                    {savingEdit ? (
+                                        <>
+                                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                            <span>Saving...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Check className="w-3.5 h-3.5" />
+                                            <span>Save Changes</span>
+                                        </>
+                                    )}
+                                </button>
+                            </div>
+                        </form>
                     </div>
                 </div>
             )}

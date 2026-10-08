@@ -1,5 +1,8 @@
 'use client';
 
+import { resolveOrgDashboardTab, pushDashboardNavigation, type OrgDashboardTab } from '@/frontend/lib/dashboard/orgTabs';
+import { useDashboardContent } from '@/frontend/components/layout/DashboardContentSlot';
+import PettyCashNavLink from '@/frontend/components/pettyCash/PettyCashNavLink';
 import HRTicketsContent from '@/frontend/components/hr/HRTicketsContent';
 import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from 'react';
 import {
@@ -7,7 +10,7 @@ import {
     Search, Plus, Filter, LogOut, ChevronRight, MapPin, Edit, Trash2, X, Check, UsersRound,
     Coffee, IndianRupee, PhoneCall, FileDown, ChevronDown, Fuel, Menu, Upload, FileBarChart, Zap, Package, ClipboardCheck, Scan, Key,
     AlertCircle, CheckCircle2, Clock, GitBranch, DoorOpen, MessageCircle, Send, Loader2, CalendarDays, Calendar, Wrench, ShoppingCart, Sun, Moon, Droplets, TrendingUp, Smartphone,
-    MessageSquarePlus, Bot, Gauge, Cpu, FolderLock, Layers, ShieldCheck, Mic
+    MessageSquarePlus, Bot, Gauge, Cpu, FolderLock, Layers, ShieldCheck, Mic, ClipboardList, FlaskConical
 } from 'lucide-react';
 import SatejConsole from '@/frontend/components/satej/SatejConsole';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -52,6 +55,8 @@ import WaterAnalyticsDashboard from '@/frontend/components/water/WaterAnalyticsD
 import VendorManagementModal from '@/frontend/components/vendor/VendorManagementModal';
 import GuestExperienceDashboard from '@/frontend/components/guest-experience/GuestExperienceDashboard';
 import AITicketsDashboard from '@/frontend/components/ai-tickets/AITicketsDashboard';
+import TaskManagerSuperuserDashboard from '@/frontend/components/task-manager/TaskManagerSuperuserDashboard';
+import TaskManagerTestingDashboard from '@/frontend/components/task-manager/TaskManagerTestingDashboard';
 
 import { BDQuickStats } from './UnifiedDashboard';
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
@@ -63,7 +68,7 @@ import AgentPulse from '@/frontend/components/agents/AgentPulse';
 import type { ModuleKey } from '@/frontend/types/agentRuntime';
 
 // Types
-type Tab = 'overview' | 'properties' | 'requests' | 'reports' | 'visitors' | 'settings' | 'profile' | 'revenue' | 'users' | 'diesel_logger' | 'diesel' | 'electricity_logger' | 'electricity' | 'stock_reports' | 'checklist' | 'super_tenants' | 'escalation' | 'rooms' | 'ppm' | 'vendors' | 'procurement' | 'roster' | 'water_logger' | 'water' | 'guest_experience' | 'ai_tickets' | 'org_progress' | 'org_efficiency' | 'agent_console' | 'document_bank' | 'grievance' | 'assets';
+type Tab = OrgDashboardTab;
 
 /**
  * AGENT PULSE MOUNTS — tab -> canonical module slug.
@@ -120,47 +125,16 @@ interface Organization {
 }
 
 const OrgAdminDashboard = () => {
+    const { dashboardContent, navigateDashboard } = useDashboardContent();
     const { user, signOut, membership } = useAuth();
     const params = useParams();
     const router = useRouter();
     const searchParams = useSearchParams();
     const orgSlugOrId = params?.orgId as string;
 
-    // Active Tab with URL searchParams & localStorage persistence
-    const [activeTab, setActiveTabRaw] = useState<Tab>(() => {
-        if (typeof window !== 'undefined') {
-            const urlParams = new URLSearchParams(window.location.search);
-            const tabParam = urlParams.get('tab');
-            if (tabParam) return tabParam as Tab;
-            const savedKey = orgSlugOrId ? `active_tab_${orgSlugOrId}` : 'active_tab_org';
-            const saved = localStorage.getItem(savedKey);
-            if (saved) return saved as Tab;
-        }
-        return 'overview';
-    });
-
-    const setActiveTab = useCallback((newTab: Tab | ((prev: Tab) => Tab)) => {
-        setActiveTabRaw((prevTab) => {
-            const resolvedTab = typeof newTab === 'function' ? newTab(prevTab) : newTab;
-            if (typeof window !== 'undefined') {
-                try {
-                    const savedKey = orgSlugOrId ? `active_tab_${orgSlugOrId}` : 'active_tab_org';
-                    localStorage.setItem(savedKey, resolvedTab);
-                    const url = new URL(window.location.href);
-                    url.searchParams.set('tab', resolvedTab);
-                    window.history.replaceState(null, '', url.toString());
-                } catch (e) {}
-            }
-            return resolvedTab;
-        });
-    }, [orgSlugOrId]);
-
-    useEffect(() => {
-        const tabParam = searchParams.get('tab');
-        if (tabParam) {
-            setActiveTabRaw(tabParam as Tab);
-        }
-    }, [searchParams]);
+    const isOpsTabScope = ['ops_super_admin', 'ops super admin'].includes((membership?.org_role || '').toLowerCase());
+    const dashboardTab = resolveOrgDashboardTab(searchParams.get('tab'), isOpsTabScope);
+    const activeTab = dashboardContent !== undefined ? 'petty-cash' as Tab : dashboardTab;
 
     const [org, setOrg] = useState<Organization | null>(null);
     const [properties, setProperties] = useState<Property[]>([]);
@@ -258,22 +232,12 @@ const OrgAdminDashboard = () => {
     const [isSummariesLoading, setIsSummariesLoading] = useState(false);
     const { getCachedData, setCachedData, invalidateCache } = useDataCache();
 
-    // Restore showRequestsList, filter, and selectedPropertyId from URL on mount/back navigation
-    // Restore showRequestsList, filter, and selectedPropertyId from URL on mount/back navigation
+    // Only restore subordinate filters. The validated URL owns the active tab.
     useEffect(() => {
-        const tab = searchParams.get('tab') as Tab;
-        // No ?tab= means overview: `/{orgId}/dashboard` is the board. Leaving the
-        // previous tab in place made a bare dashboard link a no-op on back navigation.
-        setActiveTab(tab || 'overview');
-        
-        const filter = searchParams.get('filter');
-        if (filter) setPendingStatusFilter(filter);
-        
-        const propId = searchParams.get('propertyId');
-        if (propId) setSelectedPropertyId(propId);
-
-        const view = searchParams.get('view') as any;
-        if (view) setRequestsView(view);
+        setPendingStatusFilter(searchParams.get('filter') || 'all');
+        setSelectedPropertyId(searchParams.get('propertyId') || 'all');
+        const view = searchParams.get('view');
+        setRequestsView(view === 'board' || view === 'flow' ? view : 'list');
     }, [searchParams]);
 
     // Robust Unified Scroll Restoration for Org Admin
@@ -547,19 +511,6 @@ const OrgAdminDashboard = () => {
         init();
     }, [orgSlugOrId, fetchOrgDetails]);
 
-    // Restore tab from URL
-    useEffect(() => {
-        const tab = searchParams.get('tab');
-        if (tab && ['overview', 'properties', 'requests', 'reports', 'visitors', 'settings', 'profile', 'revenue', 'users', 'diesel_logger', 'diesel', 'electricity_logger', 'electricity', 'stock_reports', 'checklist', 'super_tenants', 'escalation', 'rooms', 'ppm', 'vendors', 'procurement', 'roster', 'water_logger', 'water', 'guest_experience', 'agent_console', 'org_progress', 'org_efficiency', 'grievance', 'assets'].includes(tab)) {
-            if (isOpsSuperAdmin && (tab === 'org_progress' || tab === 'org_efficiency' || tab === 'agent_console')) {
-                setActiveTab('overview');
-            } else {
-                setActiveTab(tab as Tab);
-            }
-        }
-    }, [searchParams, isOpsSuperAdmin]);
-
-
     // Fetch properties ONCE when org is loaded (not on every tab change)
     useEffect(() => {
         const init = async () => {
@@ -582,7 +533,7 @@ const OrgAdminDashboard = () => {
                 user_id,
                 role,
                 is_active,
-                user:users (
+                user:users!user_id (
                     id,
                     full_name,
                     email
@@ -606,13 +557,13 @@ const OrgAdminDashboard = () => {
                     organization_id,
                     name
                 ),
-                user:users (
+                user:users!user_id (
                     id,
                     full_name,
                     email
                 )
             `)
-            .eq('properties.organization_id', org.id)
+            .eq('property.organization_id', org.id)
             .eq('is_active', true);
 
         if (propError) console.error('Error fetching property users:', propError);
@@ -850,8 +801,8 @@ const OrgAdminDashboard = () => {
     }, [org?.id, timePeriod, properties]);
 
     useEffect(() => {
-        fetchSummaries();
-    }, [fetchSummaries]);
+        if (dashboardContent === undefined) fetchSummaries();
+    }, [fetchSummaries, dashboardContent]);
 
     const uploadBase64IfNeeded = async (url: string | undefined) => {
         if (!url || !url.startsWith('data:image/')) return url;
@@ -1025,7 +976,6 @@ const OrgAdminDashboard = () => {
 
     const handleTabChange = (tab: Tab, filter: string = 'all', dateFrom?: string, dateTo?: string, procurementTab?: string) => {
         const effectiveTab = (isOpsSuperAdmin && (tab === 'org_progress' || tab === 'org_efficiency' || tab === 'agent_console')) ? 'overview' : tab;
-        setActiveTab(effectiveTab);
         setPendingStatusFilter(filter);
         setSidebarOpen(false);
         const params = new URLSearchParams(window.location.search);
@@ -1058,7 +1008,9 @@ const OrgAdminDashboard = () => {
             params.set('view', requestsView);
         }
         
-        router.replace(`${window.location.pathname}?${params.toString()}`, { scroll: false });
+        const path = dashboardContent !== undefined ? `/${orgSlugOrId}/dashboard` : window.location.pathname;
+        if (dashboardContent !== undefined) router.push(`${path}?${params.toString()}`, { scroll: false });
+        else pushDashboardNavigation(`${path}?${params.toString()}${window.location.hash}`);
     };
 
     // COMMAND CENTER — the body of the Overview tab, and nothing else. This dashboard
@@ -1252,6 +1204,7 @@ const OrgAdminDashboard = () => {
                             Management Hub
                         </p>
                         <div className="space-y-1">
+                            <PettyCashNavLink onNavigate={() => setSidebarOpen(false)} />
                             <button
                                 onClick={() => handleTabChange('properties')}
                                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'properties'
@@ -1502,6 +1455,27 @@ const OrgAdminDashboard = () => {
                         </p>
                         <div className="space-y-1">
                             <button
+                                onClick={() => handleTabChange('tasks')}
+                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm group ${activeTab === 'tasks'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-primary/10 hover:text-primary'
+                                    }`}
+                            >
+                                <ClipboardList className={`w-4 h-4 transition-transform ${activeTab === 'tasks' ? '' : 'group-hover:scale-110'}`} />
+                                <span className="flex-1 text-left">Task Manager</span>
+                            </button>
+                            <button
+                                onClick={() => handleTabChange('task_testing')}
+                                className={`w-full flex items-center gap-3 px-4 py-2 rounded-xl transition-all duration-200 font-bold text-sm group ${activeTab === 'task_testing'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-primary/10 hover:text-primary'
+                                    }`}
+                            >
+                                <Building2 className={`w-4 h-4 transition-transform ${activeTab === 'task_testing' ? '' : 'group-hover:scale-110 text-amber-500'}`} />
+                                <span className="flex-1 text-left">Control Center</span>
+                                <span className="text-[10px] uppercase font-extrabold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400">Dept & WA</span>
+                            </button>
+                            <button
                                 onClick={() => handleTabChange('ai_tickets')}
                                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm group ${activeTab === 'ai_tickets'
                                     ? 'bg-primary text-text-inverse shadow-sm'
@@ -1587,7 +1561,15 @@ const OrgAdminDashboard = () => {
             />
 
             {/* Main Content */}
-            <main id="main-scroll-container" className={`flex-1 min-w-0 w-full lg:ml-72 bg-white transition-all duration-300 overflow-y-auto ${activeTab === 'overview' ? 'p-4 md:p-6 lg:p-8' : activeTab === 'requests' ? 'pt-16 lg:pt-0 lg:p-12' : 'pt-16 lg:pt-0 p-4 md:p-8 lg:p-12'}`}>
+            <main id="main-scroll-container" className={`flex-1 min-w-0 w-full lg:ml-72 bg-white transition-all duration-300 overflow-y-auto ${activeTab === 'overview' ? 'pt-16 px-4 pb-4 md:p-6 lg:p-8' : activeTab === 'requests' ? 'pt-16 lg:pt-0 lg:p-12' : 'pt-16 lg:pt-0 p-4 md:p-8 lg:p-12'}`}>
+                {(showCommandCenter || dashboardContent !== undefined) && (
+                    <div className="lg:hidden fixed top-0 inset-x-0 h-14 bg-white border-b border-border flex items-center gap-3 px-4 z-30">
+                        <button type="button" aria-label="Open menu" onClick={() => setSidebarOpen(true)} className="p-2 text-text-secondary"><Menu className="w-6 h-6" /></button>
+                        <span className="font-semibold">{dashboardContent !== undefined ? 'Petty Cash' : 'Dashboard'}</span>
+                    </div>
+                )}
+                {dashboardContent ?? (<>
+
 
             {/* Overview IS the Command Center board — same tab, same URL, same chrome;
                 only what sits inside <main> changes. It gets its own thin header (not the
@@ -1798,6 +1780,8 @@ const OrgAdminDashboard = () => {
                             and credentials all live behind it. */}
                         {!isOpsSuperAdmin && activeTab === 'agent_console' && <AgentConsole key="agent-console-tab" orgId={org?.id ?? ''} />}
                         {activeTab === 'ai_tickets' && <AITicketsDashboard propertyId={selectedPropertyId === 'all' ? undefined : selectedPropertyId} />}
+                        {activeTab === 'tasks' && <TaskManagerSuperuserDashboard orgId={org?.id || ''} />}
+                        {activeTab === 'task_testing' && <TaskManagerTestingDashboard orgId={org?.id || ''} />}
                         {activeTab === 'revenue' && <RevenueTab key="revenue-tab" properties={properties} selectedPropertyId={selectedPropertyId} />}
                         {activeTab === 'properties' && (
                             <PropertiesTab
@@ -2126,7 +2110,9 @@ const OrgAdminDashboard = () => {
                 </AnimatePresence>
             </>
             )}
-            </main>
+
+                </>)}
+</main>
 
             {/* Modals — outside the tab branches so they stay mounted on every tab */}
             {
@@ -2159,7 +2145,7 @@ const OrgAdminDashboard = () => {
                 properties={properties}
                 onSuccess={() => {
                     fetchOrgUsers();
-                    setActiveTab('users');
+                    handleTabChange('users');
                 }}
             />
 
@@ -4218,7 +4204,7 @@ const SuperTenantOrgTab = ({ orgId, properties }: { orgId: string; properties: S
         try {
             const { data: stMems } = await supabase
                 .from('organization_memberships')
-                .select('user_id, users(id, full_name, email)')
+                .select('user_id, users!user_id(id, full_name, email)')
                 .eq('organization_id', orgId)
                 .eq('role', 'super_tenant')
                 .eq('is_active', true);
@@ -4236,7 +4222,7 @@ const SuperTenantOrgTab = ({ orgId, properties }: { orgId: string; properties: S
 
             const { data: members } = await supabase
                 .from('organization_memberships')
-                .select('user_id, role, users(id, full_name, email)')
+                .select('user_id, role, users!user_id(id, full_name, email)')
                 .eq('organization_id', orgId)
                 .eq('is_active', true)
                 .neq('role', 'super_tenant');

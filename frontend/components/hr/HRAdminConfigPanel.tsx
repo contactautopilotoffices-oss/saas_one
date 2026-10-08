@@ -446,7 +446,8 @@ export default function HRAdminConfigPanel({ orgId }: HRAdminConfigPanelProps = 
                     hr_head_profile_ids: selectedHrHeadIds,
                     director_profile_ids: selectedDirectorIds,
                     flow_assignees: payloadFlowAssignees,
-                    flow_levels: payloadFlowLevels
+                    flow_levels: payloadFlowLevels,
+                    manual_escalation: customData?.manual_escalation
                 })
             });
 

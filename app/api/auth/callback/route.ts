@@ -1,4 +1,5 @@
 import { createClient } from '@/frontend/utils/supabase/server';
+import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { NextResponse } from 'next/server';
 
 export async function GET(request: Request) {
@@ -100,6 +101,27 @@ export async function GET(request: Request) {
             const propMembership = propResult.data?.[0]; // Get the first active property membership
 
             if (profileError) console.error('Profile Error:', profileError.message);
+
+            // Sync organization_id and role to Auth user_metadata so downstream modules never find it missing
+            const targetOrgId = orgMembership?.organization_id || propMembership?.organization_id;
+            const targetRole = orgMembership?.role || propMembership?.role || (dbUser?.is_master_admin ? 'master_admin' : 'staff');
+            if (targetOrgId || targetRole) {
+                try {
+                    const adminSupabase = createAdminClient();
+                    const updatedMeta = {
+                        ...(user.user_metadata || {}),
+                        ...(targetOrgId ? { organization_id: targetOrgId } : {}),
+                        ...(targetRole ? { role: targetRole } : {}),
+                        ...(propMembership?.property_id ? { property_id: propMembership.property_id, property_role: propMembership.role } : {})
+                    };
+                    await adminSupabase.auth.admin.updateUserById(user.id, {
+                        user_metadata: updatedMeta
+                    });
+                    await adminSupabase.from('users').update({ metadata: updatedMeta }).eq('id', user.id);
+                } catch (metaErr) {
+                    console.warn('[Auth Callback] Failed to sync user_metadata:', metaErr);
+                }
+            }
 
             // --- ROLE-BASED ROUTING ---
 

@@ -72,6 +72,7 @@ export async function POST(request: NextRequest) {
             try {
                 await WhatsAppEventProcessor.processEvent(event);
             } catch (waErr) {
+                if(event.event_type?.startsWith('PETTY_CASH_'))throw waErr;
                 console.error(`[WhatsAppEventProcessor] Failed processing event ${event.id}:`, waErr);
             }
 

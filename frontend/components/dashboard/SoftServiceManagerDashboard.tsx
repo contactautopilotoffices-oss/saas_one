@@ -1,5 +1,7 @@
 'use client';
 
+import { useDashboardContent } from '@/frontend/components/layout/DashboardContentSlot';
+import PettyCashNavLink from '@/frontend/components/pettyCash/PettyCashNavLink';
 import HRTicketsContent from '@/frontend/components/hr/HRTicketsContent';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
@@ -47,17 +49,19 @@ interface SoftServiceManagerDashboardProps {
 }
 
 const SoftServiceManagerDashboard: React.FC<SoftServiceManagerDashboardProps> = ({ propertyId, userRole = '' }) => {
+    const { dashboardContent, navigateDashboard } = useDashboardContent();
     const searchParams = useSearchParams();
     const router = useRouter();
     const { user, signOut } = useAuth();
     const supabase = useMemo(() => createClient(), []);
 
     const isManager = userRole === 'soft_service_manager' || userRole === 'soft_service_supervisor';
-    const [activeTab, setActiveTab] = useState<Tab>(() => {
+    const [dashboardTab, setActiveTab] = useState<Tab>(() => {
         const tab = searchParams?.get('tab') as Tab;
         if (tab && ['stock', 'scanner', 'checklist', 'guest_experience', 'settings', 'profile', 'grievance'].includes(tab)) return tab;
         return isManager ? 'stock' : 'checklist';
     });
+    const activeTab = dashboardContent !== undefined ? 'petty-cash' as Tab : dashboardTab;
     const [property, setProperty] = useState<any>(null);
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [showSignOutModal, setShowSignOutModal] = useState(false);
@@ -87,6 +91,7 @@ const SoftServiceManagerDashboard: React.FC<SoftServiceManagerDashboardProps> = 
     }, [propertyId, supabase]);
 
     const handleTabChange = (tab: Tab) => {
+        if (dashboardContent !== undefined) { navigateDashboard(tab); setSidebarOpen(false); return; }
         setActiveTab(tab);
         setSidebarOpen(false);
         const url = new URL(window.location.href);
@@ -193,7 +198,12 @@ const SoftServiceManagerDashboard: React.FC<SoftServiceManagerDashboardProps> = 
                         </div>
                     </div>
 
-                    {/* System & Personal */}
+
+                    <div className="mb-6" data-navigation-section="management-hub">
+                        <p className="px-4 mb-3 text-[10px] font-bold uppercase tracking-widest text-text-secondary">Management Hub</p>
+                        <PettyCashNavLink onNavigate={() => setSidebarOpen(false)} />
+                    </div>
+{/* System & Personal */}
                     <div className="mb-6">
                         <p className="px-4 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-3 flex items-center gap-2">
                             <span className="w-1 h-3 bg-primary rounded-full"></span>
@@ -278,6 +288,7 @@ const SoftServiceManagerDashboard: React.FC<SoftServiceManagerDashboardProps> = 
 
             {/* Main Content */}
             <main className="flex-1 min-w-0 lg:ml-64 flex flex-col bg-background border-l border-slate-300 shadow-[-4px_0_12px_-4px_rgba(0,0,0,0.05)] relative z-10 min-h-screen overflow-x-hidden">
+
                 <header className="h-14 bg-white sticky top-0 z-30 flex justify-between items-center px-3 sm:px-5 md:px-8 border-b border-border shadow-sm">
                     <div className="flex items-center gap-2 sm:gap-3 min-w-0">
                         {/* Mobile Menu Toggle */}
@@ -303,6 +314,8 @@ const SoftServiceManagerDashboard: React.FC<SoftServiceManagerDashboardProps> = 
                         </button>
                     </div>
                 </header>
+                {dashboardContent ?? (<>
+
 
                 <div className={`flex-1 overflow-y-auto ${activeTab === 'checklist' ? 'p-0' : 'p-2 md:p-5 lg:p-8'}`} key={activeTab}>
 
@@ -353,7 +366,9 @@ const SoftServiceManagerDashboard: React.FC<SoftServiceManagerDashboardProps> = 
                         </motion.div>
                     </AnimatePresence>
                 </div>
-            </main>
+
+                </>)}
+</main>
         </div>
     );
 };

@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
     Search, Loader2, Trash2, ImageIcon, AlertTriangle, ArchiveRestore,
     Archive, Package, Check, Building2, Globe, SlidersHorizontal, X,
-    CheckSquare, Square
+    CheckSquare, Square, RotateCcw, Filter, CheckCheck
 } from 'lucide-react';
 import { createClient } from '@/frontend/utils/supabase/client';
 import { compressImage } from '@/frontend/utils/image-compression';
@@ -33,6 +33,36 @@ export interface CatalogManagerItem {
     assigned_property_ids?: string[] | null;
 }
 
+export interface ColumnFilters {
+    srNo: string;
+    photo: 'all' | 'with_photo' | 'no_photo';
+    name: string;
+    category: string;
+    unit: string;
+    brand: string;
+    priceRange: 'all' | 'free' | 'under_100' | '100_500' | '500_2000' | 'over_2000' | 'custom';
+    minPrice: string;
+    maxPrice: string;
+    property: string; // 'all' | 'universal' | 'specific_only' | propertyId
+    propertyCountOp: 'any' | 'exact' | 'gte' | 'lte';
+    propertyCountValue: string;
+}
+
+export const DEFAULT_COLUMN_FILTERS: ColumnFilters = {
+    srNo: '',
+    photo: 'all',
+    name: '',
+    category: 'all',
+    unit: 'all',
+    brand: 'all',
+    priceRange: 'all',
+    minPrice: '',
+    maxPrice: '',
+    property: 'all',
+    propertyCountOp: 'any',
+    propertyCountValue: '',
+};
+
 interface Props {
     organizationId: string;
     items: CatalogManagerItem[];
@@ -55,6 +85,8 @@ export default function CatalogManagerTable({
 }: Props) {
     const [section, setSection] = useState<'standard' | 'legacy'>('standard');
     const [search, setSearch] = useState('');
+    const [filters, setFilters] = useState<ColumnFilters>(DEFAULT_COLUMN_FILTERS);
+    const [showFilterRow, setShowFilterRow] = useState(true);
     const [savingCell, setSavingCell] = useState<string | null>(null);
     const [savedCell, setSavedCell] = useState<string | null>(null);
     const [rowBusy, setRowBusy] = useState<string | null>(null);
@@ -109,15 +141,205 @@ export default function CatalogManagerTable({
         legacy: items.filter(i => i.lifecycle === 'legacy').length,
     }), [items]);
 
+    // Derived category options with item counts
+    const categoryOptions = useMemo(() => {
+        const countsMap: Record<string, number> = {};
+        let uncategorized = 0;
+        items.forEach(i => {
+            const cat = (i.category || '').trim();
+            if (cat) countsMap[cat] = (countsMap[cat] || 0) + 1;
+            else uncategorized++;
+        });
+        CATEGORIES.forEach(c => {
+            if (!(c in countsMap)) countsMap[c] = 0;
+        });
+        const list = Object.entries(countsMap)
+            .sort((a, b) => a[0].localeCompare(b[0]))
+            .map(([name, count]) => ({ name, count }));
+        return { list, uncategorized };
+    }, [items]);
+
+    // Derived unit options with item counts
+    const unitOptions = useMemo(() => {
+        const countsMap: Record<string, number> = {};
+        items.forEach(i => {
+            const u = (i.unit || '').trim();
+            if (u) countsMap[u] = (countsMap[u] || 0) + 1;
+        });
+        return Object.entries(countsMap)
+            .sort((a, b) => b[1] - a[1])
+            .map(([name, count]) => ({ name, count }));
+    }, [items]);
+
+    // Derived brand options with item counts
+    const brandOptions = useMemo(() => {
+        const countsMap: Record<string, number> = {};
+        let noBrand = 0;
+        items.forEach(i => {
+            const b = (i.brand || '').trim();
+            if (b) countsMap[b] = (countsMap[b] || 0) + 1;
+            else noBrand++;
+        });
+        const list = Object.entries(countsMap)
+            .sort((a, b) => a[0].localeCompare(b[0]))
+            .map(([name, count]) => ({ name, count }));
+        return { list, noBrand };
+    }, [items]);
+
+    // Derived property count options (e.g. 22 properties assigned, 1 property assigned, etc.)
+    const propertyCountOptions = useMemo(() => {
+        const countsMap: Record<number, number> = {};
+        items.filter(i => (i.lifecycle || 'standard') === section).forEach(i => {
+            const count = (i.assigned_property_ids || []).filter(p => p !== 'ALL').length;
+            countsMap[count] = (countsMap[count] || 0) + 1;
+        });
+        return Object.entries(countsMap)
+            .map(([cnt, numItems]) => ({ count: Number(cnt), numItems }))
+            .filter(pc => pc.count > 0)
+            .sort((a, b) => b.count - a.count);
+    }, [items, section]);
+
+    // Active column filter count
+    const activeFilterCount = useMemo(() => {
+        let count = 0;
+        if (filters.srNo.trim()) count++;
+        if (filters.photo !== 'all') count++;
+        if (filters.name.trim()) count++;
+        if (filters.category !== 'all') count++;
+        if (filters.unit !== 'all') count++;
+        if (filters.brand !== 'all') count++;
+        if (filters.priceRange !== 'all') count++;
+        if (filters.property !== 'all') count++;
+        if (filters.propertyCountOp !== 'any' && filters.propertyCountValue.trim()) count++;
+        return count;
+    }, [filters]);
+
+    const resetFilters = useCallback(() => {
+        setFilters(DEFAULT_COLUMN_FILTERS);
+    }, []);
+
+    // Property names lookup map
+    const propertyNameMap = useMemo(() => {
+        const map: Record<string, string> = {};
+        availableProperties.forEach(p => { map[p.id] = p.name; });
+        return map;
+    }, [availableProperties]);
+
+    // Filtered property helper
+    const filteredPropertyObj = useMemo(() => {
+        if (!filters.property || ['all', 'universal', 'specific_only'].includes(filters.property) || filters.property.startsWith('count_')) return null;
+        return availableProperties.find(p => p.id === filters.property) || null;
+    }, [filters.property, availableProperties]);
+
     const visible = useMemo(() => {
         const q = search.trim().toLowerCase();
+        const fSr = filters.srNo.trim();
+        const fName = filters.name.trim().toLowerCase();
+
         return items
             .filter(i => (i.lifecycle || 'standard') === section)
+            // Global search (matches name, brand, category, item code, description, and assigned property name)
             .filter(i => !q
                 || i.name?.toLowerCase().includes(q)
                 || (i.brand || '').toLowerCase().includes(q)
-                || (i.category || '').toLowerCase().includes(q));
-    }, [items, section, search]);
+                || (i.category || '').toLowerCase().includes(q)
+                || (i.item_code || '').toLowerCase().includes(q)
+                || (i.description || '').toLowerCase().includes(q)
+                || (i.assigned_property_ids || []).some(pid => (propertyNameMap[pid] || '').toLowerCase().includes(q)))
+            // Column: Sr. No.
+            .filter(i => {
+                if (!fSr) return true;
+                const order = i.sort_order ?? 0;
+                if (fSr.includes('-')) {
+                    const [minStr, maxStr] = fSr.split('-');
+                    const min = parseInt(minStr, 10);
+                    const max = parseInt(maxStr, 10);
+                    if (!isNaN(min) && !isNaN(max)) return order >= min && order <= max;
+                    if (!isNaN(min)) return order >= min;
+                    if (!isNaN(max)) return order <= max;
+                }
+                const num = parseInt(fSr, 10);
+                if (!isNaN(num) && order === num) return true;
+                return String(order).includes(fSr);
+            })
+            // Column: Photo
+            .filter(i => {
+                if (filters.photo === 'with_photo') return Boolean(i.photo_url);
+                if (filters.photo === 'no_photo') return !i.photo_url;
+                return true;
+            })
+            // Column: Name / Description / Item code
+            .filter(i => {
+                if (!fName) return true;
+                return (
+                    i.name?.toLowerCase().includes(fName) ||
+                    (i.description || '').toLowerCase().includes(fName) ||
+                    (i.item_code || '').toLowerCase().includes(fName)
+                );
+            })
+            // Column: Category
+            .filter(i => {
+                if (filters.category === 'all') return true;
+                if (filters.category === '__uncategorized__') return !i.category || !i.category.trim();
+                return (i.category || '').trim().toLowerCase() === filters.category.toLowerCase();
+            })
+            // Column: Unit
+            .filter(i => {
+                if (filters.unit === 'all') return true;
+                return (i.unit || '').trim().toLowerCase() === filters.unit.toLowerCase();
+            })
+            // Column: Brand
+            .filter(i => {
+                if (filters.brand === 'all') return true;
+                if (filters.brand === '__no_brand__') return !i.brand || !i.brand.trim();
+                return (i.brand || '').trim().toLowerCase() === filters.brand.toLowerCase();
+            })
+            // Column: Rate
+            .filter(i => {
+                const p = priceOf(i);
+                if (filters.priceRange === 'free') return p === 0;
+                if (filters.priceRange === 'under_100') return p > 0 && p <= 100;
+                if (filters.priceRange === '100_500') return p > 100 && p <= 500;
+                if (filters.priceRange === '500_2000') return p > 500 && p <= 2000;
+                if (filters.priceRange === 'over_2000') return p > 2000;
+                if (filters.priceRange === 'custom') {
+                    const min = parseFloat(filters.minPrice);
+                    const max = parseFloat(filters.maxPrice);
+                    if (!isNaN(min) && p < min) return false;
+                    if (!isNaN(max) && p > max) return false;
+                }
+                return true;
+            })
+            // Column: Property & Count
+            .filter(i => {
+                const assigned = i.assigned_property_ids || [];
+                const actualCount = assigned.filter(p => p !== 'ALL').length;
+                const isUniversal = assigned.length === 0 || assigned.includes('ALL');
+
+                // Property count operator filter (=, >=, <=)
+                if (filters.propertyCountOp !== 'any' && filters.propertyCountValue.trim() !== '') {
+                    const target = parseInt(filters.propertyCountValue, 10);
+                    if (!isNaN(target)) {
+                        if (filters.propertyCountOp === 'exact' && actualCount !== target) return false;
+                        if (filters.propertyCountOp === 'gte' && actualCount < target) return false;
+                        if (filters.propertyCountOp === 'lte' && actualCount > target) return false;
+                    }
+                }
+
+                if (filters.property === 'all') return true;
+                if (filters.property === 'universal') return isUniversal;
+                if (filters.property === 'specific_only') return !isUniversal;
+
+                // Filter by exact property count: e.g. "count_22"
+                if (filters.property.startsWith('count_')) {
+                    const targetCount = parseInt(filters.property.replace('count_', ''), 10);
+                    return actualCount === targetCount;
+                }
+
+                // Property selected: show items available to this property (Universal items + items specifically assigned to it)
+                return isUniversal || assigned.includes(filters.property);
+            });
+    }, [items, section, search, filters]);
 
     // Selection helpers
     const isAllVisibleSelected = visible.length > 0 && visible.every(i => selectedItemIds.has(i.id));
@@ -256,8 +478,11 @@ export default function CatalogManagerTable({
         }
     };
 
-    // ─── Save Property Assignments (Single / Bulk) ───────────────────────────
-    const handleSavePropertyAssignments = async (assignedPropertyIds: string[]) => {
+    // ─── Save Property Assignments (Single / Bulk / Instant) ───────────────────────────
+    const handleSavePropertyAssignments = async (
+        assignedPropertyIds: string[],
+        strategy: 'replace' | 'append' = 'replace'
+    ) => {
         if (!propertyModalState) return;
         const { targetItemIds } = propertyModalState;
         if (targetItemIds.length === 0) return;
@@ -266,33 +491,196 @@ export default function CatalogManagerTable({
         setError('');
         try {
             const isBulk = targetItemIds.length > 1;
-            const payload = isBulk
-                ? { item_ids: targetItemIds, organization_id: organizationId, assigned_property_ids: assignedPropertyIds }
-                : { id: targetItemIds[0], organization_id: organizationId, assigned_property_ids: assignedPropertyIds };
 
-            const res = await fetch('/api/procurement/catalog', {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-            });
-            const data = await res.json();
+            if (isBulk && strategy === 'append' && assignedPropertyIds.length > 0) {
+                // Append mode: merge assigned IDs for each item
+                const updates = targetItemIds.map(id => {
+                    const current = items.find(i => i.id === id)?.assigned_property_ids || [];
+                    const merged = Array.from(new Set([...current.filter(p => p !== 'ALL'), ...assignedPropertyIds]));
+                    return { id, assigned_property_ids: merged };
+                });
 
-            if (!res.ok) {
-                setError(data.error || 'Failed to update property assignment');
-                return;
-            }
+                await Promise.all(updates.map(u =>
+                    fetch('/api/procurement/catalog', {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            id: u.id,
+                            organization_id: organizationId,
+                            assigned_property_ids: u.assigned_property_ids
+                        }),
+                    })
+                ));
 
-            // Update local state for all target items
-            items.forEach(i => {
-                if (targetItemIds.includes(i.id)) {
-                    onItemUpdated({ ...i, assigned_property_ids: assignedPropertyIds });
+                updates.forEach(u => {
+                    const current = items.find(i => i.id === u.id);
+                    if (current) onItemUpdated({ ...current, assigned_property_ids: u.assigned_property_ids });
+                });
+            } else {
+                // Replace mode: single bulk or single item call
+                const payload = isBulk
+                    ? { item_ids: targetItemIds, organization_id: organizationId, assigned_property_ids: assignedPropertyIds }
+                    : { id: targetItemIds[0], organization_id: organizationId, assigned_property_ids: assignedPropertyIds };
+
+                const res = await fetch('/api/procurement/catalog', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const data = await res.json();
+
+                if (!res.ok) {
+                    setError(data.error || 'Failed to update property assignment');
+                    return;
                 }
-            });
+
+                // Update local state for all target items
+                items.forEach(i => {
+                    if (targetItemIds.includes(i.id)) {
+                        onItemUpdated({ ...i, assigned_property_ids: assignedPropertyIds });
+                    }
+                });
+            }
 
             setSelectedItemIds(new Set());
             setPropertyModalState(null);
         } catch {
             setError('Network error while saving property assignments');
+        } finally {
+            setIsSavingProp(false);
+        }
+    };
+
+    // ─── Instant 1-Click Assign to Filtered Property ────────────────────────
+    const handleInstantAssignFilteredProperty = async () => {
+        if (!filteredPropertyObj) return;
+        const targetItemIds = Array.from(selectedItemIds);
+        if (targetItemIds.length === 0) return;
+
+        setIsSavingProp(true);
+        setError('');
+        try {
+            const updates = targetItemIds.map(id => {
+                const current = items.find(i => i.id === id)?.assigned_property_ids || [];
+                const merged = Array.from(new Set([...current.filter(p => p !== 'ALL'), filteredPropertyObj.id]));
+                return { id, assigned_property_ids: merged };
+            });
+
+            const firstArrStr = JSON.stringify(updates[0].assigned_property_ids.slice().sort());
+            const allSame = updates.every(u => JSON.stringify(u.assigned_property_ids.slice().sort()) === firstArrStr);
+
+            if (allSame) {
+                const res = await fetch('/api/procurement/catalog', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        item_ids: targetItemIds,
+                        organization_id: organizationId,
+                        assigned_property_ids: updates[0].assigned_property_ids
+                    }),
+                });
+                if (!res.ok) {
+                    const data = await res.json();
+                    setError(data.error || `Failed to assign to ${filteredPropertyObj.name}`);
+                    return;
+                }
+            } else {
+                await Promise.all(updates.map(u =>
+                    fetch('/api/procurement/catalog', {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            id: u.id,
+                            organization_id: organizationId,
+                            assigned_property_ids: u.assigned_property_ids
+                        }),
+                    })
+                ));
+            }
+
+            updates.forEach(u => {
+                const current = items.find(i => i.id === u.id);
+                if (current) onItemUpdated({ ...current, assigned_property_ids: u.assigned_property_ids });
+            });
+
+            setSelectedItemIds(new Set());
+        } catch {
+            setError(`Network error while assigning to ${filteredPropertyObj.name}`);
+        } finally {
+            setIsSavingProp(false);
+        }
+    };
+
+    // ─── Instant 1-Click Make Universal (All Properties) ────────────────────
+    const handleInstantMakeUniversal = async () => {
+        const targetItemIds = Array.from(selectedItemIds);
+        if (targetItemIds.length === 0) return;
+
+        setIsSavingProp(true);
+        setError('');
+        try {
+            const res = await fetch('/api/procurement/catalog', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    item_ids: targetItemIds,
+                    organization_id: organizationId,
+                    assigned_property_ids: []
+                }),
+            });
+            if (!res.ok) {
+                const data = await res.json();
+                setError(data.error || 'Failed to make items universal');
+                return;
+            }
+
+            targetItemIds.forEach(id => {
+                const current = items.find(i => i.id === id);
+                if (current) onItemUpdated({ ...current, assigned_property_ids: [] });
+            });
+
+            setSelectedItemIds(new Set());
+        } catch {
+            setError('Network error while updating items');
+        } finally {
+            setIsSavingProp(false);
+        }
+    };
+
+    // ─── Instant 1-Click Add Property to Selected (Append) ─────────────────
+    const handleAddSinglePropertyToSelected = async (propertyIdToAdd: string) => {
+        const targetItemIds = Array.from(selectedItemIds);
+        if (targetItemIds.length === 0 || !propertyIdToAdd) return;
+
+        setIsSavingProp(true);
+        setError('');
+        try {
+            const updates = targetItemIds.map(id => {
+                const current = items.find(i => i.id === id)?.assigned_property_ids || [];
+                const merged = Array.from(new Set([...current.filter(p => p !== 'ALL'), propertyIdToAdd]));
+                return { id, assigned_property_ids: merged };
+            });
+
+            await Promise.all(updates.map(u =>
+                fetch('/api/procurement/catalog', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id: u.id,
+                        organization_id: organizationId,
+                        assigned_property_ids: u.assigned_property_ids
+                    }),
+                })
+            ));
+
+            updates.forEach(u => {
+                const current = items.find(i => i.id === u.id);
+                if (current) onItemUpdated({ ...current, assigned_property_ids: u.assigned_property_ids });
+            });
+
+            setSelectedItemIds(new Set());
+        } catch {
+            setError('Network error while adding property to selected items');
         } finally {
             setIsSavingProp(false);
         }
@@ -401,43 +789,286 @@ export default function CatalogManagerTable({
                     ))}
                 </div>
 
-                <div className="relative flex-1 min-w-[200px] max-w-sm">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                    <input
-                        value={search}
-                        onChange={e => setSearch(e.target.value)}
-                        placeholder="Search name, brand, category…"
-                        className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700 focus:outline-hidden focus:border-slate-400 focus:bg-white transition-colors"
-                    />
+                <div className="flex items-center gap-2 flex-1 min-w-[240px] max-w-md">
+                    <div className="relative flex-1">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                        <input
+                            value={search}
+                            onChange={e => setSearch(e.target.value)}
+                            placeholder="Search name, brand, category…"
+                            className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700 focus:outline-hidden focus:border-slate-400 focus:bg-white transition-colors"
+                        />
+                    </div>
+                    {/* Toggle Column Filters Row */}
+                    <button
+                        type="button"
+                        onClick={() => setShowFilterRow(prev => !prev)}
+                        className={`px-3 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 border shrink-0 ${
+                            showFilterRow || activeFilterCount > 0
+                                ? 'bg-slate-900 text-white border-slate-900 shadow-sm'
+                                : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200'
+                        }`}
+                        title="Toggle column filters row"
+                    >
+                        <SlidersHorizontal className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">Filters</span>
+                        {activeFilterCount > 0 && (
+                            <span className="px-1.5 py-0.5 rounded-md text-[10px] font-black bg-emerald-400 text-slate-950">
+                                {activeFilterCount}
+                            </span>
+                        )}
+                    </button>
                 </div>
             </div>
 
+            {/* ── Active Filter Badges ───────────────────────────────────────── */}
+            {activeFilterCount > 0 && (
+                <div className="flex flex-wrap items-center gap-2 p-2 bg-slate-50 border border-slate-200/80 rounded-2xl animate-in fade-in duration-200">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 pl-1 mr-1">
+                        Active Filters:
+                    </span>
+
+                    {filters.srNo && (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white text-slate-800 text-[11px] font-bold border border-slate-200 shadow-2xs">
+                            <span>Sr. No: {filters.srNo}</span>
+                            <button type="button" onClick={() => setFilters(f => ({ ...f, srNo: '' }))} className="hover:text-rose-500">
+                                <X className="w-3 h-3" />
+                            </button>
+                        </span>
+                    )}
+
+                    {filters.photo !== 'all' && (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white text-slate-800 text-[11px] font-bold border border-slate-200 shadow-2xs">
+                            <span>Photo: {filters.photo === 'with_photo' ? 'With Photo' : 'No Photo'}</span>
+                            <button type="button" onClick={() => setFilters(f => ({ ...f, photo: 'all' }))} className="hover:text-rose-500">
+                                <X className="w-3 h-3" />
+                            </button>
+                        </span>
+                    )}
+
+                    {filters.name && (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white text-slate-800 text-[11px] font-bold border border-slate-200 shadow-2xs">
+                            <span>Name: "{filters.name}"</span>
+                            <button type="button" onClick={() => setFilters(f => ({ ...f, name: '' }))} className="hover:text-rose-500">
+                                <X className="w-3 h-3" />
+                            </button>
+                        </span>
+                    )}
+
+                    {filters.category !== 'all' && (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white text-slate-800 text-[11px] font-bold border border-slate-200 shadow-2xs">
+                            <span>Category: {filters.category === '__uncategorized__' ? 'Uncategorized' : filters.category}</span>
+                            <button type="button" onClick={() => setFilters(f => ({ ...f, category: 'all' }))} className="hover:text-rose-500">
+                                <X className="w-3 h-3" />
+                            </button>
+                        </span>
+                    )}
+
+                    {filters.unit !== 'all' && (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white text-slate-800 text-[11px] font-bold border border-slate-200 shadow-2xs">
+                            <span>Unit: {filters.unit}</span>
+                            <button type="button" onClick={() => setFilters(f => ({ ...f, unit: 'all' }))} className="hover:text-rose-500">
+                                <X className="w-3 h-3" />
+                            </button>
+                        </span>
+                    )}
+
+                    {filters.brand !== 'all' && (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white text-slate-800 text-[11px] font-bold border border-slate-200 shadow-2xs">
+                            <span>Brand: {filters.brand === '__no_brand__' ? 'No Brand' : filters.brand}</span>
+                            <button type="button" onClick={() => setFilters(f => ({ ...f, brand: 'all' }))} className="hover:text-rose-500">
+                                <X className="w-3 h-3" />
+                            </button>
+                        </span>
+                    )}
+
+                    {filters.priceRange !== 'all' && (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white text-slate-800 text-[11px] font-bold border border-slate-200 shadow-2xs">
+                            <span>
+                                Rate: {
+                                    filters.priceRange === 'free' ? 'Free (₹0)' :
+                                    filters.priceRange === 'under_100' ? '≤ ₹100' :
+                                    filters.priceRange === '100_500' ? '₹100–₹500' :
+                                    filters.priceRange === '500_2000' ? '₹500–₹2k' :
+                                    filters.priceRange === 'over_2000' ? '> ₹2k' :
+                                    `₹${filters.minPrice || 0}–₹${filters.maxPrice || '∞'}`
+                                }
+                            </span>
+                            <button type="button" onClick={() => setFilters(f => ({ ...f, priceRange: 'all', minPrice: '', maxPrice: '' }))} className="hover:text-rose-500">
+                                <X className="w-3 h-3" />
+                            </button>
+                        </span>
+                    )}
+
+                    {filters.property !== 'all' && (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-900 text-[11px] font-black border border-emerald-200 shadow-2xs">
+                            <Building2 className="w-3 h-3 text-emerald-600" />
+                            <span>
+                                Property: {
+                                    filters.property === 'universal' ? 'Universal (All)' :
+                                    filters.property === 'specific_only' ? 'Specific Properties' :
+                                    filters.property.startsWith('count_') ? `Assigned to ${filters.property.replace('count_', '')} Properties` :
+                                    (filteredPropertyObj?.name || 'Selected Property')
+                                }
+                            </span>
+                            <button type="button" onClick={() => setFilters(f => ({ ...f, property: 'all' }))} className="hover:text-rose-500">
+                                <X className="w-3 h-3" />
+                            </button>
+                        </span>
+                    )}
+
+                    {filters.propertyCountOp !== 'any' && filters.propertyCountValue.trim() && (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-900 text-[11px] font-black border border-emerald-200 shadow-2xs">
+                            <Building2 className="w-3 h-3 text-emerald-600" />
+                            <span>
+                                Property Count: {
+                                    filters.propertyCountOp === 'exact' ? `= ${filters.propertyCountValue}` :
+                                    filters.propertyCountOp === 'gte' ? `≥ ${filters.propertyCountValue}` :
+                                    `≤ ${filters.propertyCountValue}`
+                                }
+                            </span>
+                            <button type="button" onClick={() => setFilters(f => ({ ...f, propertyCountOp: 'any', propertyCountValue: '' }))} className="hover:text-rose-500">
+                                <X className="w-3 h-3" />
+                            </button>
+                        </span>
+                    )}
+
+                    <button
+                        type="button"
+                        onClick={resetFilters}
+                        className="text-[11px] font-black text-rose-500 hover:text-rose-700 underline underline-offset-2 ml-auto pr-2"
+                    >
+                        Clear all
+                    </button>
+                </div>
+            )}
+
             {/* ── Bulk Action Bar ────────────────────────────────────────────── */}
             {canManage && selectedItemIds.size > 0 && (
-                <div className="rounded-2xl bg-slate-950 p-3 text-white shadow-xl flex items-center justify-between gap-4 animate-in fade-in slide-in-from-top-2 duration-200">
+                <div className="rounded-2xl bg-slate-950 p-3 text-white shadow-xl flex flex-wrap items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2 duration-200">
                     <div className="flex items-center gap-2 pl-2">
-                        <CheckSquare className="w-5 h-5 text-white" />
+                        <CheckSquare className="w-5 h-5 text-emerald-400" />
                         <span className="text-xs font-black tracking-wide">
                             {selectedItemIds.size} item{selectedItemIds.size > 1 ? 's' : ''} selected
                         </span>
+                        {visible.length !== items.length && (
+                            <span className="text-[11px] text-slate-400 font-medium">
+                                (of {visible.length} filtered)
+                            </span>
+                        )}
+                        {selectedItemIds.size < visible.length && (
+                            <button
+                                type="button"
+                                onClick={() => setSelectedItemIds(new Set(visible.map(i => i.id)))}
+                                className="text-[11px] text-emerald-400 hover:underline font-bold ml-1"
+                            >
+                                Select all {visible.length} filtered
+                            </button>
+                        )}
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                        {/* 1-Click Instant Assign to the filtered property! */}
+                        {filteredPropertyObj && (
+                            <button
+                                type="button"
+                                onClick={handleInstantAssignFilteredProperty}
+                                disabled={isSavingProp}
+                                className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black uppercase tracking-wider transition-all shadow-md flex items-center gap-1.5 border border-emerald-500 active:scale-95 disabled:opacity-50"
+                                title={`Instantly assign all ${selectedItemIds.size} selected items to ${filteredPropertyObj.name}`}
+                            >
+                                {isSavingProp ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Building2 className="w-3.5 h-3.5" />}
+                                <span>Assign to {filteredPropertyObj.name}</span>
+                            </button>
+                        )}
+
+                        {/* 1-Click Make Universal */}
                         <button
+                            type="button"
+                            onClick={handleInstantMakeUniversal}
+                            disabled={isSavingProp}
+                            className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-all border border-slate-700 flex items-center gap-1.5"
+                            title="Make selected items available to ALL properties"
+                        >
+                            <Globe className="w-3.5 h-3.5 text-emerald-400" />
+                            <span>Make Universal</span>
+                        </button>
+
+                        {/* Instant Quick Add Property Dropdown */}
+                        {availableProperties.length > 0 && (
+                            <select
+                                defaultValue=""
+                                disabled={isSavingProp}
+                                onChange={async (e) => {
+                                    const propId = e.target.value;
+                                    if (!propId) return;
+                                    const targetProp = availableProperties.find(p => p.id === propId);
+                                    if (!targetProp) return;
+                                    if (!confirm(`Add "${targetProp.name}" to all ${selectedItemIds.size} selected items? (Existing properties will be kept)`)) {
+                                        e.target.value = '';
+                                        return;
+                                    }
+                                    await handleAddSinglePropertyToSelected(propId);
+                                    e.target.value = '';
+                                }}
+                                className="h-8 px-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-bold border border-slate-700 focus:outline-none cursor-pointer"
+                                title="Add a property to all selected items while keeping their existing assignments"
+                            >
+                                <option value="" disabled>+ Add Property to Selected…</option>
+                                {availableProperties.map(p => (
+                                    <option key={p.id} value={p.id}>
+                                        + {p.name}
+                                    </option>
+                                ))}
+                            </select>
+                        )}
+
+                        {/* Standard Modal Assign */}
+                        <button
+                            type="button"
                             onClick={() => {
                                 const selectedArr = Array.from(selectedItemIds);
-                                const firstItem = items.find(i => i.id === selectedArr[0]);
+                                const selectedItems = items.filter(i => selectedItemIds.has(i.id));
+
+                                // Calculate common properties assigned across selected items
+                                let resolvedInitialPropIds: string[] = [];
+
+                                if (selectedItems.length > 0) {
+                                    // Properties present on ALL selected items (intersection)
+                                    const commonProps = selectedItems.reduce<string[]>((acc, item, idx) => {
+                                        const itemProps = (item.assigned_property_ids || []).filter(p => p && p !== 'ALL');
+                                        if (idx === 0) return [...itemProps];
+                                        return acc.filter(id => itemProps.includes(id));
+                                    }, []);
+
+                                    if (commonProps.length > 0) {
+                                        resolvedInitialPropIds = commonProps;
+                                    } else {
+                                        // Union of assigned properties across selected items
+                                        const unionProps = Array.from(new Set(
+                                            selectedItems.flatMap(i => (i.assigned_property_ids || []).filter(p => p && p !== 'ALL'))
+                                        ));
+                                        resolvedInitialPropIds = unionProps;
+                                    }
+                                }
+
+                                if (filteredPropertyObj && !resolvedInitialPropIds.includes(filteredPropertyObj.id)) {
+                                    resolvedInitialPropIds = [filteredPropertyObj.id, ...resolvedInitialPropIds];
+                                }
+
                                 setPropertyModalState({
                                     isOpen: true,
                                     targetItemIds: selectedArr,
-                                    initialPropIds: selectedArr.length === 1 ? (firstItem?.assigned_property_ids || []) : []
+                                    initialPropIds: resolvedInitialPropIds
                                 });
                             }}
-                            className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-black uppercase tracking-wider transition-all shadow-md flex items-center gap-2 border border-slate-700"
+                            className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-black uppercase tracking-wider transition-all shadow-md flex items-center gap-2 border border-slate-700 active:scale-95"
                         >
                             <Building2 className="w-4 h-4 text-emerald-400" />
-                            Assign Properties
+                            Assign Properties…
                         </button>
+
                         <button
+                            type="button"
                             onClick={() => setSelectedItemIds(new Set())}
                             className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white/80 text-xs font-bold transition-all"
                         >
@@ -461,14 +1092,16 @@ export default function CatalogManagerTable({
             )}
 
             {/* ── Table ────────────────────────────────────────────────────── */}
-            <div className="rounded-2xl border border-slate-200 overflow-hidden bg-white">
+            <div className="rounded-2xl border border-slate-200 overflow-hidden bg-white shadow-xs">
                 <div className="overflow-x-auto max-h-[62vh]">
                     <table className="w-full text-xs border-collapse">
-                        <thead className="sticky top-0 z-10">
+                        <thead className="sticky top-0 z-10 shadow-xs">
+                            {/* Column Header Titles */}
                             <tr className="bg-slate-100 text-slate-500 text-[10px] font-black uppercase tracking-widest text-left">
                                 {canManage && (
                                     <th className="py-2.5 px-3 w-10 border-b border-slate-200 text-center">
                                         <button
+                                            type="button"
                                             onClick={toggleSelectAll}
                                             title={isAllVisibleSelected ? 'Deselect all visible' : 'Select all visible'}
                                             className="text-slate-400 hover:text-slate-900 transition-colors inline-flex items-center justify-center"
@@ -477,16 +1110,310 @@ export default function CatalogManagerTable({
                                         </button>
                                     </th>
                                 )}
-                                <th className="py-2.5 px-3 w-16 border-b border-slate-200">Sr. No.</th>
-                                <th className="py-2.5 px-3 w-16 border-b border-slate-200">Image</th>
-                                <th className="py-2.5 px-3 min-w-[200px] border-b border-slate-200">Item Description</th>
-                                <th className="py-2.5 px-3 w-32 border-b border-slate-200">Category</th>
-                                <th className="py-2.5 px-3 w-28 border-b border-slate-200">Unit</th>
-                                <th className="py-2.5 px-3 w-32 border-b border-slate-200">Brands</th>
-                                <th className="py-2.5 px-3 w-28 border-b border-slate-200">Final Rate</th>
-                                <th className="py-2.5 px-3 min-w-[140px] border-b border-slate-200">Assigned Properties</th>
-                                {canManage && <th className="py-2.5 px-3 w-24 border-b border-slate-200 text-right">Actions</th>}
+                                <th className="py-2.5 px-2 w-20 border-b border-slate-200">Sr. No.</th>
+                                <th className="py-2.5 px-2 w-20 border-b border-slate-200">Image</th>
+                                <th className="py-2.5 px-2 min-w-[200px] border-b border-slate-200">Item Description</th>
+                                <th className="py-2.5 px-2 w-36 border-b border-slate-200">Category</th>
+                                <th className="py-2.5 px-2 w-28 border-b border-slate-200">Unit</th>
+                                <th className="py-2.5 px-2 w-36 border-b border-slate-200">Brands</th>
+                                <th className="py-2.5 px-2 w-32 border-b border-slate-200">Final Rate</th>
+                                <th className="py-2.5 px-3 min-w-[220px] border-b border-slate-200">Assigned Properties</th>
+                                {canManage && <th className="py-2.5 px-2 w-24 border-b border-slate-200 text-right">Actions</th>}
                             </tr>
+
+                            {/* ── Column Filters Row ────────────────────────────── */}
+                            {showFilterRow && (
+                                <tr className="bg-slate-50/95 backdrop-blur-xs border-b-2 border-slate-200 text-left">
+                                    {canManage && (
+                                        <th className="py-1.5 px-3 text-center align-top">
+                                            {activeFilterCount > 0 ? (
+                                                <button
+                                                    type="button"
+                                                    onClick={resetFilters}
+                                                    title="Reset all column filters"
+                                                    className="p-1 rounded-md text-rose-500 hover:bg-rose-100 transition-colors inline-flex items-center justify-center"
+                                                >
+                                                    <RotateCcw className="w-3.5 h-3.5" />
+                                                </button>
+                                            ) : (
+                                                <div className="flex items-center justify-center pt-1.5">
+                                                    <Filter className="w-3 h-3 text-slate-300" />
+                                                </div>
+                                            )}
+                                        </th>
+                                    )}
+
+                                    {/* Sr No Filter */}
+                                    <th className="py-1.5 px-2 align-top">
+                                        <input
+                                            type="text"
+                                            value={filters.srNo}
+                                            onChange={e => setFilters(f => ({ ...f, srNo: e.target.value }))}
+                                            placeholder="e.g. 1-20"
+                                            title="Filter by Sr. No. (e.g. 5 or 1-50)"
+                                            className="w-full h-7 px-1.5 text-center text-[11px] font-bold rounded-lg border border-slate-200 bg-white placeholder:text-slate-400 placeholder:font-medium text-slate-800 focus:outline-none focus:border-slate-400"
+                                        />
+                                    </th>
+
+                                    {/* Photo Filter */}
+                                    <th className="py-1.5 px-2 align-top">
+                                        <select
+                                            value={filters.photo}
+                                            onChange={e => setFilters(f => ({ ...f, photo: e.target.value as any }))}
+                                            className="w-full h-7 px-1 text-[11px] font-bold rounded-lg border border-slate-200 bg-white text-slate-800 focus:outline-none focus:border-slate-400"
+                                        >
+                                            <option value="all">All</option>
+                                            <option value="with_photo">📷 Photo</option>
+                                            <option value="no_photo">No photo</option>
+                                        </select>
+                                    </th>
+
+                                    {/* Name / Description Filter */}
+                                    <th className="py-1.5 px-2 align-top">
+                                        <div className="relative">
+                                            <input
+                                                type="text"
+                                                value={filters.name}
+                                                onChange={e => setFilters(f => ({ ...f, name: e.target.value }))}
+                                                placeholder="Filter description…"
+                                                className="w-full h-7 pl-2 pr-6 text-[11px] font-bold rounded-lg border border-slate-200 bg-white placeholder:text-slate-400 placeholder:font-medium text-slate-800 focus:outline-none focus:border-slate-400"
+                                            />
+                                            {filters.name && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setFilters(f => ({ ...f, name: '' }))}
+                                                    className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+                                                >
+                                                    <X className="w-3 h-3" />
+                                                </button>
+                                            )}
+                                        </div>
+                                    </th>
+
+                                    {/* Category Filter */}
+                                    <th className="py-1.5 px-2 align-top">
+                                        <select
+                                            value={filters.category}
+                                            onChange={e => setFilters(f => ({ ...f, category: e.target.value }))}
+                                            className="w-full h-7 px-1.5 text-[11px] font-bold rounded-lg border border-slate-200 bg-white text-slate-800 focus:outline-none focus:border-slate-400 truncate"
+                                        >
+                                            <option value="all">All Categories</option>
+                                            {categoryOptions.list.map(c => (
+                                                <option key={c.name} value={c.name}>
+                                                    {c.name} ({c.count})
+                                                </option>
+                                            ))}
+                                            {categoryOptions.uncategorized > 0 && (
+                                                <option value="__uncategorized__">
+                                                    Uncategorized ({categoryOptions.uncategorized})
+                                                </option>
+                                            )}
+                                        </select>
+                                    </th>
+
+                                    {/* Unit Filter */}
+                                    <th className="py-1.5 px-2 align-top">
+                                        <select
+                                            value={filters.unit}
+                                            onChange={e => setFilters(f => ({ ...f, unit: e.target.value }))}
+                                            className="w-full h-7 px-1.5 text-[11px] font-bold rounded-lg border border-slate-200 bg-white text-slate-800 focus:outline-none focus:border-slate-400 truncate"
+                                        >
+                                            <option value="all">All Units</option>
+                                            {unitOptions.map(u => (
+                                                <option key={u.name} value={u.name}>
+                                                    {u.name} ({u.count})
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </th>
+
+                                    {/* Brand Filter */}
+                                    <th className="py-1.5 px-2 align-top">
+                                        <select
+                                            value={filters.brand}
+                                            onChange={e => setFilters(f => ({ ...f, brand: e.target.value }))}
+                                            className="w-full h-7 px-1.5 text-[11px] font-bold rounded-lg border border-slate-200 bg-white text-slate-800 focus:outline-none focus:border-slate-400 truncate"
+                                        >
+                                            <option value="all">All Brands</option>
+                                            {brandOptions.list.map(b => (
+                                                <option key={b.name} value={b.name}>
+                                                    {b.name} ({b.count})
+                                                </option>
+                                            ))}
+                                            {brandOptions.noBrand > 0 && (
+                                                <option value="__no_brand__">
+                                                    No Brand ({brandOptions.noBrand})
+                                                </option>
+                                            )}
+                                        </select>
+                                    </th>
+
+                                    {/* Final Rate Filter */}
+                                    <th className="py-1.5 px-2 align-top">
+                                        <div className="space-y-1">
+                                            <select
+                                                value={filters.priceRange}
+                                                onChange={e => setFilters(f => ({ ...f, priceRange: e.target.value as any }))}
+                                                className="w-full h-7 px-1 text-[11px] font-bold rounded-lg border border-slate-200 bg-white text-slate-800 focus:outline-none focus:border-slate-400"
+                                            >
+                                                <option value="all">All Rates</option>
+                                                <option value="free">Free (₹0)</option>
+                                                <option value="under_100">≤ ₹100</option>
+                                                <option value="100_500">₹100–₹500</option>
+                                                <option value="500_2000">₹500–₹2k</option>
+                                                <option value="over_2000">&gt; ₹2k</option>
+                                                <option value="custom">Custom…</option>
+                                            </select>
+                                            {filters.priceRange === 'custom' && (
+                                                <div className="flex items-center gap-1">
+                                                    <input
+                                                        type="number"
+                                                        placeholder="Min"
+                                                        value={filters.minPrice}
+                                                        onChange={e => setFilters(f => ({ ...f, minPrice: e.target.value }))}
+                                                        className="w-1/2 h-6 px-1 text-[10px] font-bold rounded border border-slate-200 bg-white text-slate-800 focus:outline-none"
+                                                    />
+                                                    <input
+                                                        type="number"
+                                                        placeholder="Max"
+                                                        value={filters.maxPrice}
+                                                        onChange={e => setFilters(f => ({ ...f, maxPrice: e.target.value }))}
+                                                        className="w-1/2 h-6 px-1 text-[10px] font-bold rounded border border-slate-200 bg-white text-slate-800 focus:outline-none"
+                                                    />
+                                                </div>
+                                            )}
+                                        </div>
+                                    </th>
+
+                                    {/* Assigned Properties Filter */}
+                                    <th className="py-1.5 px-3 align-top min-w-[200px]">
+                                        <div className="space-y-1.5">
+                                            <select
+                                                value={filters.property}
+                                                onChange={e => {
+                                                    const val = e.target.value;
+                                                    setFilters(f => ({
+                                                        ...f,
+                                                        property: val,
+                                                        ...(val.startsWith('count_') ? { propertyCountOp: 'any', propertyCountValue: '' } : {})
+                                                    }));
+                                                }}
+                                                className="w-full h-7 px-1.5 text-[11px] font-bold rounded-lg border border-slate-200 bg-white text-slate-800 focus:outline-none focus:border-slate-400 truncate"
+                                                title="Filter items showing for this property"
+                                            >
+                                                <option value="all">All Properties</option>
+                                                <option value="universal">🌐 Universal (All Properties)</option>
+                                                <option value="specific_only">🏢 Specific Properties Only</option>
+
+                                                {/* Dynamically derived property count groups */}
+                                                {propertyCountOptions.length > 0 && (
+                                                    <optgroup label="By Assigned Count (Dynamic):">
+                                                        {propertyCountOptions.map(pc => (
+                                                            <option key={pc.count} value={`count_${pc.count}`}>
+                                                                📋 Exactly {pc.count} {pc.count === 1 ? 'Property' : 'Properties'} ({pc.numItems} items)
+                                                            </option>
+                                                        ))}
+                                                    </optgroup>
+                                                )}
+
+                                                {availableProperties.length > 0 && (
+                                                    <optgroup label="Filter by Property:">
+                                                        {availableProperties.map(p => (
+                                                            <option key={p.id} value={p.id}>
+                                                                🏢 {p.name}
+                                                            </option>
+                                                        ))}
+                                                    </optgroup>
+                                                )}
+                                            </select>
+
+                                            {/* Dynamic Flexible Property Count Filter (=, >=, <=) */}
+                                            <div className="flex items-center gap-1">
+                                                <select
+                                                    value={filters.propertyCountOp}
+                                                    onChange={e => {
+                                                        const op = e.target.value as any;
+                                                        setFilters(f => ({
+                                                            ...f,
+                                                            propertyCountOp: op,
+                                                            ...(f.property.startsWith('count_') ? { property: 'all' } : {})
+                                                        }));
+                                                    }}
+                                                    className="h-6 px-1 text-[10px] font-black rounded border border-slate-200 bg-white text-slate-700"
+                                                    title="Filter by count of assigned properties"
+                                                >
+                                                    <option value="any">Count Filter…</option>
+                                                    <option value="exact">= (Exact)</option>
+                                                    <option value="gte">≥ (At least)</option>
+                                                    <option value="lte">≤ (At most)</option>
+                                                </select>
+                                                {filters.propertyCountOp !== 'any' ? (
+                                                    <div className="flex items-center gap-0.5 flex-1">
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            placeholder="Count"
+                                                            value={filters.propertyCountValue}
+                                                            onChange={e => setFilters(f => ({ ...f, propertyCountValue: e.target.value }))}
+                                                            className="w-14 h-6 px-1.5 text-[10px] font-black rounded border border-emerald-300 bg-emerald-50/50 text-emerald-950 focus:outline-none"
+                                                        />
+                                                        {filters.propertyCountValue && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setFilters(f => ({ ...f, propertyCountOp: 'any', propertyCountValue: '' }))}
+                                                                className="text-slate-400 hover:text-rose-500 p-0.5"
+                                                                title="Clear count filter"
+                                                            >
+                                                                <X className="w-3 h-3" />
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                ) : (
+                                                    /* Dynamic Quick Count Badges from Catalog */
+                                                    propertyCountOptions.length > 0 && (
+                                                        <div className="flex items-center gap-1 overflow-x-auto scrollbar-hide py-0.5">
+                                                            {propertyCountOptions.map(pc => (
+                                                                <button
+                                                                    key={pc.count}
+                                                                    type="button"
+                                                                    onClick={() => setFilters(f => ({
+                                                                        ...f,
+                                                                        propertyCountOp: 'exact',
+                                                                        propertyCountValue: String(pc.count),
+                                                                        ...(f.property.startsWith('count_') ? { property: 'all' } : {})
+                                                                    }))}
+                                                                    className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200/80 whitespace-nowrap transition-colors"
+                                                                    title={`Filter to items with exactly ${pc.count} properties assigned (${pc.numItems} items)`}
+                                                                >
+                                                                    ={pc.count} ({pc.numItems})
+                                                                </button>
+                                                            ))}
+                                                        </div>
+                                                    )
+                                                )}
+                                            </div>
+                                        </div>
+                                    </th>
+
+                                    {/* Actions Column Filter Reset */}
+                                    {canManage && (
+                                        <th className="py-1.5 px-2 text-right align-top">
+                                            {activeFilterCount > 0 ? (
+                                                <button
+                                                    type="button"
+                                                    onClick={resetFilters}
+                                                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-rose-50 hover:bg-rose-100 text-rose-600 font-black text-[10px] border border-rose-200 transition-colors"
+                                                >
+                                                    <RotateCcw className="w-3 h-3" />
+                                                    <span>Reset</span>
+                                                </button>
+                                            ) : (
+                                                <span className="text-[10px] text-slate-300 font-bold block pt-1 pr-1">—</span>
+                                            )}
+                                        </th>
+                                    )}
+                                </tr>
+                            )}
                         </thead>
                         <tbody className="divide-y divide-slate-50">
                             {isLoading && (
@@ -667,7 +1594,14 @@ export default function CatalogManagerTable({
             </div>
 
             <div className="flex items-center justify-between text-[11px] font-bold text-slate-400">
-                <span>{visible.length} of {section === 'standard' ? counts.standard : counts.legacy} shown</span>
+                <div className="flex items-center gap-2">
+                    <span>{visible.length} of {section === 'standard' ? counts.standard : counts.legacy} shown</span>
+                    {activeFilterCount > 0 && (
+                        <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 text-[10px] font-black border border-emerald-200">
+                            {activeFilterCount} active filter{activeFilterCount > 1 ? 's' : ''}
+                        </span>
+                    )}
+                </div>
                 <span className="inline-flex items-center gap-1.5">
                     <Check className="w-3 h-3 text-emerald-500" /> Edits save automatically
                 </span>
@@ -694,6 +1628,14 @@ export default function CatalogManagerTable({
                     initialAssignedIds={propertyModalState.initialPropIds}
                     availableProperties={availableProperties}
                     isSaving={isSavingProp}
+                    activeFilterPropertyName={
+                        filteredPropertyObj?.name ||
+                        (filters.property.startsWith('count_')
+                            ? `Assigned to ${filters.property.replace('count_', '')} Properties`
+                            : (filters.propertyCountOp !== 'any' && filters.propertyCountValue
+                                ? `Assigned to ${filters.propertyCountValue} Properties`
+                                : undefined))
+                    }
                     onClose={() => setPropertyModalState(null)}
                     onSave={handleSavePropertyAssignments}
                 />
@@ -710,8 +1652,9 @@ interface PropertyAssignmentModalProps {
     initialAssignedIds: string[];
     availableProperties: PropertyOption[];
     isSaving: boolean;
+    activeFilterPropertyName?: string;
     onClose: () => void;
-    onSave: (assignedPropertyIds: string[]) => void;
+    onSave: (assignedPropertyIds: string[], strategy?: 'replace' | 'append') => void;
 }
 
 function PropertyAssignmentModal({
@@ -721,15 +1664,25 @@ function PropertyAssignmentModal({
     initialAssignedIds,
     availableProperties,
     isSaving,
+    activeFilterPropertyName,
     onClose,
     onSave,
 }: PropertyAssignmentModalProps) {
     const isInitialAll = initialAssignedIds.length === 0 || initialAssignedIds.includes('ALL');
     const [mode, setMode] = useState<'all' | 'specific'>(isInitialAll ? 'all' : 'specific');
+    const [strategy, setStrategy] = useState<'replace' | 'append'>('replace');
     const [selectedPropIds, setSelectedPropIds] = useState<Set<string>>(
         new Set(isInitialAll ? [] : initialAssignedIds)
     );
     const [propSearch, setPropSearch] = useState('');
+
+    useEffect(() => {
+        if (isOpen) {
+            const isAll = initialAssignedIds.length === 0 || initialAssignedIds.includes('ALL');
+            setMode(isAll ? 'all' : 'specific');
+            setSelectedPropIds(new Set(isAll ? [] : initialAssignedIds));
+        }
+    }, [isOpen, initialAssignedIds]);
 
     if (!isOpen) return null;
 
@@ -759,7 +1712,7 @@ function PropertyAssignmentModal({
         if (mode === 'all') {
             onSave([]);
         } else {
-            onSave(Array.from(selectedPropIds));
+            onSave(Array.from(selectedPropIds), strategy);
         }
     };
 
@@ -792,6 +1745,14 @@ function PropertyAssignmentModal({
 
                 {/* Body */}
                 <div className="p-6 space-y-5 overflow-y-auto flex-1 custom-scrollbar">
+                    {/* Active Filter Notice */}
+                    {activeFilterPropertyName && (
+                        <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center gap-2 text-emerald-900 text-xs font-bold">
+                            <Building2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                            <span>Pre-selected for your filter: <strong>{activeFilterPropertyName}</strong></span>
+                        </div>
+                    )}
+
                     {/* Mode Selector */}
                     <div className="grid grid-cols-2 gap-2 p-1.5 bg-slate-100 rounded-2xl border border-slate-200/60">
                         <button
@@ -832,6 +1793,37 @@ function PropertyAssignmentModal({
                         </div>
                     ) : (
                         <div className="space-y-3.5">
+                            {/* Bulk strategy when multiple items are selected */}
+                            {targetItemCount > 1 && (
+                                <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs">
+                                    <span className="font-bold text-slate-700">Assignment Strategy:</span>
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => setStrategy('replace')}
+                                            className={`px-2.5 py-1 rounded-lg font-bold text-[11px] transition-all ${
+                                                strategy === 'replace'
+                                                    ? 'bg-slate-900 text-white'
+                                                    : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+                                            }`}
+                                        >
+                                            Replace Assignments
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setStrategy('append')}
+                                            className={`px-2.5 py-1 rounded-lg font-bold text-[11px] transition-all ${
+                                                strategy === 'append'
+                                                    ? 'bg-slate-900 text-white'
+                                                    : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+                                            }`}
+                                        >
+                                            Add to Existing
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+
                             {/* Search & Bulk Select */}
                             <div className="flex items-center justify-between gap-3">
                                 <div className="relative flex-1">

@@ -1,5 +1,7 @@
 'use client';
 
+import { useDashboardContent } from '@/frontend/components/layout/DashboardContentSlot';
+import PettyCashNavLink from '@/frontend/components/pettyCash/PettyCashNavLink';
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { createClient } from '@utils/supabase/client';
 import { 
@@ -27,8 +29,9 @@ import ProcurementVendorTicketsTab from '../procurement/ProcurementVendorTickets
 import { ProcurementSettingsTab } from '../procurement/ProcurementSettingsTab';
 import PaymentUrgencyTrackerTab from '../procurement/payment-urgency/PaymentUrgencyTrackerTab';
 import { INITIAL_TEST_TASKS } from '../procurement/payment-urgency/mockData';
-import { Layers, DollarSign, PhoneCall, Mic } from 'lucide-react';
+import { Layers, DollarSign, PhoneCall, Mic, ClipboardList } from 'lucide-react';
 import SatejConsole from '@/frontend/components/satej/SatejConsole';
+import ProcurementTasksTab from '../procurement/ProcurementTasksTab';
 
 // --- Types ---
 interface MaterialRequest {
@@ -63,9 +66,10 @@ interface MaterialRequest {
     };
 }
 
-type Tab = 'overview' | 'vendor-discovery' | 'urgency-tracker' | 'task-sheet' | 'requests' | 'vendor_tickets' | 'monthly-requisitions' | 'monthly-feedback' | 'site-pricing' | 'history' | 'manage-items' | 'po-generator' | 'settings' | 'profile' | 'grievance';
+type Tab = 'overview' | 'vendor-discovery' | 'tasks' | 'urgency-tracker' | 'task-sheet' | 'requests' | 'vendor_tickets' | 'monthly-requisitions' | 'monthly-feedback' | 'site-pricing' | 'history' | 'manage-items' | 'po-generator' | 'settings' | 'profile' | 'grievance';
 
 export default function ProcurementDashboard() {
+    const { dashboardContent, navigateDashboard } = useDashboardContent();
     const supabase = createClient();
     const searchParams = useSearchParams();
     const router = useRouter();
@@ -75,7 +79,9 @@ export default function ProcurementDashboard() {
     const [activities, setActivities] = useState<any[]>([]);
     const [procurementUsers, setProcurementUsers] = useState<any[]>([]);
     const [allProperties, setAllProperties] = useState<any[]>([]);
-    const [activeTab, setActiveTabState] = useState<Tab>('overview');
+    const [dashboardTab, setActiveTabState] = useState<Tab>('overview');
+    // When the dashboard is showing a content page (petty cash), that wins over the tab state.
+    const activeTab = dashboardContent !== undefined ? 'petty-cash' as Tab : dashboardTab;
     /**
      * Every tab change is written to the address bar. "Raise Grievance" puts
      * ?tab=grievance in the URL; when the other tabs only changed state, that
@@ -95,7 +101,7 @@ export default function ProcurementDashboard() {
 
     useEffect(() => {
         const tabParam = searchParams?.get('tab') as Tab | null;
-        const linkableTabs = ['overview', 'vendor-discovery', 'urgency-tracker', 'task-sheet', 'requests', 'vendor_tickets', 'monthly-requisitions', 'monthly-feedback', 'history', 'manage-items', 'po-generator', 'settings', 'profile', 'grievance'];
+        const linkableTabs = ['overview', 'vendor-discovery', 'tasks', 'urgency-tracker', 'task-sheet', 'requests', 'vendor_tickets', 'monthly-requisitions', 'monthly-feedback', 'history', 'manage-items', 'po-generator', 'settings', 'profile', 'grievance'];
         if (SHOW_LEGACY_PER_PROPERTY_CONTROLS) linkableTabs.push('site-pricing');
         if (tabParam && linkableTabs.includes(tabParam)) {
             setActiveTabState(tabParam);
@@ -156,9 +162,14 @@ export default function ProcurementDashboard() {
             if (user?.user_metadata?.organization_id) {
                 setUserOrgId(user.user_metadata.organization_id);
             } else if (user?.id) {
-                supabase.from('organization_memberships').select('organization_id').eq('user_id', user.id).limit(1).maybeSingle().then(({ data }) => {
-                    if (data?.organization_id) setUserOrgId(data.organization_id);
-                });
+                const { data: om } = await supabase.from('organization_memberships').select('organization_id').eq('user_id', user.id).eq('is_active', true).limit(1).maybeSingle();
+                if (om?.organization_id) {
+                    setUserOrgId(om.organization_id);
+                } else {
+                    const { data: pm } = await supabase.from('property_memberships').select('organization_id, property:properties(organization_id)').eq('user_id', user.id).eq('is_active', true).limit(1).maybeSingle();
+                    const org = pm?.organization_id || (pm?.property as any)?.organization_id;
+                    if (org) setUserOrgId(org);
+                }
             }
         };
         getUser();
@@ -171,7 +182,7 @@ export default function ProcurementDashboard() {
     // --- Fetching Logic ---
     const fetchSidebarCounts = useCallback(async () => {
         try {
-            const orgId = user?.user_metadata?.organization_id;
+            const orgId = userOrgId || user?.user_metadata?.organization_id;
 
             // 1. Pending Vendor Requirement Tickets count — "pending" means anything short
             // of arranged, matching ProcurementVendorTicketsTab's own pendingCount (status
@@ -263,7 +274,7 @@ export default function ProcurementDashboard() {
 
     const fetchProperties = useCallback(async () => {
         try {
-            const orgId = user?.user_metadata?.organization_id;
+            const orgId = userOrgId || user?.user_metadata?.organization_id;
             let url = '/api/properties';
             if (orgId) url += `?organizationId=${orgId}`;
             
@@ -594,6 +605,7 @@ export default function ProcurementDashboard() {
                                         icon: LayoutDashboard, 
                                         label: 'Dashboard' 
                                     },
+                                    { id: 'tasks', icon: ClipboardList, label: 'Tasks' },
                                     { 
                                         id: 'urgency-tracker', 
                                         icon: Layers, 
@@ -663,7 +675,7 @@ export default function ProcurementDashboard() {
                                 ].map((item: any) => (
                                     <button
                                         key={item.id}
-                                        onClick={() => { if (item.href) { router.push(item.href); return; } setActiveTab(item.id as Tab); setSidebarOpen(false); }}
+                                        onClick={() => { if (item.href) { router.push(item.href); return; } if (dashboardContent !== undefined) navigateDashboard(item.id); else setActiveTab(item.id as Tab); setSidebarOpen(false); }}
                                         className={`w-full flex items-center justify-between px-4 py-3 rounded-xl font-bold text-sm transition-all ${activeTab === item.id 
                                             ? 'bg-primary text-white shadow-md' 
                                             : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'}`}
@@ -704,7 +716,7 @@ export default function ProcurementDashboard() {
                                 ].map((item) => (
                                     <button
                                         key={item.id}
-                                        onClick={() => { setActiveTab(item.id as Tab); setSidebarOpen(false); }}
+                                        onClick={() => { if (dashboardContent !== undefined) navigateDashboard(item.id); else setActiveTab(item.id as Tab); setSidebarOpen(false); }}
                                         className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-sm transition-all ${activeTab === item.id 
                                             ? 'bg-primary text-white shadow-md' 
                                             : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'}`}
@@ -715,7 +727,12 @@ export default function ProcurementDashboard() {
                                 ))}
                             </div>
                         </div>
-                    </nav>
+
+                    <div className="mb-6" data-navigation-section="management-hub">
+                        <p className="px-4 mb-3 text-[10px] font-bold uppercase tracking-widest text-text-secondary">Management Hub</p>
+                        <PettyCashNavLink onNavigate={() => setSidebarOpen(false)} />
+                    </div>
+</nav>
 
                     <div className="px-6 py-6 border-t border-slate-100 mt-auto flex-shrink-0 bg-slate-50/50">
                         <div className="flex items-center gap-4 mb-6">
@@ -745,6 +762,7 @@ export default function ProcurementDashboard() {
             </aside>
 
             <main className="flex-1 lg:ml-72 min-h-screen flex flex-col bg-slate-50 overflow-y-auto">
+
                 <header className="h-20 bg-white/80 backdrop-blur-md border-b border-slate-200 sticky top-0 z-40 px-8 flex items-center justify-between">
                     <div className="flex items-center gap-4">
                         <button onClick={() => setSidebarOpen(true)} className="lg:hidden p-2 text-slate-500 hover:bg-slate-100 rounded-xl">
@@ -755,8 +773,9 @@ export default function ProcurementDashboard() {
                                 {activeTab.replace(/-/g, ' ')}
                             </h1>
                             <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">
-                                {activeTab === 'overview' ? 'Operational Overview' : 
+                                {activeTab === 'overview' ? 'Operational Overview' :
                                  activeTab === 'vendor-discovery' ? 'Meera finds, calls and ranks vendors' :
+                                 activeTab === 'tasks' ? 'Your team task board' :
                                  activeTab === 'manage-items' ? `Catalog · ${stats.total} Items` :
                                  activeTab === 'po-generator' ? 'AI Purchase Order Processor' :
                                  `Awaiting Fulfillment · ${stats.pending} Items`}
@@ -817,6 +836,8 @@ export default function ProcurementDashboard() {
                         </div>
                     </div>
                 </header>
+                {dashboardContent ?? (<>
+
 
                 <div className="p-8">
                     <AnimatePresence mode="wait">
@@ -857,17 +878,18 @@ export default function ProcurementDashboard() {
                                 fetchRequests={fetchRequests}
                             />
                         )}
+                        {activeTab === 'tasks' && <ProcurementTasksTab departmentName="Procurement" />}
                         {activeTab === 'urgency-tracker' && (
                             <PaymentUrgencyTrackerTab
                                 user={user}
-                                organizationId={user?.user_metadata?.organization_id}
+                                organizationId={userOrgId || user?.user_metadata?.organization_id}
                                 isSuperAdmin={isAdmin}
                             />
                         )}
                         {activeTab === 'task-sheet' && (
                             <PaymentUrgencyTrackerTab
                                 user={user}
-                                organizationId={user?.user_metadata?.organization_id}
+                                organizationId={userOrgId || user?.user_metadata?.organization_id}
                                 isSuperAdmin={isAdmin}
                             />
                         )}
@@ -876,27 +898,27 @@ export default function ProcurementDashboard() {
                         {activeTab === 'monthly-requisitions' && (
                             <MonthlyRequisitionsTab
                                 user={user}
-                                organizationId={user?.user_metadata?.organization_id}
-                                userRole={user?.user_metadata?.role || 'procurement_user'}
+                                organizationId={userOrgId || user?.user_metadata?.organization_id}
+                                userRole={isAdmin ? 'org_super_admin' : (user?.user_metadata?.role || 'procurement')}
                                 onNavigateToFeedback={() => setActiveTab('monthly-feedback')}
                             />
                         )}
                         {activeTab === 'monthly-feedback' && (
                             <ProcurementFeedbackTab
-                                organizationId={user?.user_metadata?.organization_id}
+                                organizationId={userOrgId || user?.user_metadata?.organization_id}
                                 properties={allProperties}
                             />
                         )}
                         {activeTab === 'site-pricing' && SHOW_LEGACY_PER_PROPERTY_CONTROLS && (
                             <SitePricingAdminTab
                                 user={user}
-                                organizationId={user?.user_metadata?.organization_id}
+                                organizationId={userOrgId || user?.user_metadata?.organization_id}
                                 properties={allProperties}
                             />
                         )}
                         {activeTab === 'manage-items' && (
                             <ManageItemsTab 
-                                organizationId={user?.user_metadata?.organization_id} 
+                                organizationId={userOrgId || user?.user_metadata?.organization_id} 
                                 propertyId={propertyFilter === 'all' ? '' : propertyFilter}
                                 isProcurementUser={isProcurementRole}
                             />
@@ -908,7 +930,7 @@ export default function ProcurementDashboard() {
                         )}
                         {activeTab === 'po-generator' && (
                             <div className="py-8">
-                                <ProcurementPOProcessor organizationId={user?.user_metadata?.organization_id} />
+                                <ProcurementPOProcessor organizationId={userOrgId || user?.user_metadata?.organization_id} />
                             </div>
                         )}
                         {activeTab === 'settings' && (
@@ -930,7 +952,9 @@ export default function ProcurementDashboard() {
                         )}
                     </AnimatePresence>
                 </div>
-            </main>
+
+                </>)}
+</main>
 
             <SignOutModal isOpen={showSignOutModal} onClose={() => setShowSignOutModal(false)} onConfirm={async () => {
                 await supabase.auth.signOut();

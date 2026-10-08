@@ -105,7 +105,7 @@ export async function GET(request: NextRequest) {
                 resolved_at, sla_deadline, sla_breached, sla_hours, total_paused_minutes, sla_pause_reason,
                 category:issue_categories(id, code, name),
                 skill_group:skill_groups(id, code, name),
-                creator:users!raised_by(id, full_name, email, user_photo_url, property_memberships(role, property_id)),
+                creator:users!raised_by(id, full_name, email, user_photo_url, property_memberships!property_memberships_user_id_fkey(role, property_id)),
                 assignee:users!assigned_to(id, full_name, email, user_photo_url),
                 organization:organizations(id, name, code),
                 property:properties(id, name, code),

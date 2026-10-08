@@ -40,7 +40,13 @@ export async function POST(request: NextRequest) {
         let finalPropId = selectedPropertyId;
         let targetOrgId = AUTOPILOT_ORG_ID;
 
-        if (!finalPropId || finalPropId === 'default') {
+        if (selectedRole === 'accounts') {
+            // Finance joins the configured organization, without a property assignment.
+            finalPropId = null;
+            if (!targetOrgId) {
+                return NextResponse.json({ error: 'Organization is not configured.' }, { status: 400 });
+            }
+        } else if (!finalPropId || finalPropId === 'default') {
             const { data: realProp } = await adminClient
                 .from('properties')
                 .select('id, organization_id')
@@ -80,20 +86,36 @@ export async function POST(request: NextRequest) {
             ? 'soft_service_manager'
             : selectedRole;
 
-        // 3. Upsert Property Membership (pending approval, is_active: false)
-        const { error: propMembErr } = await adminClient
-            .from('property_memberships')
-            .upsert({
-                user_id: authUser.id,
-                organization_id: targetOrgId,
-                property_id: finalPropId,
-                role: finalRole as any,
-                is_active: false // Held until administrator approves
-            }, { onConflict: 'user_id,property_id' });
+        // 3. Accounts applicants have only a pending organization membership.
+        if (selectedRole === 'accounts') {
+            const { error: orgMembErr } = await adminClient
+                .from('organization_memberships')
+                .upsert({
+                    user_id: authUser.id,
+                    organization_id: targetOrgId,
+                    role: 'accounts',
+                    is_active: false
+                }, { onConflict: 'user_id,organization_id' });
 
-        if (propMembErr && !propMembErr.message.toLowerCase().includes('duplicate key')) {
-            console.error('[Onboarding Complete] property_memberships insert failed:', propMembErr);
-            return NextResponse.json({ error: propMembErr.message }, { status: 500 });
+            if (orgMembErr) {
+                return NextResponse.json({ error: orgMembErr.message }, { status: 500 });
+            }
+        } else {
+            // Property roles remain pending until an administrator approves.
+            const { error: propMembErr } = await adminClient
+                .from('property_memberships')
+                .upsert({
+                    user_id: authUser.id,
+                    organization_id: targetOrgId,
+                    property_id: finalPropId,
+                    role: finalRole as any,
+                    is_active: false // Held until administrator approves
+                }, { onConflict: 'user_id,property_id' });
+
+            if (propMembErr && !propMembErr.message.toLowerCase().includes('duplicate key')) {
+                console.error('[Onboarding Complete] property_memberships insert failed:', propMembErr);
+                return NextResponse.json({ error: propMembErr.message }, { status: 500 });
+            }
         }
 
         // 4. Role-specific organization memberships

@@ -1,219 +1,74 @@
 'use client';
-
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { useParams } from 'next/navigation';
-import { Plus, Search, Wallet, RefreshCw } from 'lucide-react';
-import { useAuth } from '@/frontend/context/AuthContext';
-import { createClient } from '@/frontend/utils/supabase/client';
-import { pettyCashCaps, PC_STATUS_META, PettyCashRequest, inr } from '@/frontend/lib/pettyCash/roles';
+import { useCallback, useEffect, useState, useRef } from 'react';
+import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { ArrowDownLeft, ArrowUpRight, CheckCircle2, ChevronLeft, ChevronRight, FilePlus2, Inbox, Loader2, Plus, RefreshCw, RotateCcw, Wallet } from 'lucide-react';
+import { Button } from '@/frontend/components/ui/button';
+import PettyCashStyles from './PettyCashStyles';
+import { inr, PC_STATUS_META } from '@/frontend/lib/pettyCash/roles';
 import NewRequestModal from './NewRequestModal';
-import RequestDetailDrawer from './RequestDetailDrawer';
-import PettyCashTracker from './PettyCashTracker';
-
-type Tab = 'mine' | 'approvals' | 'disbursements' | 'all' | 'tracker';
-
-function StatusBadge({ status }: { status: string }) {
-    const m = PC_STATUS_META[status] || { label: status, color: '#6B7280' };
-    return (
-        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold border"
-            style={{ backgroundColor: `${m.color}1A`, color: m.color, borderColor: `${m.color}44` }}>
-            {m.label}
-        </span>
-    );
-}
-
+import WorkflowRequestDetail from './WorkflowRequestDetail';
+import PropertyRoutingSettings from './PropertyRoutingSettings';
+import ExpenseHistory from './ExpenseHistory';
+import { createClient } from '@/frontend/utils/supabase/client';
+import ConsolidatedOverview from './ConsolidatedOverview';
+import { pcFetch, pcJson, type Context, type PettyCashRequest } from './workflowTypes';
 export default function PettyCashDashboard() {
-    const { membership } = useAuth();
-    const params = useParams();
-    const orgId = params?.orgId as string | undefined;
-    const caps = useMemo(() => pettyCashCaps(membership), [membership]);
-    const [supabase] = useState(() => createClient());
-
-    const tabs = useMemo(() => {
-        const t: { key: Tab; label: string }[] = [{ key: 'mine', label: 'My Requests' }];
-        if (caps.canApprove) t.push({ key: 'approvals', label: 'Approvals' });
-        if (caps.canDisburse) t.push({ key: 'disbursements', label: 'Disbursements' });
-        if (caps.isAdmin || caps.canDisburse) t.push({ key: 'all', label: 'All / Ledger' });
-        if (caps.isAdmin || caps.canDisburse) t.push({ key: 'tracker', label: 'Tracker' });
-        return t;
-    }, [caps]);
-
-    const [tab, setTab] = useState<Tab>('mine');
-    const [requests, setRequests] = useState<PettyCashRequest[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [total, setTotal] = useState(0);
-    const [search, setSearch] = useState('');
-    const [propertyFilter, setPropertyFilter] = useState('');
-    const [statusFilter, setStatusFilter] = useState('');
-    const [showNew, setShowNew] = useState(false);
-    const [selected, setSelected] = useState<PettyCashRequest | null>(null);
-
-    const buildQuery = useCallback(() => {
-        const p = new URLSearchParams({ tab, page_size: '50' });
-        if (search) p.set('search', search);
-        if (propertyFilter) p.set('property_id', propertyFilter);
-        if (statusFilter) p.append('status', statusFilter);
-        return p.toString();
-    }, [tab, search, propertyFilter, statusFilter]);
-
-    const fetchRequests = useCallback(async () => {
-        setLoading(true);
-        try {
-            const res = await fetch(`/api/petty-cash?${buildQuery()}`);
-            if (res.ok) {
-                const d = await res.json();
-                setRequests(d.requests || []);
-                setTotal(d.pagination?.total || 0);
-            } else {
-                setRequests([]);
-                setTotal(0);
-            }
-        } catch { setRequests([]); }
-        finally { setLoading(false); }
-    }, [buildQuery]);
-
-    useEffect(() => { fetchRequests(); }, [fetchRequests]);
-
-    // Live updates — refetch on any change to this org's petty cash.
-    const fetchRef = useRef(fetchRequests);
-    useEffect(() => { fetchRef.current = fetchRequests; });
-    const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const { orgId } = useParams<{ orgId: string }>();
+    const router=useRouter();const pathname=usePathname();const searchParams=useSearchParams();const linkedRequest=searchParams.get('request_id');
+    const invalidLink=linkedRequest!==null&&!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(linkedRequest);
+    const [storedContext, setContext] = useState<Context>();const context=storedContext?.organization_id===orgId?storedContext:undefined; const [requests, setRequests] = useState<PettyCashRequest[]>([]); const [tab, setTab] = useState('mine');
+    const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [showNew, setShowNew] = useState(false); const [detailTarget,setDetailTarget]=useState<{organizationId:string;id:string}>();const detailId=detailTarget?.organizationId===orgId?detailTarget.id:'';const setDetailId=(id:string)=>setDetailTarget({organizationId:orgId,id});
+    useEffect(()=>setDetailTarget(linkedRequest&&!invalidLink?{organizationId:orgId,id:linkedRequest}:undefined),[orgId,linkedRequest,invalidLink]);
+    const closeDetail=()=>{setDetailTarget(undefined);if(linkedRequest!==null){const remaining=new URLSearchParams(searchParams.toString());remaining.delete('request_id');router.replace(`${pathname}${remaining.size?`?${remaining}`:''}`,{scroll:false});}};
+    const [selected, setSelected] = useState<string[]>([]); const [amounts, setAmounts] = useState<Record<string, string>>({}); const [message, setMessage] = useState(''); const [page, setPage] = useState(1); const [pages, setPages] = useState(1); const [revision, setRevision] = useState(0);
+    const [loading,setLoading]=useState(true);const [contextLoading,setContextLoading]=useState(true);const [contextError,setContextError]=useState('');const [requestError,setRequestError]=useState('');const [requestsOrg,setRequestsOrg]=useState('');
+    const contextSequence=useRef(0);const requestSequence=useRef(0);
+    const loadContext=useCallback(async(signal?:AbortSignal)=>{const sequence=++contextSequence.current;setContextLoading(true);setContextError('');try{const data=await pcFetch<Context>(`/api/petty-cash/context?org_id=${orgId}`,{signal});if(!signal?.aborted&&sequence===contextSequence.current)setContext(data);}catch(reason){if(!signal?.aborted&&sequence===contextSequence.current){setContext(undefined);setContextError(reason instanceof Error?reason.message:'Could not load wallet and permissions');}}finally{if(!signal?.aborted&&sequence===contextSequence.current)setContextLoading(false);}},[orgId]);
+    const loadRequests=useCallback(async(signal?:AbortSignal)=>{const sequence=++requestSequence.current;setRequestError('');if(['routing','overview','expenses'].includes(tab)){setLoading(false);return;}setLoading(true);try{const data=await pcFetch<{requests:PettyCashRequest[];pagination:{total_pages:number}}>(`/api/petty-cash?org_id=${orgId}&tab=${tab}&page=${page}`,{signal});if(!signal?.aborted&&sequence===requestSequence.current){setRequests(data.requests);setRequestsOrg(orgId);setPages(Math.max(1,data.pagination.total_pages));}}catch(reason){if(!signal?.aborted&&sequence===requestSequence.current){setRequests([]);setRequestsOrg('');setRequestError(reason instanceof Error?reason.message:'Could not load requests');}}finally{if(!signal?.aborted&&sequence===requestSequence.current)setLoading(false);}},[orgId,tab,page]);
+    useEffect(()=>{const controller=new AbortController();setContext(undefined);setError('');setRequests([]);setRequestsOrg('');setSelected([]);setTab('mine');setPage(1);void loadContext(controller.signal);return()=>{controller.abort();contextSequence.current++;};},[loadContext]);
+    useEffect(()=>{const controller=new AbortController();void loadRequests(controller.signal);return()=>{controller.abort();requestSequence.current++;};},[loadRequests]);
+    const refresh=useCallback(async()=>{setError('');await Promise.all([loadContext(),loadRequests()]);setRevision(n=>n+1);},[loadContext,loadRequests]);
+    const visibleError=invalidLink?'Invalid petty cash request link. Open a request from the table or use a valid notification link.':error||contextError||requestError;
+    const refreshRef = useRef(refresh);
+    useEffect(() => { refreshRef.current = refresh; }, [refresh]);
     useEffect(() => {
-        if (!orgId) return;
-        const channel = supabase
-            .channel(`petty_cash_${orgId}`)
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'petty_cash_requests', filter: `organization_id=eq.${orgId}` },
-                () => { if (timer.current) clearTimeout(timer.current); timer.current = setTimeout(() => fetchRef.current(), 400); })
-            .subscribe();
-        return () => { if (timer.current) clearTimeout(timer.current); supabase.removeChannel(channel); };
-    }, [orgId, supabase]);
-
-    const formatDate = (d: string) => new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-
-    if (!caps.canSee) {
-        return <div className="text-center py-20 text-text-secondary">Petty Cash isn’t available for your role.</div>;
-    }
-
-    return (
-        <div className="space-y-5">
-            {/* Header */}
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-                <div>
-                    <h1 className="text-2xl font-bold text-text-primary flex items-center gap-2">
-                        <Wallet className="w-6 h-6 text-primary" /> Petty Cash
-                    </h1>
-                    <p className="text-sm text-text-secondary mt-0.5">Request, approve, disburse and settle petty cash — end to end.</p>
-                </div>
-                <button onClick={() => setShowNew(true)}
-                    className="flex items-center gap-2 px-4 py-2.5 bg-primary text-white rounded-xl text-sm font-bold hover:bg-primary/90 transition-colors">
-                    <Plus className="w-4 h-4" /> New Request
-                </button>
-            </div>
-
-            {/* Tabs */}
-            <div className="flex items-center gap-1 border-b border-border overflow-x-auto">
-                {tabs.map(t => (
-                    <button key={t.key} onClick={() => setTab(t.key)}
-                        className={`px-4 py-2.5 text-sm font-bold whitespace-nowrap border-b-2 transition-colors ${
-                            tab === t.key ? 'border-primary text-primary' : 'border-transparent text-text-secondary hover:text-text-primary'}`}>
-                        {t.label}
-                    </button>
-                ))}
-                <button onClick={fetchRequests} title="Refresh" className="ml-auto p-2 text-text-tertiary hover:text-text-primary">
-                    <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-                </button>
-            </div>
-
-            {tab === 'tracker' ? (
-                <PettyCashTracker propertyId={propertyFilter || undefined} />
-            ) : (
-            <>
-            {/* Filters */}
-            <div className="flex items-center gap-2 flex-wrap">
-                <div className="relative flex-1 min-w-[200px] max-w-sm">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-tertiary" />
-                    <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search PC# / purpose / vendor…"
-                        className="w-full pl-9 pr-4 py-2.5 border border-border rounded-xl text-sm bg-surface text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary" />
-                </div>
-                {caps.properties.length > 1 && (
-                    <select value={propertyFilter} onChange={e => setPropertyFilter(e.target.value)}
-                        className="px-3 py-2.5 border border-border rounded-xl text-sm bg-surface text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/20">
-                        <option value="">All properties</option>
-                        {caps.properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                    </select>
-                )}
-                <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-                    className="px-3 py-2.5 border border-border rounded-xl text-sm bg-surface text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/20">
-                    <option value="">All statuses</option>
-                    {Object.entries(PC_STATUS_META).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-                </select>
-                <span className="text-xs text-text-tertiary ml-auto">{total} request{total === 1 ? '' : 's'}</span>
-            </div>
-
-            {/* Table */}
-            <div className="bg-surface rounded-xl border border-border overflow-hidden">
-                <div className="overflow-x-auto">
-                    <table className="w-full">
-                        <thead>
-                            <tr className="bg-surface-elevated border-b border-border text-left">
-                                {['Request', 'Requester', 'Cash with', 'Property', 'Category', 'Amount', 'Status', 'Raised', ''].map((h, i) => (
-                                    <th key={i} className="px-4 py-3 text-xs font-bold text-text-secondary uppercase tracking-wide">{h}</th>
-                                ))}
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-border">
-                            {loading ? (
-                                [...Array(5)].map((_, i) => (
-                                    <tr key={i}><td colSpan={8} className="px-4 py-4"><div className="h-8 bg-muted rounded animate-pulse" /></td></tr>
-                                ))
-                            ) : requests.length === 0 ? (
-                                <tr><td colSpan={8} className="px-4 py-16 text-center text-text-secondary">
-                                    <Wallet className="w-10 h-10 mx-auto mb-3 text-text-tertiary" />
-                                    <p className="font-medium">No requests here</p>
-                                    <p className="text-sm mt-1">{tab === 'mine' ? 'Raise your first petty cash request.' : 'Nothing pending in this queue.'}</p>
-                                </td></tr>
-                            ) : (
-                                requests.map(r => (
-                                    <tr key={r.id} onClick={() => setSelected(r)} className="hover:bg-surface-elevated cursor-pointer transition-colors">
-                                        <td className="px-4 py-3">
-                                            <p className="font-bold text-text-primary text-sm">{r.request_no}</p>
-                                            <p className="text-xs text-text-secondary truncate max-w-[220px]">{r.purpose}</p>
-                                        </td>
-                                        <td className="px-4 py-3 text-sm text-text-primary">{r.requester?.full_name || '—'}</td>
-                                        <td className="px-4 py-3 text-sm">
-                                            {r.recipient_name
-                                                ? <span className="text-text-primary">{r.recipient_name}{r.recipient_phone ? <span className="block text-[11px] text-text-tertiary">{r.recipient_phone}</span> : null}</span>
-                                                : <span className="text-text-tertiary">Requester</span>}
-                                        </td>
-                                        <td className="px-4 py-3 text-sm text-text-secondary">{r.property?.name || '—'}</td>
-                                        <td className="px-4 py-3 text-sm text-text-secondary">{r.category || '—'}</td>
-                                        <td className="px-4 py-3 text-sm font-bold text-text-primary">{inr(r.amount_requested)}</td>
-                                        <td className="px-4 py-3"><StatusBadge status={r.status} /></td>
-                                        <td className="px-4 py-3 text-sm text-text-secondary whitespace-nowrap">{formatDate(r.created_at)}</td>
-                                        <td className="px-4 py-3 text-right"><span className="text-xs font-bold text-primary">Open →</span></td>
-                                    </tr>
-                                ))
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-            </>
-            )}
-
-            <NewRequestModal
-                open={showNew}
-                properties={caps.properties}
-                onClose={() => setShowNew(false)}
-                onCreated={() => { setShowNew(false); fetchRequests(); }}
-            />
-
-            <RequestDetailDrawer
-                request={selected}
-                caps={caps}
-                onClose={() => setSelected(null)}
-                onChanged={(updated) => { setSelected(updated); fetchRequests(); }}
-            />
-        </div>
-    );
+        const client = createClient();let timer:ReturnType<typeof setTimeout>|undefined;
+        const channel = client.channel(`pc_${orgId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'petty_cash_requests', filter: `organization_id=eq.${orgId}` }, () => {clearTimeout(timer);timer=setTimeout(()=>{void refreshRef.current();},300);}).subscribe();
+        return () => {clearTimeout(timer);void client.removeChannel(channel);};
+    }, [orgId]);
+    const tabs = [{ key: 'mine', label: 'My Wallet & Requests' }, { key: 'expenses', label: 'My Expenses' },
+        ...(context?.caps.canAllocate ? [{ key: 'allocations', label: 'To Allocate' }] : []),
+        ...(context?.caps.canApprove ? [{ key: 'approvals', label: 'To Approve' }] : []),
+        ...(context?.caps.canAllocate || context?.caps.canApprove ? [{ key: 'assigned', label: 'Assigned Requests & Spends' }] : []),
+        ...(context?.caps.canDisburse ? [{ key: 'disbursements', label: 'To Pay' }, { key: 'reconciliation', label: 'Reconciliation' }] : []),
+        ...(context?.caps.isAdmin ? [{ key: 'overview', label: 'Overview' }, { key: 'all', label: 'All Requests' }] : []),
+        ...(context?.caps.canManageRouting ? [{ key: 'routing', label: 'Property Routing' }] : []),
+    ];
+    const isBulk = tab === 'allocations' || tab === 'approvals';
+    const summary = [{ key: 'received', label: 'Received', icon: ArrowDownLeft }, { key: 'spent', label: 'Spent', icon: ArrowUpRight }, { key: 'returned', label: 'Returned', icon: RotateCcw }, { key: 'balance', label: 'Available balance', icon: Wallet }] as const;
+    return <div className="petty-cash-workflow space-y-5">
+        <PettyCashStyles />
+        <div className="pc-panel pc-header flex flex-wrap gap-4 justify-between items-center"><div className="flex items-center gap-3"><div className="pc-icon-tile"><Wallet size={20} /></div><div><h1 className="text-lg font-bold">Petty Cash</h1><p className="text-xs text-text-secondary mt-1">Manage requests, approvals, payments and expenses.</p></div></div><div className="flex flex-wrap gap-2"><Button variant="solid" size="icon" aria-label="Refresh" title="Refresh" disabled={loading || contextLoading || busy} onClick={() => { void refresh(); }}><RefreshCw size={16} className={loading || contextLoading ? 'animate-spin' : ''} /></Button><Button variant="solid" className="gap-2" disabled={!context?.properties.length} onClick={() => setShowNew(true)}><FilePlus2 size={16} />Prepare draft</Button><Button className="gap-2" disabled={!context?.wallet.can_request || !context.properties.length} onClick={() => setShowNew(true)}><Plus size={16} />Request Petty Cash</Button></div></div>
+        {visibleError && <p role="alert" className="pc-alert">{visibleError}</p>}{!context && !visibleError && <p role="status" className="flex items-center gap-2 text-sm text-text-secondary p-4"><Loader2 size={18} className="animate-spin" />Loading petty cash…</p>}
+        {!contextError && (context || requestsOrg===orgId) && <>
+            {context && tab === 'mine' && <><div className="grid grid-cols-2 xl:grid-cols-4 gap-3">{summary.map(({ key, label, icon: Icon }) => <div className={`pc-panel pc-summary ${key === 'balance' ? 'border-primary/40' : ''}`} key={key}><div className="flex justify-between items-center gap-2"><p className="text-xs font-medium text-text-secondary">{label}</p><Icon size={17} className="text-primary shrink-0" /></div><strong className="block text-2xl font-semibold tracking-tight mt-2 tabular-nums">{inr(context.wallet[key])}</strong></div>)}</div>{context.wallet.blocker && <p role="status" className="pc-notice">Next request unavailable: {context.wallet.blocker}</p>}{!context.properties.length && <p className="pc-notice">An active property assignment is needed to request cash.</p>}</>}
+            {context?.counts_error && <p role="status" className="pc-notice">{context.counts_error}</p>}
+            <nav aria-label="Petty cash views" className="flex gap-1 overflow-x-auto rounded-xl bg-surface-elevated border border-border p-1.5">{tabs.map(t => <button key={t.key} aria-label={t.label} aria-description={context?.counts?.[t.key as keyof NonNullable<Context['counts']>] === undefined ? undefined : `${context.counts[t.key as keyof NonNullable<Context['counts']>]} items awaiting action, approval or review`} title={context?.counts?.[t.key as keyof NonNullable<Context['counts']>] === undefined ? t.label : `${t.label}: ${context.counts[t.key as keyof NonNullable<Context['counts']>]} pending items`} aria-pressed={t.key === tab} disabled={busy} onClick={() => { if (t.key === tab) return; setTab(t.key); setRequests([]); setSelected([]); setPage(1); setMessage(''); }} className={`shrink-0 px-4 py-2.5 text-xs font-semibold rounded-lg whitespace-nowrap transition-colors ${t.key === tab ? 'bg-surface text-primary-dark shadow-sm' : 'text-text-secondary hover:text-text-primary hover:bg-surface/60'}`}>{t.label}{(context?.counts?.[t.key as keyof NonNullable<Context['counts']>] || 0)>0 && <span data-pending-count className="ml-2 rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px]">{context?.counts?.[t.key as keyof NonNullable<Context['counts']>]}</span>}</button>)}</nav>
+            {tab === 'routing' && context ? <PropertyRoutingSettings context={context} onSaved={() => { void loadContext(); }} /> : tab === 'expenses' ? <ExpenseHistory key={revision} org={orgId} onOpen={setDetailId} /> : tab === 'overview' ? <ConsolidatedOverview key={revision} org={orgId} onOpen={setDetailId} /> : <>
+                {isBulk && <div className="pc-panel p-4 flex flex-wrap gap-3 items-center"><button disabled={busy || loading || !selected.length} className="pc-button" onClick={async () => {
+                    const total = requests.filter(r => selected.includes(r.id)).reduce((sum, r) => sum + Number(tab === 'allocations' ? amounts[r.id] || r.amount_requested : r.allocated_amount || r.amount_requested), 0);
+                    if (!window.confirm(`${tab === 'allocations' ? 'Allocate' : 'Approve'} ${selected.length} requests totalling ${inr(total)}?`)) return;
+                    setBusy(true); setMessage(''); try {
+                        const data = await pcFetch<{ results: { id: string; ok: boolean; error?: string }[] }>('/api/petty-cash/bulk', pcJson({ organization_id: orgId, action: tab === 'allocations' ? 'allocate' : 'approve', items: requests.filter(r => selected.includes(r.id)).map(r => ({ id: r.id, expected_version: r.version, ...(tab === 'allocations' ? { allocated_amount: amounts[r.id] || r.amount_requested } : {}) })) }));
+                        setSelected(data.results.filter(r => !r.ok).map(r => r.id)); setMessage(`${data.results.filter(r => r.ok).length} succeeded. ${data.results.filter(r => !r.ok).map(r => r.error).join('; ')}`); await refresh();
+                    } catch (e) { setError(e instanceof Error ? e.message : 'Bulk action failed'); } finally { setBusy(false); }
+                }}>Process selected ({selected.length})</button><p className="text-xs text-text-secondary">Each request follows its configured approver. Allocation amounts can be edited below.</p></div>}
+                {message && <p role="status" className="pc-success"><CheckCircle2 size={18} />{message}</p>}
+                <div className="pc-table-wrap" aria-busy={loading}><table className="w-full text-sm min-w-[850px]"><thead><tr>{isBulk && <th className="p-2"><input type="checkbox" aria-label="Select all visible requests" disabled={loading || busy} checked={!!requests.length && requests.every(r => selected.includes(r.id))} onChange={e => setSelected(e.target.checked ? requests.map(r => r.id) : [])} /></th>}{['Request', 'Property', 'Requester', 'Status', 'Requested', 'Allocated', 'Approver', 'Details'].map(h => <th className="p-2 text-left" key={h}>{h}</th>)}</tr></thead><tbody>{!loading && requests.map(r => <tr key={r.id} className="border-t border-border">{isBulk && <td className="p-2"><input type="checkbox" aria-label={`Select ${r.request_no}`} disabled={loading || busy} checked={selected.includes(r.id)} onChange={e => setSelected(prev => e.target.checked ? [...prev, r.id] : prev.filter(id => id !== r.id))} /></td>}<td className="p-2 whitespace-nowrap">{r.request_no}</td><td>{r.property?.name}</td><td>{r.requester?.full_name || r.requester?.email}</td><td><span className="pc-status" data-status={r.status}>{r.request_type === 'reimbursement' ? 'Historical reimbursement' : r.workflow_version === 1 && r.status === 'submitted' ? 'Needs routing reassignment' : PC_STATUS_META[r.status]?.label || r.status}</span></td><td className="font-medium whitespace-nowrap tabular-nums">{inr(r.amount_requested)}</td><td>{tab === 'allocations' ? <input className="pc-input min-w-28" aria-label={`Allocated amount ${r.request_no}`} type="number" min="0.01" max={r.amount_requested} step="0.01" value={amounts[r.id] ?? String(r.amount_requested)} onChange={e => setAmounts(prev => ({ ...prev, [r.id]: e.target.value }))} /> : inr(r.allocated_amount)}</td><td>{r.assigned_approver?.full_name || r.assigned_approver?.email}</td><td><Button variant="solid" size="sm" disabled={!context} onClick={() => setDetailId(r.id)}>View</Button></td></tr>)}</tbody></table>{loading ? <p role="status" className="pc-empty"><Loader2 size={24} className="animate-spin" />Loading requests…</p> : !requests.length && <div className="pc-empty"><Inbox size={28} /><h3>No requests in this queue</h3><p>{tab === 'mine' ? 'Your petty cash requests will appear here. Create a request to get started.' : 'Requests will appear here when they reach this stage.'}</p></div>}</div>
+                <div className="flex gap-2 justify-end items-center"><Button variant="solid" size="sm" disabled={loading || page <= 1} onClick={() => { setPage(p => p - 1); setSelected([]); }} className="gap-1"><ChevronLeft size={14} />Previous</Button><p className="px-2 text-xs text-text-secondary">Page {page} of {pages}</p><Button variant="solid" size="sm" disabled={loading || page >= pages} onClick={() => { setPage(p => p + 1); setSelected([]); }} className="gap-1">Next<ChevronRight size={14} /></Button></div>
+            </>}
+            {showNew && context && <NewRequestModal open properties={context.properties} organizationId={orgId} routes={context.routes} canSubmit={context.wallet.can_request} blocker={context.wallet.blocker} onClose={() => setShowNew(false)} onCreated={() => { setShowNew(false); void refresh(); }} />}
+            {detailId && context && <WorkflowRequestDetail key={`${orgId}:${detailId}`} context={context} id={detailId} onClose={closeDetail} onChanged={() => { void refresh(); }} />}
+        </>}
+    </div>;
 }

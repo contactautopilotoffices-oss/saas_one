@@ -3,6 +3,8 @@ export type RoleLevel = 0 | 1 | 2 | 3 | 4;
 export type RoleKey =
     | 'super_admin'
     | 'org_admin'
+    | 'hr'
+    | 'hr_head'
     | 'property_admin'
     | 'manager_executive'
     | 'purchase_manager'

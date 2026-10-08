@@ -6,7 +6,7 @@ import {
     Settings, List, ShoppingCart, 
     FileText, FileSpreadsheet,
     DollarSign, IndianRupee, Layers,
-    Sparkles, RefreshCw
+    Sparkles, RefreshCw, ClipboardList
 } from 'lucide-react';
 import ProcurementAdminSettings from './ProcurementAdminSettings';
 import ProcurementRequestList from './ProcurementRequestList';
@@ -17,11 +17,12 @@ import SitePricingAdminTab from './SitePricingAdminTab';
 import PropertyBudgetsTab from './PropertyBudgetsTab';
 import PaymentUrgencyTrackerTab from './payment-urgency/PaymentUrgencyTrackerTab';
 import ProcurementFeedbackTab from './ProcurementFeedbackTab';
+import ProcurementTasksTab from './ProcurementTasksTab';
 import { SHOW_LEGACY_PER_PROPERTY_CONTROLS } from './procurementFeatureFlags';
 import FinanceOverview from '../accounts/FinanceOverview';
 import { useAuth } from '@/frontend/context/AuthContext';
 
-type TabType = 'orders' | 'urgency-tracker' | 'payment-tracker' | 'requisitions' | 'monthly-feedback' | 'site-budgets' | 'site-pricing' | 'catalog' | 'po-generator' | 'settings';
+type TabType = 'orders' | 'tasks' | 'urgency-tracker' | 'payment-tracker' | 'requisitions' | 'monthly-feedback' | 'site-budgets' | 'site-pricing' | 'catalog' | 'po-generator' | 'settings';
 
 function ProcurementModuleSkeleton() {
     return (
@@ -71,9 +72,9 @@ export default function ProcurementModule({
     properties?: any[];
 }) {
     const params = useParams();
-    const orgId = propOrgId || (params?.orgId as string) || '';
-    const propertyId = (params?.propertyId as string) || '';
     const { user, membership } = useAuth();
+    const orgId = propOrgId || (params?.orgId as string) || membership?.org_id || '';
+    const propertyId = (params?.propertyId as string) || '';
     
     const [activeTab, setActiveTab] = useState<TabType>('orders');
     const [properties, setProperties] = useState<any[]>(propProperties || []);
@@ -81,8 +82,11 @@ export default function ProcurementModule({
     const [counts, setCounts] = useState({ orders: 0, pending_quotation: 0 });
     const isMountedRef = useRef(false);
 
-    // Robust Role Hierarchy
-    const userRole = (membership?.org_role || (user?.user_metadata?.role as string) || '').toLowerCase();
+    // Robust Role Hierarchy - check both organization role and property memberships
+    const hasPropertyAdminMembership = Boolean(
+        membership?.properties?.some((p: any) => p.role === 'property_admin' || p.role === 'property_manager')
+    );
+    const userRole = (membership?.org_role || (user?.user_metadata?.role as string) || (hasPropertyAdminMembership ? 'property_admin' : '')).toLowerCase();
     const isMasterAdmin = Boolean(membership?.is_master_admin || userRole === 'master_admin');
     const isSuperAdmin = isMasterAdmin || userRole === 'org_super_admin' || userRole === 'owner' || propIsAdmin === true;
     const isProcurementUser = isSuperAdmin || userRole.includes('procurement') || userRole === 'org_admin';
@@ -160,8 +164,9 @@ export default function ProcurementModule({
     useEffect(() => {
         if (typeof window !== 'undefined') {
             const urlParams = new URLSearchParams(window.location.search);
-            const tabParam = urlParams.get('procurement_tab') || urlParams.get('subtab');
-            const linkableTabs = ['orders', 'urgency-tracker', 'payment-tracker', 'requisitions', 'catalog', 'po-generator', 'settings'];
+            let tabParam = urlParams.get('procurement_tab') || urlParams.get('subtab') || urlParams.get('tab');
+            if (tabParam === 'monthly-requisitions') tabParam = 'requisitions';
+            const linkableTabs = ['orders', 'tasks', 'urgency-tracker', 'payment-tracker', 'requisitions', 'monthly-feedback', 'catalog', 'po-generator', 'settings'];
             if (SHOW_LEGACY_PER_PROPERTY_CONTROLS) linkableTabs.push('site-budgets', 'site-pricing');
             if (tabParam && linkableTabs.includes(tabParam)) {
                 setActiveTab(tabParam as TabType);
@@ -171,6 +176,7 @@ export default function ProcurementModule({
 
     const TABS = useMemo(() => [
         { id: 'orders', label: 'All Orders', icon: List, show: true, count: counts.orders },
+        { id: 'tasks', label: 'Tasks', icon: ClipboardList, show: true, count: 0 },
         { id: 'urgency-tracker', label: 'Urgency Tracker (P1-P3)', icon: Layers, show: canViewUrgencyTracker, count: 0 },
         { id: 'payment-tracker', label: 'Payment Tracker', icon: IndianRupee, show: canViewPaymentTracker, count: 0 },
         { id: 'requisitions', label: 'Monthly Requisitions', icon: FileSpreadsheet, show: true, count: 0 },
@@ -233,6 +239,10 @@ export default function ProcurementModule({
                     <ProcurementAdminSettings organizationId={orgId} properties={properties} />
                 )}
 
+                {activeTab === 'tasks' && (
+                    <ProcurementTasksTab departmentName="Procurement" />
+                )}
+
                 {activeTab === 'orders' && (
                     <ProcurementRequestList organizationId={orgId} propertyId={propertyId} onAction={fetchCounts} />
                 )}
@@ -254,8 +264,8 @@ export default function ProcurementModule({
                     <MonthlyRequisitionsTab 
                         user={user} 
                         organizationId={orgId} 
-                        propertyId={propertyId} 
-                        userRole={userRole || 'property_admin'}
+                        propertyId={propertyId || (hasPropertyAdminMembership ? membership?.properties?.[0]?.id : undefined)} 
+                        userRole={hasPropertyAdminMembership ? 'property_admin' : (userRole || 'property_admin')}
                         onNavigateToBudgets={() => setActiveTab('site-budgets')}
                     />
                 )}

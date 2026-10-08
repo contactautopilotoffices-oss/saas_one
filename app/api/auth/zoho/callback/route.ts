@@ -176,6 +176,26 @@ export async function GET(request: Request) {
 
         if (profileError) console.error('[ZOHO] profile upsert error:', profileError.message);
 
+        // Sync organization_id and role to Auth user_metadata so downstream modules never find it missing
+        const targetOrgId = orgMembership?.organization_id || propMembership?.organization_id;
+        const targetRole = orgMembership?.role || propMembership?.role || (dbUser?.is_master_admin ? 'master_admin' : 'staff');
+        if (targetOrgId || targetRole) {
+            try {
+                const updatedMeta = {
+                    ...(user.user_metadata || {}),
+                    ...(targetOrgId ? { organization_id: targetOrgId } : {}),
+                    ...(targetRole ? { role: targetRole } : {}),
+                    ...(propMembership?.property_id ? { property_id: propMembership.property_id, property_role: propMembership.role } : {})
+                };
+                await supabaseAdmin.auth.admin.updateUserById(user.id, {
+                    user_metadata: updatedMeta
+                });
+                await supabaseAdmin.from('users').update({ metadata: updatedMeta }).eq('id', user.id);
+            } catch (metaErr) {
+                console.warn('[ZOHO Callback] Failed to sync user_metadata:', metaErr);
+            }
+        }
+
         // 8. Role-based routing
         if (dbUser?.is_master_admin || user.user_metadata?.is_master_admin) {
             return NextResponse.redirect(`${appOrigin}${redirect || '/master'}`);

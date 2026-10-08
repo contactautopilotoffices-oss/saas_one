@@ -1,5 +1,5 @@
-import PropertyAdminDashboard from '@/frontend/components/dashboard/PropertyAdminDashboard';
+import UnifiedDashboard from '@/frontend/components/dashboard/UnifiedDashboard';
 
 export default function PropertyDashboardPage() {
-    return <PropertyAdminDashboard />;
+    return <UnifiedDashboard />;
 }

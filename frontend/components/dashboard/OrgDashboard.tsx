@@ -1,5 +1,7 @@
 'use client';
 
+import { useDashboardContent } from '@/frontend/components/layout/DashboardContentSlot';
+import PettyCashNavLink from '@/frontend/components/pettyCash/PettyCashNavLink';
 import React, { useState, useEffect } from 'react';
 import {
     BarChart3, Users, Building2, LayoutDashboard,
@@ -31,8 +33,10 @@ interface Property {
 }
 
 const OrgDashboard = ({ orgId }: { orgId: string }) => {
+    const { dashboardContent, navigateDashboard } = useDashboardContent();
     const router = useRouter();
-    const [activeTab, setActiveTab] = useState<SubTab>('dashboard');
+    const [dashboardTab, setActiveTab] = useState<SubTab>('dashboard');
+    const activeTab = dashboardContent !== undefined ? 'petty-cash' as SubTab : dashboardTab;
     const [isSidebarOpen] = useState(true);
     const [properties, setProperties] = useState<Property[]>([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -162,7 +166,7 @@ const OrgDashboard = ({ orgId }: { orgId: string }) => {
                                     {section.items.map((item) => (
                                         <button
                                             key={item.id}
-                                            onClick={() => setActiveTab(item.id as SubTab)}
+                                            onClick={() => dashboardContent !== undefined ? navigateDashboard(item.id) : setActiveTab(item.id as SubTab)}
                                             className={`w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl transition-all relative group ${activeTab === item.id
                                                 ? 'bg-brand-orange/10 text-foreground shadow-[inset_0_0_15px_rgba(242,140,51,0.1)]'
                                                 : 'text-muted-foreground hover:text-foreground hover:bg-muted/30'
@@ -178,7 +182,12 @@ const OrgDashboard = ({ orgId }: { orgId: string }) => {
                                 </div>
                             </div>
                         ))}
-                    </nav>
+
+                    <div className="mb-6" data-navigation-section="management-hub">
+                        <p className="px-4 mb-3 text-[10px] font-bold uppercase tracking-widest text-text-secondary">Management Hub</p>
+                        <PettyCashNavLink />
+                    </div>
+</nav>
                 </div>
 
                 <div className="p-4 border-t border-border space-y-2">
@@ -210,6 +219,8 @@ const OrgDashboard = ({ orgId }: { orgId: string }) => {
 
             {/* Main Panel */}
             <main className={`flex-1 flex flex-col bg-background border-l border-slate-300 shadow-[-4px_0_12px_-4px_rgba(0,0,0,0.05)] relative z-10 transition-all duration-300 ${isSidebarOpen ? 'ml-80' : 'ml-20'}`}>
+                {dashboardContent ?? (<>
+
                 {/* Subtle Ambience */}
                 <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-brand-orange/5 rounded-full blur-[120px] pointer-events-none" />
 
@@ -265,7 +276,9 @@ const OrgDashboard = ({ orgId }: { orgId: string }) => {
                         <SuperTenantOrgTab orgId={orgId} properties={properties} />
                     </div>
                 </div>
-            </main>
+
+                </>)}
+</main>
         </div>
     );
 };

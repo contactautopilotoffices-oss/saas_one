@@ -1,12 +1,14 @@
 'use client';
 
+import { useDashboardContent } from '@/frontend/components/layout/DashboardContentSlot';
+import PettyCashNavLink from '@/frontend/components/pettyCash/PettyCashNavLink';
 import HRTicketsContent from '@/frontend/components/hr/HRTicketsContent';
 import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from 'react';
 import {
     LayoutDashboard, Users, Ticket, Settings, UserCircle, UsersRound,
     Search, Plus, Filter, LogOut, ChevronRight, MapPin, Building2,
     Calendar, CheckCircle2, AlertCircle, Clock, Coffee, IndianRupee, FileDown, Fuel, Store, Activity, Upload, FileBarChart, Menu, X, Zap, RefreshCw,
-    Package, ClipboardCheck, Scan, ChevronDown, ChevronUp, Check, GitBranch, CalendarDays, ShoppingCart, Droplets, TrendingUp, QrCode, Smartphone, MessageSquarePlus, Bot, ShieldCheck, Mic
+    Package, ClipboardCheck, ClipboardList, Scan, ChevronDown, ChevronUp, Check, GitBranch, CalendarDays, ShoppingCart, Droplets, TrendingUp, QrCode, Smartphone, MessageSquarePlus, Bot, ShieldCheck, Mic
 } from 'lucide-react';
 
 import { motion, AnimatePresence } from 'framer-motion';
@@ -53,9 +55,10 @@ import VendorManagementModal from '@/frontend/components/vendor/VendorManagement
 import GuestExperienceDashboard from '@/frontend/components/guest-experience/GuestExperienceDashboard';
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
 import AITicketsDashboard from '@/frontend/components/ai-tickets/AITicketsDashboard';
+import TaskManagerSuperuserDashboard from '@/frontend/components/task-manager/TaskManagerSuperuserDashboard';
 
 // Types
-type Tab = 'overview' | 'requests' | 'guest_experience' | 'reports' | 'users' | 'visitors' | 'rooms' | 'diesel' | 'diesel_analytics' | 'electricity' | 'electricity_analytics' | 'cafeteria' | 'settings' | 'profile' | 'units' | 'vendor_revenue' | 'stock' | 'checklist' | 'escalation' | 'ppm' | 'procurement' | 'roster' | 'water' | 'water_analytics' | 'ai_tickets' | 'grievance' | 'assets';
+type Tab = 'overview' | 'requests' | 'guest_experience' | 'reports' | 'users' | 'visitors' | 'rooms' | 'diesel' | 'diesel_analytics' | 'electricity' | 'electricity_analytics' | 'cafeteria' | 'settings' | 'profile' | 'units' | 'vendor_revenue' | 'stock' | 'checklist' | 'escalation' | 'ppm' | 'procurement' | 'roster' | 'water' | 'water_analytics' | 'ai_tickets' | 'grievance' | 'assets' | 'tasks';
 
 interface Property {
     id: string;
@@ -288,6 +291,7 @@ const PropertySelectorDropdown = memo(function PropertySelectorDropdown({
 });
 
 const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDashboardProps = {}) => {
+    const { dashboardContent, dashboardPropertyId, navigateDashboard } = useDashboardContent();
     const { user, signOut, membership } = useAuth();
     const { theme, toggleTheme } = useTheme();
     const params = useParams();
@@ -298,7 +302,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
 
     // Resolved active property id: prop -> url param -> searchParam
     const [activePropId, setActivePropId] = useState<string | undefined>(
-        propPropertyId || urlPropertyId || searchParams.get('propertyId') || undefined
+        propPropertyId || urlPropertyId || searchParams.get('propertyId') || dashboardPropertyId
     );
 
     useEffect(() => {
@@ -311,7 +315,8 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
     const propertyId = activePropId || (params?.propertyId as string) || '';
 
     // State
-    const [openTab, setActiveTab] = useState<Tab>('overview');
+    const [dashboardTab, setActiveTab] = useState<Tab>('overview');
+    const openTab = dashboardContent !== undefined ? 'petty-cash' as Tab : dashboardTab;
     const supabase = useMemo(() => createClient(), []);
     const { getCachedData, setCachedData } = useDataCache();
     const cacheKey = `property-${propertyId}`;
@@ -438,7 +443,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
     // Restore tab from URL
     useEffect(() => {
         const tab = searchParams.get('tab');
-        if (tab && ['overview', 'requests', 'reports', 'users', 'visitors', 'rooms', 'diesel', 'diesel_analytics', 'electricity', 'electricity_analytics', 'cafeteria', 'settings', 'profile', 'units', 'vendor_revenue', 'stock', 'checklist', 'roster', 'water', 'water_analytics', 'facility_qr', 'ai_tickets', 'grievance', 'assets'].includes(tab)) {
+        if (tab && ['overview', 'requests', 'reports', 'users', 'visitors', 'rooms', 'diesel', 'diesel_analytics', 'electricity', 'electricity_analytics', 'cafeteria', 'settings', 'profile', 'units', 'vendor_revenue', 'stock', 'checklist', 'roster', 'water', 'water_analytics', 'facility_qr', 'ai_tickets', 'grievance', 'assets', 'tasks'].includes(tab)) {
             setActiveTab(tab as Tab);
         }
         const filter = searchParams.get('filter');
@@ -451,6 +456,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
 
     // Helper to change tab with URL persistence
     const handleTabChange = (tab: Tab, filter: string = 'all', dateFrom?: string, dateTo?: string) => {
+        if (dashboardContent !== undefined) { navigateDashboard(tab); setSidebarOpen(false); return; }
         setActiveTab(tab);
         setPendingStatusFilter(filter);
         setSidebarOpen(false);
@@ -697,6 +703,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                             Management Hub
                         </p>
                         <div className="space-y-1">
+                            <PettyCashNavLink onNavigate={() => setSidebarOpen(false)} />
 
                             <button
                                 onClick={() => handleTabChange('users')}
@@ -869,13 +876,6 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                                 <Coffee className="w-4 h-4" />
                                 Cafeteria Revenue
                             </button>
-                            <button
-                                onClick={() => router.push(`/${property?.organization_id}/crm`)}
-                                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 font-bold text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
-                            >
-                                <TrendingUp className="w-4 h-4" />
-                                CRM
-                            </button>
                         </div>
                     </div>
 
@@ -886,6 +886,16 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                             System & Personal
                         </p>
                         <div className="space-y-1">
+                            <button
+                                onClick={() => handleTabChange('tasks')}
+                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm group ${openTab === 'tasks'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-primary/10 hover:text-primary'
+                                    }`}
+                            >
+                                <ClipboardList className={`w-4 h-4 transition-transform ${openTab === 'tasks' ? '' : 'group-hover:scale-110'}`} />
+                                <span className="flex-1 text-left">Task Manager</span>
+                            </button>
                             <button
                                 onClick={() => handleTabChange('ai_tickets')}
                                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm group ${openTab === 'ai_tickets'
@@ -983,6 +993,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
 
             {/* Main Content */}
             <main className="flex-1 min-w-0 overflow-x-hidden lg:ml-72 flex flex-col bg-white border-l border-slate-300 shadow-[-4px_0_12px_-4px_rgba(0,0,0,0.05)] relative z-10">
+
                 {openTab !== 'overview' && (
                     <header className="h-14 flex justify-between items-center px-3 md:px-8 lg:px-12 mb-2 md:mb-4 border-b border-border/10">
                         <div className="flex items-center gap-3">
@@ -998,6 +1009,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                                     <h1 className="text-2xl md:text-3xl font-black text-text-primary tracking-tight capitalize">
                                         {openTab === 'ppm' ? 'Planned Preventive Maintenance' : 
                                          openTab === 'rooms' ? 'Meeting Rooms' : 
+                                         openTab === 'tasks' ? 'Task Manager' : 
                                          openTab.replace(/_/g, ' ')}
                                     </h1>
                                     <p className="text-text-tertiary text-xs md:text-sm font-medium mt-0.5">{property?.address || 'Property Management Hub'}</p>
@@ -1041,6 +1053,8 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                         </div>
                     </header>
                 )}
+                {dashboardContent ?? (<>
+
 
                 <AnimatePresence mode="wait">
                     <motion.div
@@ -1142,6 +1156,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                             />
                         )}
                         {openTab === 'settings' && <SettingsView />}
+                        {openTab === 'tasks' && <TaskManagerSuperuserDashboard orgId={property?.organization_id || membership?.org_id || ''} />}
                         {openTab === 'ai_tickets' && <AITicketsDashboard propertyId={propertyId || property?.id || (assignedProperties && assignedProperties[0]?.id)} />}
                         {openTab === 'profile' && (
                             <div className="flex justify-center items-start py-8">
@@ -1224,7 +1239,9 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                         )}
                     </motion.div>
                 </AnimatePresence>
-            </main>
+
+                </>)}
+</main>
 
             <AddMemberModal
                 isOpen={showAddMemberModal}

@@ -8,12 +8,17 @@ import {
     Sparkles, ArrowRight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import ModalPortal from '../ui/ModalPortal';
+import RequisitionApproverSelect, { type RequisitionApprover } from './RequisitionApproverSelect';
 
 interface BulkApproverUploadModalProps {
     isOpen: boolean;
     onClose: () => void;
     requisitions: any[];
-    approvers: any[];
+    approvers: RequisitionApprover[];
+    approversLoading?: boolean;
+    approversError?: string;
+    onRetryApprovers?: () => void;
     organizationId: string;
     currentUser: any;
     onSuccess: () => void;
@@ -29,6 +34,9 @@ export default function BulkApproverUploadModal({
     onClose,
     requisitions = [],
     approvers = [],
+    approversLoading = false,
+    approversError = '',
+    onRetryApprovers,
     organizationId,
     currentUser,
     onSuccess
@@ -38,7 +46,7 @@ export default function BulkApproverUploadModal({
 
     // Form inputs
     const [vendorNotes, setVendorNotes] = useState<string>('');
-    const [selectedApproverId, setSelectedApproverId] = useState<string>(approvers[0]?.id || '');
+    const [selectedApproverId, setSelectedApproverId] = useState<string>('');
     const [quoteFile, setQuoteFile] = useState<File | null>(null);
     const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -52,11 +60,12 @@ export default function BulkApproverUploadModal({
     React.useEffect(() => {
         if (isOpen && eligibleRequisitions.length > 0) {
             setSelectedIds(new Set(eligibleRequisitions.map(r => r.id)));
-            if (approvers.length > 0 && !selectedApproverId) {
-                setSelectedApproverId(approvers[0].id);
-            }
         }
-    }, [isOpen, eligibleRequisitions, approvers]);
+    }, [isOpen, eligibleRequisitions]);
+
+    React.useEffect(() => {
+        setSelectedApproverId(previous => approvers.some(user => user.id === previous) ? previous : '');
+    }, [approvers, organizationId]);
 
     if (!isOpen) return null;
 
@@ -94,8 +103,8 @@ export default function BulkApproverUploadModal({
             return;
         }
 
-        if (!selectedApproverId) {
-            setErrorMessage('Please select an Approver from the dropdown.');
+        if (approversLoading || approversError || !approvers.some(user => user.id === selectedApproverId)) {
+            setErrorMessage('Please choose an available Org Super Admin or Ops Super Admin approver.');
             return;
         }
 
@@ -134,6 +143,7 @@ export default function BulkApproverUploadModal({
     };
 
     return (
+        <ModalPortal>
         <AnimatePresence>
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto">
                 <motion.div
@@ -324,21 +334,12 @@ export default function BulkApproverUploadModal({
                                 3. Assign Reviewing Approver
                             </h4>
                             <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">
-                                The selected Director / Super Admin will receive the uploaded quote and can approve or reject all selected sites.
+                                The selected Org Super Admin or Ops Super Admin will receive the uploaded quote and can approve or reject all selected sites.
                             </p>
 
-                            <select
-                                required
-                                value={selectedApproverId}
-                                onChange={e => setSelectedApproverId(e.target.value)}
-                                className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-semibold text-slate-800 dark:text-slate-100 focus:outline-hidden focus:ring-2 focus:ring-sky-500"
-                            >
-                                {approvers.map(a => (
-                                    <option key={a.id} value={a.id}>
-                                        {a.full_name || a.email} ({a.email})
-                                    </option>
-                                ))}
-                            </select>
+                            <RequisitionApproverSelect approvers={approvers} value={selectedApproverId}
+                                onChange={setSelectedApproverId} loading={approversLoading}
+                                error={approversError} onRetry={onRetryApprovers} />
                         </div>
                     </form>
 
@@ -355,7 +356,7 @@ export default function BulkApproverUploadModal({
                         <button
                             type="button"
                             onClick={handleSubmit}
-                            disabled={isSubmitting || selectedIds.size === 0}
+                            disabled={isSubmitting || selectedIds.size === 0 || approversLoading || !!approversError || !selectedApproverId}
                             className="h-9 px-5 inline-flex items-center gap-1.5 bg-gradient-to-r from-sky-600 to-blue-700 hover:from-sky-700 hover:to-blue-800 text-white rounded-xl font-bold text-xs shadow-md shadow-sky-600/20 transition-all cursor-pointer disabled:opacity-50"
                         >
                             {isSubmitting ? (
@@ -374,5 +375,6 @@ export default function BulkApproverUploadModal({
                 </motion.div>
             </div>
         </AnimatePresence>
+        </ModalPortal>
     );
 }

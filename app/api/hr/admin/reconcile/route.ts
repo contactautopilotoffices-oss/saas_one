@@ -76,47 +76,45 @@ export async function GET() {
             return isMapped || internalUserIds.has(u.id) || isInternalCompanyDomain(u.email);
         });
 
-        // Perform auto-linking for matching unlinked profiles
+        // Perform auto-linking only on exact email or verified phone for new unlinked profiles
         if (eligibleAppUsers.length > 0 && profilesList.length > 0) {
-            const updatesToPersist: { id: string; user_id: string }[] = [];
+            const updatesToPersist: { id: string; user_id: string; email?: string }[] = [];
 
             for (const p of profilesList) {
-                if (!p.user_id) {
-                    const pName = `${p.first_name || ''} ${p.last_name || ''}`.toLowerCase().trim();
+                // Only auto-link if profile has no user_id and was not manually unlinked
+                if (!p.user_id && p.reconciliation_status !== 'unlinked') {
                     const pEmail = (p.email || '').toLowerCase().trim();
                     const pPhone = (p.phone || p.contact_number || '').replace(/\D/g, '');
 
+                    // Auto-link strictly by exact email or exact 10+ digit phone
                     const match = eligibleAppUsers.find(u => {
                         const uEmail = (u.email || '').toLowerCase().trim();
                         const uPhone = (u.phone || '').replace(/\D/g, '');
-                        const uName = (u.full_name || '').toLowerCase().trim();
 
                         return (uEmail && pEmail && uEmail === pEmail) ||
-                               (uPhone && pPhone && uPhone.length >= 10 && uPhone === pPhone) ||
-                               (uName && pName && uName.length >= 5 && uName === pName);
+                               (uPhone && pPhone && uPhone.length >= 10 && uPhone === pPhone);
                     });
 
                     if (match) {
                         p.user_id = match.id;
                         p.reconciliation_status = 'linked';
                         p.user = match;
-                        updatesToPersist.push({ id: p.id, user_id: match.id });
+                        updatesToPersist.push({ id: p.id, user_id: match.id, email: match.email || undefined });
                     }
                 }
             }
 
             if (updatesToPersist.length > 0) {
-                Promise.all(updatesToPersist.map(u =>
-                    supabaseAdmin
-                        .from('employee_profiles')
-                        .update({ user_id: u.user_id, reconciliation_status: 'linked', updated_at: new Date().toISOString() })
-                        .eq('id', u.id)
-                )).catch(err => console.error('Error persisting reconcile auto-links:', err));
+                Promise.all(updatesToPersist.map(u => {
+                    const upd: any = { user_id: u.user_id, reconciliation_status: 'linked', updated_at: new Date().toISOString() };
+                    if (u.email) upd.email = u.email;
+                    return supabaseAdmin.from('employee_profiles').update(upd).eq('id', u.id);
+                })).catch(err => console.error('Error persisting reconcile auto-links:', err));
             }
         }
 
         const linkedProfiles = profilesList.filter(p => p.reconciliation_status === 'linked' || p.user_id !== null);
-        const unlinkedProfiles = profilesList.filter(p => p.reconciliation_status === 'unlinked' && p.user_id === null);
+        const unlinkedProfiles = profilesList.filter(p => p.reconciliation_status === 'unlinked' || p.user_id === null);
         const pendingApprovalProfiles = profilesList.filter(p => p.reconciliation_status === 'pending_approval');
 
         // Users in app who aren't mapped to any employee profile
@@ -124,8 +122,7 @@ export async function GET() {
 
         const unmappedAppUsers = eligibleAppUsers.filter(u => 
             !u.deleted_at && 
-            !mappedUserIds.has(u.id) && 
-            (!u.email || !mappedEmails.has(u.email.toLowerCase().trim()))
+            !mappedUserIds.has(u.id)
         );
 
         return NextResponse.json({
@@ -139,6 +136,7 @@ export async function GET() {
                 unmapped_app_users_count: unmappedAppUsers.length
             },
             data: {
+                all_profiles: profilesList,
                 linked: linkedProfiles,
                 unlinked: unlinkedProfiles,
                 pending_approval: pendingApprovalProfiles,
@@ -161,11 +159,29 @@ export async function POST(request: Request) {
                 return NextResponse.json({ success: false, error: 'employee_profile_id and user_id are required' }, { status: 400 });
             }
 
+            // Fetch existing profile to check previous user_id and details
+            const { data: existingProfile } = await supabaseAdmin
+                .from('employee_profiles')
+                .select('user_id, employee_code, first_name, last_name')
+                .eq('id', employee_profile_id)
+                .single();
+
+            const previousUserId = existingProfile?.user_id;
+
+            // Fetch target app user to sync email and phone
+            const { data: targetUser } = await supabaseAdmin
+                .from('users')
+                .select('email, phone')
+                .eq('id', user_id)
+                .maybeSingle();
+
             const updates: any = {
                 user_id,
                 reconciliation_status: 'linked',
                 updated_at: new Date().toISOString()
             };
+            if (targetUser?.email) updates.email = targetUser.email;
+            if (targetUser?.phone) updates.phone = targetUser.phone;
             if (reporting_manager_id) updates.reporting_manager_id = reporting_manager_id;
 
             const { data: updated, error } = await supabaseAdmin
@@ -177,6 +193,22 @@ export async function POST(request: Request) {
 
             if (error) throw error;
 
+            // Migrate reportees and tickets if user account changed or was newly linked
+            if (user_id) {
+                const empFullName = `${existingProfile?.first_name || ''} ${existingProfile?.last_name || ''}`.trim();
+                if (previousUserId && previousUserId !== user_id) {
+                    await supabaseAdmin.from('employee_profiles').update({ reporting_manager_id: user_id }).eq('reporting_manager_id', previousUserId);
+                    await supabaseAdmin.from('hr_tickets').update({ assigned_to_user_id: user_id }).eq('assigned_to_user_id', previousUserId);
+                    await supabaseAdmin.from('hr_tickets').update({ manager_user_id: user_id }).eq('manager_user_id', previousUserId);
+                }
+                if (existingProfile?.employee_code) {
+                    await supabaseAdmin.from('employee_profiles').update({ reporting_manager_id: user_id }).eq('reporting_manager_code', existingProfile.employee_code);
+                }
+                if (empFullName.length >= 4) {
+                    await supabaseAdmin.from('employee_profiles').update({ reporting_manager_id: user_id }).ilike('reporting_manager_code', empFullName);
+                }
+            }
+
             return NextResponse.json({ success: true, message: 'Employee onboarding approved and linked successfully', data: updated });
         } else if (action === 'manual_link' || action === 'relink_profile') {
             // Manually link/re-link an Excel profile to an App User
@@ -184,10 +216,19 @@ export async function POST(request: Request) {
                 return NextResponse.json({ success: false, error: 'employee_profile_id and user_id are required' }, { status: 400 });
             }
 
-            // Fetch target app user to sync email if needed
+            // Fetch existing profile to check previous user_id and details
+            const { data: existingProfile } = await supabaseAdmin
+                .from('employee_profiles')
+                .select('user_id, employee_code, first_name, last_name')
+                .eq('id', employee_profile_id)
+                .single();
+
+            const previousUserId = existingProfile?.user_id;
+
+            // Fetch target app user to sync email and phone if needed
             const { data: targetUser } = await supabaseAdmin
                 .from('users')
-                .select('email')
+                .select('email, phone')
                 .eq('id', user_id)
                 .maybeSingle();
 
@@ -199,6 +240,9 @@ export async function POST(request: Request) {
             if (targetUser?.email) {
                 updateData.email = targetUser.email;
             }
+            if (targetUser?.phone) {
+                updateData.phone = targetUser.phone;
+            }
 
             const { data: updated, error } = await supabaseAdmin
                 .from('employee_profiles')
@@ -208,6 +252,22 @@ export async function POST(request: Request) {
                 .single();
 
             if (error) throw error;
+
+            // Migrate reportees and tickets if user account changed or was newly linked
+            if (user_id) {
+                const empFullName = `${existingProfile?.first_name || ''} ${existingProfile?.last_name || ''}`.trim();
+                if (previousUserId && previousUserId !== user_id) {
+                    await supabaseAdmin.from('employee_profiles').update({ reporting_manager_id: user_id }).eq('reporting_manager_id', previousUserId);
+                    await supabaseAdmin.from('hr_tickets').update({ assigned_to_user_id: user_id }).eq('assigned_to_user_id', previousUserId);
+                    await supabaseAdmin.from('hr_tickets').update({ manager_user_id: user_id }).eq('manager_user_id', previousUserId);
+                }
+                if (existingProfile?.employee_code) {
+                    await supabaseAdmin.from('employee_profiles').update({ reporting_manager_id: user_id }).eq('reporting_manager_code', existingProfile.employee_code);
+                }
+                if (empFullName.length >= 4) {
+                    await supabaseAdmin.from('employee_profiles').update({ reporting_manager_id: user_id }).ilike('reporting_manager_code', empFullName);
+                }
+            }
 
             return NextResponse.json({ success: true, message: 'Employee profile linked successfully', data: updated });
         } else if (action === 'unlink_profile') {

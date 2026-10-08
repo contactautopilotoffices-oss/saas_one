@@ -78,7 +78,9 @@ const todayIso = () => new Intl.DateTimeFormat('en-CA', {
  */
 export default function FinanceOverview() {
     const { membership } = useAuth();
-    const caps = useMemo(() => accountsCaps(membership), [membership]);
+    const params = useParams();
+    const orgId = params?.orgId as string | undefined;
+    const caps = useMemo(() => accountsCaps(membership, orgId), [membership, orgId]);
     if (!caps.canSee) return null;
     // What the caller may action comes from the API's own `can` block, which is derived
     // server-side by resolveAccountsAccess — the client caps only gate mounting.

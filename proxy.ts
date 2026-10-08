@@ -126,7 +126,8 @@ export async function proxy(request: NextRequest) {
         }
         console.log('Middleware: Redirecting to login from:', pathname);
         const loginUrl = new URL('/login', request.url)
-        loginUrl.searchParams.set('redirect', pathname)
+        const fullPath = request.nextUrl.pathname + request.nextUrl.search
+        loginUrl.searchParams.set('redirect', fullPath)
         return NextResponse.redirect(loginUrl)
     }
 

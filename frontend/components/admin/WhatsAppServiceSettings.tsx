@@ -7,15 +7,20 @@ import {
     Send, Info, Server, MessageCircle, ExternalLink, Ticket,
     ShoppingCart, Calendar, UserCheck, Wrench, FileSpreadsheet, ShieldCheck, QrCode
 } from 'lucide-react';
+import PettyCashTemplateDrafts from './PettyCashTemplateDrafts';
+import PettyCashEmailTemplates from './PettyCashEmailTemplates';
+import { PC_NOTIFICATION_EVENTS, PC_EMPTY_CAMPAIGNS, importPcCampaigns } from '@/frontend/lib/notifications/pettyCashTemplates';
 import { createClient } from '@/frontend/utils/supabase/client';
 
 interface WhatsAppTemplate {
     campaign_name: string;
     params: string[];
     is_media?: boolean;
+    confirmed_live?: boolean;
 }
 
 const DEFAULT_WHATSAPP_TEMPLATES: Record<string, WhatsAppTemplate> = {
+    ...PC_EMPTY_CAMPAIGNS,
     // Requisitions & Procurement
     monthly_requisition_uploaded: { campaign_name: 'requisition_submitted_v1', params: ['user_name', 'property', 'month', 'year', 'items_count', 'total_amount', 'requested_by'] },
     requisition_approval_requested: { campaign_name: 'requisition_approval_requested_v1', params: ['approver_name', 'property', 'month', 'year', 'vendor_name', 'total_amount', 'notes'] },
@@ -61,6 +66,7 @@ const DEFAULT_WHATSAPP_TEMPLATES: Record<string, WhatsAppTemplate> = {
 };
 
 const TEMPLATE_CATEGORIES = [
+    {title:'Petty Cash',icon:MessageSquare,color:'text-teal-600 bg-teal-50',events:PC_NOTIFICATION_EVENTS.map(event=>({key:event.key,label:event.name}))},
     {
         title: 'User Onboarding & Approvals',
         icon: UserCheck,
@@ -129,10 +135,14 @@ const TEMPLATE_CATEGORIES = [
 
 interface WhatsAppServiceSettingsProps {
     organizationId: string;
+    moduleId?: string;
+    featureKeys?: string[];
 }
 
-export default function WhatsAppServiceSettings({ organizationId }: WhatsAppServiceSettingsProps) {
+export default function WhatsAppServiceSettings({ organizationId, moduleId, featureKeys }: WhatsAppServiceSettingsProps) {
     const supabase = createClient();
+    const [localModule,setLocalModule]=useState('tickets');
+    const selectedModule=moduleId || localModule;
 
     const [isLoading, setIsLoading] = useState<boolean>(true);
     const [isSaving, setIsSaving] = useState<boolean>(false);
@@ -155,12 +165,7 @@ export default function WhatsAppServiceSettings({ organizationId }: WhatsAppServ
                     .eq('organization_id', organizationId)
                     .maybeSingle();
 
-                if (data?.whatsapp_templates) {
-                    setTemplatesMap({
-                        ...DEFAULT_WHATSAPP_TEMPLATES,
-                        ...data.whatsapp_templates
-                    });
-                }
+                setTemplatesMap({...DEFAULT_WHATSAPP_TEMPLATES,...(data?.whatsapp_templates||{})});
             } catch (err) {
                 console.error('Error fetching WhatsApp templates:', err);
             } finally {
@@ -175,6 +180,8 @@ export default function WhatsAppServiceSettings({ organizationId }: WhatsAppServ
         setTemplatesMap(prev => ({
             ...prev,
             [eventKey]: {
+                ...prev[eventKey],
+                ...(eventKey.startsWith('petty_cash_') ? {confirmed_live:true} : {}),
                 campaign_name: campaignName.trim(),
                 params: prev[eventKey]?.params || DEFAULT_WHATSAPP_TEMPLATES[eventKey]?.params || []
             }
@@ -253,7 +260,7 @@ export default function WhatsAppServiceSettings({ organizationId }: WhatsAppServ
             </div>
 
             {/* AiSensy Provider Status Card */}
-            <div className="p-5 bg-white border border-slate-200 rounded-2xl shadow-xs space-y-4">
+            {!moduleId && selectedModule !== 'petty_cash' && <div className="p-5 bg-white border border-slate-200 rounded-2xl shadow-xs space-y-4">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                         <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl border border-emerald-100">
@@ -286,21 +293,24 @@ export default function WhatsAppServiceSettings({ organizationId }: WhatsAppServ
                         <span className="font-bold text-slate-800">&lt; 1 Second (Instant)</span>
                     </div>
                 </div>
-            </div>
+            </div>}
 
+            {!moduleId && <nav aria-label="Template modules" className="flex gap-2"><button type="button" aria-pressed={selectedModule==='tickets'} onClick={()=>setLocalModule('tickets')} className="rounded-lg border px-3 py-2 text-xs">Tickets & other modules</button><button type="button" aria-pressed={selectedModule==='petty_cash'} onClick={()=>setLocalModule('petty_cash')} className="rounded-lg border px-3 py-2 text-xs">Petty Cash</button></nav>}
+            {selectedModule==='petty_cash' && <><PettyCashTemplateDrafts /><button type="button" className="rounded-lg bg-teal-700 px-4 py-2 text-xs text-white" onClick={()=>setTemplatesMap(current=>Object.fromEntries(Object.entries(importPcCampaigns(current)).map(([key,value])=>[key,key.startsWith('petty_cash_')?{...value,confirmed_live:!!value.campaign_name}:value])))}>Import seven live Petty Cash campaign names</button><p className="text-xs text-slate-600">Import assumes API campaign names match the seven template names. Edit any differing names, then Save Campaign Templates. Existing mappings are retained; channels and recipients remain unchanged.</p><PettyCashEmailTemplates organizationId={organizationId} /></>}
             {/* Meta Templates Manager by Category */}
             <div className="space-y-5">
                 <div className="flex items-center justify-between">
                     <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
                         <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                        Meta Approved Campaign Templates
+                        Campaign template mappings
                     </h3>
                     <span className="text-xs text-slate-500">
                         Each campaign name must match the approved template in your AiSensy dashboard.
                     </span>
                 </div>
 
-                {TEMPLATE_CATEGORIES.map((cat, idx) => {
+                {TEMPLATE_CATEGORIES.filter(cat => selectedModule === 'petty_cash' ? cat.title === 'Petty Cash' : cat.title !== 'Petty Cash' && (!moduleId || cat.events.some(event => featureKeys?.includes(event.key)))).map((category, idx) => {
+                    const cat = moduleId && featureKeys ? {...category, events: category.events.filter(event => featureKeys.includes(event.key))} : category;
                     const CatIcon = cat.icon;
                     return (
                         <div key={idx} className="p-5 bg-white border border-slate-200 rounded-2xl shadow-xs space-y-4">
@@ -333,6 +343,7 @@ export default function WhatsAppServiceSettings({ organizationId }: WhatsAppServ
                                                 </span>
                                                 <input
                                                     type="text"
+                                                    aria-label={`AiSensy campaign for ${ev.label}`}
                                                     value={template.campaign_name}
                                                     onChange={(e) => handleTemplateChange(ev.key, e.target.value)}
                                                     placeholder="e.g. requisition_submitted_v1"

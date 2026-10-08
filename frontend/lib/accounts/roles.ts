@@ -11,13 +11,19 @@ const COMPLETE = new Set(['accounts', 'org_super_admin', 'master_admin', 'ops_su
 export interface AccountsCaps { canSee: boolean; isAdmin: boolean; canAlign: boolean; canComplete: boolean; }
 
 interface MembershipLike {
+    org_id?: string | null;
+    all_org_memberships?: { org_id: string; role: string }[];
     org_role?: string | null;
     is_master_admin?: boolean;
-    properties?: { role?: string }[];
+    properties?: { role?: string; organization_id?: string | null }[];
 }
 
-export function accountsCaps(m: MembershipLike | null | undefined): AccountsCaps {
-    const roles = [m?.org_role, ...(m?.properties?.map(p => p.role) || [])].filter(Boolean) as string[];
+export function accountsCaps(m: MembershipLike | null | undefined, organizationId?: string): AccountsCaps {
+    const orgRoles = organizationId
+        ? [...(m?.all_org_memberships?.filter(item => item.org_id === organizationId).map(item => item.role) || []), ...(m?.org_id === organizationId ? [m.org_role] : [])]
+        : [m?.org_role];
+    const properties = (m?.properties || []).filter(property => !organizationId || property.organization_id === organizationId);
+    const roles = [...orgRoles, ...properties.map(p => p.role)].filter(Boolean) as string[];
     const isMaster = !!m?.is_master_admin;
     return {
         canSee: isMaster || roles.some(r => VIEW.has(r)),

@@ -1417,9 +1417,39 @@ export class NotificationService {
         }
     }
 
-    private static async dispatchPushNotification(token: string, notification: any, priority: "LOW" | "NORMAL" | "HIGH" | "CRITICAL" = 'NORMAL') {
+    /** Outbox-only push/in-app adapter. Recipient authorization is resolved by the caller's Omnichannel rule. */
+    static async sendOutboxPush(payload: NotificationPayload & { deliveryId: string }): Promise<{success:boolean;ambiguous?:boolean;error?:string;providerReference?:string}> {
+        const {error: insertError} = await supabaseAdmin.from('notifications').upsert({
+            id: payload.deliveryId, user_id: payload.userId, organization_id: payload.organizationId,
+            property_id: payload.propertyId, notification_type: payload.type, title: payload.title,
+            message: payload.message, deep_link: payload.deepLink, is_read: false
+        }, {onConflict:'id',ignoreDuplicates:true});
+        if(insertError) throw new Error(insertError.message);
+        const {data: notification,error: readError} = await supabaseAdmin.from('notifications').select('*').eq('id',payload.deliveryId).single();
+        if(readError || !notification) throw new Error(readError?.message || 'Push notification unavailable');
+        const {data: tokens,error: tokenError} = await supabaseAdmin.from('push_tokens').select('token,browser').eq('user_id',payload.userId).eq('is_active',true).order('updated_at',{ascending:false});
+        if(tokenError) throw new Error(tokenError.message);
+        const {data: previous,error: previousError} = await supabaseAdmin.from('notification_delivery').select('push_token,delivery_status').eq('notification_id',payload.deliveryId);
+        if(previousError) throw new Error(previousError.message);
+        const sent = new Set((previous || []).filter(row=>row.delivery_status==='SENT').map(row=>row.push_token));
+        const seen = new Set<string>();
+        for(const row of tokens || []) {
+            const key = row.browser || row.token;
+            if(seen.has(key)) continue;
+            seen.add(key);
+            if(sent.has(row.token)) continue;
+            await this.dispatchPushNotification(row.token,notification,payload.priority,true);
+        }
+        const {data: deliveries,error: deliveryError} = await supabaseAdmin.from('notification_delivery').select('delivery_status').eq('notification_id',payload.deliveryId);
+        if(deliveryError) throw new Error(deliveryError.message);
+        if(deliveries?.some(row=>row.delivery_status!=='SENT')) return {success:false,ambiguous:true,error:'Push provider outcome needs reconciliation'};
+        // Users without an active device still receive the standard in-app notification.
+        return {success:true,providerReference:payload.deliveryId};
+    }
+
+    private static async dispatchPushNotification(token: string, notification: any, priority: "LOW" | "NORMAL" | "HIGH" | "CRITICAL" = 'NORMAL', requireTrackedAttempt = false) {
         const fcmPriority: 'high' | 'normal' = (priority === 'CRITICAL' || priority === 'HIGH') ? 'high' : 'normal';
-        const { data: delivery } = await supabaseAdmin
+        const { data: delivery, error: trackingError } = await supabaseAdmin
             .from('notification_delivery')
             .insert({
                 notification_id: notification.id,
@@ -1429,9 +1459,12 @@ export class NotificationService {
             .select()
             .single();
 
+        if(requireTrackedAttempt && (trackingError || !delivery)) throw new Error(trackingError?.message || 'Push attempt could not be persisted');
+
         try {
             const message = {
                 token,
+                ...(requireTrackedAttempt && notification.deep_link ? {webpush:{fcmOptions:{link:notification.deep_link}}} : {}),
                 notification: {
                     title: notification.title,
                     body: notification.message,
@@ -2994,16 +3027,16 @@ export class NotificationService {
                 deepLink: `/hr-tickets?tab=tickets&id=${ticket.id}`
             });
 
-            // Dispatch WhatsApp Reportee Alert
-            const { WhatsAppEventProcessor } = await import('./WhatsAppEventProcessor');
-            WhatsAppEventProcessor.processEvent({
+            // Push event into event_outbox so recipients and platforms are resolved exclusively via Omnichannel matrix
+            await supabaseAdmin.from('event_outbox').insert({
                 event_type: 'HR_TICKET_REPORTEE_ALERT',
+                entity_id: ticket.id,
                 payload: {
                     ...ticket,
                     manager_user_id: managerUserId,
                     reportee_name: assigneeName
                 }
-            }).catch(e => console.error('[NotificationService] WhatsApp HR reportee alert error:', e));
+            });
         } catch (err) {
             console.error('[NotificationService] afterHrTicketCreatedForReportee error:', err);
         }

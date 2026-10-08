@@ -7,7 +7,8 @@ import sharp from 'sharp';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { resolveClassification, logClassification } from '@/backend/lib/ticketing';
 import { classifyTicketEnhanced } from '@/backend/lib/ticketing/classifyTicket';
-import { WhatsAppService } from '@/backend/services/WhatsAppService';
+import { WhatsAppService, type WhatsAppOptions } from '@/backend/services/WhatsAppService';
+import { getWhatsAppProperties } from './assistant/access';
 
 const BUCKET_NAME = 'ticket_photos';
 const VIDEO_BUCKET = 'ticket_videos';
@@ -60,15 +61,17 @@ function decryptWhatsAppMedia(encryptedBuffer: Buffer, mediaKeyBase64: string, m
     return Buffer.concat([decipher.update(encData), decipher.final()]);
 }
 
-async function uploadMediaToStorage(mediaUrl: string, ticketId: string, mediaKeyBase64?: string): Promise<string | null> {
+async function uploadMediaToStorage(mediaUrl: string, ticketId: string, mediaKeyBase64?: string, preloaded?: Buffer): Promise<string | null> {
     try {
-        const res = await fetch(mediaUrl);
-        if (!res.ok) {
-            console.error('[WA WEBHOOK] Failed to download media:', res.status);
-            return null;
+        let encryptedBuffer = preloaded;
+        if (!encryptedBuffer) {
+            const res = await fetch(mediaUrl);
+            if (!res.ok) {
+                console.error('[WA WEBHOOK] Failed to download media:', res.status);
+                return null;
+            }
+            encryptedBuffer = Buffer.from(await res.arrayBuffer());
         }
-
-        const encryptedBuffer = Buffer.from(await res.arrayBuffer());
         let rawBuffer: Buffer;
         if (mediaKeyBase64) {
             rawBuffer = decryptWhatsAppMedia(encryptedBuffer, mediaKeyBase64);
@@ -188,9 +191,21 @@ export async function processIncomingMessage(
     isVideo = false,
     forcedPropertyId: string | null = null,
     waMessageId: string | null = null,
+    processingOptions: { userId?: string; requestId?: string; suppressReply?: boolean; throwOnError?: boolean; skipTaskRouting?: boolean; mediaBuffer?: Buffer; interpreterInputHash?: string } = {},
 ) {
+    const sendReply = (options: WhatsAppOptions) => {
+        if (!processingOptions.suppressReply) WhatsAppService.send(senderPhone, options);
+    };
     try {
         const mediaType = isImage ? 'image' : isVideo ? 'video' : 'text';
+
+        // Retain legacy webhook deduplication while the guided assistant is disabled.
+        if (waMessageId && !processingOptions.requestId) {
+            const existing = await supabaseAdmin.from('tickets').select('*')
+                .eq('wa_message_id', waMessageId).maybeSingle();
+            if (existing.error) throw existing.error;
+            if (existing.data) return existing.data;
+        }
 
         // ── Look up user by phone ─────────────────────────────────────────────
         const last10 = senderPhone.slice(-10);
@@ -198,53 +213,34 @@ export async function processIncomingMessage(
             .from('users')
             .select('id, full_name, phone')
             .or(`phone.eq.${last10},phone.ilike.%${last10}`)
-            .limit(1);
-        const userRow = usersFound?.[0] || null;
+            .limit(processingOptions.userId ? 20 : 1);
+        const userRow = processingOptions.userId
+            ? usersFound?.find(user => user.id === processingOptions.userId) || null
+            : usersFound?.[0] || null;
 
         if (!userRow) {
+            if (processingOptions.throwOnError) throw new Error('WhatsApp user not found');
             console.warn('[WA WEBHOOK] No user found for phone:', senderPhone);
-            WhatsAppService.send(senderPhone, {
+            sendReply({
                 message: `❌ Your number is not registered in our system. Please contact your property manager.`,
             });
             return;
         }
 
-        // ── Resolve all properties available to this user ────────────────────
-        type PropOption = { id: string; name: string; organization_id: string };
-        let propertyOptions: PropOption[] = [];
-
-        const { data: orgAdminRecord } = await supabaseAdmin
-            .from('organization_memberships')
-            .select('organization_id')
-            .eq('user_id', userRow.id)
-            .eq('role', 'org_super_admin')
-            .maybeSingle();
-
-        if (orgAdminRecord) {
-            const { data: allProps } = await supabaseAdmin
-                .from('properties')
-                .select('id, name, organization_id')
-                .eq('organization_id', orgAdminRecord.organization_id)
-                .limit(12);
-            propertyOptions = (allProps || []).map(p => ({
-                id: p.id, name: p.name, organization_id: p.organization_id,
-            }));
-        } else {
-            const { data: memberships } = await supabaseAdmin
-                .from('property_memberships')
-                .select('property_id, properties(id, name, organization_id)')
-                .eq('user_id', userRow.id)
-                .limit(12);
-            propertyOptions = (memberships || []).map((m: any) => ({
-                id: m.property_id,
-                name: m.properties?.name || m.property_id,
-                organization_id: m.properties?.organization_id,
-            }));
+        // ── Task Manager Interceptor: handle employee task actions ──────────
+        if (!processingOptions.skipTaskRouting) {
+            const { TaskMessageRouter } = await import('@/task-manager/TaskMessageRouter');
+            const routeResult = await TaskMessageRouter.routeInboundMessage({ phone: senderPhone, text: messageText });
+            if (routeResult.handledByTaskManager) return;
         }
 
+        // Resolve active memberships across all organizations, including ops super admins.
+        const propertyOptions = await getWhatsAppProperties(userRow.id, !processingOptions.requestId);
+
         if (propertyOptions.length === 0) {
+            if (processingOptions.throwOnError) throw new Error('No active property access');
             console.warn('[WA WEBHOOK] User has no accessible properties:', userRow.id);
-            WhatsAppService.send(senderPhone, {
+            sendReply({
                 message: `❌ You are not assigned to any property. Please contact your property manager.`,
             });
             return;
@@ -271,7 +267,7 @@ export async function processIncomingMessage(
 
             if (sessionError) {
                 console.error('[WA WEBHOOK] Session upsert failed:', sessionError.message);
-                WhatsAppService.send(senderPhone, {
+                sendReply({
                     message: `❌ Could not start property selection. Please try again.`,
                 });
                 return;
@@ -284,7 +280,7 @@ export async function processIncomingMessage(
             );
             if (!pollSent) {
                 console.error('[WA WEBHOOK] sendPoll failed for:', senderPhone);
-                WhatsAppService.send(senderPhone, { message: `❌ Could not send property selection. Please try again.` });
+                sendReply({ message: `❌ Could not send property selection. Please try again.` });
             }
             return;
         }
@@ -294,18 +290,10 @@ export async function processIncomingMessage(
             ? propertyOptions.find(p => p.id === forcedPropertyId)
             : propertyOptions[0];
 
-        if (!selectedProp && forcedPropertyId) {
-            const { data: directProp } = await supabaseAdmin
-                .from('properties')
-                .select('id, name, organization_id')
-                .eq('id', forcedPropertyId)
-                .single();
-            if (directProp) selectedProp = { id: directProp.id, name: directProp.name, organization_id: directProp.organization_id };
-        }
-
         if (!selectedProp) {
+            if (processingOptions.throwOnError) throw new Error('No active access to selected property');
             console.error('[WA WEBHOOK] Could not resolve property');
-            WhatsAppService.send(senderPhone, {
+            sendReply({
                 message: `❌ Could not identify your property. Please contact your property manager.`,
             });
             return;
@@ -316,8 +304,9 @@ export async function processIncomingMessage(
         const propertyName: string = selectedProp.name || 'your property';
 
         if (!organizationId) {
+            if (processingOptions.throwOnError) throw new Error('Property organization is missing');
             console.error('[WA WEBHOOK] Property has no organization_id:', propertyId);
-            WhatsAppService.send(senderPhone, {
+            sendReply({
                 message: `❌ Property configuration error. Please contact your administrator.`,
             });
             return;
@@ -389,7 +378,16 @@ export async function processIncomingMessage(
             : dbPriority;
         const titleText = ticketText.slice(0, 100);
 
-        const { data: ticket, error: insertError } = await supabaseAdmin
+        let existingTicket = null;
+        if (processingOptions.requestId) {
+            const lookup = await supabaseAdmin.from('tickets').select('*')
+                .eq('wa_assistant_request_id', processingOptions.requestId).maybeSingle();
+            if (lookup.error) throw lookup.error;
+            existingTicket = lookup.data;
+        }
+        const { data: createdTicket, error: insertError } = existingTicket
+            ? { data: existingTicket, error: null }
+            : await supabaseAdmin
             .from('tickets')
             .insert({
                 ticket_number: ticketNumber,
@@ -419,26 +417,37 @@ export async function processIncomingMessage(
                 classification_source: decisionSource,
                 confidence_score: resolution.llmResult ? 90 : 100,
                 wa_message_id: waMessageId,
+                ...(processingOptions.requestId ? { wa_assistant_request_id: processingOptions.requestId } : {}),
+                ...(processingOptions.interpreterInputHash ? { wa_assistant_input_hash: processingOptions.interpreterInputHash } : {}),
             })
             .select('*')
             .single();
 
+        const ticket = createdTicket;
+        // Pilot retries resume the persisted ticket; they must not reassign it or
+        // reset escalation after a later delivery/completion-marker failure.
+        const resumedPilot = !!processingOptions.interpreterInputHash && !!existingTicket;
+        const needsAssignment = !resumedPilot || (ticket?.status === 'open' && !ticket.assigned_to);
+
         if (insertError || !ticket) {
+            if (processingOptions.throwOnError) throw insertError || new Error('Ticket creation failed');
             console.error('[WA WEBHOOK] Ticket insert error:', insertError?.message);
-            WhatsAppService.send(senderPhone, {
+            sendReply({
                 message: `❌ Failed to create your request. Please try again or contact the front desk.`,
             });
             return;
         }
 
-        let photoUrl: string | null = null;
-        if (mediaUrl && isImage) {
-            photoUrl = await uploadMediaToStorage(mediaUrl, ticket.id, mediaKey ?? undefined);
+        let photoUrl: string | null = ticket.photo_before_url || null;
+        if (mediaUrl && isImage && !photoUrl) {
+            photoUrl = await uploadMediaToStorage(mediaUrl, ticket.id, mediaKey ?? undefined, processingOptions.mediaBuffer);
+            if (!photoUrl && processingOptions.throwOnError) throw new Error('Ticket photo upload failed');
             if (photoUrl) {
-                await supabaseAdmin
+                const photoUpdate = await supabaseAdmin
                     .from('tickets')
                     .update({ photo_before_url: photoUrl })
                     .eq('id', ticket.id);
+                if (photoUpdate.error && processingOptions.throwOnError) throw photoUpdate.error;
             }
         }
 
@@ -474,7 +483,7 @@ export async function processIncomingMessage(
             defaultHierarchy = orgWide;
         }
 
-        if (defaultHierarchy) {
+        if (defaultHierarchy && (!resumedPilot || !ticket.hierarchy_id)) {
             await supabaseAdmin
                 .from('tickets')
                 .update({
@@ -485,14 +494,14 @@ export async function processIncomingMessage(
                 .eq('id', ticket.id);
         }
 
-        try {
+        if (needsAssignment) try {
             const { processIntelligentAssignment } = await import('@/backend/lib/ticketing/assignment');
             await processIntelligentAssignment(
                 supabaseAdmin,
                 [{ 
                     id: ticket.id, 
                     property_id: propertyId, 
-                    skill_group_code: skill_group,
+                    skill_group_code: resumedPilot ? (ticket.skill_group_code || skill_group) : skill_group,
                     title: ticket.title,
                     description: ticket.description
                 }],
@@ -536,7 +545,7 @@ export async function processIncomingMessage(
         const replyMessage = [
             `✅ *Request Created Successfully!*`,
             ``,
-            `🎫 *${ticketNumber}*`,
+            `🎫 *${ticket.ticket_number}*`,
             `📋 ${titleText}`,
             `🏢 ${propertyName}`,
             `🔧 Category: *${categoryLabel.toUpperCase()}*`,
@@ -547,12 +556,14 @@ export async function processIncomingMessage(
             `Our team will look into it shortly.`,
         ].filter(Boolean).join('\n');
 
-        WhatsAppService.send(senderPhone, {
+        sendReply({
             message: replyMessage,
             deepLink: `/tickets/${ticket.id}?from=requests`,
         });
+        return { ...ticket, photo_before_url: photoUrl };
 
     } catch (err: any) {
         console.error('[WA WEBHOOK] processIncomingMessage error:', err);
+        if (processingOptions.throwOnError) throw err;
     }
 }

@@ -32,6 +32,8 @@ export const authService = {
         const roleLevelMap: Record<string, number> = {
             'super_admin': 0,
             'org_admin': 1,
+            'hr_head': 1,
+            'hr': 2,
             'property_admin': 2,
             'accounts': 2,
             'manager_executive': 3,

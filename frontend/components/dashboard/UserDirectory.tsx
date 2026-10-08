@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
     Users, Search, Filter, UserPlus, Trash2, RefreshCw,
     Plus, Mail, Phone, Shield, Building2,
@@ -53,7 +53,10 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
     // Reliability panel is visible to org/ops super admins only (RLS agrees).
     const canViewReliability = membership?.org_role === 'org_super_admin' || membership?.org_role === 'ops_super_admin';
     const [users, setUsers] = useState<UserWithMembership[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
+    const [loadStatus, setLoadStatus] = useState<'waiting' | 'loading' | 'success' | 'error'>('waiting');
+    const [loadError, setLoadError] = useState<string | null>(null);
+    const usersRequestId = useRef(0);
+    const usersAbortController = useRef<AbortController | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
     const [roleFilter, setRoleFilter] = useState('all');
     const [statusFilter, setStatusFilter] = useState('all');
@@ -109,36 +112,62 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
         setTimeout(() => setToast(null), 3000);
     };
 
-    useEffect(() => {
-        fetchUsers();
-    }, [orgId, propertyId]);
+    const invalidateUsersRequest = useCallback(() => {
+        ++usersRequestId.current;
+        usersAbortController.current?.abort();
+    }, []);
 
-    const fetchUsers = async () => {
-        setIsLoading(true);
+    const fetchUsers = useCallback(async () => {
+        // The profile table is shared. Never issue an unscoped directory request
+        // while the dashboard is still resolving its organization/property.
+        invalidateUsersRequest();
+        const requestId = usersRequestId.current;
+        if (!orgId && !propertyId) {
+            setUsers([]);
+            setLoadError(null);
+            setLoadStatus('waiting');
+            return;
+        }
+
+        const controller = new AbortController();
+        usersAbortController.current = controller;
+        setLoadStatus('loading');
+        setLoadError(null);
 
         try {
             const params = new URLSearchParams();
             if (propertyId) params.set('propertyId', propertyId);
             if (orgId) params.set('orgId', orgId);
 
-            const response = await fetch(`/api/users/list?${params.toString()}`);
-            if (!response.ok) {
-                const error = await response.json();
-                console.error('Failed to fetch users:', error);
-                setUsers([]);
-                setIsLoading(false);
-                return;
-            }
-
+            const response = await fetch(`/api/users/list?${params.toString()}`, { signal: controller.signal });
             const data = await response.json();
-            setUsers(data.users || []);
+            if (!response.ok) {
+                throw new Error(typeof data?.error === 'string' ? data.error : 'Unable to load users. Please try again.');
+            }
+            if (!Array.isArray(data?.users)) {
+                throw new Error('Unable to load users. Please try again.');
+            }
+            if (requestId !== usersRequestId.current) return;
+            setUsers(data.users);
+            setLoadStatus('success');
         } catch (err) {
-            console.error('Error fetching users:', err);
+            // Aborting saves work, but the request ID also protects against
+            // responses that already completed or transports that ignore abort.
+            if (requestId !== usersRequestId.current || controller.signal.aborted) return;
             setUsers([]);
+            setLoadError(err instanceof Error ? err.message : 'Unable to load users. Please try again.');
+            setLoadStatus('error');
         }
+    }, [orgId, propertyId, invalidateUsersRequest]);
 
-        setIsLoading(false);
-    };
+    useEffect(() => {
+        setUsers([]);
+        setSelectedUserForProfile(null);
+        setSuperTenantPropsMap({});
+        setPropAssignPropsMap({});
+        void fetchUsers();
+        return invalidateUsersRequest;
+    }, [fetchUsers, invalidateUsersRequest]);
 
     const [approvingUserId, setApprovingUserId] = useState<string | null>(null);
 
@@ -151,7 +180,8 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                 body: JSON.stringify({
                     userId: userToApprove.id,
                     action: 'approve',
-                    propertyId: userToApprove.propertyId || propertyId,
+                    organizationId: orgId || userToApprove.organizationId,
+                    propertyId,
                 })
             });
 
@@ -201,8 +231,9 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                 body: JSON.stringify({
                     userId: userToReject.id,
                     action: 'reject',
+                    organizationId: orgId || userToReject.organizationId,
                     reason,
-                    propertyId: userToReject.propertyId || propertyId,
+                    propertyId,
                 })
             });
 
@@ -444,7 +475,7 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
             }
 
             // For cross-level changes (property ↔ org), refetch all users
-            const ORG_LEVEL_ROLES = ['org_super_admin', 'ops_super_admin', 'procurement', 'hr', 'hr_head'];
+            const ORG_LEVEL_ROLES = ['org_super_admin', 'ops_super_admin', 'procurement', 'accounts', 'hr', 'hr_head'];
             const wasPropertyLevel = !!user?.propertyRole && !user?.orgRole;
             const wasOrgLevel = !!user?.orgRole;
             const isNowOrgLevel = ORG_LEVEL_ROLES.includes(newRole);
@@ -513,7 +544,6 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
             'soft_service_supervisor',
             'vendor',
             'procurement',
-            'finance',
         ]
         : [
             'org_super_admin',
@@ -529,7 +559,7 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
             'soft_service_manager',
             'soft_service_supervisor',
             'procurement',
-            'finance',
+            'accounts',
             'sales',
             'bd_rep',
             'vendor',
@@ -725,10 +755,26 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
 
             {/* User Cards */}
             <div className="space-y-4">
-                {isLoading ? (
+                {loadStatus === 'waiting' ? (
+                    <div role="status" className="bg-white border border-slate-100 rounded-2xl p-12 text-center">
+                        <p className="text-slate-500 font-medium">Waiting for organization or property...</p>
+                    </div>
+                ) : loadStatus === 'loading' ? (
                     <div className="bg-white border border-slate-100 rounded-2xl p-12 text-center">
                         <div className="w-10 h-10 border-4 border-slate-200 border-t-slate-600 rounded-full animate-spin mx-auto mb-4" />
                         <p className="text-slate-500 font-medium">Loading users...</p>
+                    </div>
+                ) : loadStatus === 'error' ? (
+                    <div role="alert" className="bg-white border border-rose-200 rounded-2xl p-12 text-center">
+                        <p className="text-rose-700 font-bold">Unable to load users.</p>
+                        <p className="text-slate-500 font-medium mt-2">{loadError}</p>
+                        <button
+                            onClick={() => void fetchUsers()}
+                            className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-900 text-white font-bold text-sm cursor-pointer"
+                        >
+                            <RefreshCw className="w-4 h-4" />
+                            Retry
+                        </button>
                     </div>
                 ) : filteredUsers.length === 0 ? (
                     <div className="bg-white border border-slate-100 rounded-2xl p-12 text-center">

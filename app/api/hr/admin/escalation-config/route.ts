@@ -164,6 +164,7 @@ export async function GET(request: Request) {
         // 4. Fetch per-flow, per-level custom step assignees & custom flow levels from organization_settings for orgId
         let flowAssigneesRaw: any = {};
         let flowLevelsRaw: any = null;
+        let manualEscalationRaw: any = {};
         try {
             let settingsQuery = supabaseAdmin
                 .from('organization_settings')
@@ -184,6 +185,7 @@ export async function GET(request: Request) {
                     flowAssigneesRaw = flowAssigneesRaw.flow_assignees;
                 }
                 flowLevelsRaw = configObj.flow_levels || null;
+                manualEscalationRaw = configObj.manual_escalation || {};
             }
         } catch (sErr) {
             console.warn('Could not read hr_escalation_config from organization_settings:', sErr);
@@ -192,6 +194,10 @@ export async function GET(request: Request) {
         // Map ID lists in flowAssigneesRaw to full employee profile objects dynamically across any number of levels
         const formattedFlowAssignees: Record<string, Record<string, any[]>> = {};
         const flows = ['grievance', 'hr_query', 'confidential_feedback', 'anonymous_feedback'];
+
+        // Per-flow toggle for the handler's manual "Escalate to next level" button (off unless enabled)
+        const manualEscalation: Record<string, boolean> = {};
+        flows.forEach(flowId => { manualEscalation[flowId] = manualEscalationRaw?.[flowId] === true; });
 
         flows.forEach(flowId => {
             formattedFlowAssignees[flowId] = {};
@@ -263,7 +269,8 @@ export async function GET(request: Request) {
                 designated_hr_head: hrHeads[0] || null,
                 designated_director: directors[0] || null,
                 flow_assignees: formattedFlowAssignees,
-                flow_levels: resolvedFlowLevels
+                flow_levels: resolvedFlowLevels,
+                manual_escalation: manualEscalation
             }
         });
     } catch (err: any) {
@@ -418,7 +425,7 @@ export async function POST(request: Request) {
         }
 
         // 4. Save per-flow, per-level custom step assignees & flow levels into organization_settings
-        if (body.flow_assignees || body.flow_levels) {
+        if (body.flow_assignees || body.flow_levels || body.manual_escalation) {
             try {
                 // Fetch org id: prioritize request body, then query DB, then default Autopilot Offices
                 let orgId = body.organization_id;
@@ -503,10 +510,18 @@ export async function POST(request: Request) {
                         ...(cleanAssignees || {})
                     };
 
+                    const mergedManualEscalation: Record<string, boolean> = { ...(currentEscalationConfig.manual_escalation || {}) };
+                    if (body.manual_escalation && typeof body.manual_escalation === 'object') {
+                        Object.keys(body.manual_escalation).forEach(fKey => {
+                            mergedManualEscalation[fKey] = body.manual_escalation[fKey] === true;
+                        });
+                    }
+
                     const newEscalationConfig = {
                         ...currentEscalationConfig,
                         flow_assignees: mergedFlowAssignees,
                         flow_levels: mergedFlowLevels,
+                        manual_escalation: mergedManualEscalation,
                         updated_at: new Date().toISOString()
                     };
 

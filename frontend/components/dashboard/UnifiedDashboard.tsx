@@ -2,6 +2,12 @@
 
 import React, { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { useDashboardContent } from '@/frontend/components/layout/DashboardContentSlot';
+import AccountsWorkspace from '@/frontend/components/layout/AccountsWorkspace';
+import DashboardSidebar, { MobileHeader } from '@/frontend/components/layout/DashboardSidebar';
+import StaffDashboard from './StaffDashboard';
+import MstDashboard from './MstDashboard';
+import SecurityDashboard from './SecurityDashboard';
 import PropertyAdminDashboard from './PropertyAdminDashboard';
 import OrgAdminDashboard from './OrgAdminDashboard';
 import MasterAdminDashboard from './MasterAdminDashboard';
@@ -142,20 +148,24 @@ function BDQuickStats({ orgId }: { orgId: string }) {
 }
 
 const UnifiedDashboard = () => {
+    const { dashboardContent, dashboardPropertyId, dashboardRole, dashboardOrgId } = useDashboardContent();
     const { session, isLoading } = useAppSession();
     const router = useRouter();
 
+    const role = (dashboardRole || session?.role)?.toLowerCase();
+    const propertyIds = dashboardPropertyId ? [dashboardPropertyId] : session?.property_ids || [];
+
     // Auto-redirect BD roles to CRM immediately
     useEffect(() => {
-        if (!isLoading && (session?.role === 'bd_admin' || session?.role === 'bd_super_admin' || session?.role === 'bd_rep')) {
-            const orgId = session?.org_id || (session as any)?.organization_id;
+        if (dashboardContent === undefined && !isLoading && (role === 'bd_admin' || role === 'bd_super_admin' || role === 'bd_rep')) {
+            const orgId = dashboardOrgId || session?.org_id;
             if (orgId) {
                 router.replace(`/${orgId}/crm`);
             }
         }
-    }, [isLoading, session, router]);
+    }, [isLoading, role, dashboardOrgId, session?.org_id, router, dashboardContent]);
 
-    if (isLoading) {
+    if (isLoading && dashboardContent === undefined) {
         return (
             <div className="h-screen w-full flex flex-col items-center justify-center bg-background gap-3">
                 <Loader size="lg" />
@@ -165,9 +175,6 @@ const UnifiedDashboard = () => {
             </div>
         );
     }
-
-    const role = session?.role?.toLowerCase();
-    const propertyIds = session?.property_ids || [];
 
     console.log('[UnifiedDashboard] Session Data:', { role, propertyIds, userId: session?.user_id });
 
@@ -194,7 +201,7 @@ const UnifiedDashboard = () => {
     // Accounts is a silo (see frontend/lib/auth/silos.ts) — it has no FMS dashboard of its
     // own, so send it to the Finance workspace rather than the Access Restricted fallback.
     if (role === 'accounts') {
-        return <AccountsWorkspaceRedirect orgId={session?.org_id} />;
+        return dashboardContent !== undefined ? <AccountsWorkspace>{dashboardContent}</AccountsWorkspace> : <AccountsWorkspaceRedirect orgId={dashboardOrgId || session?.org_id} />;
     }
 
     // Super Tenant — multi-property analytics dashboard
@@ -226,6 +233,7 @@ const UnifiedDashboard = () => {
     // BD roles already redirected above via useEffect
     // Show brief loading state while redirecting
     if (role === 'bd_admin' || role === 'bd_super_admin' || role === 'bd_rep') {
+        if (dashboardContent !== undefined) return <GenericPettyCashDashboard>{dashboardContent}</GenericPettyCashDashboard>;
         return (
             <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-50">
                 <div className="w-16 h-16 bg-primary/10 text-primary rounded-2xl flex items-center justify-center mb-4 animate-pulse">
@@ -238,6 +246,12 @@ const UnifiedDashboard = () => {
             </div>
         );
     }
+
+    if (role === 'staff' || role === 'employee') return <StaffDashboard />;
+    if (role === 'mst' || role === 'maintenance') return <MstDashboard />;
+    if (role === 'security' || role === 'security_guard') return <SecurityDashboard />;
+
+    if (dashboardContent !== undefined) return <GenericPettyCashDashboard>{dashboardContent}</GenericPettyCashDashboard>;
 
     // Default Fallback
     return (
@@ -252,6 +266,15 @@ const UnifiedDashboard = () => {
         </div>
     );
 };
+
+function GenericPettyCashDashboard({ children }: { children: React.ReactNode }) {
+    const [mobileOpen, setMobileOpen] = React.useState(false);
+    return <div className="min-h-screen flex bg-background">
+        <MobileHeader onMenuToggle={() => setMobileOpen(true)} />
+        <DashboardSidebar isOpen isMobileOpen={mobileOpen} onMobileClose={() => setMobileOpen(false)} />
+        <main className="flex-1 min-w-0 lg:pl-72 pt-16 lg:pt-0 p-4">{children}</main>
+    </div>;
+}
 
 export { BDQuickStats };
 export default UnifiedDashboard;

@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { CapabilityDomain } from '@/frontend/types/rbac';
+import PettyCashNavLink from '@/frontend/components/pettyCash/PettyCashNavLink';
 import CapabilityWrapper from '../auth/CapabilityWrapper';
 import { useAuth } from '@/frontend/context/AuthContext';
 import FeedbackModal from '../ui/FeedbackModal';
@@ -50,11 +51,12 @@ export default function DashboardSidebar({
     // call sites agree. user_metadata.role is not reliably populated.
     const isBdSuperAdmin = checkBdSuperAdmin(user?.email, membership?.org_role);
     const isCrmRoute = pathname?.split('/').includes('crm') ?? false;
-    const isBDRole = (userRole === 'bd_rep' || userRole === 'bd_admin' || isBdSuperAdmin) && isCrmRoute;
-    // The email allowlist says WHO may see the BD portal, not WHERE. Gating chrome on the
-    // allowlist alone put BD Command Center branding and CRM actions on every non-CRM page
-    // for these three users — an org super admin opening /org-progress got a CRM sidebar.
-    // isBDRole already pairs the allowlist with isCrmRoute; chrome must do the same.
+    // Pure BD roles (bd_rep, bd_admin) belong to the CRM workspace permanently.
+    // They must never lose their CRM navigation, quick actions, or branding on shared
+    // personal pages like /hr-tickets or /settings.
+    // BD Super Admins (CEO/Directors with dual FMS+CRM access) switch chrome based on isCrmRoute.
+    const isPureBdRole = userRole === 'bd_rep' || userRole === 'bd_admin' || userRole === 'bd';
+    const isBDRole = isPureBdRole || (isBdSuperAdmin && isCrmRoute);
     const showBdChrome = isBdSuperAdmin && isCrmRoute;
     // An org super admin landing on a non-CRM page was being labelled "Staff Dashboard"
     // because the label had only three branches and staff was the fallback. Their console
@@ -77,7 +79,7 @@ export default function DashboardSidebar({
 
         if (isBDRole) return [];
 
-        if (userRole === 'hr' || userRole === 'hr_head') {
+        if (['hr', 'hr_head', 'hr_manager', 'hr_ops'].includes(userRole)) {
             return [
                 { label: 'Requests & Grievances', href: `/${orgId}/hr-tickets?tab=tickets`, icon: Ticket, domain: 'tickets' as const },
                 { label: 'Notes Tracker', href: `/${orgId}/hr-tickets?tab=notes`, icon: FileText, domain: 'tickets' as const },
@@ -114,7 +116,7 @@ export default function DashboardSidebar({
         // in from this sidebar, only from the admin dashboards. Visibility is gated by the
         // `petty_cash` capability, so tenant-like roles never see it.
         // The Payment Tracker deliberately stays out: it is finance-only (item 7).
-        items.push({ label: 'Petty Cash', href: `/${orgId}/petty-cash`, icon: Wallet, domain: 'petty_cash' as const });
+        // Petty Cash is rendered once in the shared personal section for every internal role.
 
         if (userRole === 'org_super_admin') {
             items.push({ label: 'Water Analytics', href: `/${orgId}/dashboard?tab=water`, icon: Droplets, domain: 'dashboards' as const });
@@ -232,19 +234,21 @@ export default function DashboardSidebar({
                         <img src="/autopilot-logo-new.png" alt="Autopilot" className="h-9 w-auto object-contain" />
                         <p className="text-[10px] font-bold text-slate-400 dark:text-slate-400 uppercase tracking-[0.2em] mt-1">
                             {(() => {
-                            if (['hr', 'hr_head'].includes(rawRole)) return 'HR HQ CONSOLE';
-                            if (['org_super_admin', 'director'].includes(rawRole)) return 'SUPER ADMIN CONSOLE';
-                            if (showBdChrome) return 'BD COMMAND CENTER';
-                            if (isBDRole) return 'CRM DASHBOARD';
-                            if (['mst', 'mst_technician', 'technician', 'maintenance_staff'].includes(rawRole)) return 'MAINTENANCE PORTAL';
-                            if (['security', 'security_guard', 'gatekeeper'].includes(rawRole)) return 'SECURITY DASHBOARD';
-                            if (['property_admin', 'building_admin'].includes(rawRole)) return 'PROPERTY ADMIN CONSOLE';
-                            if (['soft_service_manager', 'soft_service_supervisor', 'manager'].includes(rawRole)) return 'OPERATIONS CONSOLE';
-                            if (['ops_super_admin'].includes(rawRole)) return 'OPS SUPER ADMIN CONSOLE';
-                            if (['vendor'].includes(rawRole)) return 'VENDOR PORTAL';
-                            if (['tenant'].includes(rawRole)) return 'TENANT PORTAL';
-                            return 'STAFF DASHBOARD';
-                        })()}
+                                if (['hr', 'hr_head'].includes(rawRole)) return 'HR HQ CONSOLE';
+                                if (['org_super_admin', 'director'].includes(rawRole)) return 'SUPER ADMIN CONSOLE';
+                                if (rawRole === 'bd_admin' || showBdChrome) return 'BD COMMAND CENTER';
+                                if (rawRole === 'bd_rep' || isBDRole) return 'CRM DASHBOARD';
+                                if (['mst', 'mst_technician', 'technician', 'maintenance_staff'].includes(rawRole)) return 'MAINTENANCE PORTAL';
+                                if (['security', 'security_guard', 'gatekeeper'].includes(rawRole)) return 'SECURITY DASHBOARD';
+                                if (['property_admin', 'building_admin'].includes(rawRole)) return 'PROPERTY ADMIN CONSOLE';
+                                if (['soft_service_manager', 'soft_service_supervisor', 'manager'].includes(rawRole)) return 'OPERATIONS CONSOLE';
+                                if (['ops_super_admin'].includes(rawRole)) return 'OPS SUPER ADMIN CONSOLE';
+                                if (['procurement', 'procurement_admin', 'procurement_manager'].includes(rawRole)) return 'PROCUREMENT CONSOLE';
+                                if (['accounts', 'finance', 'accounts_manager'].includes(rawRole)) return 'FINANCE CONSOLE';
+                                if (['vendor', 'maintenance_vendor', 'food_vendor', 'pantry_vendor', 'cafeteria_vendor', 'external_vendor'].includes(rawRole) || rawRole.includes('vendor')) return 'VENDOR PORTAL';
+                                if (['tenant', 'super_tenant', 'tenant_admin'].includes(rawRole) || rawRole.includes('tenant')) return 'TENANT PORTAL';
+                                return 'STAFF DASHBOARD';
+                            })()}
                         </p>
                     </div>
 
@@ -330,46 +334,137 @@ export default function DashboardSidebar({
 
                 {/* Navigation */}
                 <nav className="flex-1 px-3.5 space-y-0.5 overflow-y-auto custom-scrollbar touch-scroll min-h-0 pt-2">
+                    {/* 1. CORE OPERATIONS / HR OPERATIONS Section (For non-BD roles) */}
                     {!isBDRole && (
-                        <div className="flex items-center gap-2 px-2 py-1 mb-1">
-                            <span className="w-0.5 h-3.5 bg-[#587e85] rounded-full" />
-                            <p className="text-[10px] font-bold text-slate-400 dark:text-slate-400 tracking-wider font-mono uppercase">
-                                {(userRole === 'hr' || userRole === 'hr_head') ? 'CORE OPERATIONS' : 'CORE OPERATIONS'}
-                            </p>
+                        <>
+                            <div className="flex items-center gap-2 px-2 py-1 mb-1">
+                                <span className="w-0.5 h-3.5 bg-[#587e85] rounded-full" />
+                                <p className="text-[10px] font-bold text-slate-400 dark:text-slate-400 tracking-wider font-mono uppercase">
+                                    {['hr', 'hr_head', 'hr_manager', 'hr_ops'].includes(userRole) ? 'HR OPERATIONS' : 'CORE OPERATIONS'}
+                                </p>
+                            </div>
+                            {NAV_ITEMS.map((item) => {
+                                let isActive = false;
+                                if (item.href.includes('?tab=')) {
+                                    const itemTab = item.href.split('?tab=')[1];
+                                    isActive = pathname.endsWith('/hr-tickets') && (currentTab === itemTab || (!currentTab && itemTab === 'tickets'));
+                                } else if (item.href.includes('?')) {
+                                    const queryPart = item.href.split('?')[1];
+                                    isActive = pathname === item.href.split('?')[0] && (searchParams.toString().includes(queryPart));
+                                } else {
+                                    isActive = pathname === item.href && (!searchParams.get('tab'));
+                                }
+
+                                const linkElement = (
+                                    <Link
+                                        href={item.href}
+                                        onClick={handleLinkClick}
+                                        className={`
+                                            flex items-center gap-3 px-3.5 py-2 rounded-xl transition-all font-semibold text-xs sm:text-sm group
+                                            ${isActive
+                                                ? 'bg-[#587e85] text-white shadow-xs font-bold'
+                                                : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
+                                            }
+                                        `}
+                                    >
+                                        <item.icon className={`w-4 h-4 shrink-0 transition-transform group-hover:scale-105 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                                        <span className="truncate">{item.label}</span>
+                                    </Link>
+                                );
+
+                                if (['hr', 'hr_head', 'hr_manager', 'hr_ops'].includes(userRole)) {
+                                    return (
+                                        <React.Fragment key={`${item.label}-${item.href}`}>
+                                            {linkElement}
+                                        </React.Fragment>
+                                    );
+                                }
+
+                                return (
+                                    <CapabilityWrapper key={`${item.label}-${item.href}`} domain={item.domain} action="view">
+                                        {linkElement}
+                                    </CapabilityWrapper>
+                                );
+                            })}
+                        </>
+                    )}
+
+                    {/* 2. BD Super Admin (CEO) — grouped Overview / Tools sections */}
+                    {isBdSuperAdmin && isCrmRoute && (
+                        <div className="space-y-3">
+                            {BD_SUPER_NAV_SECTIONS.map((section) => (
+                                <div key={section.title}>
+                                    <p className="px-3 text-[10px] font-medium text-text-tertiary tracking-wider mb-1.5 font-body uppercase">
+                                        {section.title}
+                                    </p>
+                                    <div className="space-y-0.5 pl-2">
+                                        {section.items.map((item) => {
+                                            const isActive = item.href.endsWith('/crm')
+                                                ? pathname === item.href
+                                                : pathname?.startsWith(item.href);
+                                            return (
+                                                <Link
+                                                    key={item.href}
+                                                    href={item.href}
+                                                    onClick={handleLinkClick}
+                                                    className={`
+                                                        flex items-center gap-3 px-3 py-1.5 rounded-[var(--radius-md)] transition-smooth group
+                                                        ${isActive
+                                                            ? 'bg-primary text-text-inverse shadow-sm'
+                                                            : 'text-text-secondary hover:bg-surface-elevated hover:text-text-primary'
+                                                        }
+                                                    `}
+                                                >
+                                                    <item.icon className="w-4 h-4 mr-0.5 transition-smooth group-hover:scale-105 shrink-0" />
+                                                    <span className="font-body font-medium text-xs md:text-sm">{item.label}</span>
+                                                </Link>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            ))}
                         </div>
                     )}
-                    {NAV_ITEMS.map((item) => {
-                        let isActive = false;
-                        if (item.href.includes('?tab=')) {
-                            const itemTab = item.href.split('?tab=')[1];
-                            isActive = pathname.endsWith('/hr-tickets') && currentTab === itemTab;
-                        } else if (item.href.includes('?')) {
-                            const queryPart = item.href.split('?')[1];
-                            isActive = pathname === item.href.split('?')[0] && (searchParams.toString().includes(queryPart));
-                        } else {
-                            isActive = pathname === item.href && (!searchParams.get('tab'));
-                        }
-                        return (
-                            <CapabilityWrapper key={`${item.label}-${item.href}`} domain={item.domain} action="view">
-                                <Link
-                                    href={item.href}
-                                    onClick={handleLinkClick}
-                                    className={`
-                                        flex items-center gap-3 px-3.5 py-2 rounded-xl transition-all font-semibold text-xs sm:text-sm group
-                                        ${isActive
-                                            ? 'bg-[#587e85] text-white shadow-xs font-bold'
-                                            : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
-                                        }
-                                    `}
-                                >
-                                    <item.icon className={`w-4 h-4 shrink-0 transition-transform group-hover:scale-105 ${isActive ? 'text-white' : 'text-slate-400'}`} />
-                                    <span className="truncate">{item.label}</span>
-                                </Link>
-                            </CapabilityWrapper>
-                        );
-                    })}
 
-                    {/* SYSTEM & PERSONAL Section */}
+                    {/* 3. CRM Section (for BD roles, or when visiting CRM routes) */}
+                    {(isCrmRoute || isBDRole) && !showBdChrome && !['hr', 'hr_head', 'property_admin', 'building_admin', 'ops_super_admin'].includes(userRole) && (
+                        <div className={isBDRole ? '' : 'pt-2.5 mt-2.5 border-t border-border'}>
+                            <p className="px-3 text-[10px] font-medium text-text-tertiary tracking-wider mb-1.5 font-body uppercase">
+                                CRM
+                            </p>
+                            <div className="space-y-0.5 pl-2">
+                                {CRM_NAV_ITEMS.map((item) => {
+                                    const isActive = item.href.endsWith('/crm')
+                                        ? pathname === item.href
+                                        : pathname?.startsWith(item.href);
+                                    return (
+                                        <Link
+                                            key={item.href}
+                                            href={item.href}
+                                            onClick={handleLinkClick}
+                                            className={`
+                                                flex items-center gap-3 px-3 py-1.5 rounded-[var(--radius-md)] transition-smooth group
+                                                ${isActive
+                                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                                    : 'text-text-secondary hover:bg-surface-elevated hover:text-text-primary'
+                                                }
+                                            `}
+                                        >
+                                            <item.icon className={`w-4 h-4 mr-0.5 transition-smooth group-hover:scale-105 shrink-0`} />
+                                            <span className="font-body font-medium text-xs md:text-sm">{item.label}</span>
+                                        </Link>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
+
+                    <div data-navigation-section="management-hub">
+                        <p className="px-4 mb-2 text-[10px] font-bold uppercase tracking-widest text-text-secondary">Management Hub</p>
+                        <PettyCashNavLink onNavigate={handleLinkClick} />
+                    </div>
+
+                    {/* 4. SYSTEM & PERSONAL Section (Always below primary role navigation) */}
                     {!isExternalRole && (
                         <div className="pt-3 mt-3 border-t border-slate-200/60 dark:border-slate-800 space-y-1">
                             <div className="flex items-center gap-2 px-2 py-1 mb-2">
@@ -379,18 +474,35 @@ export default function DashboardSidebar({
                                 </p>
                             </div>
 
-                            <Link
-                                href={isOrgSuperAdmin ? `/${orgId}/dashboard?tab=grievance` : `/${orgId}/hr-tickets?tab=tickets`}
-                                onClick={handleLinkClick}
-                                className={`flex items-center gap-3 px-3.5 py-2 rounded-xl transition-all font-semibold text-xs sm:text-sm group ${
-                                    (isOrgSuperAdmin ? (pathname?.endsWith('/dashboard') && currentTab === 'grievance') : (pathname?.includes('/hr-tickets') && (!currentTab || currentTab === 'tickets')))
-                                        ? 'bg-[#587e85] text-white shadow-xs font-bold'
-                                        : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
-                                }`}
-                            >
-                                <ShieldCheck className="w-4 h-4 shrink-0 transition-transform group-hover:scale-105" />
-                                <span className="truncate">{isOrgSuperAdmin ? 'HR & Grievances' : 'My Grievances'}</span>
-                            </Link>
+                            {!['hr', 'hr_head', 'hr_manager', 'hr_ops'].includes(userRole) && (
+                                <Link
+                                    href={isOrgSuperAdmin ? `/${orgId}/dashboard?tab=grievance` : `/${orgId}/hr-tickets?tab=tickets`}
+                                    onClick={handleLinkClick}
+                                    className={`flex items-center gap-3 px-3.5 py-2 rounded-xl transition-all font-semibold text-xs sm:text-sm group ${
+                                        (isOrgSuperAdmin ? (pathname?.endsWith('/dashboard') && currentTab === 'grievance') : (pathname?.includes('/hr-tickets') && (!currentTab || currentTab === 'tickets')))
+                                            ? 'bg-[#587e85] text-white shadow-xs font-bold'
+                                            : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
+                                    }`}
+                                >
+                                    <ShieldCheck className="w-4 h-4 shrink-0 transition-transform group-hover:scale-105" />
+                                    <span className="truncate">{isOrgSuperAdmin ? 'HR & Grievances' : 'My Grievances'}</span>
+                                </Link>
+                            )}
+
+                            {isOrgSuperAdmin && (
+                                <Link
+                                    href={`/${orgId}/dashboard?tab=tasks`}
+                                    onClick={handleLinkClick}
+                                    className={`flex items-center gap-3 px-3.5 py-2 rounded-xl transition-all font-semibold text-xs sm:text-sm group ${
+                                        pathname?.includes('tab=tasks')
+                                            ? 'bg-[#587e85] text-white shadow-xs font-bold'
+                                            : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
+                                    }`}
+                                >
+                                    <ClipboardList className="w-4 h-4 shrink-0 transition-transform group-hover:scale-105" />
+                                    <span className="truncate">Task Manager</span>
+                                </Link>
+                            )}
 
                             {(userRole !== 'hr' && userRole !== 'hr_head' && (isOrgSuperAdmin || userRole === 'property_admin')) && (
                                 <Link
@@ -444,76 +556,6 @@ export default function DashboardSidebar({
                                 <UserCircle className="w-4 h-4 shrink-0 transition-transform group-hover:scale-105" />
                                 <span className="truncate">Profile</span>
                             </Link>
-                        </div>
-                    )}
-
-                    {/* BD Super Admin (CEO) — grouped Overview / Tools sections */}
-                    {isBdSuperAdmin && isCrmRoute && (
-                        <div className="space-y-3">
-                            {BD_SUPER_NAV_SECTIONS.map((section) => (
-                                <div key={section.title}>
-                                    <p className="px-3 text-[10px] font-medium text-text-tertiary tracking-wider mb-1.5 font-body uppercase">
-                                        {section.title}
-                                    </p>
-                                    <div className="space-y-0.5 pl-2">
-                                        {section.items.map((item) => {
-                                            const isActive = item.href.endsWith('/crm')
-                                                ? pathname === item.href
-                                                : pathname?.startsWith(item.href);
-                                            return (
-                                                <Link
-                                                    key={item.href}
-                                                    href={item.href}
-                                                    onClick={handleLinkClick}
-                                                    className={`
-                                                        flex items-center gap-3 px-3 py-1.5 rounded-[var(--radius-md)] transition-smooth group
-                                                        ${isActive
-                                                            ? 'bg-primary text-text-inverse shadow-sm'
-                                                            : 'text-text-secondary hover:bg-surface-elevated hover:text-text-primary'
-                                                        }
-                                                    `}
-                                                >
-                                                    <item.icon className="w-4 h-4 mr-0.5 transition-smooth group-hover:scale-105 shrink-0" />
-                                                    <span className="font-body font-medium text-xs md:text-sm">{item.label}</span>
-                                                </Link>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-
-                    {/* CRM Section (only on CRM routes or for BD roles, strictly excluded for HR) */}
-                    {(isCrmRoute || isBDRole) && userRole !== 'hr' && userRole !== 'hr_head' && (
-                        <div className={isBDRole ? '' : 'pt-2.5 mt-2.5 border-t border-border'}>
-                            <p className="px-3 text-[10px] font-medium text-text-tertiary tracking-wider mb-1.5 font-body">
-                                CRM
-                            </p>
-                            <div className="space-y-0.5 pl-2">
-                                {CRM_NAV_ITEMS.map((item) => {
-                                    const isActive = item.href.endsWith('/crm')
-                                        ? pathname === item.href
-                                        : pathname?.startsWith(item.href);
-                                    return (
-                                        <Link
-                                            key={item.href}
-                                            href={item.href}
-                                            onClick={handleLinkClick}
-                                            className={`
-                                                flex items-center gap-3 px-3 py-1.5 rounded-[var(--radius-md)] transition-smooth group
-                                                ${isActive
-                                                    ? 'bg-primary text-text-inverse shadow-sm'
-                                                    : 'text-text-secondary hover:bg-surface-elevated hover:text-text-primary'
-                                                }
-                                            `}
-                                        >
-                                            <item.icon className={`w-4 h-4 mr-0.5 transition-smooth group-hover:scale-105 shrink-0`} />
-                                            <span className="font-body font-medium text-xs md:text-sm">{item.label}</span>
-                                        </Link>
-                                    );
-                                })}
-                            </div>
                         </div>
                     )}
                 </nav>

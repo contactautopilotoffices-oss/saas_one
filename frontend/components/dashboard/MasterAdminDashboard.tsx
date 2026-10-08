@@ -1,5 +1,7 @@
 'use client';
 
+import { useDashboardContent } from '@/frontend/components/layout/DashboardContentSlot';
+import PettyCashNavLink from '@/frontend/components/pettyCash/PettyCashNavLink';
 import React, { useState, useEffect } from 'react';
 import {
     ShieldCheck, Users, Building2, AlertTriangle, Activity,
@@ -8,7 +10,7 @@ import {
     Key, Eye, EyeOff, Globe, Copy, X, Ticket, Link as LinkIcon, LogOut,
     UserCircle, FileDown, Brain, Wrench, MessageCircle,
     TrendingUp, MapPin, Radio, Flame, Phone, Gauge,
-  MessageSquarePlus, Mail, Sparkles
+  MessageSquarePlus, Mail, Sparkles, Menu
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -95,13 +97,14 @@ interface SystemUser {
 }
 
 const MasterAdminDashboard = () => {
+    const { dashboardContent, navigateDashboard } = useDashboardContent();
     const { user, signOut } = useAuth();
     const { theme, toggleTheme } = useTheme();
     const router = useRouter();
     const searchParams = useSearchParams();
 
     // Active Tab with URL searchParams & localStorage persistence
-    const [activeTab, setActiveTabRaw] = useState<Tab>(() => {
+    const [dashboardTab, setActiveTabRaw] = useState<Tab>(() => {
         if (typeof window !== 'undefined') {
             const urlParams = new URLSearchParams(window.location.search);
             const tabParam = urlParams.get('tab');
@@ -111,6 +114,7 @@ const MasterAdminDashboard = () => {
         }
         return 'overview';
     });
+    const activeTab = dashboardContent !== undefined ? 'petty-cash' as Tab : dashboardTab;
 
     const setActiveTab = React.useCallback((newTab: Tab | ((prev: Tab) => Tab)) => {
         setActiveTabRaw((prevTab) => {
@@ -134,6 +138,7 @@ const MasterAdminDashboard = () => {
         }
     }, [searchParams]);
 
+    const [sidebarOpen, setSidebarOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [organizations, setOrganizations] = useState<Organization[]>([]);
     const [users, setUsers] = useState<SystemUser[]>([]);
@@ -260,6 +265,8 @@ const MasterAdminDashboard = () => {
 
     // Helper to change tab with URL persistence
     const handleTabChange = (tab: Tab) => {
+        if (dashboardContent !== undefined) { navigateDashboard(tab); setSidebarOpen(false); return; }
+        setSidebarOpen(false);
         setActiveTab(tab);
         const url = new URL(window.location.href);
         url.searchParams.set('tab', tab);
@@ -483,7 +490,9 @@ const MasterAdminDashboard = () => {
     return (
         <div className="min-h-screen bg-background flex font-inter text-foreground">
             {/* Sidebar */}
-            <div className="w-72 bg-sidebar border-r border-border flex flex-col p-6 fixed inset-y-0 left-0 overflow-hidden z-20">
+            {sidebarOpen && <button aria-label="Close menu" className="fixed inset-0 bg-black/40 z-40 lg:hidden" onClick={() => setSidebarOpen(false)} />}
+            <aside className={`w-72 bg-sidebar border-r border-border flex flex-col p-6 fixed inset-y-0 left-0 overflow-hidden z-50 transition-transform ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
+                <button className="lg:hidden self-end p-2" aria-label="Close menu" onClick={() => setSidebarOpen(false)}><X className="w-5 h-5" /></button>
                 <div className="flex items-center gap-3 mb-8 flex-shrink-0">
                     <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center border border-primary/20">
                         <div className="w-5 h-5 border-2 border-primary rounded-sm rotate-45"></div>
@@ -512,7 +521,12 @@ const MasterAdminDashboard = () => {
                             </button>
                         </React.Fragment>
                     ))}
-                </nav>
+
+                    <div className="mb-6" data-navigation-section="management-hub">
+                        <p className="px-4 mb-3 text-[10px] font-bold uppercase tracking-widest text-text-secondary">Management Hub</p>
+                        <PettyCashNavLink onNavigate={() => setSidebarOpen(false)} />
+                    </div>
+</nav>
 
                 <div className="pt-6 pb-12 border-t border-border flex-shrink-0">
                     <div className="bg-orange-500/10 p-4 rounded-2xl border border-orange-500/20 mb-4">
@@ -555,7 +569,7 @@ const MasterAdminDashboard = () => {
                         Sign Out
                     </button>
                 </div>
-            </div>
+            </aside>
 
             <SignOutModal
                 isOpen={showSignOutModal}
@@ -565,8 +579,10 @@ const MasterAdminDashboard = () => {
 
             {/* Main Content */}
             <main id="main-scroll-container" className={`flex-1 ${activeTab === 'ai-assistant' || activeTab === 'council' ? 'p-0' : 'p-12'} lg:ml-72 transition-all duration-500 overflow-y-auto`}>
+
                 {activeTab !== 'ai-assistant' && activeTab !== 'council' && (
                     <header className="flex justify-between items-center mb-12">
+                    <button type="button" aria-label="Open menu" className="lg:hidden p-2" onClick={() => setSidebarOpen(true)}><Menu className="w-6 h-6" /></button>
                         <div>
                             <h2 className="text-3xl font-black text-text-primary tracking-tight capitalize">{activeTab.replace('-', ' ')}</h2>
                             <p className="text-text-tertiary text-sm font-medium mt-1">Real-time system oversight and governance.</p>
@@ -608,6 +624,8 @@ const MasterAdminDashboard = () => {
                         </div>
                     </header>
                 )}
+                {dashboardContent ?? (<>
+
 
                 <AnimatePresence mode="wait">
                     <motion.div
@@ -710,7 +728,9 @@ const MasterAdminDashboard = () => {
                         )}
                     </motion.div>
                 </AnimatePresence>
-            </main>
+
+                </>)}
+</main>
 
             {/* Toast Notification */}
             <AnimatePresence>

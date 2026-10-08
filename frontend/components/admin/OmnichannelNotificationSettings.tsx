@@ -11,6 +11,9 @@ import {
     Phone, PhoneCall, Volume2, Sparkles, Play, ShieldAlert, Activity, QrCode
 } from 'lucide-react';
 import { createClient } from '@/frontend/utils/supabase/client';
+import WhatsAppServiceSettings from './WhatsAppServiceSettings';
+import PettyCashDeliveryStatus from './PettyCashDeliveryStatus';
+import { PC_NOTIFICATION_EVENTS, PC_DEFAULT_RULES } from '@/frontend/lib/notifications/pettyCashTemplates';
 import VoiceAnomalyDashboard from '@/frontend/components/admin/VoiceAnomalyDashboard';
 import WhatsAppAnomalyDashboard from '@/frontend/components/admin/WhatsAppAnomalyDashboard';
 
@@ -218,6 +221,7 @@ function SearchableUserPicker({
 }
 
 export interface EventMeta {
+    assigneeLabel?: string;
     key: string;
     name: string;
     description: string;
@@ -241,6 +245,7 @@ export interface ModuleMeta {
 }
 
 const MODULES_META: ModuleMeta[] = [
+    {id:'petty_cash',name:'Petty Cash',description:'Allocation, approval, payment and expense review.',icon:ShoppingBag,color:'text-teal-600 bg-teal-50 border-teal-100',events:PC_NOTIFICATION_EVENTS},
     {
         id: 'hr_tickets',
         name: 'HR Helpdesk & Workplace Grievances',
@@ -631,10 +636,11 @@ const MODULES_META: ModuleMeta[] = [
 ];
 
 const DEFAULT_NOTIFICATION_MATRIX: NotificationMatrix = {
+    petty_cash: PC_DEFAULT_RULES,
     hr_tickets: {
         hr_ticket_created_submitter_v2: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: ['hr', 'hr_head', 'org_super_admin'], user_ids: [], notify_assignee: false, notify_requester: true },
         hr_ticket_assigned_handler_v2: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: ['manager', 'hr', 'hr_head'], user_ids: [], notify_assignee: true },
-        hr_ticket_escalated_handler: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: ['hr_head', 'org_super_admin'], user_ids: [], notify_assignee: true },
+        hr_ticket_escalated_handler: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: [], user_ids: [], notify_assignee: true },
         hr_ticket_status_updated: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: [], user_ids: [], notify_requester: true },
         hr_ticket_comment_added: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: [], user_ids: [], notify_assignee: true, notify_requester: true },
         hr_ticket_resolved_ack: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: [], user_ids: [], notify_requester: true },
@@ -748,7 +754,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
     const [selectedPropertyScope, setSelectedPropertyScope] = useState<string>('global');
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
     const [activeModuleTab, setActiveModuleTab] = useState<string>('tickets');
-    const [mainTab, setMainTab] = useState<'rules' | 'voice_analytics' | 'whatsapp_analytics'>('rules');
+    const [mainTab, setMainTab] = useState<'rules' | 'templates' | 'voice_analytics' | 'whatsapp_analytics'>('rules');
 
     // Broadcast Welcome Modal State
     const [showBroadcastModal, setShowBroadcastModal] = useState(false);
@@ -802,10 +808,20 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
             if (res.ok) {
                 const data = await res.json();
                 if (data?.notification_matrix) {
-                    setMatrix(prev => ({
-                        ...DEFAULT_NOTIFICATION_MATRIX,
-                        ...data.notification_matrix
-                    }));
+                    setMatrix(prev => {
+                        const merged: any = { ...DEFAULT_NOTIFICATION_MATRIX };
+                        Object.entries(data.notification_matrix).forEach(([modKey, modVal]) => {
+                            if (modVal && typeof modVal === 'object') {
+                                merged[modKey] = {
+                                    ...(DEFAULT_NOTIFICATION_MATRIX[modKey] || {}),
+                                    ...(modVal as any)
+                                };
+                            } else {
+                                merged[modKey] = modVal;
+                            }
+                        });
+                        return merged;
+                    });
                 }
             }
 
@@ -940,6 +956,11 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
         }
     };
 
+    const getPcUsers = (): UserItem[] => {
+        const users = selectedPropertyScope === 'global' ? [...orgMembers, ...Object.values(propertyMembersMap).flat()] : [...orgMembers, ...(propertyMembersMap[selectedPropertyScope] || [])];
+        return [...new Map(users.filter(u=>u.role && !/tenant|vendor/i.test(u.role)).map(u=>[u.id,u])).values()];
+    };
+
     const getScopedUsers = (): UserItem[] => {
         if (selectedPropertyScope === 'global') return orgMembers;
         return propertyMembersMap[selectedPropertyScope] || [];
@@ -953,14 +974,17 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
 
     const getRule = (moduleId: string, eventKey: string): EventNotificationRule => {
         const mod = matrix[moduleId] || DEFAULT_NOTIFICATION_MATRIX[moduleId] || {};
-        const globalRule = mod[eventKey] || { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [] };
+        const stored = mod[eventKey];
+        const globalRule: EventNotificationRule = moduleId === 'petty_cash' ? { ...PC_DEFAULT_RULES[eventKey], ...stored, channels: { ...PC_DEFAULT_RULES[eventKey].channels, ...stored?.channels } } : stored || { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [] };
 
         if (selectedPropertyScope === 'global') {
             return globalRule;
         }
 
         const overrides = globalRule.property_overrides || {};
+        if (moduleId === 'petty_cash' && overrides[selectedPropertyScope]) return {...globalRule, ...overrides[selectedPropertyScope],channels:{...globalRule.channels,...overrides[selectedPropertyScope].channels}};
         return overrides[selectedPropertyScope] || {
+            enabled: globalRule.enabled,
             channels: { ...globalRule.channels },
             roles: [...(globalRule.roles || [])],
             user_ids: [...(globalRule.user_ids || [])],
@@ -976,7 +1000,8 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
     const updateRule = (moduleId: string, eventKey: string, updateFn: (current: EventNotificationRule) => EventNotificationRule) => {
         setMatrix(prev => {
             const currentMod = prev[moduleId] || DEFAULT_NOTIFICATION_MATRIX[moduleId] || {};
-            const globalRule = currentMod[eventKey] || { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [] };
+            const stored = currentMod[eventKey];
+            const globalRule: EventNotificationRule = moduleId === 'petty_cash' ? { ...PC_DEFAULT_RULES[eventKey], ...stored, channels: { ...PC_DEFAULT_RULES[eventKey].channels, ...stored?.channels } } : stored || { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [] };
 
             if (selectedPropertyScope === 'global') {
                 const updatedGlobal = updateFn(globalRule);
@@ -992,8 +1017,9 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                 };
             } else {
                 const overrides = globalRule.property_overrides || {};
-                const currentPropRule = overrides[selectedPropertyScope] || {
-                    channels: { ...globalRule.channels },
+                const currentPropRule = (moduleId === 'petty_cash' && overrides[selectedPropertyScope] ? {...globalRule,...overrides[selectedPropertyScope],channels:{...globalRule.channels,...overrides[selectedPropertyScope].channels}} : overrides[selectedPropertyScope]) || {
+                    enabled: globalRule.enabled,
+            channels: { ...globalRule.channels },
                     roles: [...(globalRule.roles || [])],
                     user_ids: [...(globalRule.user_ids || [])],
                     notify_assignee: globalRule.notify_assignee,
@@ -1025,6 +1051,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
     const toggleChannel = (moduleId: string, eventKey: string, channel: 'email' | 'whatsapp' | 'push' | 'voice') => {
         updateRule(moduleId, eventKey, current => ({
             ...current,
+            ...(moduleId === 'petty_cash' ? { enabled: ['email','whatsapp','push'].some(key => key === channel ? !current.channels[channel] : current.channels[key as 'email'|'whatsapp'|'push']) } : {}),
             channels: {
                 ...current.channels,
                 [channel]: !current.channels[channel]
@@ -1218,7 +1245,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
     const toggleContextual = (moduleId: string, eventKey: string, key: 'notify_assignee' | 'notify_requester' | 'notify_approver') => {
         updateRule(moduleId, eventKey, current => ({
             ...current,
-            [key]: !(current[key] !== false)
+            [key]: moduleId === 'petty_cash' ? current[key] !== true : !(current[key] !== false)
         }));
     };
 
@@ -1252,15 +1279,15 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
             Object.entries(matrix).forEach(([modKey, modEvents]) => {
                 if (!modEvents) return;
                 Object.entries(modEvents).forEach(([evKey, rule]) => {
-                    const waEnabled = rule.channels?.whatsapp === true;
-                    const emEnabled = rule.channels?.email === true;
+                    const waEnabled = rule.channels?.whatsapp === true && (modKey !== 'petty_cash' || rule.enabled === true);
+                    const emEnabled = rule.channels?.email === true && (modKey !== 'petty_cash' || rule.enabled === true);
 
                     const baseConfig = {
                         roles: rule.roles || [],
                         user_ids: rule.user_ids || [],
-                        notify_assignee: rule.notify_assignee !== false,
-                        notify_requester: rule.notify_requester !== false,
-                        notify_approver: rule.notify_approver !== false,
+                        notify_assignee: modKey === 'petty_cash' ? rule.notify_assignee === true : rule.notify_assignee !== false,
+                        notify_requester: modKey === 'petty_cash' ? rule.notify_requester === true : rule.notify_requester !== false,
+                        notify_approver: modKey === 'petty_cash' ? rule.notify_approver === true : rule.notify_approver !== false,
                         reminder_minutes: rule.reminder_minutes ?? null
                     };
 
@@ -1276,11 +1303,36 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                 });
             });
 
+            // Ensure legacy HR alias keys mirror their modern v2 configuration
+            const finalMatrix = { ...matrix };
+            if (finalMatrix.hr_tickets) {
+                finalMatrix.hr_tickets = { ...finalMatrix.hr_tickets };
+                if (finalMatrix.hr_tickets.hr_ticket_assigned_handler_v2) {
+                    finalMatrix.hr_tickets.hr_ticket_assigned = { ...finalMatrix.hr_tickets.hr_ticket_assigned_handler_v2 };
+                }
+                if (finalMatrix.hr_tickets.hr_ticket_created_submitter_v2) {
+                    finalMatrix.hr_tickets.hr_ticket_created = { ...finalMatrix.hr_tickets.hr_ticket_created_submitter_v2 };
+                }
+            }
+
+            if (syncWhatsAppConfig['hr_ticket_assigned_handler_v2']) {
+                syncWhatsAppConfig['hr_ticket_assigned'] = { ...syncWhatsAppConfig['hr_ticket_assigned_handler_v2'] };
+            }
+            if (syncEmailConfig['hr_ticket_assigned_handler_v2']) {
+                syncEmailConfig['hr_ticket_assigned'] = { ...syncEmailConfig['hr_ticket_assigned_handler_v2'] };
+            }
+            if (syncWhatsAppConfig['hr_ticket_created_submitter_v2']) {
+                syncWhatsAppConfig['hr_ticket_created'] = { ...syncWhatsAppConfig['hr_ticket_created_submitter_v2'] };
+            }
+            if (syncEmailConfig['hr_ticket_created_submitter_v2']) {
+                syncEmailConfig['hr_ticket_created'] = { ...syncEmailConfig['hr_ticket_created_submitter_v2'] };
+            }
+
             const res = await fetch(`/api/admin/organizations/${organizationId}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    notification_matrix: matrix,
+                    notification_matrix: finalMatrix,
                     whatsapp_service_config: syncWhatsAppConfig,
                     email_service_config: syncEmailConfig
                 })
@@ -1426,6 +1478,9 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
             </div>
 
             {/* TAB VIEW: Voice Telephony Analytics */}
+            {(mainTab === 'rules' || mainTab === 'templates') && <><nav aria-label="Notification modules" className="flex gap-2 overflow-x-auto py-2">{[...MODULES_META].sort((a,b)=>a.id==='tickets'?-1:b.id==='tickets'?1:0).map(module=><button type="button" key={module.id} aria-pressed={activeModuleTab===module.id} onClick={()=>setActiveModuleTab(module.id)} className={`shrink-0 rounded-lg border px-3 py-2 text-xs ${activeModuleTab===module.id?'bg-primary text-white':'bg-white text-slate-700'}`}>{module.id==='tickets'?'Tickets':module.name}</button>)}</nav><div className="flex gap-2"><button type="button" onClick={()=>setMainTab('rules')} aria-pressed={mainTab==='rules'} className="rounded-lg border px-3 py-2 text-xs">Channel & recipient rules</button><button type="button" onClick={()=>setMainTab('templates')} aria-pressed={mainTab==='templates'} className="rounded-lg border px-3 py-2 text-xs">Templates</button></div></>}
+            {mainTab === 'templates' && <WhatsAppServiceSettings organizationId={organizationId} moduleId={activeModuleTab} featureKeys={MODULES_META.find(module => module.id === activeModuleTab)?.events.map(event => event.key)} />}
+            {mainTab === 'rules' && activeModuleTab === 'petty_cash' && <><p className="rounded-lg bg-teal-50 p-3 text-xs text-teal-900">Select Email, WhatsApp or Push and choose roles, specific internal users, or the assigned allocator/approver/requester. Only eligible users with current request access receive notifications. Save your choices; campaign import does not enable channels.</p><PettyCashDeliveryStatus organizationId={organizationId} /></>}
             {mainTab === 'voice_analytics' && (
                 <VoiceAnomalyDashboard
                     organizationId={organizationId}
@@ -1473,7 +1528,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
 
             {/* Modules Accordion Cards */}
             <div className="space-y-6">
-                {MODULES_META.map(module => {
+                {MODULES_META.filter(module=>module.id === activeModuleTab).map(module => {
                     const Icon = module.icon;
 
                     return (
@@ -1505,7 +1560,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                     const isAnyChannelOn = rule.channels.email || rule.channels.whatsapp || rule.channels.push || rule.channels.voice;
 
                                     return (
-                                        <div key={ev.key} className="p-4 rounded-xl hover:bg-slate-50/50 transition-colors space-y-3">
+                                        <div key={ev.key} data-notification-event={ev.key} className="p-4 rounded-xl hover:bg-slate-50/50 transition-colors space-y-3">
                                             {/* Event Top Bar */}
                                             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                                                 <div>
@@ -1532,7 +1587,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                                     {/* Email Toggle */}
                                                     <button
                                                         type="button"
-                                                        onClick={() => toggleChannel(module.id, ev.key, 'email')}
+                                                        aria-pressed={rule.channels.email} onClick={() => toggleChannel(module.id, ev.key, 'email')}
                                                         className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
                                                             rule.channels.email
                                                                 ? 'bg-blue-600 text-white shadow-xs'
@@ -1546,7 +1601,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                                     {/* WhatsApp Toggle */}
                                                     <button
                                                         type="button"
-                                                        onClick={() => toggleChannel(module.id, ev.key, 'whatsapp')}
+                                                        aria-pressed={rule.channels.whatsapp} onClick={() => toggleChannel(module.id, ev.key, 'whatsapp')}
                                                         className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
                                                             rule.channels.whatsapp
                                                                 ? 'bg-emerald-600 text-white shadow-xs'
@@ -1560,6 +1615,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                                     {/* Push Toggle */}
                                                     <button
                                                         type="button"
+                                                        aria-pressed={rule.channels.push}
                                                         onClick={() => toggleChannel(module.id, ev.key, 'push')}
                                                         className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
                                                             rule.channels.push
@@ -1572,7 +1628,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                                     </button>
                                                     
                                                     {/* Voice Toggle */}
-                                                    <button
+                                                    {module.id !== 'petty_cash' && <button
                                                         type="button"
                                                         onClick={() => toggleChannel(module.id, ev.key, 'voice')}
                                                         className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
@@ -1583,7 +1639,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                                     >
                                                         <PhoneCall className="w-3 h-3" />
                                                         <span>Voice</span>
-                                                    </button>
+                                                    </button>}
                                                 </div>
                                             </div>
 
@@ -1706,8 +1762,8 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                                             })}
 
                                                             <SearchableUserPicker
-                                                                availableUsers={getScopedUsers()}
-                                                                allUsers={allUsersList}
+                                                                availableUsers={module.id === 'petty_cash' ? getPcUsers() : getScopedUsers()}
+                                                                allUsers={module.id === 'petty_cash' ? getPcUsers() : allUsersList}
                                                                 selectedUserIds={rule.user_ids || []}
                                                                 onSelectUser={(userId) => addUser(module.id, ev.key, userId)}
                                                                 scopeName={getScopeName()}
@@ -1722,18 +1778,18 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                                                 <label className="flex items-center gap-2 cursor-pointer">
                                                                     <input
                                                                         type="checkbox"
-                                                                        checked={rule.notify_assignee !== false}
+                                                                        checked={module.id === 'petty_cash' ? rule.notify_assignee === true : rule.notify_assignee !== false}
                                                                         onChange={() => toggleContextual(module.id, ev.key, 'notify_assignee')}
                                                                         className="w-3.5 h-3.5 text-primary rounded border-slate-300"
                                                                     />
-                                                                    <span className="text-xs font-semibold text-slate-700">Notify Assignee / Agent</span>
+                                                                    <span className="text-xs font-semibold text-slate-700">{module.id === 'petty_cash' ? ev.assigneeLabel || 'Notify Assigned Allocator' : 'Notify Assignee / Agent'}</span>
                                                                 </label>
                                                             )}
                                                             {ev.hasContextual.requester && (
                                                                 <label className="flex items-center gap-2 cursor-pointer">
                                                                     <input
                                                                         type="checkbox"
-                                                                        checked={rule.notify_requester !== false}
+                                                                        checked={module.id === 'petty_cash' ? rule.notify_requester === true : rule.notify_requester !== false}
                                                                         onChange={() => toggleContextual(module.id, ev.key, 'notify_requester')}
                                                                         className="w-3.5 h-3.5 text-primary rounded border-slate-300"
                                                                     />
@@ -1744,7 +1800,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                                                 <label className="flex items-center gap-2 cursor-pointer">
                                                                     <input
                                                                         type="checkbox"
-                                                                        checked={rule.notify_approver !== false}
+                                                                        checked={module.id === 'petty_cash' ? rule.notify_approver === true : rule.notify_approver !== false}
                                                                         onChange={() => toggleContextual(module.id, ev.key, 'notify_approver')}
                                                                         className="w-3.5 h-3.5 text-primary rounded border-slate-300"
                                                                     />
@@ -2471,5 +2527,3 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
         </div>
     );
 }
-
-

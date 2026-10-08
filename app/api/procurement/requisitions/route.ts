@@ -2,9 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { generateRequisitionExcelWorkbook, RequisitionItemData } from '@/backend/lib/excel/requisitionExcelGenerator';
 import { PricingAndAliasService, normalizeText } from '@/backend/lib/procurement/pricingAndAliasService';
-import { EmailService } from '@/backend/services/EmailService';
-import { EmailRecipientResolver } from '@/backend/services/EmailRecipientResolver';
-import { WhatsAppEventProcessor } from '@/backend/services/WhatsAppEventProcessor';
 
 const MONTH_NAMES = [
     'January', 'February', 'March', 'April', 'May', 'June',
@@ -137,10 +134,13 @@ export async function POST(request: NextRequest) {
         let rawItems: RequisitionItemData[] = [];
         let uploadedFileBuffer: Buffer | null = null;
         let uploadedFileName = '';
+        let cachedCatalog: any[] = [];
 
+        let isPreviewOnly = false;
         if (contentType.includes('application/json')) {
             // Interactive UI submission with dual-table items
             const body = await request.json();
+            isPreviewOnly = Boolean(body.preview_only);
             organizationId = body.organization_id;
             propertyId = body.property_id;
             floorTag = body.floor_tag || 'All Floors';
@@ -156,6 +156,7 @@ export async function POST(request: NextRequest) {
 
             // CRITICAL SECURITY RULE: Resolve authorized prices server-side from item_site_prices / procurement_catalog
             const siteCatalog = await PricingAndAliasService.getCatalogWithSitePrices(organizationId, propertyId);
+            cachedCatalog = siteCatalog;
             const verifiedPriceMap = new Map<string, number>();
             siteCatalog.forEach((item: any) => {
                 verifiedPriceMap.set(normalizeText(item.name), item.unit_price);
@@ -173,9 +174,11 @@ export async function POST(request: NextRequest) {
                 };
             });
 
-            // Fetch property & user info to populate Excel template
-            const { data: prop } = await adminSupabase.from('properties').select('id, name, address, city').eq('id', propertyId).single();
-            const { data: uploader } = await adminSupabase.from('users').select('id, full_name, email, phone').eq('id', userId).single();
+            // Fetch property & user info to populate Excel template concurrently
+            const [{ data: prop }, { data: uploader }] = await Promise.all([
+                adminSupabase.from('properties').select('id, name, address, city').eq('id', propertyId).single(),
+                adminSupabase.from('users').select('id, full_name, email, phone').eq('id', userId).single()
+            ]);
 
             const monthName = MONTH_NAMES[requisitionMonth - 1] || 'Month';
             const now = new Date();
@@ -200,6 +203,18 @@ export async function POST(request: NextRequest) {
             const cleanFloor = floorTag.replace(/\s+/g, '_');
             uploadedFileName = `${cleanPropName}_${cleanFloor}_${monthName}_${requisitionYear}_requisition.xlsx`;
             rawItems = verifiedItems;
+
+            // IF PREVIEW ONLY: Return the generated Excel directly as a file download without touching the DB
+            if (isPreviewOnly && uploadedFileBuffer) {
+                return new NextResponse(new Uint8Array(uploadedFileBuffer), {
+                    status: 200,
+                    headers: {
+                        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        'Content-Disposition': `attachment; filename="${uploadedFileName}"`,
+                        'Content-Length': uploadedFileBuffer.length.toString()
+                    }
+                });
+            }
         } else {
             // FormData File Upload
             const form = await request.formData();
@@ -315,73 +330,157 @@ export async function POST(request: NextRequest) {
             }
         });
 
-        // Insert into property_monthly_requisitions
-        const insertPayload: any = {
-            organization_id: organizationId,
-            property_id: propertyId,
-            requisition_month: requisitionMonth,
-            requisition_year: requisitionYear,
-            floor_tag: floorTag,
-            file_url: publicUrl,
-            file_name: uploadedFileName,
-            file_size_bytes: uploadedFileBuffer.length,
-            notes: notesPayload,
-            status: 'submitted',
-            uploaded_by: userId,
-            updated_at: new Date().toISOString(),
-            is_over_budget: isOverBudget,
-            budget_limit: allocatedBudgetLimit,
-            over_budget_amount: overBudgetAmount
-        };
-
-        const { data: insertedRecord, error: insertError } = await adminSupabase
+        // IDEMPOTENCY & DUPLICATION PREVENTION:
+        // Check if a requisition for this property, month, year, and floor tag already exists
+        const { data: existingRecords, error: existingError } = await adminSupabase
             .from('property_monthly_requisitions')
-            .insert(insertPayload)
             .select(`
                 *,
                 property:properties!property_id(id, name),
                 uploader:users!uploaded_by(id, full_name, email, phone)
             `)
-            .single();
+            .eq('organization_id', organizationId)
+            .eq('property_id', propertyId)
+            .eq('requisition_month', requisitionMonth)
+            .eq('requisition_year', requisitionYear)
+            .eq('floor_tag', floorTag)
+            .order('created_at', { ascending: false });
 
-        if (insertError) {
-            console.error('[Requisition Insert Error]:', insertError);
-            return NextResponse.json({ error: 'Failed to save requisition record', details: insertError.message }, { status: 500 });
+        let finalRecord = null;
+
+        if (existingRecords && existingRecords.length > 0) {
+            const latest = existingRecords[0];
+            const msSinceCreation = Date.now() - new Date(latest.created_at).getTime();
+
+            // 1. Debounce rapid double-submissions within 45 seconds by the same user
+            if (msSinceCreation < 45000 && latest.uploaded_by === userId) {
+                console.log(`[Requisition Deduplication]: Debounced concurrent submission within ${msSinceCreation}ms. Returning existing requisition ${latest.id}`);
+                return NextResponse.json({
+                    success: true,
+                    requisition: latest,
+                    file_url: latest.file_url,
+                    debounced: true
+                });
+            }
+
+            // 2. If existing record is still in 'submitted' or 'draft' status, UPDATE it (upsert) instead of creating duplicate row
+            if (['submitted', 'draft'].includes(latest.status)) {
+                console.log(`[Requisition Upsert]: Updating existing ${latest.status} requisition ${latest.id} instead of creating duplicate`);
+                const { data: updatedRecord, error: updateError } = await adminSupabase
+                    .from('property_monthly_requisitions')
+                    .update({
+                        file_url: publicUrl,
+                        file_name: uploadedFileName,
+                        file_size_bytes: uploadedFileBuffer.length,
+                        notes: notesPayload,
+                        uploaded_by: userId,
+                        updated_at: new Date().toISOString(),
+                        is_over_budget: isOverBudget,
+                        budget_limit: allocatedBudgetLimit,
+                        over_budget_amount: overBudgetAmount
+                    })
+                    .eq('id', latest.id)
+                    .select(`
+                        *,
+                        property:properties!property_id(id, name),
+                        uploader:users!uploaded_by(id, full_name, email, phone)
+                    `)
+                    .single();
+
+                if (!updateError && updatedRecord) {
+                    finalRecord = updatedRecord;
+                } else {
+                    console.error('[Requisition Upsert Update Error]:', updateError);
+                }
+            }
         }
 
-        // Auto-sync available stock counts to property's stock_items table so they appear in Stock Management
-        try {
-            if (Array.isArray(rawItems) && rawItems.length > 0) {
-                const siteCatalog = await PricingAndAliasService.getCatalogWithSitePrices(organizationId, propertyId);
-                for (const item of rawItems) {
-                    if (!item.name) continue;
-                    const norm = normalizeText(item.name);
-                    
-                    const { data: existingStock } = await adminSupabase
+        // 3. If no existing active record found or update failed, insert new record
+        if (!finalRecord) {
+            const insertPayload: any = {
+                organization_id: organizationId,
+                property_id: propertyId,
+                requisition_month: requisitionMonth,
+                requisition_year: requisitionYear,
+                floor_tag: floorTag,
+                file_url: publicUrl,
+                file_name: uploadedFileName,
+                file_size_bytes: uploadedFileBuffer.length,
+                notes: notesPayload,
+                status: 'submitted',
+                uploaded_by: userId,
+                updated_at: new Date().toISOString(),
+                is_over_budget: isOverBudget,
+                budget_limit: allocatedBudgetLimit,
+                over_budget_amount: overBudgetAmount
+            };
+
+            const { data: insertedRecord, error: insertError } = await adminSupabase
+                .from('property_monthly_requisitions')
+                .insert(insertPayload)
+                .select(`
+                    *,
+                    property:properties!property_id(id, name),
+                    uploader:users!uploaded_by(id, full_name, email, phone)
+                `)
+                .single();
+
+            if (insertError) {
+                console.error('[Requisition Insert Error]:', insertError);
+                return NextResponse.json({ error: 'Failed to save requisition record', details: insertError.message }, { status: 500 });
+            }
+            finalRecord = insertedRecord;
+        }
+
+        // Fire-and-forget background sync of available stock counts to property's stock_items table
+        // Runs non-blocking so the user gets an instant submission response (< 1s)
+        if (Array.isArray(rawItems) && rawItems.length > 0) {
+            (async () => {
+                try {
+                    const catalogToUse = cachedCatalog && cachedCatalog.length > 0
+                        ? cachedCatalog
+                        : await PricingAndAliasService.getCatalogWithSitePrices(organizationId, propertyId);
+
+                    const { data: existingStocks } = await adminSupabase
                         .from('stock_items')
-                        .select('id, quantity')
-                        .eq('property_id', propertyId)
-                        .ilike('name', item.name)
-                        .maybeSingle();
+                        .select('id, name, quantity')
+                        .eq('property_id', propertyId);
 
-                    const matchedCatalog = (siteCatalog || []).find((c: any) => normalizeText(c.name) === norm);
+                    const stockMap = new Map<string, any>();
+                    (existingStocks || []).forEach((stk: any) => {
+                        if (stk.name) stockMap.set(normalizeText(stk.name), stk);
+                    });
 
-                    if (existingStock) {
-                        if (item.available_stock_qty !== undefined && item.available_stock_qty !== null) {
-                            await adminSupabase
-                                .from('stock_items')
-                                .update({
-                                    quantity: Number(item.available_stock_qty) || 0,
-                                    catalog_item_id: matchedCatalog?.id || null,
-                                    updated_at: new Date().toISOString()
-                                })
-                                .eq('id', existingStock.id);
-                        }
-                    } else {
-                        const itemCode = `STK-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-                        await adminSupabase
-                            .from('stock_items')
-                            .insert({
+                    const catalogMap = new Map<string, any>();
+                    (catalogToUse || []).forEach((c: any) => {
+                        if (c.name) catalogMap.set(normalizeText(c.name), c);
+                    });
+
+                    const updatePromises: PromiseLike<any>[] = [];
+                    const toInsert: any[] = [];
+
+                    for (const item of rawItems) {
+                        if (!item.name) continue;
+                        const norm = normalizeText(item.name);
+                        const existingStock = stockMap.get(norm);
+                        const matchedCatalog = catalogMap.get(norm);
+
+                        if (existingStock) {
+                            if (item.available_stock_qty !== undefined && item.available_stock_qty !== null && Number(existingStock.quantity) !== Number(item.available_stock_qty)) {
+                                updatePromises.push(
+                                    adminSupabase
+                                        .from('stock_items')
+                                        .update({
+                                            quantity: Number(item.available_stock_qty) || 0,
+                                            catalog_item_id: matchedCatalog?.id || null,
+                                            updated_at: new Date().toISOString()
+                                        })
+                                        .eq('id', existingStock.id)
+                                );
+                            }
+                        } else {
+                            const itemCode = `STK-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+                            toInsert.push({
                                 organization_id: organizationId,
                                 property_id: propertyId,
                                 catalog_item_id: matchedCatalog?.id || null,
@@ -393,16 +492,57 @@ export async function POST(request: NextRequest) {
                                 min_threshold: 10,
                                 unit_price: item.unit_price || 0
                             });
+                        }
                     }
+
+                    if (toInsert.length > 0) {
+                        await adminSupabase.from('stock_items').insert(toInsert);
+                    }
+                    if (updatePromises.length > 0) {
+                        const batchSize = 25;
+                        for (let i = 0; i < updatePromises.length; i += batchSize) {
+                            await Promise.all(updatePromises.slice(i, i + batchSize));
+                        }
+                    }
+                } catch (syncStockErr) {
+                    console.warn('[Auto Sync Stock Background Error]:', syncStockErr);
                 }
-            }
-        } catch (syncStockErr) {
-            console.warn('[Auto Sync Stock Error]:', syncStockErr);
+            })();
         }
+
+        // Dispatch Omnichannel notification via event_outbox (automatically delivers Email & WhatsApp via /api/webhooks/process-event)
+        (async () => {
+            try {
+                await adminSupabase.from('event_outbox').insert({
+                    event_type: 'REQUISITION_UPLOADED',
+                    entity_id: finalRecord.id,
+                    payload: {
+                        requisition_id: finalRecord.id,
+                        property_id: propertyId,
+                        organization_id: organizationId,
+                        floor_tag: floorTag,
+                        requisition_month: requisitionMonth,
+                        requisition_year: requisitionYear,
+                        file_name: uploadedFileName,
+                        file_url: publicUrl,
+                        items_count: requestedItemsCount > 0 ? requestedItemsCount : rawItems.length,
+                        total_amount: totalEstimatedAmount,
+                        total_estimated_amount: totalEstimatedAmount,
+                        is_over_budget: isOverBudget,
+                        budget_limit: allocatedBudgetLimit,
+                        over_budget_amount: overBudgetAmount,
+                        uploaded_by: userId,
+                        status: 'submitted'
+                    }
+                });
+            } catch (notifErr) {
+                console.error('[Requisition Notification Dispatch Error]:', notifErr);
+            }
+        })();
 
         return NextResponse.json({
             success: true,
-            requisition: insertedRecord,
+            requisition: finalRecord,
             file_url: publicUrl
         });
     } catch (err: any) {

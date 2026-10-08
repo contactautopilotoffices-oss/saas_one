@@ -7,6 +7,7 @@ import {
     Coffee, Sparkles, Filter, ShieldCheck, ArrowRight, Maximize2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import ModalPortal from '../ui/ModalPortal';
 
 export interface PropertyBudgetItem {
     id?: string;
@@ -335,6 +336,7 @@ export default function PropertyBudgetManagerModal({
     if (!isOpen) return null;
 
     return (
+        <ModalPortal>
         <AnimatePresence>
             <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/75 backdrop-blur-xs overflow-y-auto">
                 <motion.div
@@ -765,5 +767,6 @@ export default function PropertyBudgetManagerModal({
                 </motion.div>
             </div>
         </AnimatePresence>
+        </ModalPortal>
     );
 }

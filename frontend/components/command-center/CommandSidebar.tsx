@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import PettyCashNavLink from '@/frontend/components/pettyCash/PettyCashNavLink';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
@@ -131,6 +132,7 @@ export default function CommandSidebar({ orgId, userName, userEmail, onCustomize
                         })}
                     </div>
                 ))}
+                <PettyCashNavLink />
             </nav>
 
             <div className="px-3 py-3 border-t border-sidebar-border space-y-2">

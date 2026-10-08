@@ -1,4 +1,6 @@
 'use client';
+import { useDashboardContent } from '@/frontend/components/layout/DashboardContentSlot';
+import PettyCashNavLink from '@/frontend/components/pettyCash/PettyCashNavLink';
 import HRTicketsContent from '@/frontend/components/hr/HRTicketsContent';
 
 import React, { useState, useEffect } from 'react';
@@ -91,13 +93,15 @@ interface Ticket {
 }
 
 const MstDashboard = () => {
+    const { dashboardContent, dashboardPropertyId, navigateDashboard } = useDashboardContent();
     const { user, signOut } = useAuth();
     const params = useParams();
     const router = useRouter();
-    const propertyId = params?.propertyId as string;
+    const propertyId = (params?.propertyId as string) || dashboardPropertyId;
 
     // State
-    const [activeTab, setActiveTab] = useState<Tab>('dashboard');
+    const [dashboardTab, setActiveTab] = useState<Tab>('dashboard');
+    const activeTab = dashboardContent !== undefined ? 'petty-cash' as Tab : dashboardTab;
     const [property, setProperty] = useState<Property | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [errorMsg, setErrorMsg] = useState('');
@@ -284,6 +288,7 @@ const MstDashboard = () => {
 
     // Helper to change tab with URL persistence
     const handleTabChange = (tab: Tab, filter?: string) => {
+        if (dashboardContent !== undefined) { navigateDashboard(tab); setSidebarOpen(false); return; }
         setActiveTab(tab);
         if (filter && tab === 'requests') {
             setRequestFilter(filter as any);
@@ -453,7 +458,7 @@ const MstDashboard = () => {
             .select(`
                 *,
                 assignee:users!assigned_to(id, full_name, email, user_photo_url),
-                creator:users!raised_by(property_memberships(role, property_id)),
+                creator:users!raised_by(property_memberships!property_memberships_user_id_fkey(role, property_id)),
                 ticket_escalation_logs(from_level, to_level, escalated_at, from_employee:users!from_employee_id(full_name, user_photo_url), to_employee:users!to_employee_id(full_name, user_photo_url)),
                 material_requests(id)
             `)
@@ -783,7 +788,12 @@ const MstDashboard = () => {
                         </div>
                     </div>
 
-                    {/* System & Personal */}
+
+                    <div className="mb-6" data-navigation-section="management-hub">
+                        <p className="px-4 mb-3 text-[10px] font-bold uppercase tracking-widest text-text-secondary">Management Hub</p>
+                        <PettyCashNavLink onNavigate={() => setSidebarOpen(false)} />
+                    </div>
+{/* System & Personal */}
                     <div className="mb-4">
                         <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider px-2 mb-2 flex items-center gap-1.5">
                             <span className="w-0.5 h-2.5 bg-primary rounded-full" />
@@ -876,6 +886,8 @@ const MstDashboard = () => {
                 {/* Page Content */}
                 {/* Page Content */}
                 <main id="main-scroll-container" className={`flex-1 w-full min-h-0 max-w-full overflow-y-auto overflow-x-hidden ${activeTab === 'checklist' ? 'p-0' : 'p-2 sm:p-4 md:p-6'} bg-slate-50/50`}>
+                {dashboardContent ?? (<>
+
 
                     <AnimatePresence mode="wait">
                         <motion.div
@@ -1047,7 +1059,9 @@ const MstDashboard = () => {
                             )}
                         </motion.div>
                     </AnimatePresence>
-                </main>
+
+                </>)}
+</main>
             </div >
 
             <SignOutModal

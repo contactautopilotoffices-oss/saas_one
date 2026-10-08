@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/frontend/utils/supabase/server'
 import { createAdminClient } from '@/frontend/utils/supabase/admin'
+import { isOrganizationUserManager } from '@/backend/lib/users/managementRoles'
 
 /**
  * GET /api/users/list?orgId=xxx&propertyId=yyy
@@ -43,41 +44,53 @@ export async function GET(request: NextRequest) {
 
         const isMasterAdmin = !!callerUser?.is_master_admin
 
-        if (!isMasterAdmin && orgId) {
-            const { data: callerOrgMembership } = await adminClient
-                .from('organization_memberships')
-                .select('role')
-                .eq('user_id', currentUser.id)
-                .eq('organization_id', orgId)
-                .eq('is_active', true)
-                .maybeSingle()
-
-            const { data: callerPropMembership } = await adminClient
-                .from('property_memberships')
-                .select('role')
-                .eq('user_id', currentUser.id)
-                .eq('is_active', true)
-
-            const isOrgAdmin = callerOrgMembership && ['org_super_admin', 'admin', 'owner'].includes(callerOrgMembership.role)
-            const isPropAdmin = callerPropMembership?.some((m: any) => m.role === 'property_admin')
-
-            if (!isOrgAdmin && !isPropAdmin) {
-                return NextResponse.json(
-                    { error: 'Forbidden. You must be an org admin or property admin.' },
-                    { status: 403 }
-                )
+        // Resolve property scope before any privileged directory reads.
+        let resolvedOrgId = orgId;
+        if (propertyId) {
+            const { data: property, error } = await adminClient
+                .from('properties').select('organization_id').eq('id', propertyId).maybeSingle();
+            if (error) throw error;
+            if (!property) return NextResponse.json({ error: 'Property not found' }, { status: 404 });
+            if (orgId && orgId !== property.organization_id) {
+                return NextResponse.json({ error: 'Property does not belong to the supplied organization' }, { status: 400 });
             }
+            resolvedOrgId = property.organization_id;
+        }
+
+        if (!isMasterAdmin) {
+            const { data: callerOrgMembership, error: orgPermissionError } = await adminClient
+                .from('organization_memberships').select('role')
+                .eq('user_id', currentUser.id).eq('organization_id', resolvedOrgId!)
+                .eq('is_active', true).maybeSingle();
+            if (orgPermissionError) throw orgPermissionError;
+            let isPropertyAdmin = false;
+            if (propertyId) {
+                const { data: callerPropMembership, error: propertyPermissionError } = await adminClient
+                    .from('property_memberships').select('role')
+                    .eq('user_id', currentUser.id).eq('property_id', propertyId)
+                    .eq('is_active', true).maybeSingle();
+                if (propertyPermissionError) throw propertyPermissionError;
+                isPropertyAdmin = callerPropMembership?.role === 'property_admin';
+            }
+            if (!isOrganizationUserManager(callerOrgMembership?.role) && !isPropertyAdmin) {
+                return NextResponse.json({ error: 'Forbidden. You must administer this organization or property.' }, { status: 403 });
+            }
+        }
+
+        function approvalState(item: { is_active?: boolean; approval_status?: string | null; user?: { is_approved?: boolean; approval_status?: string | null } }) {
+            if (item.is_active === true) return { is_approved: true, approval_status: 'approved' };
+            const status = item.approval_status || item.user?.approval_status ||
+                (item.user?.is_approved === false ? 'pending' : 'approved');
+            return { is_approved: status === 'approved', approval_status: status };
         }
 
         // Helper function to attach employee profiles to user records
         async function attachEmployeeProfiles(usersList: any[]) {
             if (!usersList || usersList.length === 0) return;
-            const userIds = usersList.map((u: any) => u.id).filter(Boolean);
-            const userEmails = usersList.map((u: any) => u.email).filter(Boolean);
-
             const { data: empProfiles } = await adminClient
                 .from('employee_profiles')
-                .select('user_id, email, designation, employee_code, department, phone');
+                .select('user_id, email, designation, employee_code, department, phone')
+                .eq('organization_id', resolvedOrgId!);
 
             if (empProfiles && empProfiles.length > 0) {
                 const empByUserId = new Map(empProfiles.filter((ep: any) => ep.user_id).map((ep: any) => [ep.user_id, ep]));
@@ -97,24 +110,19 @@ export async function GET(request: NextRequest) {
             }
         }
 
+        // Explicit user_id embeds select the member, not audit fields such as updated_by.
         // Fetch users using admin client (bypasses RLS)
         if (propertyId) {
-            // First get the orgId for this property
-            const { data: propertyData } = await adminClient
-                .from('properties')
-                .select('organization_id')
-                .eq('id', propertyId)
-                .single();
-
             const { data, error } = await adminClient
                 .from('property_memberships')
                 .select(`
                     role,
                     custom_designation,
                     is_active,
+                    approval_status,
                     created_at,
                     property:properties (id, name, organization_id),
-                    user:users (*)
+                    user:users!user_id (*)
                 `)
                 .eq('property_id', propertyId);
 
@@ -125,7 +133,7 @@ export async function GET(request: NextRequest) {
                 if (!item?.user) return false;
                 if (item.user.deleted_at) return false;
                 if (item.is_active === true) return true;
-                const isPendingApproval = (item.user.is_approved === false || item.user.approval_status === 'pending') && item.user.approval_status !== 'rejected';
+                const isPendingApproval = ['pending', 'pending_approval'].includes(approvalState(item).approval_status);
                 return isPendingApproval;
             };
 
@@ -144,8 +152,7 @@ export async function GET(request: NextRequest) {
                     organizationId: item.property?.organization_id,
                     is_active: item.is_active,
                     joined_at: item.created_at,
-                    is_approved: item.user?.is_approved ?? true,
-                    approval_status: item.user?.approval_status || (item.user?.is_approved === false ? 'pending' : 'approved'),
+                    ...approvalState(item),
                     approved_by: item.user?.approved_by || null,
                     approved_at: item.user?.approved_at || null,
                     rejection_reason: item.user?.rejection_reason || null,
@@ -159,6 +166,7 @@ export async function GET(request: NextRequest) {
                     .from('organization_memberships')
                     .select('user_id, role')
                     .in('user_id', userIds)
+                    .eq('organization_id', resolvedOrgId!)
                     .eq('is_active', true);
                 if (orgM && orgM.length > 0) {
                     const orgMap = new Map(orgM.map((m: any) => [m.user_id, m.role]));
@@ -188,7 +196,7 @@ export async function GET(request: NextRequest) {
                 });
             }
 
-            return NextResponse.json({ users, organizationId: propertyData?.organization_id });
+            return NextResponse.json({ users, organizationId: resolvedOrgId });
         }
 
         // Org-level: fetch both org memberships and property memberships
@@ -197,8 +205,9 @@ export async function GET(request: NextRequest) {
             .select(`
                 role,
                 is_active,
+                approval_status,
                 created_at,
-                user:users (*)
+                user:users!user_id (*)
             `)
             .eq('organization_id', orgId!);
 
@@ -210,11 +219,12 @@ export async function GET(request: NextRequest) {
                 role,
                 custom_designation,
                 is_active,
+                approval_status,
                 created_at,
                 property:properties!inner (id, name, organization_id),
-                user:users (*)
+                user:users!user_id (*)
             `)
-            .eq('properties.organization_id', orgId!);
+            .eq('property.organization_id', orgId!);
 
         if (propError) throw propError;
 
@@ -224,7 +234,7 @@ export async function GET(request: NextRequest) {
             if (!item?.user) return false;
             if (item.user.deleted_at) return false;
             if (item.is_active === true) return true;
-            const isPendingApproval = (item.user.is_approved === false || item.user.approval_status === 'pending') && item.user.approval_status !== 'rejected';
+            const isPendingApproval = ['pending', 'pending_approval'].includes(approvalState(item).approval_status);
             return isPendingApproval;
         };
 
@@ -240,8 +250,7 @@ export async function GET(request: NextRequest) {
                 organizationId: orgId,
                 is_active: item.is_active,
                 joined_at: item.created_at,
-                is_approved: item.user.is_approved ?? true,
-                approval_status: item.user.approval_status || (item.user.is_approved === false ? 'pending' : 'approved'),
+                ...approvalState(item),
                 approved_by: item.user.approved_by || null,
                 approved_at: item.user.approved_at || null,
                 rejection_reason: item.user.rejection_reason || null,
@@ -253,6 +262,10 @@ export async function GET(request: NextRequest) {
             if (!item.user) return;
             const existing = userMap.get(item.user.id);
             if (existing) {
+                const memberApproval = approvalState(item);
+                if (['pending', 'pending_approval'].includes(memberApproval.approval_status)) {
+                    Object.assign(existing, memberApproval);
+                }
                 existing.propertyRole = item.role;
                 existing.propertyName = item.property?.name;
                 existing.propertyId = item.property?.id;
@@ -271,8 +284,7 @@ export async function GET(request: NextRequest) {
                     organizationId: orgId,
                     is_active: item.is_active,
                     joined_at: item.created_at,
-                    is_approved: item.user.is_approved ?? true,
-                    approval_status: item.user.approval_status || (item.user.is_approved === false ? 'pending' : 'approved'),
+                    ...approvalState(item),
                     approved_by: item.user.approved_by || null,
                     approved_at: item.user.approved_at || null,
                     rejection_reason: item.user.rejection_reason || null,
@@ -280,39 +292,6 @@ export async function GET(request: NextRequest) {
                 });
             }
         });
-
-        // Also fetch pending/unapproved users directly from `users` table who might not have membership rows yet
-        const { data: directPendingUsers } = await adminClient
-            .from('users')
-            .select('*')
-            .is('deleted_at', null)
-            .eq('organization_id', orgId!)
-            .or('is_approved.eq.false,approval_status.eq.pending,approval_status.eq.pending_approval');
-
-        if (directPendingUsers && directPendingUsers.length > 0) {
-            directPendingUsers.forEach((u: any) => {
-                if (!userMap.has(u.id)) {
-                    const metaRole = u.role || u.raw_user_meta_data?.role || 'staff';
-                    userMap.set(u.id, {
-                        id: u.id,
-                        full_name: u.full_name || u.raw_user_meta_data?.full_name || u.email.split('@')[0],
-                        email: u.email || '',
-                        user_photo_url: u.user_photo_url,
-                        phone: u.phone,
-                        orgRole: metaRole,
-                        organizationId: orgId,
-                        is_active: false,
-                        joined_at: u.created_at,
-                        is_approved: false,
-                        approval_status: u.approval_status || 'pending',
-                        approved_by: u.approved_by || null,
-                        approved_at: u.approved_at || null,
-                        rejection_reason: u.rejection_reason || null,
-                        approverName: null as string | null
-                    });
-                }
-            });
-        }
 
         const users = Array.from(userMap.values()).sort((a, b) => a.full_name.localeCompare(b.full_name));
 

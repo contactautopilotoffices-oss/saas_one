@@ -190,6 +190,8 @@ export default function OnboardingPage() {
 
 
     useEffect(() => {
+        // Property data is needed only after choosing a property-scoped role.
+        if (step !== 3) return;
         const fetchProperties = async () => {
             const orgId = process.env.NEXT_PUBLIC_AUTOPILOT_ORG_ID;
 
@@ -227,17 +229,18 @@ export default function OnboardingPage() {
         };
 
         fetchProperties();
-    }, [supabase]);
+    }, [supabase, step]);
 
     const handleComplete = useCallback(async () => {
-        if (!user || !selectedProperty || !selectedRole || !AUTOPILOT_ORG_ID) return;
+        if (!user || !selectedRole || !AUTOPILOT_ORG_ID) return;
+        if (selectedRole !== 'accounts' && !selectedProperty) return;
 
         setSubmitting(true);
         setError('');
 
         try {
             // Resolve Property ID
-            let finalPropId = selectedProperty.id;
+            let finalPropId = selectedRole === 'accounts' ? null : selectedProperty!.id;
             if (finalPropId === 'default') {
                 const { data: realProp } = await supabase.from('properties').select('id').eq('organization_id', AUTOPILOT_ORG_ID).limit(1).maybeSingle();
                 if (realProp) finalPropId = realProp.id;
@@ -280,7 +283,10 @@ export default function OnboardingPage() {
     };
 
     const nextStep = () => {
-        if (step === 3 && (selectedRole === 'mst' || selectedRole === 'staff')) {
+        if (step === 2 && selectedRole === 'accounts') {
+            // Accounts joins the organization directly, without a property step.
+            handleComplete();
+        } else if (step === 3 && (selectedRole === 'mst' || selectedRole === 'staff')) {
             // Need to go to skills step
             setStep(4);
         } else if (step === 3) {
@@ -307,8 +313,8 @@ export default function OnboardingPage() {
         switch (step) {
             case 0: return true;
             case 1: return phoneNumber.length === 0 || phoneNumber.length >= 10;
-            case 2: return selectedProperty !== null;
-            case 3: return selectedRole !== null;
+            case 2: return selectedRole !== null;
+            case 3: return selectedProperty !== null;
             case 4: return selectedSkills.length > 0;
             default: return false;
         }
@@ -316,7 +322,7 @@ export default function OnboardingPage() {
 
     // Calculate total steps including skill step if relevant
     const showSkillsStep = selectedRole && (selectedRole === 'mst' || selectedRole === 'staff');
-    const totalSteps = showSkillsStep ? 5 : 4;
+    const totalSteps = selectedRole === 'accounts' ? 3 : showSkillsStep ? 5 : 4;
 
 
     if ((loading || authLoading) && step === 0) {
@@ -401,7 +407,7 @@ export default function OnboardingPage() {
                         )}
 
 
-                        {step === 2 && (
+                        {step === 3 && (
                             <motion.div
                                 key="property" initial={{ opacity: 0, x: 50 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -50 }}
                                 className="flex flex-col items-center"
@@ -451,7 +457,7 @@ export default function OnboardingPage() {
                             </motion.div>
                         )}
 
-                        {step === 3 && (
+                        {step === 2 && (
                             <motion.div
                                 key="role" initial={{ opacity: 0, x: 50 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -50 }}
                                 className="flex flex-col items-center"

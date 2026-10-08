@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
+import { canAssignProperties } from '@/backend/lib/users/managementRoles';
 
 /**
  * POST /api/users/assign-property
@@ -35,6 +36,16 @@ export async function POST(request: NextRequest) {
 
         const adminClient = createAdminClient();
 
+        if (!['add', 'remove'].includes(action)) {
+            return NextResponse.json({ error: 'Action must be add or remove' }, { status: 400 });
+        }
+        const { data: property, error: propertyError } = await adminClient.from('properties')
+            .select('organization_id').eq('id', propertyId).maybeSingle();
+        if (propertyError) throw propertyError;
+        if (!property || property.organization_id !== organizationId) {
+            return NextResponse.json({ error: 'Property does not belong to the supplied organization' }, { status: 400 });
+        }
+
         // Verify caller is org_super_admin or master_admin for this org
         const { data: callerMembership } = await adminClient
             .from('organization_memberships')
@@ -52,17 +63,17 @@ export async function POST(request: NextRequest) {
 
         const isAuthorized =
             callerProfile?.is_master_admin === true ||
-            callerMembership?.role === 'org_super_admin';
+            canAssignProperties(callerMembership?.role);
 
-        if (!isAuthorized) {
-            return NextResponse.json({ error: 'Only org super admins can assign properties' }, { status: 403 });
+        if (!isAuthorized || (role === 'master_admin' && !callerProfile?.is_master_admin)) {
+            return NextResponse.json({ error: 'Only organization super admins or master admins can assign properties' }, { status: 403 });
         }
 
         if (action === 'remove') {
             // Deactivate the membership (don't delete, preserves history)
             const { error } = await adminClient
                 .from('property_memberships')
-                .update({ is_active: false })
+                .update({ is_active: false, approval_status: 'inactive', updated_by: user.id, updated_at: new Date().toISOString() })
                 .eq('user_id', userId)
                 .eq('property_id', propertyId);
 
@@ -93,7 +104,7 @@ export async function POST(request: NextRequest) {
             // Reactivate and update role
             const { error } = await adminClient
                 .from('property_memberships')
-                .update({ is_active: true, role: role || existing.role })
+                .update({ is_active: true, approval_status: 'approved', role: role || existing.role, updated_by: user.id, updated_at: new Date().toISOString() })
                 .eq('user_id', userId)
                 .eq('property_id', propertyId);
 
@@ -111,6 +122,7 @@ export async function POST(request: NextRequest) {
                     organization_id: organizationId,
                     role: role || 'property_admin',
                     is_active: true,
+                    approval_status: 'approved',
                 });
 
             if (error) {

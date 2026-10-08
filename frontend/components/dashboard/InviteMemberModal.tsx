@@ -29,6 +29,7 @@ const AddMemberModal = ({ isOpen, onClose, orgId, orgName, properties, fixedProp
     const [superTenantPropertyIds, setSuperTenantPropertyIds] = useState<string[]>([]);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const isOrgWideRole = ['org_super_admin', 'ops_super_admin', 'super_tenant', 'procurement', 'accounts', 'hr', 'hr_head'].includes(role);
 
     const SKILL_OPTIONS: Record<string, { code: string; label: string; icon: any }[]> = {
         mst: [
@@ -77,7 +78,7 @@ const AddMemberModal = ({ isOpen, onClose, orgId, orgName, properties, fixedProp
                     full_name: fullName,
                     organization_id: orgId,
                     role,
-                    property_id: (['org_super_admin', 'ops_super_admin', 'super_tenant', 'procurement', 'hr', 'hr_head'].includes(role)) ? null : selectedPropertyId,
+                    property_id: isOrgWideRole ? null : selectedPropertyId,
                     specialization: role === 'staff' ? specialization : undefined,
                     skills: (role === 'staff' || role === 'mst' || role === 'soft_service_staff' || role === 'soft_service_supervisor' || role === 'soft_service_manager') ? selectedSkills : undefined
                 }),
@@ -256,6 +257,10 @@ const AddMemberModal = ({ isOpen, onClose, orgId, orgName, properties, fixedProp
                                             <option value="procurement">Procurement</option>
                                         </optgroup>
 
+                                        <optgroup label="Finance">
+                                            <option value="accounts">Accounts / Finance</option>
+                                        </optgroup>
+
                                         <optgroup label="Human Resources">
                                             <option value="hr">HR Executive</option>
                                             <option value="hr_head">HR Head</option>
@@ -271,7 +276,7 @@ const AddMemberModal = ({ isOpen, onClose, orgId, orgName, properties, fixedProp
                                 </div>
                             </div>
 
-                            {!['org_super_admin', 'ops_super_admin', 'super_tenant', 'procurement', 'hr', 'hr_head'].includes(role) && (
+                            {!isOrgWideRole && (
                                 <div className="space-y-2">
                                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Target Property</label>
                                     <div className="relative">
@@ -279,7 +284,7 @@ const AddMemberModal = ({ isOpen, onClose, orgId, orgName, properties, fixedProp
                                         <select
                                             value={selectedPropertyId}
                                             onChange={(e) => setSelectedPropertyId(e.target.value)}
-                                            required={!['org_super_admin', 'ops_super_admin', 'super_tenant', 'procurement', 'hr', 'hr_head'].includes(role)}
+                                            required={!isOrgWideRole}
                                             disabled={!!fixedPropertyId}
                                             className="w-full pl-11 pr-4 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold text-slate-900 focus:ring-2 focus:ring-slate-100 outline-none appearance-none disabled:opacity-75 disabled:cursor-not-allowed"
                                         >

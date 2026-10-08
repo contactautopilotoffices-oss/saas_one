@@ -105,13 +105,15 @@ export function populateRequisitionWorksheet(worksheet: ExcelJS.Worksheet, data:
         { key: 'colD', width: 22 },  // Color, Size
         { key: 'colE', width: 10 },  // Qty
         { key: 'colF', width: 10 },  // UOM
-        { key: 'colG', width: 4 },   // Spacer
-        { key: 'colH', width: 6 },   // #
-        { key: 'colI', width: 28 },  // Product Name/Type
-        { key: 'colJ', width: 22 },  // Specific Brand if any
-        { key: 'colK', width: 22 },  // Color, Size
-        { key: 'colL', width: 10 },  // Qty
-        { key: 'colM', width: 10 },  // UOM
+        { key: 'colG', width: 14 },  // Total (₹)
+        { key: 'colH', width: 4 },   // Spacer
+        { key: 'colI', width: 6 },   // #
+        { key: 'colJ', width: 28 },  // Product Name/Type
+        { key: 'colK', width: 22 },  // Specific Brand if any
+        { key: 'colL', width: 22 },  // Color, Size
+        { key: 'colM', width: 10 },  // Qty
+        { key: 'colN', width: 10 },  // UOM
+        { key: 'colO', width: 14 },  // Total (₹)
     ];
 
     let currentRow = 1;
@@ -234,17 +236,17 @@ export function populateRequisitionWorksheet(worksheet: ExcelJS.Worksheet, data:
 
         // Category Banner
         const catRow = currentRow;
-        worksheet.mergeCells(`A${catRow}:F${catRow}`);
+        worksheet.mergeCells(`A${catRow}:G${catRow}`);
         worksheet.getCell(`A${catRow}`).value = `Requisition Format - ${title}`;
         worksheet.getCell(`A${catRow}`).font = { bold: true, size: 11 };
         worksheet.getCell(`A${catRow}`).alignment = { horizontal: 'center' };
         worksheet.getCell(`A${catRow}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
 
-        worksheet.mergeCells(`H${catRow}:M${catRow}`);
-        worksheet.getCell(`H${catRow}`).value = `List of available Stock at the center`;
-        worksheet.getCell(`H${catRow}`).font = { bold: true, size: 11 };
-        worksheet.getCell(`H${catRow}`).alignment = { horizontal: 'center' };
-        worksheet.getCell(`H${catRow}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+        worksheet.mergeCells(`I${catRow}:O${catRow}`);
+        worksheet.getCell(`I${catRow}`).value = `List of available Stock at the center`;
+        worksheet.getCell(`I${catRow}`).font = { bold: true, size: 11 };
+        worksheet.getCell(`I${catRow}`).alignment = { horizontal: 'center' };
+        worksheet.getCell(`I${catRow}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
 
         currentRow++;
 
@@ -258,14 +260,16 @@ export function populateRequisitionWorksheet(worksheet: ExcelJS.Worksheet, data:
         worksheet.getCell(`D${headerRow}`).value = 'Color, Size';
         worksheet.getCell(`E${headerRow}`).value = 'Qty';
         worksheet.getCell(`F${headerRow}`).value = 'UOM';
+        worksheet.getCell(`G${headerRow}`).value = 'Total';
 
         // Right Table Headers (Available Stock)
-        worksheet.getCell(`H${headerRow}`).value = '#';
-        worksheet.getCell(`I${headerRow}`).value = 'Product Name/Type';
-        worksheet.getCell(`J${headerRow}`).value = 'Specific Brand if any';
-        worksheet.getCell(`K${headerRow}`).value = 'Color, Size';
-        worksheet.getCell(`L${headerRow}`).value = 'Qty';
-        worksheet.getCell(`M${headerRow}`).value = 'UOM';
+        worksheet.getCell(`I${headerRow}`).value = '#';
+        worksheet.getCell(`J${headerRow}`).value = 'Product Name/Type';
+        worksheet.getCell(`K${headerRow}`).value = 'Specific Brand if any';
+        worksheet.getCell(`L${headerRow}`).value = 'Color, Size';
+        worksheet.getCell(`M${headerRow}`).value = 'Qty';
+        worksheet.getCell(`N${headerRow}`).value = 'UOM';
+        worksheet.getCell(`O${headerRow}`).value = 'Total';
 
         // Apply Colors to Headers
         const applyHeaderStyle = (cellRef: string, colorHex: string) => {
@@ -288,40 +292,53 @@ export function populateRequisitionWorksheet(worksheet: ExcelJS.Worksheet, data:
         applyHeaderStyle(`D${headerRow}`, COLORS.DETAILS_HEADER);
         applyHeaderStyle(`E${headerRow}`, COLORS.GRAY_HEADER);
         applyHeaderStyle(`F${headerRow}`, COLORS.UOM_HEADER);
+        applyHeaderStyle(`G${headerRow}`, COLORS.GRAY_HEADER);
 
         // Right headers
-        applyHeaderStyle(`H${headerRow}`, COLORS.GRAY_HEADER);
-        applyHeaderStyle(`I${headerRow}`, COLORS.PRODUCT_HEADER);
-        applyHeaderStyle(`J${headerRow}`, COLORS.BRAND_HEADER);
-        applyHeaderStyle(`K${headerRow}`, COLORS.DETAILS_HEADER);
-        applyHeaderStyle(`L${headerRow}`, COLORS.GRAY_HEADER);
-        applyHeaderStyle(`M${headerRow}`, COLORS.UOM_HEADER);
+        applyHeaderStyle(`I${headerRow}`, COLORS.GRAY_HEADER);
+        applyHeaderStyle(`J${headerRow}`, COLORS.PRODUCT_HEADER);
+        applyHeaderStyle(`K${headerRow}`, COLORS.BRAND_HEADER);
+        applyHeaderStyle(`L${headerRow}`, COLORS.DETAILS_HEADER);
+        applyHeaderStyle(`M${headerRow}`, COLORS.GRAY_HEADER);
+        applyHeaderStyle(`N${headerRow}`, COLORS.UOM_HEADER);
+        applyHeaderStyle(`O${headerRow}`, COLORS.GRAY_HEADER);
 
         currentRow++;
 
         // Render Data Rows
         itemsList.forEach((item, index) => {
             const rowIdx = currentRow;
+            const unitPrice = Number(item.unit_price) || 0;
+            const reqQty = Number(item.requested_qty) || 0;
+            const totalReq = reqQty * unitPrice;
+            const stockQty = Number(item.available_stock_qty) || 0;
+            const totalStock = stockQty * unitPrice;
             
             // Left Table (Requested)
             worksheet.getCell(`A${rowIdx}`).value = index + 1;
             worksheet.getCell(`B${rowIdx}`).value = item.name;
             worksheet.getCell(`C${rowIdx}`).value = item.brand || 'NA';
             worksheet.getCell(`D${rowIdx}`).value = item.details || '';
-            worksheet.getCell(`E${rowIdx}`).value = item.requested_qty || 0;
+            worksheet.getCell(`E${rowIdx}`).value = reqQty;
             worksheet.getCell(`F${rowIdx}`).value = item.unit || 'pcs';
+            worksheet.getCell(`G${rowIdx}`).value = unitPrice > 0 ? { formula: `E${rowIdx}*${unitPrice}`, result: totalReq } : totalReq;
+            worksheet.getCell(`G${rowIdx}`).numFmt = '₹#,##0.00';
 
             // Right Table (Stock)
-            worksheet.getCell(`H${rowIdx}`).value = index + 1;
-            worksheet.getCell(`I${rowIdx}`).value = item.name;
-            worksheet.getCell(`J${rowIdx}`).value = item.brand || 'NA';
-            worksheet.getCell(`K${rowIdx}`).value = item.details || '';
-            worksheet.getCell(`L${rowIdx}`).value = item.available_stock_qty || 0;
-            worksheet.getCell(`M${rowIdx}`).value = item.unit || 'pcs';
+            worksheet.getCell(`I${rowIdx}`).value = index + 1;
+            worksheet.getCell(`J${rowIdx}`).value = item.name;
+            worksheet.getCell(`K${rowIdx}`).value = item.brand || 'NA';
+            worksheet.getCell(`L${rowIdx}`).value = item.details || '';
+            worksheet.getCell(`M${rowIdx}`).value = stockQty;
+            worksheet.getCell(`N${rowIdx}`).value = item.unit || 'pcs';
+            worksheet.getCell(`O${rowIdx}`).value = unitPrice > 0 ? { formula: `M${rowIdx}*${unitPrice}`, result: totalStock } : totalStock;
+            worksheet.getCell(`O${rowIdx}`).numFmt = '₹#,##0.00';
 
             // Cell styling
-            const cells = [`A${rowIdx}`, `B${rowIdx}`, `C${rowIdx}`, `D${rowIdx}`, `E${rowIdx}`, `F${rowIdx}`,
-                           `H${rowIdx}`, `I${rowIdx}`, `J${rowIdx}`, `K${rowIdx}`, `L${rowIdx}`, `M${rowIdx}`];
+            const cells = [
+                `A${rowIdx}`, `B${rowIdx}`, `C${rowIdx}`, `D${rowIdx}`, `E${rowIdx}`, `F${rowIdx}`, `G${rowIdx}`,
+                `I${rowIdx}`, `J${rowIdx}`, `K${rowIdx}`, `L${rowIdx}`, `M${rowIdx}`, `N${rowIdx}`, `O${rowIdx}`
+            ];
 
             cells.forEach(c => {
                 const cell = worksheet.getCell(c);
@@ -340,17 +357,19 @@ export function populateRequisitionWorksheet(worksheet: ExcelJS.Worksheet, data:
             worksheet.getCell(`D${rowIdx}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${COLORS.DETAILS_CELL}` } };
             worksheet.getCell(`F${rowIdx}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${COLORS.UOM_CELL}` } };
 
-            worksheet.getCell(`I${rowIdx}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${COLORS.PRODUCT_CELL}` } };
-            worksheet.getCell(`J${rowIdx}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${COLORS.BRAND_CELL}` } };
-            worksheet.getCell(`K${rowIdx}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${COLORS.DETAILS_CELL}` } };
-            worksheet.getCell(`M${rowIdx}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${COLORS.UOM_CELL}` } };
+            worksheet.getCell(`J${rowIdx}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${COLORS.PRODUCT_CELL}` } };
+            worksheet.getCell(`K${rowIdx}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${COLORS.BRAND_CELL}` } };
+            worksheet.getCell(`L${rowIdx}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${COLORS.DETAILS_CELL}` } };
+            worksheet.getCell(`N${rowIdx}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${COLORS.UOM_CELL}` } };
 
             worksheet.getCell(`A${rowIdx}`).alignment = { horizontal: 'center' };
             worksheet.getCell(`E${rowIdx}`).alignment = { horizontal: 'right' };
             worksheet.getCell(`F${rowIdx}`).alignment = { horizontal: 'center' };
-            worksheet.getCell(`H${rowIdx}`).alignment = { horizontal: 'center' };
-            worksheet.getCell(`L${rowIdx}`).alignment = { horizontal: 'right' };
-            worksheet.getCell(`M${rowIdx}`).alignment = { horizontal: 'center' };
+            worksheet.getCell(`G${rowIdx}`).alignment = { horizontal: 'right' };
+            worksheet.getCell(`I${rowIdx}`).alignment = { horizontal: 'center' };
+            worksheet.getCell(`M${rowIdx}`).alignment = { horizontal: 'right' };
+            worksheet.getCell(`N${rowIdx}`).alignment = { horizontal: 'center' };
+            worksheet.getCell(`O${rowIdx}`).alignment = { horizontal: 'right' };
 
             currentRow++;
         });

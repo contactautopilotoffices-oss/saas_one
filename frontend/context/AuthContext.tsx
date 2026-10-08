@@ -174,6 +174,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             // Cache the result
             membershipCache.set(userId, { data: membershipData, timestamp: Date.now() });
             setMembership(membershipData);
+
+            // Self-heal: ensure user.user_metadata has organization_id and role
+            if (membershipData.org_id && (!user?.user_metadata?.organization_id || !user?.user_metadata?.role)) {
+                supabase.auth.updateUser({
+                    data: {
+                        organization_id: membershipData.org_id,
+                        role: membershipData.org_role || 'staff',
+                        property_id: membershipData.properties?.[0]?.id,
+                        property_role: membershipData.properties?.[0]?.role
+                    }
+                }).catch(e => console.warn('Self-healing user_metadata error:', e));
+            }
         } catch (err) {
             console.error('Membership fetch error:', err);
             // On error, set membership with error flag so consumers know it failed
