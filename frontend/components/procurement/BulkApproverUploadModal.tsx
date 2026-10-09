@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ModalPortal from '../ui/ModalPortal';
+import { siteEstimatedAmount } from '@/backend/lib/procurement/requisition-approval.mjs';
 import RequisitionApproverSelect, { type RequisitionApprover } from './RequisitionApproverSelect';
 
 interface BulkApproverUploadModalProps {
@@ -91,7 +92,7 @@ export default function BulkApproverUploadModal({
 
     const selectedRequisitionsList = eligibleRequisitions.filter(r => selectedIds.has(r.id));
     const totalSelectedEstAmount = selectedRequisitionsList.reduce((acc, r) => {
-        return acc + (Number(r.total_estimated_amount) || Number(r.vendor_quotation?.total_quoted_amount) || 0);
+        return acc + siteEstimatedAmount(r);
     }, 0);
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -114,7 +115,6 @@ export default function BulkApproverUploadModal({
             formData.append('organization_id', organizationId || currentUser?.user_metadata?.organization_id || '');
             formData.append('requisition_ids', JSON.stringify(Array.from(selectedIds)));
             formData.append('vendor_name', 'Vendor Quote');
-            formData.append('total_quoted_amount', String(totalSelectedEstAmount));
             formData.append('vendor_notes', vendorNotes.trim());
             formData.append('target_approver_id', selectedApproverId);
             if (quoteFile) {
@@ -131,7 +131,7 @@ export default function BulkApproverUploadModal({
                 throw new Error(data.error || 'Failed to submit multi-site approval');
             }
 
-            alert(`✅ Request for approval sent to Director / Approver for ${selectedIds.size} sites! Approver has been notified.`);
+            alert(`✅ ${data.updated_count} requisitions sent for individual approval.${data.failed_ids?.length ? ` ${data.failed_ids.length} could not be submitted; refresh and retry those records.` : ''}${data.notification_warning ? ' A notification could not be sent; the requisitions remain available in the app.' : ' One WhatsApp summary was requested for this upload.'}`);
             onSuccess();
             onClose();
         } catch (err: any) {
@@ -225,7 +225,7 @@ export default function BulkApproverUploadModal({
                                         const isSelected = selectedIds.has(req.id);
                                         const monthName = MONTH_NAMES[(req.requisition_month || 1) - 1] || 'Month';
                                         const itemsCount = req.total_items_count || req.items?.length || 0;
-                                        const estAmount = req.total_estimated_amount || req.vendor_quotation?.total_quoted_amount || 0;
+                                        const estAmount = siteEstimatedAmount(req);
 
                                         return (
                                             <div
@@ -334,7 +334,7 @@ export default function BulkApproverUploadModal({
                                 3. Assign Reviewing Approver
                             </h4>
                             <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">
-                                The selected Org Super Admin or Ops Super Admin will receive the uploaded quote and can approve or reject all selected sites.
+                                The selected Org Super Admin or Ops Super Admin will receive the uploaded quote and will receive one WhatsApp summary and must review and approve or reject each requisition separately.
                             </p>
 
                             <RequisitionApproverSelect approvers={approvers} value={selectedApproverId}

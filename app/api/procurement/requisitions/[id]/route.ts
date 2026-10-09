@@ -1,3 +1,4 @@
+import { siteVendorQuotation } from '@/backend/lib/procurement/requisition-approval.mjs';
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
@@ -65,7 +66,7 @@ export async function GET(
                 total_estimated_amount: parsedData.total_estimated_amount || req.total_estimated_amount || 0,
                 total_items_count: parsedData.items?.length || 0,
                 site_notes: parsedData.site_notes || (typeof req.notes === 'string' ? req.notes : ''),
-                vendor_quotation: parsedData.vendor_quotation || null,
+                vendor_quotation: siteVendorQuotation({ ...req, vendor_quotation: parsedData.vendor_quotation }),
                 approver_info: parsedData.approver_info || null,
                 po_info: parsedData.po_info || null
             }
@@ -86,6 +87,9 @@ export async function PATCH(
             return NextResponse.json({ error: 'Requisition ID is required' }, { status: 400 });
         }
 
+        const session = await createClient();
+        const { data: { user }, error: authError } = await session.auth.getUser();
+        if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         const adminSupabase = createAdminClient();
         const contentType = request.headers.get('content-type') || '';
 
@@ -100,6 +104,22 @@ export async function PATCH(
             return NextResponse.json({ error: 'Requisition not found' }, { status: 404 });
         }
 
+        const { data: profile, error: profileError } = await adminSupabase.from('users')
+            .select('is_master_admin,deleted_at').eq('id', user.id).maybeSingle();
+        if (profileError) throw profileError;
+        if (!profile || profile.deleted_at) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+        if (!profile.is_master_admin) {
+            const { data: memberships, error } = await adminSupabase.from('organization_memberships')
+                .select('role').eq('organization_id', existing.organization_id).eq('user_id', user.id).eq('is_active', true);
+            if (error) throw error;
+            const roles = ['procurement', 'purchase_manager', 'purchase_executive', 'org_super_admin', 'ops_super_admin', 'master_admin'];
+            if (!memberships?.some(member => roles.includes(member.role))) {
+                return NextResponse.json({ error: 'Procurement or administrator access is required.' }, { status: 403 });
+            }
+        }
+        if (!contentType.includes('multipart/form-data')) {
+            return NextResponse.json({ error: 'Use the individual approval endpoint for decisions, or the quotation/PO form.' }, { status: 400 });
+        }
         let propertyObj: any = null;
         if (existing.property_id) {
             const { data: prop } = await adminSupabase.from('properties').select('id, name, address, city').eq('id', existing.property_id).maybeSingle();
@@ -124,7 +144,7 @@ export async function PATCH(
         }
 
         let updateStatus = existing.status;
-        let vendorQuotationData = existingNotesObj.vendor_quotation || null;
+        let vendorQuotationData = siteVendorQuotation(existing);
         let approverInfoData = existingNotesObj.approver_info || null;
         let poInfoData = existingNotesObj.po_info || null;
 
@@ -132,10 +152,19 @@ export async function PATCH(
             const formData = await request.formData();
             const action = formData.get('action') as string || 'submit_for_approval';
 
+            if (!['issue_po', 'submit_for_approval'].includes(action)) {
+                return NextResponse.json({ error: 'Invalid requisition action.' }, { status: 400 });
+            }
+            if (action === 'issue_po' && existing.status !== 'approved') {
+                return NextResponse.json({ error: 'Review and approve this requisition before issuing a PO.' }, { status: 409 });
+            }
+            if (action === 'submit_for_approval' && !['submitted', 'uploaded', 'acknowledged', 'pending_approval', 'rejected'].includes(existing.status)) {
+                return NextResponse.json({ error: 'This requisition is already approved or ordered.' }, { status: 409 });
+            }
             if (action === 'issue_po') {
                 const poNumber = formData.get('po_number') as string || '';
                 const vendorName = formData.get('vendor_name') as string || vendorQuotationData?.vendor_name || '';
-                const totalPoAmount = parseFloat(formData.get('total_po_amount') as string || String(vendorQuotationData?.total_quoted_amount || existingNotesObj.total_estimated_amount || 0));
+                const totalPoAmount = parseFloat(formData.get('total_po_amount') as string || String(vendorQuotationData?.total_quoted_amount ?? existingNotesObj.total_estimated_amount ?? existing.total_estimated_amount ?? 0));
                 const expectedDeliveryDate = formData.get('expected_delivery_date') as string || '';
                 const poNotes = formData.get('po_notes') as string || '';
                 const poFile = formData.get('po_file') as File | null;
@@ -176,6 +205,12 @@ export async function PATCH(
                 const vendorNotes = formData.get('vendor_notes') as string || '';
                 const targetApproverId = formData.get('target_approver_id') as string || '';
                 const quoteFile = formData.get('quote_file') as File | null;
+                const { data: targetMember, error: targetError } = await adminSupabase.from('organization_memberships')
+                    .select('role').eq('organization_id', existing.organization_id).eq('user_id', targetApproverId).eq('is_active', true).maybeSingle();
+                if (targetError) throw targetError;
+                if (!targetMember || !['org_super_admin', 'ops_super_admin'].includes(targetMember.role)) {
+                    return NextResponse.json({ error: 'Choose an active Org Super Admin or Ops Super Admin in this organization.' }, { status: 400 });
+                }
 
                 let fileUrl = vendorQuotationData?.file_url || '';
                 let fileName = vendorQuotationData?.file_name || '';
@@ -222,10 +257,7 @@ export async function PATCH(
             }
         } else {
             const body = await request.json();
-            if (body.status) updateStatus = body.status;
-            if (body.vendor_quotation) vendorQuotationData = body.vendor_quotation;
-            if (body.approver_info) approverInfoData = body.approver_info;
-            if (body.po_info) poInfoData = body.po_info;
+            return NextResponse.json({ error: 'Use the individual approval endpoint for decisions.' }, { status: 400 });
         }
 
         const mergedNotes = JSON.stringify({
@@ -243,12 +275,13 @@ export async function PATCH(
                 notes: mergedNotes,
                 updated_at: new Date().toISOString()
             })
-            .eq('id', id)
+            .eq('id', id).eq('organization_id', existing.organization_id)
+            .eq('status', existing.status).eq('updated_at', existing.updated_at)
             .select('*')
             .maybeSingle();
 
         if (updateError || !updatedRecord) {
-            return NextResponse.json({ error: 'Failed to update requisition', details: updateError?.message }, { status: 500 });
+            return NextResponse.json({ error: 'Requisition changed or could not be updated. Refresh and retry.' }, { status: 409 });
         }
 
         // If status moved to pending_approval, notify Approver via Email & WhatsApp
