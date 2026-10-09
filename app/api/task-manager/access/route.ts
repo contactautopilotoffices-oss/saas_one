@@ -120,6 +120,34 @@ export async function POST(request: NextRequest) {
             });
         }
 
+        // Working with a superuser: let a department give tasks to a superuser and send them "pending for you" reminders
+        if (body.action === 'set_superuser_collab') {
+            if (!body.departmentId || typeof body.enabled !== 'boolean') {
+                return NextResponse.json({ success: false, error: 'Missing departmentId or enabled (true/false)' }, { status: 400 });
+            }
+            await TaskAccessService.setSuperuserCollabEnabled(body.departmentId, body.enabled, guard.label);
+            return NextResponse.json({
+                success: true,
+                message: body.enabled
+                    ? 'This team can now give tasks to a superuser and send them reminders (a new "superuser" tab appears in their Tasks tab).'
+                    : 'This team can no longer give tasks to a superuser or remind them. Existing tasks stay where they are.'
+            });
+        }
+
+        // Smart chat: let a department's people talk to the Task Manager in plain language on WhatsApp
+        if (body.action === 'set_smart_chat') {
+            if (!body.departmentId || typeof body.enabled !== 'boolean') {
+                return NextResponse.json({ success: false, error: 'Missing departmentId or enabled (true/false)' }, { status: 400 });
+            }
+            await TaskAccessService.setSmartChatEnabled(body.departmentId, body.enabled, guard.label);
+            return NextResponse.json({
+                success: true,
+                message: body.enabled
+                    ? 'People in this team can now talk to the Task Manager in plain language (every change is confirmed first).'
+                    : 'Smart chat is OFF for this team. The bot answers exactly as before.'
+            });
+        }
+
         if (body.action === 'record_kickoff') {
             if (!body.userId) {
                 return NextResponse.json({ success: false, error: 'Missing userId' }, { status: 400 });

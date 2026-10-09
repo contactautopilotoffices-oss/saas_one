@@ -4,6 +4,7 @@ import { TaskNotificationService } from '@/task-manager/TaskNotificationService'
 import { TaskDatabaseService } from '@/task-manager/TaskDatabaseService';
 import { TaskMessagingService } from '@/task-manager/TaskMessagingService';
 import { evaluateRuleSchedule } from '@/task-manager/NotificationSchedule';
+import { SuperuserPingService } from '@/task-manager/SuperuserPingService';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -45,6 +46,10 @@ async function handleRequest(request: NextRequest) {
     const force = request.nextUrl.searchParams.get('force') === 'true';
 
     try {
+        // Working with a superuser: send scheduled reminders that are due and each team's regular reminder. This never throws and
+        // never changes what the notification rules below do; with no team switched on it does nothing.
+        if (action === 'auto' && !dryRun) await SuperuserPingService.runDue();
+
         if (action === 'daily_tasks') {
             const result = await TaskDailyGeneratorService.generateDailyFixedTasks({
                 date: targetDate,
@@ -91,6 +96,9 @@ async function handleRequest(request: NextRequest) {
         const currentMinutes = nowIST.getHours() * 60 + nowIST.getMinutes();
         const currentISTTime = `${String(nowIST.getHours()).padStart(2, '0')}:${String(nowIST.getMinutes()).padStart(2, '0')}`;
 
+        // Locked (personal fixed) tasks come back on their days whatever the notification rules are. Idempotent; never throws.
+        if (!dryRun) await TaskDailyGeneratorService.generatePersonalFixedTasks({ date: todayIST });
+
         const targetRuleId = request.nextUrl.searchParams.get('ruleId') || undefined;
 
         // Rules to evaluate: either a specific requested rule or all active rules
@@ -116,7 +124,16 @@ async function handleRequest(request: NextRequest) {
 
         for (const rule of candidates) {
             // Step 6: every rule runs for ITS OWN department. Rules without one (the original Tech rules) keep using the default.
-            const ruleDept = rule.departmentId && rule.departmentId !== 'all' ? rule.departmentId : deptId;
+            // A personal rule (ownerUserId) belongs to one person: it uses that person's department for the kill switches.
+            let ruleDept = rule.departmentId && rule.departmentId !== 'all' ? rule.departmentId : deptId;
+            if (rule.ownerUserId) {
+                const owner = await TaskDatabaseService.getEmployeeById(rule.ownerUserId);
+                if (!owner || !owner.active) {
+                    ruleResults.push({ ruleId: rule.id, ruleName: rule.name, status: 'disabled', message: `Rule '${rule.name}' skipped: its owner is not an active employee.` });
+                    continue;
+                }
+                ruleDept = owner.department_id || deptId;
+            }
 
             const status = evaluateRuleSchedule(rule, { dayOfWeek: currentDayOfWeek, minutes: currentMinutes, todayIST }, force);
             if (status !== 'due') {
@@ -149,10 +166,13 @@ async function handleRequest(request: NextRequest) {
             }
 
             // Execute tasks & notification for this rule
-            const genResult = await TaskDailyGeneratorService.generateDailyFixedTasks({
-                date: todayIST,
-                departmentId: ruleDept
-            });
+            // A personal rule sends only; generating the department's daily tasks stays with the department's own rules.
+            const genResult = rule.ownerUserId
+                ? { tasksGenerated: 0, tasksAlreadyExisting: 0 }
+                : await TaskDailyGeneratorService.generateDailyFixedTasks({
+                    date: todayIST,
+                    departmentId: ruleDept
+                });
 
             const notifResult = await TaskNotificationService.sendMorningNotifications({
                 date: todayIST,
@@ -184,7 +204,7 @@ async function handleRequest(request: NextRequest) {
             });
 
             // If it's the primary morning digest, maintain legacy fields too
-            if (rule.id === 'rule_morning_digest' || (rule.ruleType === 'morning_digest' && !rule.departmentId)) {
+            if (!rule.ownerUserId && (rule.id === 'rule_morning_digest' || (rule.ruleType === 'morning_digest' && !rule.departmentId))) {
                 await TaskDatabaseService.saveTestingConfig({
                     cronLastRunDate: todayIST,
                     cronLastRunSummary: summary

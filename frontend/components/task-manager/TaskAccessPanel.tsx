@@ -25,6 +25,8 @@ interface AccessDepartment {
     peerAssign: boolean;
     notificationsDelegated: boolean;
     taskImportEnabled: boolean;
+    smartChatEnabled: boolean;
+    superuserCollabEnabled: boolean;
     memberCount: number;
     onboardedCount: number;
     members: AccessMember[];
@@ -53,6 +55,8 @@ export default function TaskAccessPanel({ orgId }: { orgId?: string }) {
     const [provisioned, setProvisioned] = useState(true);
     const [nlGateway, setNlGateway] = useState(false);
     const [taskImportColumnMissing, setTaskImportColumnMissing] = useState(false);
+    const [smartChatColumnMissing, setSmartChatColumnMissing] = useState(false);
+    const [collabColumnMissing, setCollabColumnMissing] = useState(false);
     const [sharingColumnMissing, setSharingColumnMissing] = useState(false);
     const [notificationsColumnMissing, setNotificationsColumnMissing] = useState(false);
     const [departments, setDepartments] = useState<AccessDepartment[]>([]);
@@ -70,6 +74,8 @@ export default function TaskAccessPanel({ orgId }: { orgId?: string }) {
             setProvisioned(Boolean(data.provisioned));
             setNlGateway(Boolean(data.nlGatewayEnabled));
             setTaskImportColumnMissing(Boolean(data.taskImportColumnMissing));
+            setSmartChatColumnMissing(Boolean(data.smartChatColumnMissing));
+            setCollabColumnMissing(Boolean(data.superuserCollabColumnMissing));
             setSharingColumnMissing(Boolean(data.teamSharingColumnMissing));
             setNotificationsColumnMissing(Boolean(data.notificationsColumnMissing));
             if (data.readable === false) setError('Access settings could not be read. Everyone is treated as locked until this works again.');
@@ -178,6 +184,24 @@ Their files and images go back to being handled exactly as before.`;
         post(`import-${d.departmentId}`, { action: 'set_task_import', departmentId: d.departmentId, enabled: next });
     };
 
+    const toggleSuperuserCollab = (d: AccessDepartment) => {
+        const next = !d.superuserCollabEnabled;
+        const text = next
+            ? `Let ${d.name} give tasks to a superuser?\n\nThis is a PERMISSION change. People in ${d.name} will be able to give tasks to a superuser (for example Saniel), see the tasks they gave him, and send him "these are pending for you" reminders, now or scheduled, plus one shared regular reminder for the team. His replies ("working on it", "done") are passed back to whoever gave him each task, as a summary, not his exact words. Nothing else about who can assign to whom changes. While Pretend Mode is ON no WhatsApp message is actually sent.`
+            : `Stop ${d.name} from giving tasks to a superuser?\n\nThe "superuser" tab disappears for them and scheduled reminders will no longer be sent. Tasks already given stay where they are.`;
+        if (!window.confirm(text)) return;
+        post(`collab-${d.departmentId}`, { action: 'set_superuser_collab', departmentId: d.departmentId, enabled: next });
+    };
+
+    const toggleSmartChat = (d: AccessDepartment) => {
+        const next = !d.smartChatEnabled;
+        const text = next
+            ? `Let ${d.name} talk to the Task Manager in plain language?\n\nAnyone in ${d.name} who is unlocked can then write normally on WhatsApp ("what's pending?", "give Vidya a task to chase the quote", "finished the carpet one"). Every change is confirmed first, and anything unclear is asked about, never guessed. If the AI is unavailable, or a message is about rooms or tickets, the old bot answers as before. While Pretend Mode is ON no reply is actually sent (changes after YES still happen). While the sandbox is ON only the sandbox numbers can use it.`
+            : `Switch smart chat OFF for ${d.name}?\n\nThe bot answers them exactly as before.`;
+        if (!window.confirm(text)) return;
+        post(`smart-${d.departmentId}`, { action: 'set_smart_chat', departmentId: d.departmentId, enabled: next });
+    };
+
     const toggleExpanded = (id: string) => {
         setExpanded(prev => {
             const next = new Set(prev);
@@ -240,6 +264,20 @@ Their files and images go back to being handled exactly as before.`;
                 </div>
             )}
 
+            {provisioned && collabColumnMissing && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs">
+                    <p className="font-black flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Working with a superuser needs one more SQL file</p>
+                    <p>Run <code className="font-mono bg-white/70 px-1 rounded">supabase/migrations/20261007000006_task_manager_superuser_pings.sql</code> once in the Supabase SQL Editor. Until then no team can give tasks to a superuser and its buttons are disabled.</p>
+                </div>
+            )}
+
+            {provisioned && smartChatColumnMissing && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs">
+                    <p className="font-black flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Smart chat needs one more SQL file</p>
+                    <p>Run <code className="font-mono bg-white/70 px-1 rounded">supabase/migrations/20261007000005_task_manager_smart_chat.sql</code> once in the Supabase SQL Editor. Until then smart chat is OFF for every team and its buttons are disabled.</p>
+                </div>
+            )}
+
             {provisioned && taskImportColumnMissing && (
                 <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs">
                     <p className="font-black flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Task import needs one more SQL file</p>
@@ -299,6 +337,32 @@ Their files and images go back to being handled exactly as before.`;
                                     )}
                                 </button>
                                 <div className="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    disabled={!provisioned || collabColumnMissing || busyKey === `collab-${d.departmentId}`}
+                                    onClick={() => toggleSuperuserCollab(d)}
+                                    className={`px-3 py-1.5 rounded-xl font-bold text-[11px] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                                        d.superuserCollabEnabled
+                                            ? 'bg-amber-600 hover:bg-amber-700 text-white'
+                                            : 'bg-white border border-slate-300 hover:bg-slate-100 text-slate-600'
+                                    }`}
+                                    title="This team can give tasks to a superuser and send them reminders"
+                                >
+                                    Send tasks to a superuser: {d.superuserCollabEnabled ? 'ON' : 'OFF'}
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={!provisioned || smartChatColumnMissing || busyKey === `smart-${d.departmentId}`}
+                                    onClick={() => toggleSmartChat(d)}
+                                    className={`px-3 py-1.5 rounded-xl font-bold text-[11px] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                                        d.smartChatEnabled
+                                            ? 'bg-violet-600 hover:bg-violet-700 text-white'
+                                            : 'bg-white border border-slate-300 hover:bg-slate-100 text-slate-600'
+                                    }`}
+                                    title="People in this team can talk to the Task Manager in plain language on WhatsApp"
+                                >
+                                    Smart chat: {d.smartChatEnabled ? 'ON' : 'OFF'}
+                                </button>
                                 <button
                                     type="button"
                                     disabled={!provisioned || taskImportColumnMissing || busyKey === `import-${d.departmentId}`}

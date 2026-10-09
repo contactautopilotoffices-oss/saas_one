@@ -295,7 +295,11 @@ export class TaskNotificationService {
 
         // 1. Fetch targeted active employees
         let employees: Employee[] = [];
-        if (options.employeeId) {
+        if (options.rule?.ownerUserId) {
+            // A personal rule only ever reaches its owner, whatever department or list the caller named.
+            const owner = await TaskDatabaseService.getEmployeeById(options.rule.ownerUserId);
+            employees = owner && owner.active ? [owner] : [];
+        } else if (options.employeeId) {
             const emp = await TaskDatabaseService.getEmployeeById(options.employeeId);
             if (emp && emp.active) employees = [emp];
         } else if (options.departmentId) {

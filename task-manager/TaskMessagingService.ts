@@ -325,6 +325,8 @@ export class TaskMessagingService {
             campaignName?: string;
             templateParams?: string[];
             bypassKillSwitch?: boolean;
+            /** Plain text only: if the 24-hour window is closed the message is NOT sent (no template fallback). */
+            freeformOnly?: boolean;
         }
     ): Promise<boolean> {
         const gate = await this.resolveSendMode(options);
@@ -342,6 +344,7 @@ export class TaskMessagingService {
 
         const sent = await this.postFreeform(phone, text);
         if (sent) return true;
+        if (options?.freeformOnly) return false;
 
         // Fallback to Meta-approved template if outside 24h window or freeform fails
         const campaignName = options?.campaignName || this.getCampaignForRuleType(options?.ruleType);

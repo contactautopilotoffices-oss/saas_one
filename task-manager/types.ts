@@ -66,6 +66,10 @@ export interface TaskTemplate {
     created_by: string | null;
     task_type: TaskType;
     is_active: boolean;
+    /** Personal fixed task: only ever created for this person. Null/absent = the original department-wide fixed task. */
+    owner_id?: string | null;
+    /** Days a fixed task comes back (0 = Sunday ... 6 = Saturday). Default Monday to Saturday. */
+    days_of_week?: number[];
     created_at: string;
     updated_at: string;
     department?: Department | null;
@@ -156,12 +160,14 @@ export interface NotificationRule {
     daysOfWeek: number[];           // [1, 2, 3, 4, 5, 6] (1=Mon ... 6=Sat, 0=Sun)
     ruleType: NotificationRuleType;
     departmentId?: string | null;   // Phase 5: Optional Department-scope (null/'all' = company-wide or default)
+    ownerUserId?: string | null;    // Personal rule: it only ever reaches this one person (a superuser's own notifications)
     taskFilters: NotificationTaskFilters;
     conditions: NotificationConditions;
     recipients: NotificationRecipients;
     customTemplate?: NotificationCustomTemplate;
     lastRunDate?: string | null;    // "2026-10-05"
     lastRunSummary?: string | null; // Summary string of last run
+    lastManualSendAt?: string | null; // ISO time of the last "Send now" (cooldown against double sends)
 }
 
 

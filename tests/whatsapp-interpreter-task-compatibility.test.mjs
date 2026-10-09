@@ -31,7 +31,7 @@ function setup({facilityActive=false,choice=false,testingConfig=null}={}){
         '@/backend/lib/whatsapp/processMessage':{processIncomingMessage:()=>assert.fail('no default ticket')},
         '@/backend/lib/whatsapp/greeting':{isGreetingMessage:()=>false},'@/backend/services/AiSensyService':{AiSensyService:{}},
         '@/whatsapp-test/freeformTest':{handleFreeformTest:async()=>false},
-        '@/task-manager/TaskImportInbound':{claimTaskImport:async()=>({handled:false})},'@/task-manager/TaskMessageRouter':router,
+        '@/task-manager/TaskImportInbound':{claimTaskImport:async()=>({handled:false})},'@/task-manager/brain/shadow':{scheduleShadow:()=>undefined},'@/task-manager/brain/live':{claimSmartChat:async()=>({handled:false})},'@/task-manager/TaskMessageRouter':router,
         '@/task-manager/TaskIdempotencyService':{TaskIdempotencyService:{isDuplicateWebhook:async()=>false,recordProcessedWebhook(){}}},
         '@/backend/lib/whatsapp/interpreter/coordinator.mjs':{isExplicitTaskCommand,isDirectBookingRequest},
         '@/backend/lib/whatsapp/interpreter/context':{isInterpreterPilot:async()=>true,lookupQuotedContext:async()=>({workflow:'task'}),

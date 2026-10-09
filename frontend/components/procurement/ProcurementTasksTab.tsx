@@ -2,7 +2,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { AlertTriangle, Bell, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, LayoutGrid, Lock, Plus, RefreshCw, Users, X } from 'lucide-react';
+import { AlertTriangle, Bell, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, LayoutGrid, Lock, Plus, RefreshCw, Send, Users, X } from 'lucide-react';
 import { EASE, WTask, longDate, shiftDate, todayIST } from './tasks/types';
 import { useWorkspace } from './tasks/useWorkspace';
 import StatCards from './tasks/StatCards';
@@ -10,6 +10,7 @@ import Board from './tasks/Board';
 import TeamView from './tasks/TeamView';
 import TaskDialog from './tasks/TaskDialog';
 import NotificationsView from './tasks/NotificationsView';
+import SuperuserPanel from './tasks/SuperuserPanel';
 
 /**
  * Procurement "Tasks" tab: a drag-and-drop board and a team view.
@@ -17,12 +18,11 @@ import NotificationsView from './tasks/NotificationsView';
  * this screen only shows what the server returns and offers the actions it allows.
  */
 
-type View = 'board' | 'team' | 'notifications';
-type Filter = 'all' | 'mine' | 'today' | 'carried';
+type View = 'board' | 'team' | 'notifications' | 'superuser';
+type Filter = 'all' | 'today' | 'carried';
 
 const FILTERS: ReadonlyArray<{ id: Filter; label: string }> = [
     { id: 'all', label: 'All' },
-    { id: 'mine', label: 'My tasks' },
     { id: 'today', label: 'Today' },
     { id: 'carried', label: 'Carried forward' },
 ];
@@ -90,17 +90,19 @@ export default function ProcurementTasksTab({ departmentName = 'Procurement' }: 
     const [filter, setFilter] = useState<Filter>('all');
     const [dialog, setDialog] = useState<{ open: boolean; target: string | null }>({ open: false, target: null });
 
-    const { ws, ok, loading, refreshing, error, toasts, dismissToast, reload, moveTask, addTask } = useWorkspace(date, departmentName);
+    const { ws, ok, loading, refreshing, error, toasts, dismissToast, reload, moveTask, addTask, giveTask, deleteTask, setLocked } = useWorkspace(date, departmentName);
+
+    // The board shows only MY tasks; the Team tab is where other people's tasks live.
+    const mine: WTask[] = useMemo(() => (ok ? ok.tasks.filter(t => t.ownerId === ok.actor.userId) : []), [ok]);
 
     const filtered: WTask[] = useMemo(() => {
         if (!ok) return [];
-        return ok.tasks.filter(t => {
-            if (filter === 'mine') return t.ownerId === ok.actor.userId;
+        return mine.filter(t => {
             if (filter === 'today') return !t.isCarriedForward;
             if (filter === 'carried') return t.isCarriedForward;
             return true;
         });
-    }, [ok, filter]);
+    }, [ok, mine, filter]);
 
     const counts = useMemo(() => ({
         todo: filtered.filter(t => t.status === 'pending').length,
@@ -110,14 +112,13 @@ export default function ProcurementTasksTab({ departmentName = 'Procurement' }: 
     }), [filtered]);
 
     const filterCounts = useMemo(() => {
-        const all = ok?.tasks || [];
+        const all = mine;
         return {
             all: all.length,
-            mine: all.filter(t => t.ownerId === ok?.actor.userId).length,
             today: all.filter(t => !t.isCarriedForward).length,
             carried: all.filter(t => t.isCarriedForward).length,
         };
-    }, [ok]);
+    }, [mine]);
 
     if (loading && !ws) return <Skeleton />;
     if (ws && (ws.state === 'locked' || ws.state === 'no_profile')) return <LockScreen message={ws.message} />;
@@ -131,9 +132,13 @@ export default function ProcurementTasksTab({ departmentName = 'Procurement' }: 
     }
 
     const meId = ok.actor.userId;
+    // Working with a superuser: this view exists only for a team whose switch is ON and when there is someone to work with.
+    const collab = ok.superuserCollab?.enabled && ok.superuserCollab.superusers.length ? ok.superuserCollab : null;
     const isToday = date === todayIST();
     const openDialog = (target: string | null) => setDialog({ open: true, target });
     const quickAdd = (title: string) => addTask({ targetUserId: meId, title, date });
+    // "Give to…": the teammates the server says I may give work to (never myself)
+    const give = { people: ok.assignable.filter(a => !a.isMe), onGive: giveTask };
 
     return (
         <div className="relative space-y-5">
@@ -190,7 +195,7 @@ export default function ProcurementTasksTab({ departmentName = 'Procurement' }: 
                 </div>
             )}
 
-            {view !== 'notifications' && <StatCards counts={counts} />}
+            {(view === 'board' || view === 'team') && <StatCards counts={counts} />}
 
             {/* toolbar */}
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -200,6 +205,7 @@ export default function ProcurementTasksTab({ departmentName = 'Procurement' }: 
                         { id: 'board' as View, label: 'Board', icon: <LayoutGrid className="h-3.5 w-3.5" /> },
                         { id: 'team' as View, label: 'Team', icon: <Users className="h-3.5 w-3.5" /> },
                         { id: 'notifications' as View, label: 'Notifications', icon: <Bell className="h-3.5 w-3.5" /> },
+                        ...(collab ? [{ id: 'superuser' as View, label: 'Send', icon: <Send className="h-3.5 w-3.5" /> }] : []),
                     ]}
                 />
                 {view === 'board' && (
@@ -213,9 +219,16 @@ export default function ProcurementTasksTab({ departmentName = 'Procurement' }: 
             {/* content */}
             <AnimatePresence mode="wait" initial={false}>
                 <motion.div key={view} initial={reduce ? false : { opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={reduce ? undefined : { opacity: 0, y: -6 }} transition={{ duration: 0.3, ease: EASE }}>
-                    {view === 'board' && <Board tasks={filtered} meId={meId} onMove={moveTask} onQuickAdd={quickAdd} />}
+                    {view === 'board' && <Board tasks={filtered} meId={meId} onMove={moveTask} onQuickAdd={quickAdd} onDelete={deleteTask} onLock={setLocked} give={give} />}
                     {view === 'team' && <TeamView members={ok.members} tasks={ok.tasks} assignable={ok.assignable} onAssign={openDialog} />}
                     {view === 'notifications' && <NotificationsView departmentName={departmentName} />}
+                    {view === 'superuser' && collab && (
+                        <SuperuserPanel
+                            onAddTask={(recipientId, title) => addTask({ targetUserId: recipientId, title, date })}
+                            onDeleteTask={deleteTask}
+                            onChanged={reload}
+                        />
+                    )}
                 </motion.div>
             </AnimatePresence>
 

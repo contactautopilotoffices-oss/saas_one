@@ -24,7 +24,7 @@ function handler(env, enqueue = async () => 'event-1', overrides = {}) {
         '@/backend/lib/whatsapp/greeting': { isGreetingMessage: () => false },
         '@/backend/services/AiSensyService': { AiSensyService: { sendGreeting: async () => {} } },
         '@/whatsapp-test/freeformTest': { handleFreeformTest: async () => false },
-        '@/task-manager/TaskImportInbound':{claimTaskImport:async()=>({handled:false})},'@/task-manager/TaskMessageRouter': {TaskMessageRouter:{routeInboundMessage:async()=>({handledByTaskManager:false})}},
+        '@/task-manager/TaskImportInbound':{claimTaskImport:async()=>({handled:false})},'@/task-manager/brain/shadow':{scheduleShadow:()=>undefined},'@/task-manager/brain/live':{claimSmartChat:async()=>({handled:false})},'@/task-manager/TaskMessageRouter': {TaskMessageRouter:{routeInboundMessage:async()=>({handledByTaskManager:false})}},
         '@/task-manager/TaskIdempotencyService': {TaskIdempotencyService:{isDuplicateWebhook:async()=>false,recordProcessedWebhook:()=>{}}},
         '@/backend/lib/whatsapp/interpreter/context': {isInterpreterPilot:async()=>false,lookupQuotedContext:async()=>null,getConversationRoutingState:async()=>({taskActive:false,facilityActive:false})},
         '@/backend/lib/whatsapp/interpreter/coordinator.mjs': {isExplicitTaskCommand,isDirectBookingRequest},
@@ -56,7 +56,7 @@ test('pilot persists before task audit dedup and retains quoted IDs and service 
     const route=handler({AISENSY_ASSISTANT_ENABLED:'true'},async input=>{stored=input;return 'pilot-event';},{
         '@/backend/lib/whatsapp/interpreter/context':{isInterpreterPilot:async()=>true,lookupQuotedContext:async()=>null},
         '@/task-manager/TaskIdempotencyService':{TaskIdempotencyService:{isDuplicateWebhook:()=>assert.fail('pilot uses durable dedup'),recordProcessedWebhook:()=>assert.fail('must persist first')}},
-        '@/task-manager/TaskImportInbound':{claimTaskImport:async()=>({handled:false})},'@/task-manager/TaskMessageRouter':{TaskMessageRouter:{routeInboundMessage:()=>assert.fail('facility draft bypasses Task Manager')}}
+        '@/task-manager/TaskImportInbound':{claimTaskImport:async()=>({handled:false})},'@/task-manager/brain/shadow':{scheduleShadow:()=>undefined},'@/task-manager/brain/live':{claimSmartChat:async()=>({handled:false})},'@/task-manager/TaskMessageRouter':{TaskMessageRouter:{routeInboundMessage:()=>assert.fail('facility draft bypasses Task Manager')}}
     });
     const response=await route.POST(request({topic:'message.sender.user',project_id:'project-1',data:{message:{phone_number:'919876543210',messageId:'pilot-wamid',message_content:{text:'3 PM to 4 PM'},context:{id:'old-prompt',submitted_message_id:'alias'},sent_at:1791201600}}}));
     assert.equal(response.status,200);
@@ -68,7 +68,7 @@ test('direct boardroom request bypasses stale task context without changing task
     let stored;
     const route=handler({},async input=>{stored=input;return 'direct-booking';},{
         '@/backend/lib/whatsapp/interpreter/context':{isInterpreterPilot:async()=>true,getConversationRoutingState:async()=>({taskActive:true,facilityActive:false})},
-        '@/task-manager/TaskImportInbound':{claimTaskImport:async()=>({handled:false})},'@/task-manager/TaskMessageRouter':{TaskMessageRouter:{classifyMessage:()=>assert.fail('clear direct facility request must not be classified from task context'),routeInboundMessage:()=>assert.fail('no task action')}}
+        '@/task-manager/TaskImportInbound':{claimTaskImport:async()=>({handled:false})},'@/task-manager/brain/shadow':{scheduleShadow:()=>undefined},'@/task-manager/brain/live':{claimSmartChat:async()=>({handled:false})},'@/task-manager/TaskMessageRouter':{TaskMessageRouter:{classifyMessage:()=>assert.fail('clear direct facility request must not be classified from task context'),routeInboundMessage:()=>assert.fail('no task action')}}
     });
     for (const message of ['Book boardroom today from 5 pm to 6 pm','Book boardroom today from 5 pm to 6 pm for task planning','Book boardroom for ticket review today from 5 pm to 6 pm']) {
         assert.equal((await route.POST(request({...payload,data:{...payload.data,message}}))).status,200);
@@ -89,7 +89,7 @@ test('explicit task command stays with legacy Task Manager and cannot alter faci
     let called=false;
     const route=handler({},()=>assert.fail('task must not advance facility draft'),{
         '@/backend/lib/whatsapp/interpreter/context':{isInterpreterPilot:async()=>true},
-        '@/task-manager/TaskImportInbound':{claimTaskImport:async()=>({handled:false})},'@/task-manager/TaskMessageRouter':{TaskMessageRouter:{routeInboundMessage:async()=>{called=true;return {handledByTaskManager:true};}}}
+        '@/task-manager/TaskImportInbound':{claimTaskImport:async()=>({handled:false})},'@/task-manager/brain/shadow':{scheduleShadow:()=>undefined},'@/task-manager/brain/live':{claimSmartChat:async()=>({handled:false})},'@/task-manager/TaskMessageRouter':{TaskMessageRouter:{routeInboundMessage:async()=>{called=true;return {handledByTaskManager:true};}}}
     });
     const response=await route.POST(request({...payload,data:{...payload.data,message:'done 1'}}));
     assert.equal(called,true);assert.equal((await response.json()).routedTo,'TASK_MANAGER');
@@ -104,7 +104,7 @@ for (const [text, contexts] of [
     const routed=[];
     const route=handler({},()=>assert.fail('task conversation must not be sent to the facility interpreter'),{
         '@/backend/lib/whatsapp/interpreter/context':{isInterpreterPilot:async()=>true,getConversationRoutingState:async()=>contexts},
-        '@/task-manager/TaskImportInbound':{claimTaskImport:async()=>({handled:false})},'@/task-manager/TaskMessageRouter':{TaskMessageRouter:{classifyMessage:async()=>({system:'TASK_MANAGER'}),routeInboundMessage:async input=>{routed.push(input.text);return {handledByTaskManager:true};}}}
+        '@/task-manager/TaskImportInbound':{claimTaskImport:async()=>({handled:false})},'@/task-manager/brain/shadow':{scheduleShadow:()=>undefined},'@/task-manager/brain/live':{claimSmartChat:async()=>({handled:false})},'@/task-manager/TaskMessageRouter':{TaskMessageRouter:{classifyMessage:async()=>({system:'TASK_MANAGER'}),routeInboundMessage:async input=>{routed.push(input.text);return {handledByTaskManager:true};}}}
     });
     const response=await route.POST(request({...payload,data:{...payload.data,message:text}}));
     assert.equal((await response.json()).routedTo,'TASK_MANAGER');assert.deepEqual(routed,[text]);
@@ -114,7 +114,7 @@ test('pilot task execution failure cannot fall through to a facility action',asy
     let enqueued=0;
     const route=handler({},async()=>{enqueued++;return 'event';},{
         '@/backend/lib/whatsapp/interpreter/context':{isInterpreterPilot:async()=>true},
-        '@/task-manager/TaskImportInbound':{claimTaskImport:async()=>({handled:false})},'@/task-manager/TaskMessageRouter':{TaskMessageRouter:{routeInboundMessage:async()=>{throw new Error('task storage failed');}}}
+        '@/task-manager/TaskImportInbound':{claimTaskImport:async()=>({handled:false})},'@/task-manager/brain/shadow':{scheduleShadow:()=>undefined},'@/task-manager/brain/live':{claimSmartChat:async()=>({handled:false})},'@/task-manager/TaskMessageRouter':{TaskMessageRouter:{routeInboundMessage:async()=>{throw new Error('task storage failed');}}}
     });
     assert.equal((await route.POST(request({...payload,data:{...payload.data,message:'done 1'}}))).status,503);
     assert.equal(enqueued,0);
@@ -124,7 +124,7 @@ test('explicit CANCEL TASKS and quoted task cancellation stay outside facility d
     const texts=[];
     const route=handler({},()=>assert.fail('task cancellation must not advance facility draft'),{
         '@/backend/lib/whatsapp/interpreter/context':{isInterpreterPilot:async()=>true,lookupQuotedContext:async()=>({workflow:'task'})},
-        '@/task-manager/TaskImportInbound':{claimTaskImport:async()=>({handled:false})},'@/task-manager/TaskMessageRouter':{TaskMessageRouter:{routeInboundMessage:async input=>{texts.push(input.text);return {handledByTaskManager:true};}}}
+        '@/task-manager/TaskImportInbound':{claimTaskImport:async()=>({handled:false})},'@/task-manager/brain/shadow':{scheduleShadow:()=>undefined},'@/task-manager/brain/live':{claimSmartChat:async()=>({handled:false})},'@/task-manager/TaskMessageRouter':{TaskMessageRouter:{routeInboundMessage:async input=>{texts.push(input.text);return {handledByTaskManager:true};}}}
     });
     assert.equal((await route.POST(request({...payload,data:{...payload.data,message:'Cancel Tasks'}}))).status,200);
     assert.equal((await route.POST(request({topic:'message.sender.user',data:{message:{phone_number:'919876543210',messageId:'cancel-quoted',message_content:{text:'Cancel'},context:{id:'task-prompt'}}}}))).status,200);
@@ -135,7 +135,7 @@ test('quoted task mutation and unknown quote require clarification rather than e
     let saved;
     const route=handler({},async input=>{saved=input;return 'event';},{
         '@/backend/lib/whatsapp/interpreter/context':{isInterpreterPilot:async()=>true,lookupQuotedContext:async()=>({workflow:'task'})},
-        '@/task-manager/TaskImportInbound':{claimTaskImport:async()=>({handled:false})},'@/task-manager/TaskMessageRouter':{TaskMessageRouter:{routeInboundMessage:()=>assert.fail('old task quote cannot complete current task 1')}}
+        '@/task-manager/TaskImportInbound':{claimTaskImport:async()=>({handled:false})},'@/task-manager/brain/shadow':{scheduleShadow:()=>undefined},'@/task-manager/brain/live':{claimSmartChat:async()=>({handled:false})},'@/task-manager/TaskMessageRouter':{TaskMessageRouter:{routeInboundMessage:()=>assert.fail('old task quote cannot complete current task 1')}}
     });
     await route.POST(request({topic:'message.sender.user',data:{message:{phone_number:'919876543210',messageId:'quoted-task-command',message_content:{text:'done 1'},context:{id:'old-task-list'}}}}));
     assert.equal(saved.interpreter,true);

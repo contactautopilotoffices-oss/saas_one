@@ -335,6 +335,9 @@ function TwelveHourTimePicker({
     );
 }
 
+// The staged intro plays once per page load; coming back to this screen shows it fully drawn.
+let controlCenterIntroPlayed = false;
+
 export default function TaskManagerTestingDashboard({ orgId }: { orgId?: string }) {
     const [employees, setEmployees] = useState<EmployeeItem[]>([]);
     const [departments, setDepartments] = useState<DepartmentItem[]>([]);
@@ -1506,13 +1509,18 @@ export default function TaskManagerTestingDashboard({ orgId }: { orgId?: string 
         }
     };
 
-    const [animationStep, setAnimationStep] = useState(0);
+    const [animationStep, setAnimationStep] = useState(controlCenterIntroPlayed ? 5 : 0);
 
     useEffect(() => {
         fetchData();
     }, []);
 
     useEffect(() => {
+        // The intro plays once per page load; later visits show everything at once
+        if (controlCenterIntroPlayed) {
+            setAnimationStep(5);
+            return;
+        }
         if (loading) {
             setAnimationStep(0);
             return;
@@ -1523,7 +1531,7 @@ export default function TaskManagerTestingDashboard({ orgId }: { orgId?: string 
         const t2 = setTimeout(() => setAnimationStep(2), 150);
         const t3 = setTimeout(() => setAnimationStep(3), 280);
         const t4 = setTimeout(() => setAnimationStep(4), 400);
-        const t5 = setTimeout(() => setAnimationStep(5), 520);
+        const t5 = setTimeout(() => { setAnimationStep(5); controlCenterIntroPlayed = true; }, 520);
 
         return () => {
             clearTimeout(t1);

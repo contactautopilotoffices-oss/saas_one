@@ -8,6 +8,8 @@ import { handleFreeformTest } from '@/whatsapp-test/freeformTest';
 import { TaskMessageRouter } from '@/task-manager/TaskMessageRouter';
 import { TaskIdempotencyService } from '@/task-manager/TaskIdempotencyService';
 import { claimTaskImport } from '@/task-manager/TaskImportInbound';
+import { scheduleShadow } from '@/task-manager/brain/shadow';
+import { claimSmartChat } from '@/task-manager/brain/live';
 import { isInterpreterPilot, lookupQuotedContext, getConversationRoutingState } from '@/backend/lib/whatsapp/interpreter/context';
 import { isExplicitTaskCommand, isDirectBookingRequest } from '@/backend/lib/whatsapp/interpreter/coordinator.mjs';
 
@@ -53,6 +55,19 @@ export async function POST(req: NextRequest) {
         if (taskImport.background) after(async () => { await taskImport.background!(); });
         return NextResponse.json({ success: true, routedTo: 'TASK_IMPORT' });
     }
+
+    // Smart chat (Phase 4): for people in a department with Smart chat ON, the brain answers plain-language messages. Anything it
+    // does not take (rooms / tickets, the AI being down, an older conversation still open) comes back handled:false and the old
+    // bot answers exactly as before. The slow part (carrying out, replying) runs after this webhook has answered.
+    const smartChat = await claimSmartChat(body);
+    if (smartChat.handled) {
+        if (smartChat.background) after(async () => { await smartChat.background!(); });
+        return NextResponse.json({ success: true, routedTo: 'SMART_CHAT' });
+    }
+
+    // Task Brain shadow mode (Phase 3): beside the old bot, for the sandbox numbers only, the brain reads the message and only
+    // LOGS what it would have done. It never replies and never changes anything; any failure is swallowed.
+    if (input?.text) scheduleShadow({ phone: input.phone, text: input.text, messageId: input.messageId });
 
     if (!input) return NextResponse.json({ ok: true, ignored: true });
 

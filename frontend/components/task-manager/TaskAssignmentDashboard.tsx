@@ -69,6 +69,9 @@ interface TaskAssignmentItem {
     template?: TaskTemplate;
 }
 
+// The staged intro plays once per page load. Coming back to this screen later shows it fully drawn, with no replay.
+let introPlayed = false;
+
 // Count-up hook — rolls a number from 0 to target over ~750ms easeOut cubic
 function useCountUp(target: number, active: boolean, decimals = 0): string {
     const [display, setDisplay] = useState(0);
@@ -79,6 +82,11 @@ function useCountUp(target: number, active: boolean, decimals = 0): string {
         if (!active) {
             setDisplay(0);
             startValRef.current = 0;
+            return;
+        }
+        if (introPlayed) {
+            setDisplay(target);
+            startValRef.current = target;
             return;
         }
 
@@ -137,17 +145,19 @@ export default function TaskAssignmentDashboard({
     // Step 3 (2.0s – 3.0s): Progress Hierarchy Meter (3-Arc Gauge)
     // Step 4 (3.0s – 4.0s): Organisation Progress Card & Department Matrix
     // Step 5 (4.0s – 5.0s): Department Staff & Tasks List
-    // Step 6 (5.0s+):       Floating Quick-Assign CTA Card
-    const [animationStep, setAnimationStep] = useState(0);
-    const [floatingCTADismissed, setFloatingCTADismissed] = useState(false);
+    const [animationStep, setAnimationStep] = useState(introPlayed ? 5 : 0);
 
     useEffect(() => {
+        if (introPlayed) {
+            setAnimationStep(5);
+            return;
+        }
         if (loading) {
             setAnimationStep(0);
             return;
         }
 
-        // Fresh trigger on data load
+        // First load only
         setAnimationStep(0);
 
         const t1 = setTimeout(() => setAnimationStep(1), 80);    // 0.08s: Header (Top -> Down)
@@ -155,7 +165,7 @@ export default function TaskAssignmentDashboard({
         const t3 = setTimeout(() => setAnimationStep(3), 2000);  // 2.0s:  Hierarchy Gauge (Left -> Right, 1.8s)
         const t4 = setTimeout(() => setAnimationStep(4), 3200);  // 3.2s:  Organisation Progress (Right -> Left, 1.8s)
         const t5 = setTimeout(() => setAnimationStep(5), 4400);  // 4.4s:  Staff (Left) & Tasks (Right)
-        const t6 = setTimeout(() => setAnimationStep(6), 5500);  // 5.5s:  Floating CTA (Bottom -> Up)
+        const t6 = setTimeout(() => { introPlayed = true; }, 6200);  // intro done: later visits skip it
 
         return () => {
             clearTimeout(t1);
@@ -1634,64 +1644,6 @@ export default function TaskAssignmentDashboard({
                 </div>
             )}
 
-            {/* ── Floating Quick-Assign CTA Card ─────────────────────────────── */}
-            {(isReportingManager || isSuperuser) && !floatingCTADismissed && animationStep >= 6 && (
-                <div
-                    className="fixed bottom-4 right-4 z-40 w-64 tm-float-in"
-                >
-                    <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-xl shadow-black/10 overflow-hidden">
-                        {/* Gradient accent strip */}
-                        <div className="h-0.5 w-full bg-gradient-to-r from-indigo-500 via-violet-500 to-indigo-600" />
-                        <div className="p-3 sm:p-3.5">
-                            <div className="flex items-start justify-between mb-2">
-                                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-sm shadow-indigo-500/25 flex-shrink-0">
-                                    <Plus className="w-4 h-4 text-white" />
-                                </div>
-                                <button
-                                    onClick={() => setFloatingCTADismissed(true)}
-                                    className="p-1 text-zinc-300 dark:text-zinc-600 hover:text-zinc-500 dark:hover:text-zinc-400 rounded-lg transition-colors"
-                                >
-                                    <X className="w-3.5 h-3.5" />
-                                </button>
-                            </div>
-                            <div className="mb-2">
-                                <h4 className="text-xs sm:text-sm font-bold text-zinc-900 dark:text-zinc-100 leading-tight">
-                                    Ready to assign tasks?
-                                </h4>
-                                <p className="text-[11px] text-zinc-400 mt-0.5 leading-snug">
-                                    Delegate daily deliverables in seconds.
-                                </p>
-                            </div>
-                            <div className="space-y-1 mb-3">
-                                {[
-                                    { icon: <Check className="w-2.5 h-2.5" />, text: 'Pick an employee' },
-                                    { icon: <Check className="w-2.5 h-2.5" />, text: 'Set task title & notes' },
-                                    { icon: <Check className="w-2.5 h-2.5" />, text: 'Track completion live' },
-                                ].map((item, i) => (
-                                    <div key={i} className="flex items-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
-                                        <span className="w-3.5 h-3.5 rounded-full bg-indigo-100 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center flex-shrink-0">
-                                            {item.icon}
-                                        </span>
-                                        {item.text}
-                                    </div>
-                                ))}
-                            </div>
-                            <button
-                                onClick={() => {
-                                    setAssignTargetEmpId(assignableEmployees[0]?.id || '');
-                                    setShowAssignModal(true);
-                                    setFloatingCTADismissed(true);
-                                }}
-                                className="w-full flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white shadow-sm shadow-indigo-500/25 hover:shadow hover:shadow-indigo-500/35 transition-all duration-200 hover:-translate-y-px active:scale-[0.97]"
-                            >
-                                <Plus className="w-3.5 h-3.5" />
-                                Assign First Task
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
             {/* Animation system */}
             <style>{`
                 .tm-root {
@@ -1739,26 +1691,6 @@ export default function TaskAssignmentDashboard({
                 @keyframes tmModalIn {
                     from { opacity: 0; transform: scale(0.93) translateY(10px); }
                     to   { opacity: 1; transform: scale(1) translateY(0); }
-                }
-
-                /* ── Floating CTA Spring-in ──────────────────────────────────── */
-                @keyframes tmFloatIn {
-                    0% {
-                        opacity: 0;
-                        transform: translateY(40px) scale(0.94);
-                    }
-                    60% {
-                        opacity: 1;
-                        transform: translateY(-4px) scale(1.02);
-                    }
-                    100% {
-                        opacity: 1;
-                        transform: translateY(0) scale(1);
-                    }
-                }
-
-                .tm-float-in {
-                    animation: tmFloatIn 650ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
                 }
             `}</style>
         </div>

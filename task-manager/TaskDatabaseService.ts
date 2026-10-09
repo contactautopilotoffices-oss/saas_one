@@ -221,7 +221,8 @@ export class TaskDatabaseService {
                 *,
                 department:departments(*)
             `)
-            .eq('is_active', true);
+            .eq('is_active', true)
+            .is('owner_id', null); // personal fixed ("locked") tasks are not department templates
 
         if (params?.departmentId) {
             query = query.eq('department_id', params.departmentId);

@@ -7,8 +7,12 @@ import {
     type CollisionDetection, type DragEndEvent, type DragStartEvent,
 } from '@dnd-kit/core';
 import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from 'framer-motion';
-import { Check, Clock, GripVertical, Loader2, Lock, MoveRight, Plus } from 'lucide-react';
-import { COLUMNS, ColumnDef, EASE, Status, WTask, avatarGradient, initials, shortDate } from './types';
+import { Check, Clock, GripVertical, Loader2, Lock, MoveRight, Plus, Trash2, Unlock } from 'lucide-react';
+import { COLUMNS, ColumnDef, EASE, Status, WAssignable, WTask, avatarGradient, initials, shortDate } from './types';
+import GiveTo from './GiveTo';
+
+/** What the card needs to offer "Give to…": the teammates I may give work to, and the action. */
+interface GiveProps { people: WAssignable[]; onGive: (taskId: string, userId: string, name: string) => Promise<boolean> }
 
 /** The pointer decides the target column; if it is between columns, fall back to overlap. */
 const collision: CollisionDetection = args => {
@@ -17,7 +21,7 @@ const collision: CollisionDetection = args => {
 };
 
 /* ── The card's look. Used for the real card AND the ghost that follows the cursor. ─────────────── */
-function CardBody({ task, meId, floating = false }: { task: WTask; meId: string; floating?: boolean }) {
+function CardBody({ task, meId, floating = false, give, onDelete, onLock }: { task: WTask; meId: string; floating?: boolean; give?: GiveProps; onDelete?: (id: string) => void; onLock?: (id: string, locked: boolean) => void }) {
     const done = task.status === 'completed';
     const carried = task.isCarriedForward;
     const mine = task.ownerId === meId;
@@ -43,8 +47,24 @@ function CardBody({ task, meId, floating = false }: { task: WTask; meId: string;
                     <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white"><Check className="h-3 w-3" strokeWidth={3} /></span>
                 ) : task.canChange ? (
                     <GripVertical className="mt-0.5 h-4 w-4 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
-                ) : (
-                    <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-300 dark:text-zinc-600" aria-label="Only the owner can move this" />
+                ) : null}
+                {!floating && onLock && task.canLock && (
+                    <button
+                        type="button" aria-pressed={!!task.locked} aria-label={task.locked ? `Unlock ${task.title}` : `Lock ${task.title}`}
+                        title={task.locked ? 'Locked: comes back every working day (Mon to Sat). Click to unlock.' : 'Lock: bring this task back every working day (Mon to Sat)'}
+                        onClick={e => { e.stopPropagation(); onLock(task.id, !task.locked); }}
+                        onMouseDown={e => e.stopPropagation()} onTouchStart={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}
+                        className={`-mt-0.5 shrink-0 cursor-pointer rounded-lg p-1 transition-colors ${task.locked ? 'bg-indigo-50 text-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-300' : 'text-zinc-300 hover:bg-indigo-50 hover:text-indigo-600 dark:text-zinc-600 dark:hover:bg-indigo-950/30'}`}
+                    >{task.locked ? <Lock className="h-3.5 w-3.5" /> : <Unlock className="h-3.5 w-3.5" />}</button>
+                )}
+                {!floating && onDelete && (
+                    <button
+                        type="button" aria-label={`Delete ${task.title}`} disabled={!!task.locked}
+                        title={task.locked ? 'Unlock this task to delete it' : 'Delete task'}
+                        onClick={e => { e.stopPropagation(); if (!task.locked) onDelete(task.id); }}
+                        onMouseDown={e => e.stopPropagation()} onTouchStart={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}
+                        className="-mr-1 -mt-0.5 shrink-0 cursor-pointer rounded-lg p-1 text-zinc-300 transition-colors hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-zinc-300 dark:text-zinc-600 dark:hover:bg-rose-950/30"
+                    ><Trash2 className="h-3.5 w-3.5" /></button>
                 )}
             </div>
 
@@ -59,18 +79,35 @@ function CardBody({ task, meId, floating = false }: { task: WTask; meId: string;
                     </span>
                     {mine ? 'You' : task.ownerName.split(' ')[0]}
                 </span>
+                {task.locked && (
+                    <span className="rounded-md bg-indigo-50 px-1.5 py-0.5 text-[10px] font-black text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">Daily</span>
+                )}
+                {task.meta && (
+                    <>
+                        <span className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">from {task.meta.from}</span>
+                        <span className="rounded-md bg-indigo-50 px-1.5 py-0.5 text-[10px] font-black text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">{task.meta.department}</span>
+                    </>
+                )}
                 {carried && (
                     <span className="flex items-center gap-1 rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-black text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
                         <Clock className="h-3 w-3" /> Carried from {shortDate(task.assignedDate)}
                     </span>
                 )}
             </div>
+
+            {!floating && give && task.canHandOver && give.people.length > 0 && (
+                <GiveTo
+                    taskTitle={task.title}
+                    people={give.people}
+                    onGive={(userId, name) => give.onGive(task.id, userId, name)}
+                />
+            )}
         </div>
     );
 }
 
 /* ── One draggable card ──────────────────────────────────────────────────────────────────────── */
-function TaskCard({ task, meId, onMove, reduce }: { task: WTask; meId: string; onMove: (id: string, s: Status) => void; reduce: boolean }) {
+function TaskCard({ task, meId, onMove, reduce, give, onDelete, onLock }: { task: WTask; meId: string; onMove: (id: string, s: Status) => void; reduce: boolean; give?: GiveProps; onDelete: (id: string) => void; onLock?: (id: string, locked: boolean) => void }) {
     const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: task.id, disabled: !task.canChange });
     const index = COLUMNS.findIndex(c => c.id === task.status);
 
@@ -98,7 +135,7 @@ function TaskCard({ task, meId, onMove, reduce }: { task: WTask; meId: string; o
             aria-label={`${task.title}. ${COLUMNS[index]?.label}. ${task.canChange ? 'Drag, or press the left and right arrow keys, to move it.' : 'You cannot move this task.'}`}
             className="rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-50 dark:focus-visible:ring-offset-zinc-950 touch-manipulation"
         >
-            <CardBody task={task} meId={meId} />
+            <CardBody task={task} meId={meId} give={give} onDelete={onDelete} onLock={onLock} />
         </motion.div>
     );
 }
@@ -136,9 +173,9 @@ function QuickAdd({ onAdd }: { onAdd: (title: string) => Promise<boolean> }) {
 }
 
 /* ── One column (a drop target) ──────────────────────────────────────────────────────────────── */
-function Column({ def, tasks, meId, onMove, onQuickAdd, reduce, dragging }: {
+function Column({ def, tasks, meId, onMove, onQuickAdd, onDelete, onLock, reduce, dragging, give }: {
     def: ColumnDef; tasks: WTask[]; meId: string; onMove: (id: string, s: Status) => void;
-    onQuickAdd: (title: string) => Promise<boolean>; reduce: boolean; dragging: boolean;
+    onQuickAdd?: (title: string) => Promise<boolean>; onDelete: (id: string) => void; onLock?: (id: string, locked: boolean) => void; reduce: boolean; dragging: boolean; give?: GiveProps;
 }) {
     const { setNodeRef, isOver } = useDroppable({ id: def.id });
 
@@ -158,7 +195,7 @@ function Column({ def, tasks, meId, onMove, onQuickAdd, reduce, dragging }: {
                 className={`flex-1 space-y-2.5 rounded-2xl p-1 transition-all duration-200 ${isOver ? `ring-2 ring-offset-0 ${def.glow}` : dragging ? 'ring-1 ring-dashed ring-zinc-300 dark:ring-zinc-700' : ''}`}
             >
                 <AnimatePresence initial={false}>
-                    {tasks.map(t => <TaskCard key={t.id} task={t} meId={meId} onMove={onMove} reduce={reduce} />)}
+                    {tasks.map(t => <TaskCard key={t.id} task={t} meId={meId} onMove={onMove} reduce={reduce} give={give} onDelete={onDelete} onLock={onLock} />)}
                 </AnimatePresence>
 
                 {tasks.length === 0 && (
@@ -168,17 +205,19 @@ function Column({ def, tasks, meId, onMove, onQuickAdd, reduce, dragging }: {
                     </div>
                 )}
 
-                {def.id === 'pending' && <QuickAdd onAdd={onQuickAdd} />}
+                {def.id === 'pending' && onQuickAdd && <QuickAdd onAdd={onQuickAdd} />}
             </div>
         </section>
     );
 }
 
 /* ── The board ───────────────────────────────────────────────────────────────────────────────── */
-export default function Board({ tasks, meId, onMove, onQuickAdd }: {
-    tasks: WTask[]; meId: string; onMove: (id: string, s: Status) => void; onQuickAdd: (title: string) => Promise<boolean>;
+export default function Board({ tasks, meId, onMove, onQuickAdd, onDelete, onLock, give, instant = false }: {
+    tasks: WTask[]; meId: string; onMove: (id: string, s: Status) => void; onQuickAdd?: (title: string) => Promise<boolean>; onDelete: (id: string) => void; onLock?: (id: string, locked: boolean) => void; give?: GiveProps;
+    /** No entrance animation (used where the screen is revisited often). */
+    instant?: boolean;
 }) {
-    const reduce = !!useReducedMotion();
+    const reduce = !!useReducedMotion() || instant;
     const [activeId, setActiveId] = useState<string | null>(null);
 
     const sensors = useSensors(
@@ -225,7 +264,7 @@ export default function Board({ tasks, meId, onMove, onQuickAdd }: {
                             key={def.id}
                             variants={{ hidden: { opacity: 0, y: 18 }, show: { opacity: 1, y: 0, transition: { duration: 0.7, ease: EASE } } }}
                         >
-                            <Column def={def} tasks={byStatus[def.id]} meId={meId} onMove={onMove} onQuickAdd={onQuickAdd} reduce={reduce} dragging={!!active} />
+                            <Column def={def} tasks={byStatus[def.id]} meId={meId} onMove={onMove} onQuickAdd={onQuickAdd} onDelete={onDelete} onLock={onLock} reduce={reduce} dragging={!!active} give={give} />
                         </motion.div>
                     ))}
                 </motion.div>

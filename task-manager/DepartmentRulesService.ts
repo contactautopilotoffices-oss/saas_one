@@ -119,6 +119,43 @@ interface Context {
     canEdit: boolean;
 }
 
+/** Cooldown between two "Send now" presses on the same notification. */
+export const SEND_NOW_COOLDOWN_MS = 10 * 60 * 1000;
+
+const istToday = () => {
+    const ist = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+    return `${ist.getFullYear()}-${String(ist.getMonth() + 1).padStart(2, '0')}-${String(ist.getDate()).padStart(2, '0')}`;
+};
+
+export interface SendNowResult { sent: number; skippedNoTasks: number; skippedLocked: number; pretend: boolean; blockedReason: string | null }
+
+/**
+ * Sends one saved notification right now. It goes through the SAME safety gate as the schedule (kill switches, Pretend Mode,
+ * the test whitelist, locked people). It does not touch the rule's "ran today" stamp, so the scheduled send still happens.
+ * A short cooldown stops a double click from messaging people twice.
+ */
+export async function sendRuleNow(params: { rule: NotificationRule; departmentId?: string; actorId: string }): Promise<SendNowResult> {
+    const { rule } = params;
+    const last = rule.lastManualSendAt ? Date.parse(rule.lastManualSendAt) : 0;
+    const wait = last + SEND_NOW_COOLDOWN_MS - Date.now();
+    if (wait > 0) throw new RulesError(429, `This was just sent. You can send it again in ${Math.ceil(wait / 60000)} minute${Math.ceil(wait / 60000) === 1 ? '' : 's'}.`, 'COOLDOWN');
+
+    const result = await TaskNotificationService.sendMorningNotifications({ date: istToday(), departmentId: params.departmentId, dryRun: false, rule });
+    if (!result.blockedReason) await TaskDatabaseService.updateNotificationRule(rule.id, { lastManualSendAt: new Date().toISOString() });
+    await TaskDatabaseService.logAudit({
+        eventType: 'notification_sent_now',
+        actorId: params.actorId,
+        details: { ruleId: rule.id, ruleName: rule.name, sent: result.notificationsSent, pretend: !!result.pretend, blocked: result.blockedReason || null },
+    });
+    return {
+        sent: result.notificationsSent,
+        skippedNoTasks: result.skippedNoTasks,
+        skippedLocked: result.skippedLocked || 0,
+        pretend: !!result.pretend,
+        blockedReason: result.blockedReason || null,
+    };
+}
+
 export class DepartmentRulesService {
     private static async context(actorUserId: string, departmentName?: string): Promise<Context> {
         const actor = await TaskDatabaseService.getEmployeeById(actorUserId);
@@ -222,6 +259,16 @@ export class DepartmentRulesService {
             actorId: ctx.actor.id,
             details: { ruleId, ruleName: existing.name, departmentId: ctx.departmentId },
         });
+    }
+
+    /** "Send now" for a team notification. Reaches the whole team, so the caller must confirm. */
+    static async sendNow(actorUserId: string, input: { ruleId?: string; confirm?: boolean }, departmentName?: string): Promise<SendNowResult> {
+        const ctx = await this.context(actorUserId, departmentName);
+        this.requireEdit(ctx);
+        const rule = (await this.teamRules(ctx.departmentId)).find(r => r.id === input.ruleId);
+        if (!rule) throw new RulesError(404, 'That notification was not found for your team.', 'NOT_FOUND');
+        if (input.confirm !== true) throw new RulesError(400, 'Confirm before sending to the team.', 'CONFIRM_REQUIRED');
+        return sendRuleNow({ rule, departmentId: ctx.departmentId, actorId: ctx.actor.id });
     }
 
     /**
