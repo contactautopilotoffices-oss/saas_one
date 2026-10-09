@@ -13,6 +13,30 @@
   - The branch also carries a handful of journal-only commits about other work (brochure, business cases). They change only this file.
 - **Open questions for the founder:** Should this go to review as one pull request, or be split into Satej and calling, meeting rooms, and the mail archive?
 
+## 2026-10-09 — Saas.one: Andheri decision paper revised after team review (22 pages)
+
+**Shravani's review comments are applied. The Andheri decision paper is now 22 pages, with factual headlines throughout.**
+
+- **Why:** The team reviewed the 15-page paper overnight. They corrected the 723 Avenue fit-out and the lock-in, asked to drop the ad-data price, wanted seven pages of the 20-page deck kept, and pointed out that our clients' fit-out is spent only once a client signs. The founder asked for factual headlines with no hedging.
+- **Structural decisions:**
+  - Fit-out is ₹2,000 a sq ft for both buildings, so 723 Avenue's fit-out is now ₹2.59 Cr and its MOS price is ₹18,550 (was ₹18,410). The lock-in is 60 months for both.
+  - **Fit-out is split in two:**
+    - a base build (flooring and basic interiors), done before any client and assumed at 30% of fit-out — ₹0.92 Cr at Privilon, ₹0.78 Cr at 723 Avenue;
+    - the client-specific 70%, spent only as each client signs.
+    - The 30% share is our assumption and is flagged in the deck.
+  - The separate price from our ad data was removed from page 6 and from the ads page.
+  - The 20-page deck's layouts, connectivity, Mumbai flex, sector mix, occupiers, positioning and broker-plan pages were rendered with this deck's page numbers and merged in using pypdf.
+- **What works now:** `~/Downloads/Andheri_Privilon_vs_723Avenue_Decision.pdf`, 22 pages, with these results:
+  - **Cash before any client** (base build, 3 months of rent and the deposit): ₹6.24 Cr at Privilon, ₹4.53 Cr at 723 Avenue.
+  - **Payback:** neither floor pays back within 60 months on today's terms.
+  - **What would make it pay back:** rent + CAM about 10% lower (₹365 at Privilon, ₹181 at 723 Avenue), or 5 rent-free months with the floor 85% full in 6 months, which pays back in month 47.
+- **Left undone:**
+  - The real base-build share needs the projects team's number.
+  - The seven merged pages keep their earlier layout; their page numbers are correct.
+- **Open questions for the founder:**
+  - What share of fit-out is base build in our Andheri projects?
+  - Is the 5% escalation yearly?
+
 ## 2026-10-08 — Saas.one: Andheri decision paper, 15 simple pages (Privilon or 723 Avenue?)
 
 **The Andheri case study was rewritten as a 15-page yes-or-no paper in plain words. It rebuilds the numbers from the new workbook, compounds the 5% rent rise every year, and assumes no anchor client.**
