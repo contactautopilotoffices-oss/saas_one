@@ -1,9 +1,12 @@
+import { usesBulkApprovalSummary, siteVendorQuotation } from '@/backend/lib/procurement/requisition-approval.mjs';
+import { requisitionNotes, batchWhatsAppOptions } from '@/backend/lib/procurement/requisition-approval.mjs';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { WhatsAppRecipientResolver, ResolvedWhatsAppUser } from '@/backend/services/WhatsAppRecipientResolver';
 import { WhatsAppQueueService } from '@/backend/services/WhatsAppQueueService';
 import { PettyCashNotificationService } from '@/backend/services/PettyCashNotificationService';
 
 interface DispatchOptions {
+    durableBatch?: boolean;
     featureKey: string;
     templateEventKey: string;
     organizationId: string;
@@ -153,6 +156,9 @@ export const WhatsAppEventProcessor = {
             case 'REQUISITION_UPLOADED':
             case 'MONTHLY_REQUISITION_UPLOADED':
                 await this.handleRequisitionUploaded(payload);
+                break;
+            case 'REQUISITION_APPROVAL_BATCH_REQUESTED':
+                await this.handleRequisitionApprovalBatchRequested(payload);
                 break;
             case 'REQUISITION_APPROVAL_REQUESTED':
                 await this.handleRequisitionApprovalRequested(payload);
@@ -596,7 +602,8 @@ export const WhatsAppEventProcessor = {
                 templateParams: orderedParams,
                 entityId: entityId || undefined,
                 mediaUrl: effectiveMediaUrl,
-                mediaType: effectiveMediaType
+                mediaType: effectiveMediaType,
+                durableBatch: options.durableBatch
             });
         }
     },
@@ -1182,21 +1189,35 @@ export const WhatsAppEventProcessor = {
         });
     },
 
+    async handleRequisitionApprovalBatchRequested(payload: any) {
+        const { data: records, error } = await supabaseAdmin.from('property_monthly_requisitions')
+            .select('*,property:properties!property_id(id,name)').eq('organization_id', payload.organization_id)
+            .in('id', payload.requisition_ids);
+        if (error) throw error;
+        const saved = (records || []).filter(record =>
+            requisitionNotes(record).vendor_quotation?.batch_id === payload.batch_id);
+        if (!saved.length) return;
+        await this.dispatch(batchWhatsAppOptions(saved, payload));
+    },
+
     async handleRequisitionApprovalRequested(payload: any): Promise<void> {
         let { organization_id, property_id, requisition_month, requisition_year, target_approver_id, vendor_name, total_final_amount, vendor_notes } = payload;
         let isOverBudget = !!payload.is_over_budget;
         let overBudgetAmount = Number(payload.over_budget_amount) || 0;
         let budgetLimit = Number(payload.budget_limit) || 0;
 
+        if (usesBulkApprovalSummary({ notes: payload.notes })) return;
         if (payload.requisition_id) {
             try {
-                const { data: req } = await supabaseAdmin
+                const { data: req, error: hydrateError } = await supabaseAdmin
                     .from('property_monthly_requisitions')
-                    .select('notes, floor_tag, property_id, organization_id, requisition_month, requisition_year, is_over_budget, budget_limit, over_budget_amount')
+                    .select('notes, total_estimated_amount, floor_tag, property_id, organization_id, requisition_month, requisition_year, is_over_budget, budget_limit, over_budget_amount')
                     .eq('id', payload.requisition_id)
                     .maybeSingle();
 
+                if (hydrateError) throw hydrateError;
                 if (req) {
+                    if (usesBulkApprovalSummary(req)) return;
                     if (!organization_id) organization_id = req.organization_id;
                     if (!property_id) property_id = req.property_id;
                     if (!requisition_month) requisition_month = req.requisition_month;
@@ -1214,10 +1235,11 @@ export const WhatsAppEventProcessor = {
                         } catch {}
                     }
 
-                    if (parsedNotes?.vendor_quotation) {
-                        if (!vendor_name) vendor_name = parsedNotes.vendor_quotation.vendor_name;
-                        if (!total_final_amount) total_final_amount = parsedNotes.vendor_quotation.total_quoted_amount;
-                        if (!vendor_notes) vendor_notes = parsedNotes.vendor_quotation.notes;
+                    const siteQuote = siteVendorQuotation(req);
+                    if (siteQuote) {
+                        if (!vendor_name) vendor_name = siteQuote.vendor_name;
+                        if (siteQuote.is_bulk || !total_final_amount) total_final_amount = siteQuote.total_quoted_amount;
+                        if (!vendor_notes) vendor_notes = siteQuote.notes;
                     }
                     if (parsedNotes?.approver_info && !target_approver_id) {
                         target_approver_id = parsedNotes.approver_info.id;
@@ -1227,6 +1249,7 @@ export const WhatsAppEventProcessor = {
                 }
             } catch (err) {
                 console.warn('[Requisition Approval Hydrate Error]:', err);
+                throw err;
             }
         }
 

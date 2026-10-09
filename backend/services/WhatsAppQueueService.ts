@@ -15,6 +15,7 @@ export interface WhatsAppQueuePayload {
     templateName?: string;
     templateParams?: string[];
     entityId?: string;
+    durableBatch?: boolean;
 }
 
 export class WhatsAppQueueService {
@@ -43,11 +44,12 @@ export class WhatsAppQueueService {
         const keys = ['whatsapp_notifications_enabled'];
         if (moduleName) keys.push(`whatsapp_${moduleName}_enabled`);
 
-        const { data: configs } = await supabaseAdmin
+        const { data: configs, error: configError } = await supabaseAdmin
             .from('system_config')
             .select('key, value')
             .in('key', keys);
 
+        if (configError && payload.durableBatch) throw configError;
         const configMap = (configs || []).reduce((acc, row) => ({ ...acc, [row.key]: row.value === true }), {} as Record<string, boolean>);
         
         const isGlobalEnabled = configMap['whatsapp_notifications_enabled'] !== false;
@@ -68,11 +70,12 @@ export class WhatsAppQueueService {
         const usersWithoutPhone: string[] = [];
 
         if (payload.userIds && payload.userIds.length > 0) {
-            const { data: users } = await supabaseAdmin
+            const { data: users, error: usersError } = await supabaseAdmin
                 .from('users')
                 .select('id, phone')
                 .in('id', payload.userIds);
 
+            if (usersError && payload.durableBatch) throw usersError;
             (users || []).forEach(u => {
                 if (u.phone && String(u.phone).trim()) {
                     recipientsToEnqueue.push({ id: u.id, phone: String(u.phone).trim() });
@@ -99,12 +102,14 @@ export class WhatsAppQueueService {
                 try {
                     const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
                     const phones = recipientsToEnqueue.map(u => u.phone);
-                    const { data: recentRows } = await supabaseAdmin
-                        .from('whatsapp_queue')
+                    let dedupQuery = supabaseAdmin.from('whatsapp_queue')
                         .select('phone, template_name, event_type')
-                        .eq('entity_id', String(targetEntityId))
-                        .in('phone', phones)
-                        .gte('created_at', twoMinutesAgo);
+                        .eq('entity_id', String(targetEntityId)).in('phone', phones);
+                    // A batch UUID identifies one upload; retrying its outbox event
+                    // must reuse existing queue rows even after the normal two-minute window.
+                    if (!payload.durableBatch) dedupQuery = dedupQuery.gte('created_at', twoMinutesAgo);
+                    const { data: recentRows, error: dedupError } = await dedupQuery;
+                    if (dedupError && payload.durableBatch) throw dedupError;
 
                     if (recentRows && recentRows.length > 0) {
                         const existingKeySet = new Set(
@@ -120,6 +125,7 @@ export class WhatsAppQueueService {
                         });
                     }
                 } catch (dedupErr) {
+                    if (payload.durableBatch) throw dedupErr;
                     console.warn('[WhatsAppQueue] Deduplication check warning:', dedupErr);
                 }
             }
@@ -157,6 +163,7 @@ export class WhatsAppQueueService {
                     console.log(`[WhatsAppQueue] Reminder already queued for event: ${payload.eventType}, skipping duplicate.`);
                 } else {
                     console.error('[WhatsAppQueue] Failed to insert queue rows:', error.message);
+                    if (payload.durableBatch) throw error;
                 }
             } else {
                 console.log(`[WhatsAppQueue] Enqueued ${rows.length} messages for event: ${payload.eventType}`);

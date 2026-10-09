@@ -1,0 +1,42 @@
+name: Requisition approval checks
+
+on:
+  push:
+    branches: [fix/monthly-requisition-approval-process]
+  pull_request:
+    paths:
+      - 'app/api/procurement/requisitions/**'
+      - 'backend/lib/procurement/requisition-approval.mjs'
+      - 'backend/services/WhatsAppEventProcessor.ts'
+      - 'backend/services/WhatsAppQueueService.ts'
+      - 'app/api/webhooks/process-event/route.ts'
+      - 'app/api/cron/sweep-outbox/route.ts'
+      - 'frontend/components/procurement/**'
+      - 'tests/requisition-approval-process.test.mjs'
+      - '.github/workflows/requisition-approval-checks.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: requisition-approval-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Approval regression tests
+        run: node --test --test-isolation=none tests/requisition-approval-process.test.mjs tests/requisition-approvers.test.mjs
+      - name: Production TypeScript check
+        run: |
+          node --max-old-space-size=8192 -e 'require("next/dist/lib/typescript/runTypeCheck").runTypeCheck(require("typescript"), process.cwd(), ".next", "tsconfig.json", ".next/cache/typescript", true, true).then(() => console.log("TypeScript passed")).catch(error => { console.error(error); process.exit(1); })'

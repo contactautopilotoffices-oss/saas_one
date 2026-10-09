@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@/frontend/utils/supabase/server';
+import { requisitionNotes, siteVendorQuotation } from '@/backend/lib/procurement/requisition-approval.mjs';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { WhatsAppEventProcessor } from '@/backend/services/WhatsAppEventProcessor';
 import { EmailService } from '@/backend/services/EmailService';
@@ -15,11 +17,19 @@ export async function PATCH(
 ) {
     try {
         const { id } = await params;
+        const client = await createClient();
+        const { data: { user }, error: authError } = await client.auth.getUser();
+        if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         const body = await request.json();
-        const { action, approver_id, approver_name, remarks } = body; // action: 'approve' | 'reject'
-
-        if (!id || !action || !approver_id) {
-            return NextResponse.json({ error: 'Missing required parameters: id, action, approver_id' }, { status: 400 });
+        const { action } = body;
+        const remarks = typeof body.remarks === 'string' ? body.remarks.trim() : '';
+        const approver_id = user.id;
+        const approver_name = user.user_metadata?.full_name || user.email || 'Approver';
+        if (!id || !['approve', 'reject'].includes(action)) {
+            return NextResponse.json({ error: 'Choose approve or reject for a single requisition.' }, { status: 400 });
+        }
+        if (action === 'reject' && !remarks) {
+            return NextResponse.json({ error: 'Enter the reason for rejection or revision.' }, { status: 400 });
         }
 
         const adminSupabase = createAdminClient();
@@ -39,19 +49,19 @@ export async function PATCH(
             return NextResponse.json({ error: 'Requisition not found' }, { status: 404 });
         }
 
-        let existingNotesObj: any = {};
-        try {
-            if (existing.notes && existing.notes.trim().startsWith('{')) {
-                existingNotesObj = JSON.parse(existing.notes);
-            }
-        } catch {
-            existingNotesObj = { site_notes: existing.notes || '' };
+        const existingNotesObj = requisitionNotes(existing);
+        if (existing.status !== 'pending_approval') {
+            return NextResponse.json({ error: 'This requisition is no longer awaiting approval. Refresh to see its current status.' }, { status: 409 });
         }
+        const { data: profile, error: profileError } = await adminSupabase.from('users')
+            .select('is_master_admin,deleted_at').eq('id', user.id).maybeSingle();
+        if (profileError) throw profileError;
+        if (!profile || profile.deleted_at) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
         // Authorization Check: Only designated approver or Org Super Admin can approve/reject
         const targetApproverId = existingNotesObj.approver_info?.id || existingNotesObj.approver_info?.approver_id;
         
-        const { data: member } = await adminSupabase
+        const { data: member, error: memberError } = await adminSupabase
             .from('organization_memberships')
             .select('role')
             .eq('organization_id', existing.organization_id)
@@ -59,9 +69,10 @@ export async function PATCH(
             .eq('is_active', true)
             .maybeSingle();
 
+        if (memberError) throw memberError;
         const role = (member?.role || '').toLowerCase();
-        const isSuperAdmin = role === 'org_super_admin' || role === 'master_admin';
-        const isDesignatedApprover = Boolean(targetApproverId && approver_id === targetApproverId);
+        const isSuperAdmin = Boolean(profile.is_master_admin) || role === 'org_super_admin' || role === 'master_admin';
+        const isDesignatedApprover = Boolean(member && targetApproverId && approver_id === targetApproverId);
 
         if (!isSuperAdmin && !isDesignatedApprover) {
             return NextResponse.json({ 
@@ -83,9 +94,10 @@ export async function PATCH(
 
         const mergedNotes = JSON.stringify({
             ...existingNotesObj,
+            vendor_quotation: siteVendorQuotation(existing),
             approver_info: updatedApproverInfo,
             status_history: [
-                ...(existingNotesObj.status_history || []),
+                ...(Array.isArray(existingNotesObj.status_history) ? existingNotesObj.status_history : []),
                 {
                     status: newStatus,
                     by_id: approver_id,
@@ -107,20 +119,23 @@ export async function PATCH(
                 updated_at: new Date().toISOString()
             })
             .eq('id', id)
+            .eq('status', 'pending_approval')
+            .eq('updated_at', existing.updated_at)
             .select(`
                 *,
                 property:properties!property_id(id, name),
                 uploader:users!uploaded_by(id, full_name, email, phone)
             `)
-            .single();
+            .maybeSingle();
 
         if (updateError) {
             return NextResponse.json({ error: 'Failed to update approval status', details: updateError.message }, { status: 500 });
         }
 
+        if (!updatedRecord) return NextResponse.json({ error: 'The requisition changed during review. Refresh before deciding.' }, { status: 409 });
         const propertyName = existing.property?.name || 'Site Property';
         const monthName = MONTH_NAMES[(existing.requisition_month || 1) - 1];
-        const totalAmount = existingNotesObj.vendor_quotation?.total_quoted_amount || existingNotesObj.total_estimated_amount || 0;
+        const totalAmount = siteVendorQuotation(existing)?.total_quoted_amount ?? existingNotesObj.total_estimated_amount ?? existing.total_estimated_amount ?? 0;
 
         // 3. Dispatch Notifications (Email + WhatsApp) via OmniChannel Matrix
         (async () => {

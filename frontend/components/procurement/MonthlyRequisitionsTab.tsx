@@ -13,6 +13,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ModalPortal from '../ui/ModalPortal';
 import SiteRequisitionSheet from './SiteRequisitionSheet';
 import ApproverRequisitionModal from './ApproverRequisitionModal';
+import { siteVendorQuotation, siteEstimatedAmount } from '@/backend/lib/procurement/requisition-approval.mjs';
+
 import PropertyBudgetManagerModal from './PropertyBudgetManagerModal';
 import BulkApproverUploadModal from './BulkApproverUploadModal';
 import MonthlyFeedbackFormModal from './MonthlyFeedbackFormModal';
@@ -389,7 +391,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
             formData.append('action', 'issue_po');
             formData.append('po_number', poNumber.trim());
             formData.append('vendor_name', poVendorName.trim() || issuePoModalReq.vendor_quotation?.vendor_name || 'Selected Vendor');
-            formData.append('total_po_amount', poAmount || String(issuePoModalReq.vendor_quotation?.total_quoted_amount || issuePoModalReq.total_estimated_amount || 0));
+            formData.append('total_po_amount', poAmount || String(siteVendorQuotation(issuePoModalReq)?.total_quoted_amount ?? siteEstimatedAmount(issuePoModalReq)));
             formData.append('expected_delivery_date', poExpectedDeliveryDate);
             formData.append('po_notes', poNotes);
             if (poFile) {
@@ -821,7 +823,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                 {filteredRequisitions.map(req => {
                                     const monthName = MONTH_NAMES[req.requisition_month - 1] || req.requisition_month;
                                     const itemsCount = req.total_items_count || req.items?.length || 0;
-                                    const totalAmount = req.vendor_quotation?.total_quoted_amount || req.total_estimated_amount || 0;
+                                    const totalAmount = siteEstimatedAmount(req);
 
                                     return (
                                         <tr key={req.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-700/30 transition-colors">
@@ -936,7 +938,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                                             onClick={() => {
                                                                 setVendorQuoteModalReq(req);
                                                                 setVendorName(req.vendor_quotation?.vendor_name || '');
-                                                                setVendorQuotedAmount(req.vendor_quotation?.total_quoted_amount?.toString() || req.total_estimated_amount?.toString() || '');
+                                                                setVendorQuotedAmount(String(siteVendorQuotation(req)?.total_quoted_amount ?? siteEstimatedAmount(req)));
                                                             }}
                                                             className="inline-flex items-center gap-1.5 h-8 px-3 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold whitespace-nowrap transition-all shadow-xs shrink-0 cursor-pointer"
                                                         >
@@ -952,7 +954,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                                                 setIssuePoModalReq(req);
                                                                 setPoNumber(`PO-${req.requisition_year}-${String(Math.floor(1000 + Math.random() * 9000))}`);
                                                                 setPoVendorName(req.vendor_quotation?.vendor_name || '');
-                                                                setPoAmount(req.vendor_quotation?.total_quoted_amount?.toString() || req.total_estimated_amount?.toString() || '');
+                                                                setPoAmount(String(siteVendorQuotation(req)?.total_quoted_amount ?? siteEstimatedAmount(req)));
                                                                 setPoExpectedDeliveryDate('');
                                                                 setPoNotes('');
                                                                 setPoFile(null);
@@ -1145,7 +1147,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                 <div className="p-3.5 bg-emerald-50 dark:bg-emerald-950/30 rounded-2xl border border-emerald-200 dark:border-emerald-800/40 text-xs">
                                     <span className="font-bold text-emerald-800 dark:text-emerald-300 block mb-0.5">Approved Requisition</span>
                                     <p className="text-emerald-700 dark:text-emerald-400">
-                                        Approved for ₹{Number(issuePoModalReq.vendor_quotation?.total_quoted_amount || issuePoModalReq.total_estimated_amount || 0).toLocaleString('en-IN')}. Issuing the PO will notify site staff via WhatsApp & Email.
+                                        Approved for ₹{Number(siteVendorQuotation(issuePoModalReq)?.total_quoted_amount ?? siteEstimatedAmount(issuePoModalReq)).toLocaleString('en-IN')}. Issuing the PO will notify site staff via WhatsApp & Email.
                                     </p>
                                 </div>
 
