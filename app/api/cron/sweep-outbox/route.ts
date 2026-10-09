@@ -68,7 +68,8 @@ export async function GET(request: NextRequest) {
                 .from('event_outbox')
                 .update({ status: 'processing', updated_at: new Date().toISOString() })
                 .eq('id', event.id)
-                .eq('status', event.status) 
+                .eq('status', event.status)
+                .eq('updated_at', event.updated_at) 
                 .select()
                 .maybeSingle();
 

@@ -284,6 +284,7 @@ export const WhatsAppEventProcessor = {
             organizationId,
             propertyId,
             featureKey,
+            strictReads: options.durableBatch,
             contextualUsers: contextualUserIds ? {
                 assigneeId: contextualUserIds.assigneeId,
                 requesterId: contextualUserIds.requesterId,
@@ -309,10 +310,11 @@ export const WhatsAppEventProcessor = {
 
         const missingIds = contextualIds.filter(id => !userMap.has(id));
         if (missingIds.length > 0) {
-            const { data: contextualUsers } = await supabaseAdmin
+            const { data: contextualUsers, error: contextualError } = await supabaseAdmin
                 .from('users')
                 .select('id, phone, full_name')
                 .in('id', missingIds);
+            if (contextualError && options.durableBatch) throw contextualError;
             (contextualUsers || [])
                 .filter((u: any) => u?.phone && String(u.phone).trim())
                 .forEach((u: any) => {
@@ -339,12 +341,13 @@ export const WhatsAppEventProcessor = {
         }
 
         // Read the org's template map
-        const { data: orgData } = await supabaseAdmin
+        const { data: orgData, error: templateError } = await supabaseAdmin
             .from('organization_settings')
             .select('whatsapp_templates')
             .eq('organization_id', organizationId)
             .maybeSingle();
 
+        if (templateError && options.durableBatch) throw templateError;
         const templatesMap = (orgData as any)?.whatsapp_templates || {};
 
         const DEFAULT_TEMPLATES: Record<string, { campaign_name: string; params: string[] }> = {

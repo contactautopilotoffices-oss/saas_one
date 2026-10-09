@@ -73,7 +73,7 @@ function loadRoute(path, records, actor, sent = [], failId = '') {
                 ({ data: { user: actor ? { id: actor, user_metadata: { full_name: 'Logged-in actor' } } : null }, error: null }) } }) };
             if (name.endsWith('/admin')) return { createAdminClient: () => admin };
             if (name.endsWith('requisition-approval.mjs')) return approval;
-            if (name.endsWith('WhatsAppEventProcessor')) return { WhatsAppEventProcessor: { dispatch: async message => { sent.push(message); } } };
+            if (name.endsWith('WhatsAppEventProcessor')) return { WhatsAppEventProcessor: { dispatch: async message => { if (failId === 'dispatch') throw new Error('Queue unavailable'); sent.push(message); } } };
             if (name.endsWith('EmailRecipientResolver')) return { EmailRecipientResolver: { resolveRecipients: async () => ({ enabled: false, emails: [] }) } };
             if (name.endsWith('EmailService')) return { EmailService: { sendGenericNotificationEmail: async () => {} } };
             throw new Error('Unexpected import ' + name);
@@ -339,4 +339,34 @@ test('a failed durable queue insert rejects rather than falsely reporting succes
         userIds: [reviewer], message: 'Batch', eventType: 'REQUISITION_APPROVAL_REQUESTED',
         entityId: 'batch-id', templateName: 'requisition_approval_requested_v1', durableBatch: true
     }), /Queue unavailable/);
+});
+
+test('bulk queue failures surface a warning and leave a failed recovery event', async () => {
+    const records = fixture(), sent = [];
+    const response = await loadRoute('app/api/procurement/requisitions/bulk-approval/route.ts', records, buyer, sent, 'dispatch').POST(upload());
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).notification_warning, true);
+    assert.equal(records.event_outbox[0].status, 'failed');
+    assert.deepEqual(records.property_monthly_requisitions.map(row => row.status), ['pending_approval', 'pending_approval']);
+});
+
+test('durable recipient resolution propagates failed settings, memberships and user reads', async () => {
+    const source = readFileSync(new URL('../backend/services/WhatsAppRecipientResolver.ts', import.meta.url), 'utf8');
+    const compiled = ts.transpileModule(source, { compilerOptions: {
+        module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022
+    } }).outputText;
+    for (const failingTable of ['organization_settings', 'organization_memberships', 'users']) {
+        const exports = {};
+        const admin = { from(table) {
+            return { select() { return this; }, eq() { return this; }, in() { return this; },
+                maybeSingle() { return Promise.resolve({ data: null, error: table === failingTable ? new Error('Read unavailable') : null }); },
+                then(resolve) { return Promise.resolve({ data: [], error: table === failingTable ? new Error('Read unavailable') : null }).then(resolve); }
+            };
+        } };
+        vm.runInNewContext(compiled, { exports, console, require: () => ({ supabaseAdmin: admin }) });
+        await assert.rejects(() => exports.WhatsAppRecipientResolver.resolveRecipients({
+            organizationId: org, featureKey: 'requisition_approval_requested', strictReads: true,
+            contextualUsers: { approverId: reviewer }
+        }), /Read unavailable/);
+    }
 });

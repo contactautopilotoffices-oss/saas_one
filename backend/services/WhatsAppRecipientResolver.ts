@@ -27,6 +27,7 @@ export interface ResolvedWhatsAppUser {
 }
 
 export interface ResolveWhatsAppRecipientsOptions {
+    strictReads?: boolean;
     organizationId: string;
     propertyId?: string | null;
     featureKey: string;
@@ -177,12 +178,13 @@ export const WhatsAppRecipientResolver = {
         }
 
         // 1. Fetch organization settings
-        const { data: orgData } = await supabaseAdmin
+        const { data: orgData, error: settingsError } = await supabaseAdmin
             .from('organization_settings')
             .select('notification_matrix, whatsapp_service_config')
             .eq('organization_id', organizationId)
             .maybeSingle();
 
+        if (settingsError && options.strictReads) throw settingsError;
         const matrix = orgData?.notification_matrix || {};
         const orgConfigMap = (orgData as any)?.whatsapp_service_config || {};
 
@@ -327,6 +329,9 @@ export const WhatsAppRecipientResolver = {
 
         const [orgMemsRes, propMemsRes] = await Promise.all(tasks);
 
+        if (options.strictReads && (orgMemsRes?.error || propMemsRes?.error)) {
+            throw orgMemsRes?.error || propMemsRes?.error;
+        }
         if (orgMemsRes?.data) {
             orgMemsRes.data.forEach((m: any) => { if (m?.user_id) recipientIds.add(m.user_id); });
         }
@@ -343,11 +348,12 @@ export const WhatsAppRecipientResolver = {
         }
 
         // 3. Fetch user rows from public.users table
-        const { data: users } = await supabaseAdmin
+        const { data: users, error: usersError } = await supabaseAdmin
             .from('users')
             .select('id, phone, full_name')
             .in('id', Array.from(recipientIds));
 
+        if (usersError && options.strictReads) throw usersError;
         const userMap = new Map<string, any>((users || []).map(u => [u.id, u]));
 
         // Check for any recipient IDs whose phone is missing from public.users table
@@ -360,7 +366,8 @@ export const WhatsAppRecipientResolver = {
             await Promise.all(
                 missingPhoneIds.map(async (uid) => {
                     try {
-                        const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(uid);
+                        const { data: authUser, error: authLookupError } = await supabaseAdmin.auth.admin.getUserById(uid);
+                        if (authLookupError && options.strictReads && authLookupError.status !== 404) throw authLookupError;
                         if (authUser?.user) {
                             const rawPhone = authUser.user.phone || authUser.user.user_metadata?.phone;
                             if (rawPhone) {
@@ -381,6 +388,7 @@ export const WhatsAppRecipientResolver = {
                             }
                         }
                     } catch (e) {
+                        if (options.strictReads) throw e;
                         // ignore background fallback errors
                     }
                 })

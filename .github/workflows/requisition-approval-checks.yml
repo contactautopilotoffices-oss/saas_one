@@ -9,6 +9,7 @@ on:
       - 'backend/lib/procurement/requisition-approval.mjs'
       - 'backend/services/WhatsAppEventProcessor.ts'
       - 'backend/services/WhatsAppQueueService.ts'
+      - 'backend/services/WhatsAppRecipientResolver.ts'
       - 'app/api/webhooks/process-event/route.ts'
       - 'app/api/cron/sweep-outbox/route.ts'
       - 'frontend/components/procurement/**'
