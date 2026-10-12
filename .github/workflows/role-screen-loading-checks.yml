@@ -1,0 +1,39 @@
+name: Role screen loading checks
+
+on:
+  push:
+    branches: [fix/role-screen-loading-performance]
+  pull_request:
+    paths:
+      - 'frontend/context/**'
+      - 'frontend/hooks/useAppSession.ts'
+      - 'frontend/components/dashboard/**'
+      - 'app/org/**/layout.tsx'
+      - 'tests/dashboard/**'
+      - '.github/workflows/role-screen-loading-checks.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: role-loading-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Loading regression and access checks
+        run: node --test --test-isolation=none tests/dashboard/loading-performance.test.mjs tests/dashboard/scope.test.mjs tests/dashboard/org-tab-sync.test.mjs
+      - name: Production TypeScript check
+        run: |
+          node --max-old-space-size=8192 -e 'require("next/dist/lib/typescript/runTypeCheck").runTypeCheck(require("typescript"), process.cwd(), ".next", "tsconfig.json", ".next/cache/typescript", true, true).then(() => console.log("TypeScript passed")).catch(error => { console.error(error); process.exit(1); })'
