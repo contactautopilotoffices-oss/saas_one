@@ -76,7 +76,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Check cache first
         const cached = membershipCache.get(userId);
         if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-            if (activeUserIdRef.current === userId) setMembership(cached.data);
+            if (activeUserIdRef.current === userId) {
+                setMembership(cached.data);
+                setIsMembershipLoading(false);
+            }
             return;
         }
 
@@ -138,7 +141,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
             const primaryOrg = sortedOrgs[0];
 
-            const approvedFlag = !!profileData?.is_master_admin || profileData?.is_approved === true || profileData?.approval_status === 'approved';
+            const approvedFlag = !!profileData?.is_master_admin || (
+                profileData?.is_approved !== false && profileData?.approval_status !== 'pending' &&
+                (profileData?.is_approved === true || profileData?.approval_status === 'approved')
+            );
 
             const hasActiveMemberships = (orgData && orgData.length > 0) || (propData && propData.length > 0);
             const onboardingCompleted = !!profileData?.is_master_admin || !!profileData?.onboarding_completed || hasActiveMemberships;
