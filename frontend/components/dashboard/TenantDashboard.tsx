@@ -1,5 +1,7 @@
 'use client';
 
+import dynamic from 'next/dynamic';
+
 import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from 'react';
 import {
     LayoutDashboard, Ticket as TicketIcon, Settings, LogOut, Plus,
@@ -18,16 +20,16 @@ import Skeleton from '@/frontend/components/ui/Skeleton';
 import SignOutModal from '@/frontend/components/ui/SignOutModal';
 import NotificationBell from './NotificationBell';
 import PendingActionsBell from './PendingActionsBell';
-import DieselStaffDashboard from '@/frontend/components/diesel/DieselStaffDashboard';
-import VMSAdminDashboard from '@/frontend/components/vms/VMSAdminDashboard';
-import TenantTicketingDashboard from '@/frontend/components/tickets/TenantTicketingDashboard';
-import SettingsView from './SettingsView';
+const DieselStaffDashboard = dynamic(() => import('@/frontend/components/diesel/DieselStaffDashboard'), { loading: () => <Loader text="Loading..." /> });
+const VMSAdminDashboard = dynamic(() => import('@/frontend/components/vms/VMSAdminDashboard'), { loading: () => <Loader text="Loading..." /> });
+const TenantTicketingDashboard = dynamic(() => import('@/frontend/components/tickets/TenantTicketingDashboard'), { loading: () => <Loader text="Loading..." /> });
+const SettingsView = dynamic(() => import('./SettingsView'), { loading: () => <Loader text="Loading..." /> });
 import Loader from '@/frontend/components/ui/Loader';
 import TicketCard from '@/frontend/components/shared/TicketCard';
-import TenantRoomBooking from '@/frontend/components/meeting-rooms/TenantRoomBooking';
-import PPMCalendar from '@/frontend/components/ppm/PPMCalendar';
+const TenantRoomBooking = dynamic(() => import('@/frontend/components/meeting-rooms/TenantRoomBooking'), { loading: () => <Loader text="Loading..." /> });
+const PPMCalendar = dynamic(() => import('@/frontend/components/ppm/PPMCalendar'), { loading: () => <Loader text="Loading..." /> });
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
-import TenantVisitorManagement from '@/frontend/components/vms/TenantVisitorManagement';
+const TenantVisitorManagement = dynamic(() => import('@/frontend/components/vms/TenantVisitorManagement'), { loading: () => <Loader text="Loading..." /> });
 import { CalendarDays, ChevronDown } from 'lucide-react';
 
 // Types
@@ -74,7 +76,7 @@ interface TenantDashboardProps {
 }
 
 const TenantDashboard: React.FC<TenantDashboardProps> = ({ initialPropertyId, assignedPropertyIds }) => {
-    const { user, signOut } = useAuth();
+    const { user, membership, isMembershipLoading, signOut } = useAuth();
     const { theme, toggleTheme } = useTheme();
     const params = useParams();
     const router = useRouter();
@@ -208,59 +210,31 @@ const TenantDashboard: React.FC<TenantDashboardProps> = ({ initialPropertyId, as
     const supabase = useMemo(() => createClient(), []);
 
     // Fetch assigned properties for tenant user
+    const assignedIdsKey = (assignedPropertyIds || []).join(',');
     useEffect(() => {
         const userId = user?.id;
-        if (!userId) return;
-        async function fetchAssignedProps() {
-            try {
-                const { data } = await supabase
-                    .from('property_memberships')
-                    .select('property_id, properties(id, name, code)')
-                    .eq('user_id', userId)
-                    .neq('is_active', false);
-
-                let list: { id: string; name: string; code?: string }[] = [];
-                if (data) {
-                    list = data
-                        .filter((r: any) => r.properties && r.properties.id)
-                        .map((r: any) => ({
-                            id: r.properties.id,
-                            name: r.properties.name,
-                            code: r.properties.code
-                        }));
-                }
-
-                // If assignedPropertyIds prop was provided, merge any additional properties
-                if (assignedPropertyIds && assignedPropertyIds.length > 0) {
-                    const existingIds = new Set(list.map(p => p.id));
-                    const missingIds = assignedPropertyIds.filter(id => !existingIds.has(id));
-                    if (missingIds.length > 0) {
-                        const { data: missingProps } = await supabase
-                            .from('properties')
-                            .select('id, name, code')
-                            .in('id', missingIds);
-                        if (missingProps) {
-                            missingProps.forEach((p: any) => {
-                                list.push({
-                                    id: p.id,
-                                    name: p.name,
-                                    code: p.code
-                                });
-                            });
-                        }
-                    }
-                }
-
-                setAssignedProperties(list);
-                if (!selectedPropertyId && list.length > 0) {
-                    setSelectedPropertyId(list[0].id);
-                }
-            } catch (err) {
-                console.error('Failed to fetch tenant assigned properties:', err);
+        if (!userId || isMembershipLoading || membership?.user_id !== userId || membership.error) return;
+        let cancelled = false;
+        async function loadAssignedProperties() {
+            const list = (membership?.properties || []).map(property => ({
+                id: property.id, name: property.name, code: property.code
+            }));
+            // Ordinary tenants already have names and IDs from AuthProvider.
+            // Only additional super-tenant assignments need a separate RLS-protected lookup.
+            const knownIds = new Set(list.map(property => property.id));
+            const missingIds = assignedIdsKey.split(',').filter(id => id && !knownIds.has(id));
+            if (missingIds.length) {
+                const { data, error } = await supabase.from('properties').select('id, name, code').in('id', missingIds);
+                if (error) { console.error('Failed to fetch additional tenant properties:', error); return; }
+                for (const property of data || []) list.push(property);
             }
+            if (cancelled) return;
+            setAssignedProperties(list);
+            setSelectedPropertyId(current => current || list[0]?.id || '');
         }
-        fetchAssignedProps();
-    }, [user, supabase, assignedPropertyIds]);
+        loadAssignedProperties();
+        return () => { cancelled = true; };
+    }, [user?.id, membership, isMembershipLoading, supabase, assignedIdsKey]);
 
     useEffect(() => {
         if (propertyId) {

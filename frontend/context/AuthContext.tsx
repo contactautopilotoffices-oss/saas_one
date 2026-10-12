@@ -6,6 +6,7 @@ import { User, Session } from '@supabase/supabase-js';
 
 // Cached membership data structure
 interface UserMembership {
+    user_id: string;
     org_id: string | null;
     org_name: string | null;
     org_role: string | null;
@@ -61,7 +62,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [isLoading, setIsLoading] = useState(true);
     const [membership, setMembership] = useState<UserMembership | null>(null);
     const [isMembershipLoading, setIsMembershipLoading] = useState(false);
-    const fetchingRef = useRef(false); // Prevent duplicate fetches
+    const fetchingRef = useRef(new Set<string>()); // Deduplicate only the same account
+    const activeUserIdRef = useRef<string | null>(null);
 
     // Memoize supabase client to prevent recreation
     const supabase = useMemo(() => createClient(), []);
@@ -69,23 +71,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Fetch membership data ONCE after login with caching
     const fetchMembership = useCallback(async (userId: string) => {
         // Prevent duplicate parallel fetches
-        if (fetchingRef.current) return;
+        if (fetchingRef.current.has(userId)) return;
 
         // Check cache first
         const cached = membershipCache.get(userId);
         if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-            setMembership(cached.data);
+            if (activeUserIdRef.current === userId) {
+                setMembership(cached.data);
+                setIsMembershipLoading(false);
+            }
             return;
         }
 
-        fetchingRef.current = true;
+        fetchingRef.current.add(userId);
         setIsMembershipLoading(true);
 
+        let membershipTimeout: ReturnType<typeof setTimeout> | undefined;
         try {
             // Parallelize membership and profile fetches with a hard 15-second timeout
             // to prevent the "Verifying access..." hang if Supabase is slow or unresponsive.
             const timeoutPromise = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Membership fetch timeout')), 15000)
+                membershipTimeout = setTimeout(() => reject(new Error('Membership fetch timeout')), 15000)
             );
 
             const fetchPromise = Promise.all([
@@ -135,7 +141,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
             const primaryOrg = sortedOrgs[0];
 
-            const approvedFlag = !!profileData?.is_master_admin || profileData?.is_approved === true || profileData?.approval_status === 'approved';
+            const approvedFlag = !!profileData?.is_master_admin || (
+                profileData?.is_approved !== false && profileData?.approval_status !== 'pending' &&
+                (profileData?.is_approved === true || profileData?.approval_status === 'approved')
+            );
 
             const hasActiveMemberships = (orgData && orgData.length > 0) || (propData && propData.length > 0);
             const onboardingCompleted = !!profileData?.is_master_admin || !!profileData?.onboarding_completed || hasActiveMemberships;
@@ -148,6 +157,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             }
 
             const membershipData: UserMembership = {
+                user_id: userId,
                 org_id: (primaryOrg?.organization as any)?.id || null,
                 org_name: (primaryOrg?.organization as any)?.name || null,
                 org_role: primaryOrg?.role || null,
@@ -172,6 +182,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             };
 
             // Cache the result
+            if (activeUserIdRef.current !== userId) return;
             membershipCache.set(userId, { data: membershipData, timestamp: Date.now() });
             setMembership(membershipData);
 
@@ -189,7 +200,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } catch (err) {
             console.error('Membership fetch error:', err);
             // On error, set membership with error flag so consumers know it failed
+            if (activeUserIdRef.current !== userId) return;
             setMembership({
+                user_id: userId,
                 org_id: null,
                 org_name: null,
                 org_role: null,
@@ -204,8 +217,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 error: true
             });
         } finally {
-            fetchingRef.current = false;
-            setIsMembershipLoading(false);
+            clearTimeout(membershipTimeout);
+            fetchingRef.current.delete(userId);
+            if (activeUserIdRef.current === userId) setIsMembershipLoading(false);
         }
     }, [supabase]);
 
@@ -220,6 +234,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Get initial session ONCE
         supabase.auth.getSession().then(({ data: { session } }) => {
             setSession(session);
+            if (activeUserIdRef.current !== (session?.user.id || null)) setMembership(null);
+            activeUserIdRef.current = session?.user.id || null;
             setUser(session?.user ?? null);
             setIsLoading(false); // ✅ Non-blocking: Show UI while data fetches in background
             // Signal to the hydration watchdog that React mounted successfully.
@@ -233,8 +249,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         });
 
         // Subscribe to auth changes
-        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
             setSession(session);
+            if (activeUserIdRef.current !== (session?.user.id || null)) setMembership(null);
+            activeUserIdRef.current = session?.user.id || null;
             setUser(session?.user ?? null);
 
             if (session?.user && (event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED')) {
@@ -242,7 +260,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 fetchMembership(session.user.id);
             } else if (event === 'SIGNED_OUT') {
                 setMembership(null);
-                if (user?.id) membershipCache.delete(user.id);
+                membershipCache.clear();
+                setIsMembershipLoading(false);
             }
 
             setIsLoading(false);
@@ -297,6 +316,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Manually update local state to trigger immediate UI response
         if (sessionData) {
             setSession(sessionData);
+            activeUserIdRef.current = sessionData.user.id;
+            setMembership(null);
             setUser(sessionData.user);
             membershipCache.delete(sessionData.user.id); // Always fetch fresh membership on sign-in
             await fetchMembership(sessionData.user.id);
@@ -361,12 +382,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (newSession) {
             await supabase.auth.setSession(newSession);
             setSession(newSession);
+            activeUserIdRef.current = newSession.user.id;
+            setMembership(null);
             setUser(newSession.user);
             fetchMembership(newSession.user.id).catch(() => {});
         } else {
             const { data: sessionData } = await supabase.auth.getSession();
             if (sessionData?.session) {
                 setSession(sessionData.session);
+                activeUserIdRef.current = sessionData.session.user.id;
+                setMembership(null);
                 setUser(sessionData.session.user);
                 fetchMembership(sessionData.session.user.id).catch(() => {});
             }
@@ -382,6 +407,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (user?.id) membershipCache.delete(user.id);
         
         // 🚀 Optimistic Update: Clear local state immediately for instant UI response
+        activeUserIdRef.current = null;
+        setIsMembershipLoading(false);
         setMembership(null);
         setSession(null);
         setUser(null);
@@ -438,6 +465,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         if (data?.session) {
             setSession(data.session);
+            activeUserIdRef.current = data.session.user.id;
+            setMembership(null);
             setUser(data.session.user);
             membershipCache.delete(data.session.user.id);
             await fetchMembership(data.session.user.id);

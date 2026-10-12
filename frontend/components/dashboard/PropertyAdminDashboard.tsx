@@ -1,8 +1,11 @@
 'use client';
 
+import dynamic from 'next/dynamic';
+import Loader from '@/frontend/components/ui/Loader';
+
 import { useDashboardContent } from '@/frontend/components/layout/DashboardContentSlot';
 import PettyCashNavLink from '@/frontend/components/pettyCash/PettyCashNavLink';
-import HRTicketsContent from '@/frontend/components/hr/HRTicketsContent';
+const HRTicketsContent = dynamic(() => import('@/frontend/components/hr/HRTicketsContent'), { loading: () => <Loader text="Loading..." /> });
 import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from 'react';
 import {
     LayoutDashboard, Users, Ticket, Settings, UserCircle, UsersRound,
@@ -18,44 +21,44 @@ import { useDataCache } from '@/frontend/context/DataCacheContext';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import UserDirectory from './UserDirectory';
 import SignOutModal from '@/frontend/components/ui/SignOutModal';
-import DieselAnalyticsDashboard from '@/frontend/components/diesel/DieselAnalyticsDashboard';
-import DieselStaffDashboard from '@/frontend/components/diesel/DieselStaffDashboard';
-import ElectricityStaffDashboard from '@/frontend/components/electricity/ElectricityStaffDashboard';
-import ElectricityAnalyticsDashboard from '@/frontend/components/electricity/ElectricityAnalyticsDashboard';
+const DieselAnalyticsDashboard = dynamic(() => import('@/frontend/components/diesel/DieselAnalyticsDashboard'), { loading: () => <Loader text="Loading..." /> });
+const DieselStaffDashboard = dynamic(() => import('@/frontend/components/diesel/DieselStaffDashboard'), { loading: () => <Loader text="Loading..." /> });
+const ElectricityStaffDashboard = dynamic(() => import('@/frontend/components/electricity/ElectricityStaffDashboard'), { loading: () => <Loader text="Loading..." /> });
+const ElectricityAnalyticsDashboard = dynamic(() => import('@/frontend/components/electricity/ElectricityAnalyticsDashboard'), { loading: () => <Loader text="Loading..." /> });
 import NotificationBell from './NotificationBell';
 import Image from 'next/image';
 import Skeleton from '@/frontend/components/ui/Skeleton';
 import VendorExportModal from '@/frontend/components/vendor/VendorExportModal';
 import { Toast } from '@/frontend/components/ui/Toast';
-import VMSAdminDashboard from '@/frontend/components/vms/VMSAdminDashboard';
-import TenantTicketingDashboard from '@/frontend/components/tickets/TenantTicketingDashboard';
+const VMSAdminDashboard = dynamic(() => import('@/frontend/components/vms/VMSAdminDashboard'), { loading: () => <Loader text="Loading..." /> });
+const TenantTicketingDashboard = dynamic(() => import('@/frontend/components/tickets/TenantTicketingDashboard'), { loading: () => <Loader text="Loading..." /> });
 import TicketCreateModal from '@/frontend/components/tickets/TicketCreateModal';
-import TicketsView from './TicketsView';
+const TicketsView = dynamic(() => import('./TicketsView'), { loading: () => <Loader text="Loading..." /> });
 import { useTheme } from '@/frontend/context/ThemeContext';
 import { Sun, Moon } from 'lucide-react';
-import SettingsView from './SettingsView';
+const SettingsView = dynamic(() => import('./SettingsView'), { loading: () => <Loader text="Loading..." /> });
 import AddMemberModal from './InviteMemberModal';
 import { ImportReportsView } from '@/frontend/components/snags';
-import AdminRoomManager from '@/frontend/components/meeting-rooms/AdminRoomManager';
-import StockDashboard from '@/frontend/components/stock/StockDashboard';
+const AdminRoomManager = dynamic(() => import('@/frontend/components/meeting-rooms/AdminRoomManager'), { loading: () => <Loader text="Loading..." /> });
+const StockDashboard = dynamic(() => import('@/frontend/components/stock/StockDashboard'), { loading: () => <Loader text="Loading..." /> });
 import StockMovementModal from '@/frontend/components/stock/StockMovementModal';
-import SOPDashboard from '@/frontend/components/sop/SOPDashboard';
-import AssetsModule from '@/frontend/components/assets/AssetsModule';
+const SOPDashboard = dynamic(() => import('@/frontend/components/sop/SOPDashboard'), { loading: () => <Loader text="Loading..." /> });
+const AssetsModule = dynamic(() => import('@/frontend/components/assets/AssetsModule'), { loading: () => <Loader text="Loading..." /> });
 import { assetCaps } from '@/frontend/lib/assets/roles';
-import EscalationHierarchyBuilder from '@/frontend/components/escalation/EscalationHierarchyBuilder';
-import PPMModule from '@/frontend/components/ppm/PPMModule';
-import ProcurementModule from '@/frontend/components/procurement/ProcurementModule';
+const EscalationHierarchyBuilder = dynamic(() => import('@/frontend/components/escalation/EscalationHierarchyBuilder'), { loading: () => <Loader text="Loading..." /> });
+const PPMModule = dynamic(() => import('@/frontend/components/ppm/PPMModule'), { loading: () => <Loader text="Loading..." /> });
+const ProcurementModule = dynamic(() => import('@/frontend/components/procurement/ProcurementModule'), { loading: () => <Loader text="Loading..." /> });
 import UniversalQRScannerModal, { QRScanResult } from '@/frontend/components/shared/UniversalQRScannerModal';
-import { RosterDashboard } from '@/frontend/components/roster/RosterDashboard';
-import { WaterDashboard } from '@/frontend/components/water/WaterDashboard';
-import WaterAnalyticsDashboard from '@/frontend/components/water/WaterAnalyticsDashboard';
+const RosterDashboard = dynamic(() => import('@/frontend/components/roster/RosterDashboard').then(module => module.RosterDashboard), { loading: () => <Loader text="Loading..." /> });
+const WaterDashboard = dynamic(() => import('@/frontend/components/water/WaterDashboard').then(module => module.WaterDashboard), { loading: () => <Loader text="Loading..." /> });
+const WaterAnalyticsDashboard = dynamic(() => import('@/frontend/components/water/WaterAnalyticsDashboard'), { loading: () => <Loader text="Loading..." /> });
 import ClientQRGeneratorModal from '@/frontend/components/vms/ClientQRGeneratorModal';
 
 import VendorManagementModal from '@/frontend/components/vendor/VendorManagementModal';
-import GuestExperienceDashboard from '@/frontend/components/guest-experience/GuestExperienceDashboard';
+const GuestExperienceDashboard = dynamic(() => import('@/frontend/components/guest-experience/GuestExperienceDashboard'), { loading: () => <Loader text="Loading..." /> });
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
-import AITicketsDashboard from '@/frontend/components/ai-tickets/AITicketsDashboard';
-import TaskManagerSuperuserDashboard from '@/frontend/components/task-manager/TaskManagerSuperuserDashboard';
+const AITicketsDashboard = dynamic(() => import('@/frontend/components/ai-tickets/AITicketsDashboard'), { loading: () => <Loader text="Loading..." /> });
+const TaskManagerSuperuserDashboard = dynamic(() => import('@/frontend/components/task-manager/TaskManagerSuperuserDashboard'), { loading: () => <Loader text="Loading..." /> });
 
 // Types
 type Tab = 'overview' | 'requests' | 'guest_experience' | 'reports' | 'users' | 'visitors' | 'rooms' | 'diesel' | 'diesel_analytics' | 'electricity' | 'electricity_analytics' | 'cafeteria' | 'settings' | 'profile' | 'units' | 'vendor_revenue' | 'stock' | 'checklist' | 'escalation' | 'ppm' | 'procurement' | 'roster' | 'water' | 'water_analytics' | 'ai_tickets' | 'grievance' | 'assets' | 'tasks';

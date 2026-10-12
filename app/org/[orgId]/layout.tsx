@@ -2,114 +2,31 @@
 
 import { useAuth } from "@/frontend/context/AuthContext";
 import { useRouter, useParams } from "next/navigation";
-import { useEffect, useState } from "react";
-import { createClient } from "@/frontend/utils/supabase/client";
+import { useEffect } from "react";
 import Loader from "@/frontend/components/ui/Loader";
-
-interface OrgMembership {
-    organization_id: string;
-    role: string;
-}
 
 export default function OrgLayout({
     children,
 }: {
     children: React.ReactNode;
 }) {
-    const { user, isLoading: authLoading, signOut } = useAuth();
+    const { user, membership, isLoading: authLoading, isMembershipLoading, refreshMembership, signOut } = useAuth();
     const router = useRouter();
     const params = useParams();
     const orgId = params.orgId as string;
 
-    const [isAuthorized, setIsAuthorized] = useState<boolean | null>(null);
-    const [isCheckingAccess, setIsCheckingAccess] = useState(true);
+    const verified = !!user && membership?.user_id === user.id;
+    const isCheckingAccess = authLoading || (!!user && (isMembershipLoading || !verified));
+    const approved = !!membership?.is_approved && !membership.error;
+    const isAuthorized = verified && approved && membership!.all_org_memberships.some(member => member.org_id === orgId);
+    const property = verified && approved ? membership!.properties.find(item => item.organization_id === orgId) : null;
 
     useEffect(() => {
-        const checkOrgAccess = async () => {
-            // Wait for auth to finish loading
-            if (authLoading) return;
-
-            // Redirect to login if not authenticated
-            if (!user) {
-                router.replace('/login');
-                return;
-            }
-
-            try {
-                const supabase = createClient();
-
-                // Check user approval status
-                const { data: userProfile } = await supabase
-                    .from('users')
-                    .select('is_master_admin, is_approved, approval_status')
-                    .eq('id', user.id)
-                    .maybeSingle();
-
-                if (!userProfile?.is_master_admin && (userProfile?.is_approved === false || userProfile?.approval_status === 'pending')) {
-                    router.replace('/waiting-approval');
-                    return;
-                }
-
-                // Check if user has organization membership for this org
-                const { data: membership, error } = await supabase
-                    .from('organization_memberships')
-                    .select('organization_id, role')
-                    .eq('user_id', user.id)
-                    .eq('organization_id', orgId)
-                    .eq('is_active', true)
-                    .maybeSingle();
-
-                if (error) {
-                    console.error('Org access check error:', error);
-                    setIsAuthorized(false);
-                    setIsCheckingAccess(false);
-                    return;
-                }
-
-                if (membership) {
-                    // User has org membership - allow access
-                    setIsAuthorized(true);
-                } else {
-                    // No org membership - check if they have property membership in this org
-                    const { data: propMembership } = await supabase
-                        .from('property_memberships')
-                        .select('id')
-                        .eq('user_id', user.id)
-                        .eq('organization_id', orgId)
-                        .eq('is_active', true)
-                        .limit(1)
-                        .maybeSingle();
-
-                    if (propMembership) {
-                        // Has property access - redirect to property dashboard instead
-                        const { data: firstProp } = await supabase
-                            .from('property_memberships')
-                            .select('property_id')
-                            .eq('user_id', user.id)
-                            .eq('organization_id', orgId)
-                            .eq('is_active', true)
-                            .limit(1)
-                            .single();
-
-                        if (firstProp) {
-                            router.replace(`/property/${firstProp.property_id}/dashboard`);
-                            return;
-                        }
-                    }
-
-                    // No access at all
-                    setIsAuthorized(false);
-                }
-            } catch (err) {
-                console.error('Access check failed:', err);
-                setIsAuthorized(false);
-            } finally {
-                setIsCheckingAccess(false);
-            }
-        };
-
-        checkOrgAccess();
-    }, [user, authLoading, orgId, router]);
+        if (isCheckingAccess) return;
+        if (!user) router.replace('/login');
+        else if (verified && !membership?.error && !approved) router.replace('/waiting-approval');
+        else if (!isAuthorized && property) router.replace('/property/' + property.id + '/dashboard');
+    }, [isCheckingAccess, user?.id, verified, membership?.error, approved, isAuthorized, property?.id, router]);
 
     // Loading state
     if (authLoading || isCheckingAccess) {
@@ -125,8 +42,15 @@ export default function OrgLayout({
         return null;
     }
 
-    // Not authorized for this org
-    if (isAuthorized === false) {
+    if (membership?.error) {
+        return <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-4" role="alert">
+            <p>Could not verify your organization access.</p>
+            <button className="px-6 py-3 bg-primary text-white rounded-lg" onClick={() => refreshMembership()}>Retry</button>
+        </div>;
+    }
+    if (!approved || property && !isAuthorized) return null;
+    // Never mount protected screens before verified organization membership.
+    if (!isAuthorized) {
         return (
             <div className="min-h-screen flex flex-col items-center justify-center bg-background p-6">
                 <div className="text-center max-w-md">
