@@ -143,3 +143,137 @@ test('the shared dashboard module has no eager dependency on any other role dash
         .map(node => node.moduleSpecifier.text).filter(path => /\/(OrgAdmin|PropertyAdmin|Tenant|MasterAdmin|Procurement|Staff|Mst|Security|SuperTenant|SoftServiceManager)Dashboard$/.test(path));
     assert.deepEqual(eager, [], 'a role should not download other roles before its own screen loads');
 });
+
+test('a previous account membership cannot initialize the next account dashboard', async () => {
+    const values = [];
+    const { useAppSession } = load('frontend/hooks/useAppSession.ts', {
+        '@/frontend/context/AuthContext': { useAuth: () => ({ user: { ...account, id: 'user-b' },
+            membership: member('org_super_admin'), isLoading: false, isMembershipLoading: false }) },
+        '@/frontend/utils/supabase/client': { createClient: () => { throw new Error('Unexpected duplicate query'); } }
+    });
+    function Probe() { values.push(useAppSession()); return null; }
+    let root;
+    await act(async () => { root = TestRenderer.create(React.createElement(Probe)); });
+    assert.equal(values.at(-1).isLoading, true);
+    assert.equal(values.at(-1).session, null);
+    await act(async () => root.unmount());
+});
+
+test('organization children remain blocked on access failure, wrong organization and pending approval', async () => {
+    for (const overrides of [
+        { error: true },
+        { all_org_memberships: [], properties: [] },
+        { all_org_memberships: [{ org_id: 'other', role: 'org_super_admin' }], properties: [] },
+        { is_approved: false, approval_status: 'pending' },
+        { user_id: 'previous-account' }
+    ]) {
+        const membership = { ...member('org_super_admin'), ...overrides };
+        const { default: Layout } = load('app/org/[orgId]/layout.tsx', {
+            '@/frontend/context/AuthContext': { useAuth: () => ({ user: account, membership,
+                isLoading: false, isMembershipLoading: false, refreshMembership: async () => {}, signOut: async () => {} }) },
+            'next/navigation': { useRouter: () => ({ replace: () => {} }), useParams: () => ({ orgId: 'org' }) },
+            '@/frontend/components/ui/Loader': { default: () => null, __esModule: true }
+        });
+        let root;
+        await act(async () => { root = TestRenderer.create(React.createElement(Layout, null, React.createElement('p', null, 'protected-content'))); });
+        assert.equal(JSON.stringify(root.toJSON()).includes('protected-content'), false);
+        await act(async () => root.unmount());
+    }
+});
+
+test('a delayed membership response cannot overwrite the account currently logged in', async () => {
+    const waits = [], seen = [];
+    let emit;
+    const sessionFor = id => ({ user: { ...account, id } });
+    const initial = sessionFor('user-a');
+    const supabase = {
+        auth: {
+            getSession: async () => ({ data: { session: initial } }),
+            onAuthStateChange: callback => { emit = callback; return { data: { subscription: { unsubscribe() {} } } }; },
+            updateUser: async () => ({ error: null })
+        },
+        from(table) {
+            let id;
+            return {
+                select() { return this; }, eq(key, value) { if (key === 'user_id' || key === 'id') id = value; return this; },
+                maybeSingle() { return this; },
+                then(resolve) {
+                    return new Promise(done => {
+                        waits.push({ id, table, done: () => {
+                            const data = table === 'users' ? { is_approved: true, approval_status: 'approved', onboarding_completed: true } :
+                                table === 'organization_memberships' ? [{ role: 'org_super_admin', organization: { id: 'org-' + id, name: id } }] :
+                                [{ role: 'tenant', property: { id: 'property-' + id, name: id, code: id, organization_id: 'org-' + id } }];
+                            done({ data, error: null });
+                        } });
+                    }).then(resolve);
+                }
+            };
+        }
+    };
+    const { AuthProvider, useAuth } = load('frontend/context/AuthContext.tsx', {
+        '@/frontend/utils/supabase/client': { createClient: () => supabase }
+    });
+    function Probe() { seen.push(useAuth()); return null; }
+    let root;
+    await act(async () => { root = TestRenderer.create(React.createElement(AuthProvider, null, React.createElement(Probe))); });
+    assert.equal(waits.filter(request => request.id === 'user-a').length, 3);
+    await act(async () => { emit('SIGNED_IN', sessionFor('user-b')); });
+    assert.equal(waits.filter(request => request.id === 'user-b').length, 3, 'the next account must not wait on a different account request');
+    await act(async () => { waits.filter(request => request.id === 'user-b').forEach(request => request.done()); });
+    assert.equal(seen.at(-1).membership.user_id, 'user-b');
+    await act(async () => { waits.filter(request => request.id === 'user-a').forEach(request => request.done()); });
+    assert.equal(seen.at(-1).membership.user_id, 'user-b');
+    assert.equal(seen.at(-1).membership.org_id, 'org-user-b');
+    await act(async () => { emit('SIGNED_IN', sessionFor('user-c')); });
+    assert.equal(seen.at(-1).isMembershipLoading, true);
+    await act(async () => { emit('SIGNED_IN', sessionFor('user-b')); });
+    assert.equal(seen.at(-1).membership.user_id, 'user-b');
+    assert.equal(seen.at(-1).isMembershipLoading, false, 'cached account must clear loading from previous in-flight account');
+    await act(async () => { waits.filter(request => request.id === 'user-c').forEach(request => request.done()); });
+    assert.equal(seen.at(-1).membership.user_id, 'user-b');
+    await act(async () => root.unmount());
+});
+
+test('target role bundles load feature panels on demand', () => {
+    const heavy = new Set(['ProcurementModule', 'PPMModule', 'AssetsModule', 'SOPDashboard',
+        'TaskManagerSuperuserDashboard', 'TenantRoomBooking', 'PPMCalendar', 'OrgProgressTracker', 'AgentConsole']);
+    for (const name of ['OrgAdminDashboard', 'PropertyAdminDashboard', 'TenantDashboard']) {
+        const path = 'frontend/components/dashboard/' + name + '.tsx';
+        const source = ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+        const eager = source.statements.filter(ts.isImportDeclaration).filter(node =>
+            heavy.has(node.importClause?.name?.text)).map(node => node.moduleSpecifier.text);
+        assert.deepEqual(eager, [], name + ' should defer inactive feature panels');
+    }
+});
+
+test('shared approval keeps conflicting profile flags denied with the master-admin exception', async () => {
+    for (const profile of [
+        { is_master_admin: false, is_approved: false, approval_status: 'approved' },
+        { is_master_admin: false, is_approved: true, approval_status: 'pending' },
+        { is_master_admin: true, is_approved: false, approval_status: 'pending' }
+    ]) {
+        const seen = [];
+        const supabase = {
+            auth: { getSession: async () => ({ data: { session: { user: account } } }),
+                onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),
+                updateUser: async () => ({ error: null }) },
+            from(table) { return {
+                select() { return this; }, eq() { return this; }, maybeSingle() { return this; },
+                then(resolve) {
+                    const data = table === 'users' ? { ...profile, onboarding_completed: true } :
+                        table === 'organization_memberships' ? [{ role: 'org_super_admin', organization: { id: 'org', name: 'Fixture' } }] : [];
+                    return Promise.resolve({ data, error: null }).then(resolve);
+                }
+            }; }
+        };
+        const { AuthProvider, useAuth } = load('frontend/context/AuthContext.tsx', {
+            '@/frontend/utils/supabase/client': { createClient: () => supabase }
+        });
+        function Probe() { seen.push(useAuth()); return null; }
+        let root;
+        await act(async () => { root = TestRenderer.create(React.createElement(AuthProvider, null, React.createElement(Probe))); });
+        assert.equal(seen.at(-1).membership.is_approved, profile.is_master_admin,
+            'pending or explicit revocation must not be overridden by a conflicting positive flag');
+        await act(async () => root.unmount());
+    }
+});
