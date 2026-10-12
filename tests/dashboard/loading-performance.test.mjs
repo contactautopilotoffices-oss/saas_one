@@ -28,7 +28,7 @@ function load(file, mocks = {}, globals = {}) {
     return module.exports;
 }
 const account = { id: 'user-a', email: 'a@fixture.invalid', user_metadata: { role: 'tenant', org_id: 'org' } };
-const member = role => ({ org_id: 'org', org_role: role, org_name: 'Fixture', is_master_admin: false,
+const member = role => ({ user_id: account.id, org_id: 'org', org_role: role, org_name: 'Fixture', is_master_admin: false,
     is_approved: true, approval_status: 'approved', all_org_memberships: [{ org_id: 'org', role }],
     properties: [{ id: 'property', name: 'Property', code: 'P', role: 'tenant', organization_id: 'org' }] });
 function client(calls, role = 'org_super_admin') {

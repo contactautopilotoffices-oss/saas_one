@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import React, { createContext, useContext, useRef, useMemo, useCallback, useEffect } from 'react';
 import { useAuth } from './AuthContext';
 
 interface CacheEntry {
@@ -51,8 +51,8 @@ const writeToStorage = (key: string, data: any, ttl?: number) => {
 };
 
 export function DataCacheProvider({ children }: { children: React.ReactNode }) {
-    const { user } = useAuth();
-    const [cache, setCache] = useState<Record<string, CacheEntry>>({});
+    const { user, isLoading: authLoading } = useAuth();
+    const cache = useRef<Record<string, CacheEntry>>({});
 
     // Helper to get user-specific key
     const getUserKey = useCallback((key: string) => {
@@ -61,19 +61,18 @@ export function DataCacheProvider({ children }: { children: React.ReactNode }) {
     }, [user?.id]);
 
     const getCachedData = useCallback((key: string) => {
-        const userSpecificKey = getUserKey(key);
         const userKey = getUserKey(key);
-        const entry = cache[userKey] || readFromStorage(userKey);
+        const entry = cache.current[userKey] || readFromStorage(userKey);
         if (!entry) return null;
         const ttl = entry.ttl || CACHE_TTL;
         if (Date.now() - entry.timestamp > ttl) return null;
         return entry.data;
-    }, [cache, getUserKey]);
+    }, [getUserKey]);
 
     const setCachedData = useCallback((key: string, data: any, ttl?: number) => {
         const userKey = getUserKey(key);
         const entry: CacheEntry = { data, timestamp: Date.now(), ttl };
-        setCache(prev => ({ ...prev, [userKey]: entry }));
+        cache.current[userKey] = entry;
         if (isPersistentKey(key)) {
             writeToStorage(userKey, data, ttl);
         }
@@ -82,16 +81,12 @@ export function DataCacheProvider({ children }: { children: React.ReactNode }) {
     const invalidateCache = useCallback((key?: string) => {
         if (key) {
             const userSpecificKey = getUserKey(key);
-            setCache(prev => {
-                const next = { ...prev };
-                delete next[userSpecificKey];
-                return next;
-            });
+            delete cache.current[userSpecificKey];
             if (isPersistentKey(key)) {
                 try { localStorage.removeItem(`cache:${userSpecificKey}`); } catch {}
             }
         } else {
-            setCache({});
+            cache.current = {};
             // Clear all cache: keys from localStorage (all users/guests) for absolute safety on logout
             try {
                 Object.keys(localStorage)
@@ -105,14 +100,16 @@ export function DataCacheProvider({ children }: { children: React.ReactNode }) {
 
     // Handle logout: clear cache when user becomes null
     useEffect(() => {
-        if (!user) {
+        if (!authLoading && !user) {
             console.log('Antigravity Cache Purge: User logged out');
             invalidateCache();
         }
-    }, [user, invalidateCache]);
+    }, [authLoading, user?.id, invalidateCache]);
 
+    const value = useMemo(() => ({ getCachedData, setCachedData, invalidateCache }),
+        [getCachedData, setCachedData, invalidateCache]);
     return (
-        <DataCacheContext.Provider value={{ getCachedData, setCachedData, invalidateCache }}>
+        <DataCacheContext.Provider value={value}>
             {children}
         </DataCacheContext.Provider>
     );

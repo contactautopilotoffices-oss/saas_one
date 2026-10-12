@@ -1,5 +1,6 @@
+import { useEffect, useMemo, useState } from 'react';
+import { useAuth } from '@/frontend/context/AuthContext';
 import { createClient } from '@/frontend/utils/supabase/client';
-import { useEffect, useState } from 'react';
 
 export interface AppSession {
     user_id: string;
@@ -9,103 +10,54 @@ export interface AppSession {
     available_modules: string[];
 }
 
+
+const ORG_ROLE_PRIORITY: Record<string, number> = {
+    org_super_admin: 1, ops_super_admin: 2, org_admin: 3, super_tenant: 4,
+    owner: 5, admin: 6, bd_super_admin: 7, bd_admin: 8, procurement: 9
+};
+
+/** AuthProvider owns the approved profile and active memberships.
+ * Consumers derive presentation state; backend APIs still enforce access. */
 export function useAppSession() {
-    const [session, setSession] = useState<AppSession | null>(null);
-    const [isLoading, setIsLoading] = useState(true);
-    // Stable reference — createClient() must not be called on every render
-    const supabase = useState(() => createClient())[0];
+    const { user, membership, isLoading: authLoading, isMembershipLoading, refreshMembership } = useAuth();
+    const [superProperties, setSuperProperties] = useState<{ userId: string; ids: string[]; error?: boolean } | null>(null);
+    const verified = !!user && membership?.user_id === user.id;
+    const waiting = authLoading || (!!user && (isMembershipLoading || !verified));
+    const resolved = useMemo(() => {
+        if (waiting || !user || !membership || membership.error || !membership.is_approved) return null;
+        const organizations = [...membership.all_org_memberships].sort((a, b) =>
+            (ORG_ROLE_PRIORITY[a.role] ?? 99) - (ORG_ROLE_PRIORITY[b.role] ?? 99));
+        const organization = organizations[0];
+        const property = membership.properties.find(p => p.role && p.role !== 'tenant') || membership.properties[0];
+        const role = membership.is_master_admin ? 'master_admin' : organization?.role || property?.role;
+        if (!role) return null;
+        return {
+            user_id: user.id,
+            role: role as AppSession['role'],
+            org_id: organization?.org_id || property?.organization_id || membership.org_id || '',
+            property_ids: membership.properties.map(p => p.id),
+            available_modules: ['ticketing', 'viewer', 'analytics', 'stock', 'checklist', 'crm']
+        };
+    }, [waiting, user?.id, membership]);
 
+    const superUserId = resolved?.role === 'super_tenant' ? resolved.user_id : null;
     useEffect(() => {
-        async function getSessionData() {
-            // ✅ CRITICAL optimization: getSession() reads from cookie (~0ms)
-            // whereas getUser() makes a network request to Supabase Auth (~200ms)
-            const { data: { session: currentSession } } = await supabase.auth.getSession();
-            const user = currentSession?.user;
-
-            if (!user) {
-                setSession(null);
-                setIsLoading(false);
-                return;
-            }
-
-            // In real implementation, fetch from organization_memberships / property_memberships
-            // For this implementation, we simulate based on email/metadata
-            let role = user.user_metadata?.role || 'tenant';
-            const org_id = user.user_metadata?.org_id || 'default-org';
-
-            // FORCE Master Admin role for these specific emails
-            if (user.email === 'ranganathanlohitaksha@gmail.com') {
-                role = 'master_admin';
-            }
-
-            // ✅ Parallelize ALL database queries to prevent waterfall hangs
-            const [{ data: orgMems }, { data: propMems }] = await Promise.all([
-                supabase
-                    .from('organization_memberships')
-                    .select('role, organization_id')
-                    .eq('user_id', user.id)
-                    .neq('is_active', false),
-                supabase
-                    .from('property_memberships')
-                    .select('property_id, role')
-                    .eq('user_id', user.id)
-                    .eq('is_active', true),
-            ]);
-
-            // Sort org memberships by priority (org_super_admin > ops_super_admin > org_admin ...)
-            const ORG_ROLE_PRIORITY: Record<string, number> = {
-                'org_super_admin': 1,
-                'ops_super_admin': 2,
-                'org_admin': 3,
-                'super_tenant': 4,
-                'owner': 5,
-                'admin': 6,
-                'bd_super_admin': 7,
-                'bd_admin': 8,
-                'procurement': 9,
-            };
-
-            const sortedOrgMems = [...(orgMems || [])].sort((a, b) => {
-                const aP = ORG_ROLE_PRIORITY[a.role] ?? 99;
-                const bP = ORG_ROLE_PRIORITY[b.role] ?? 99;
-                return aP - bP;
+        if (!superUserId) return;
+        let cancelled = false;
+        const client = createClient();
+        client.from('super_tenant_properties').select('property_id').eq('user_id', superUserId)
+            .then(({ data, error }) => {
+                if (!cancelled) setSuperProperties({ userId: superUserId,
+                    ids: data?.map(row => row.property_id) || [], error: !!error });
             });
-            const orgMem = sortedOrgMems[0] || null;
-
-            // Prioritize roles: Org Member > Property Member > Metadata > Default (tenant)
-            const propRole = propMems?.find(p => p.role && p.role !== 'tenant')?.role || propMems?.[0]?.role;
-            const membershipRole = orgMem?.role || propRole;
-
-            // Resolve org_id from active org membership, or from property's org
-            const resolvedOrgId = orgMem?.organization_id || org_id;
-            const resolvedRole = (membershipRole || role) as string;
-
-            // For super_tenant: fetch assigned properties from super_tenant_properties table
-            let superTenantPropertyIds: string[] = [];
-            if (resolvedRole === 'super_tenant') {
-                const { data: stProps } = await supabase
-                    .from('super_tenant_properties')
-                    .select('property_id')
-                    .eq('user_id', user.id);
-                superTenantPropertyIds = stProps?.map(r => r.property_id) || [];
-            }
-
-            const finalPropertyIds = resolvedRole === 'super_tenant'
-                ? superTenantPropertyIds
-                : (propMems?.map(pm => pm.property_id) || []);
-
-            setSession({
-                user_id: user.id,
-                role: resolvedRole as any,
-                org_id: resolvedOrgId,
-                property_ids: finalPropertyIds,
-                available_modules: ['ticketing', 'viewer', 'analytics', 'stock', 'checklist', 'crm']
-            });
-            setIsLoading(false);
-        }
-
-        getSessionData();
-    }, [supabase]);
-
-    return { session, isLoading };
+        return () => { cancelled = true; };
+    }, [superUserId]);
+    const superWaiting = !!superUserId && superProperties?.userId !== superUserId;
+    const failed = !!membership?.error || (!!superUserId && superProperties?.userId === superUserId && !!superProperties.error);
+    const session = useMemo<AppSession | null>(() => {
+        if (superWaiting || failed || !resolved) return null;
+        return superUserId ? { ...resolved, property_ids: superProperties?.ids || [] } : resolved;
+    }, [resolved, superUserId, superProperties, superWaiting, failed]);
+    return { session, isLoading: waiting || superWaiting, error: failed,
+        retry: refreshMembership };
 }

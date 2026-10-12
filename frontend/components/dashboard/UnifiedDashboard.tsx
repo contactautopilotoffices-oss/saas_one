@@ -1,27 +1,32 @@
 'use client';
 
 import React, { useEffect } from 'react';
+import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import { useDashboardContent } from '@/frontend/components/layout/DashboardContentSlot';
 import AccountsWorkspace from '@/frontend/components/layout/AccountsWorkspace';
 import DashboardSidebar, { MobileHeader } from '@/frontend/components/layout/DashboardSidebar';
-import StaffDashboard from './StaffDashboard';
-import MstDashboard from './MstDashboard';
-import SecurityDashboard from './SecurityDashboard';
-import PropertyAdminDashboard from './PropertyAdminDashboard';
-import OrgAdminDashboard from './OrgAdminDashboard';
-import MasterAdminDashboard from './MasterAdminDashboard';
-import SoftServiceManagerDashboard from './SoftServiceManagerDashboard';
-import SuperTenantDashboard from './SuperTenantDashboard';
-import TenantDashboard from './TenantDashboard';
-import VendorDashboard from '@/frontend/components/vendors/VendorDashboard';
-import ProcurementDashboard from './ProcurementDashboard';
+const StaffDashboard = dynamic(() => import('./StaffDashboard'), { loading: () => <DashboardLoading /> });
+const MstDashboard = dynamic(() => import('./MstDashboard'), { loading: () => <DashboardLoading /> });
+const SecurityDashboard = dynamic(() => import('./SecurityDashboard'), { loading: () => <DashboardLoading /> });
+const PropertyAdminDashboard = dynamic(() => import('./PropertyAdminDashboard'), { loading: () => <DashboardLoading /> });
+const OrgAdminDashboard = dynamic(() => import('./OrgAdminDashboard'), { loading: () => <DashboardLoading /> });
+const MasterAdminDashboard = dynamic(() => import('./MasterAdminDashboard'), { loading: () => <DashboardLoading /> });
+const SoftServiceManagerDashboard = dynamic(() => import('./SoftServiceManagerDashboard'), { loading: () => <DashboardLoading /> });
+const SuperTenantDashboard = dynamic(() => import('./SuperTenantDashboard'), { loading: () => <DashboardLoading /> });
+const TenantDashboard = dynamic(() => import('./TenantDashboard'), { loading: () => <DashboardLoading /> });
+const VendorDashboard = dynamic(() => import('@/frontend/components/vendors/VendorDashboard'), { loading: () => <DashboardLoading /> });
+const ProcurementDashboard = dynamic(() => import('./ProcurementDashboard'), { loading: () => <DashboardLoading /> });
 import Loader from '@/frontend/components/ui/Loader';
 import { useAppSession } from '@/frontend/hooks/useAppSession';
 import { AlertCircle, TrendingUp, ArrowRight, IndianRupee } from 'lucide-react';
 import Link from 'next/link';
 import { TextShimmer } from '@/frontend/components/ui/text-shimmer';
 import BorderGlow from '@/frontend/components/ui/BorderGlow';
+
+function DashboardLoading() {
+    return <div className="min-h-screen flex items-center justify-center bg-background"><Loader size="lg" text="Loading your dashboard..." /></div>;
+}
 
 interface BDQuickStatsData {
     total_leads: number;
@@ -149,7 +154,7 @@ function BDQuickStats({ orgId }: { orgId: string }) {
 
 const UnifiedDashboard = () => {
     const { dashboardContent, dashboardPropertyId, dashboardRole, dashboardOrgId } = useDashboardContent();
-    const { session, isLoading } = useAppSession();
+    const { session, isLoading, error, retry } = useAppSession();
     const router = useRouter();
 
     const role = (dashboardRole || session?.role)?.toLowerCase();
@@ -176,7 +181,12 @@ const UnifiedDashboard = () => {
         );
     }
 
-    console.log('[UnifiedDashboard] Session Data:', { role, propertyIds, userId: session?.user_id });
+    if (error && dashboardContent === undefined) {
+        return <div className="min-h-screen flex flex-col items-center justify-center gap-4" role="alert">
+            <p>Could not load your account access.</p>
+            <button onClick={() => retry()}>Retry</button>
+        </div>;
+    }
 
     // Master Admin view
     if (role === 'master_admin') {
