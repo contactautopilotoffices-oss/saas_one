@@ -1,3 +1,24 @@
+## 2026-10-13 — Saas.one: Total Environment Workcations landing page, first draft
+
+**A one-page website for the Whitefield building: a hand-drawn sketchbook you turn page by page, a guide who says one true thing per page, a balcony you can touch, a folding map that opens the ATLAS study of the building's surroundings, and a slide-to-book visit form.**
+
+- **Why:** The founder wants a landing page that feels like the Autopilot website at its best and sells the building with real facts, not adjectives. The brief named the ThreeUI sketchbook component, the ATLAS location study, the ui lab interaction library and an avatar studio as the ingredients.
+- **Structural decisions:**
+  - Built outside this repo at `~/Downloads/TE-Landing/`: plain HTML, no build step, one file plus assets. The ATLAS study sits in `atlas/` as its own static folder and is shown inside the page in a frame, as the ATLAS porting guide prescribes.
+  - The nine sketchbook pages were generated on Higgsfield from Total Environment's own renders, so they depict the real building. Ten credits were spent. Each page was then fitted to one common book outline so halves of two pages line up mid-turn.
+  - The sketchbook engine is ThreeUI's, used whole as the brief required; the three ui lab interactions (folding map, picture hotspots, slide to confirm) were ported from their MIT source into plain JavaScript because the page has no React.
+  - The avatar studio the founder pointed to is AGPL-licensed, which would oblige us to publish the website's source. The guide character was drawn from scratch instead: an ink doodle whose eyes follow the cursor, blinks, and changes expression per page.
+  - Every figure on the page and in the study carries a source: Atlas's evidence ledger (building footprint, metro walk, neighbours), Cushman and Wakefield, JLL and TomTom. Nothing without a source went on the page, so there are no bus stops and no rents for the building itself.
+- **What works now:** Open `index.html` in a browser: the book riffles, pages turn with a drag, the loupe magnifies, the guide comments, the figures roll up, the balcony points open a card, the map unfolds into the ATLAS study, and the visit form opens a pre-filled email to Harshini. Checked in a headless browser at desktop and phone widths with no errors.
+- **Left undone:**
+  - No Mapbox token, so the map pane inside the ATLAS study says "Map unavailable" until a public token restricted to the site's domain is put in `atlas/config.js`.
+  - The form has no backend; it opens the visitor's email client with the details filled in.
+  - The ATLAS study was not run through the skill's headless checker, which needs Playwright installed globally.
+- **Open questions for the founder:**
+  - The brochure says Hoodi metro is 1.2 km away. Atlas's own measurement puts the nearest station at Pattandur Agrahara, 831 m on foot, with Hoodi about 2.1 km in a straight line. The page uses Atlas's figure. Which should the brochure say?
+  - Total Environment's written permission is still needed for the renders the drawings were made from.
+  - Where will the page live (which domain), so the Mapbox token can be restricted to it?
+
 ## 2026-10-08 — Saas.one: Satej, Meera calling and LiveKit meetings put on their own branch, up to date with main
 
 **All the unpushed procurement-agent work is now on one new branch, `feat/satej-meera-livekit-meetings`, brought level with the latest main and pushed. Main itself was not touched.**
@@ -12,6 +33,31 @@
   - The database migrations in this branch are still not applied anywhere. Four of them share a date-and-sequence number with a migration from main (for example 20261006000001), as many older ones already do, so the apply order needs a look before they are run.
   - The branch also carries a handful of journal-only commits about other work (brochure, business cases). They change only this file.
 - **Open questions for the founder:** Should this go to review as one pull request, or be split into Satej and calling, meeting rooms, and the mail archive?
+
+## 2026-10-09 — Saas.one: Malad West decision paper (Interface 11), 16 pages
+
+**The Malad West case is now in the same plain format as the Andheri decision paper: factual headlines, rent rises compounded every year, no anchor client, and every number marked sure or flagged.**
+
+- **Why:** The founder asked for Malad "the same way" as the final 18-page Andheri paper.
+- **Structural decisions:**
+  - A new build at `~/Downloads/Malad-Simple-2026/` for the cover, building, price, break-even, market, ads, BCG, SWOT and "what gets missed" pages.
+  - Seven pages come from the earlier Malad deck: connectivity, Mumbai flex, sector mix, occupiers, price ladder, positioning and the broker plan. They were re-rendered with the new page numbers and factual titles, then merged with pypdf.
+  - **Same assumptions as Andheri:** fit-out ₹2,000 a sq ft (the team standard set on 9 Oct); running costs ₹75 a sq ft; 30% of fit-out is base build done before any client; the floor fills to 85% over 12 months.
+  - The earlier Malad deck now also uses ₹2,000 a sq ft for fit-out.
+  - The lock-in stays at the landlord's 36 months.
+- **What the numbers say:**
+  - 1,019 seats; MOS price ₹13,286 a seat (₹13,433 with marketing, ₹14,762 with brokerage too).
+  - Break-even is 849 seats in year 1 and 970 by year 5.
+  - ₹8.65 Cr is needed before any client signs.
+  - The floor does not pay back within 60 months; it would at rent + CAM of about ₹190 (we are offered ₹208).
+  - Bare-shell space in the same building is listed at ₹80–88.
+  - No Malad ad campaign has run, and the CRM holds 1 Malad-area lead.
+- **Left undone:**
+  - Floor availability, grade and whether BFSI and consulting firms may use this IT/ITES building are unconfirmed.
+  - No floor layout was supplied.
+- **Open questions for the founder:**
+  - What does the ₹200 rent include?
+  - Is a phased take-up possible?
 
 ## 2026-10-09 — Saas.one: Andheri decision paper revised after team review (22 pages)
 
