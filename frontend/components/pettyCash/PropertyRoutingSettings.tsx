@@ -31,15 +31,15 @@ export default function PropertyRoutingSettings({ context, onSaved }: { context:
     const options = users.map(user => ({ value: user.id, label: user.full_name || user.email, description: user.email || undefined, searchText: `${user.roles?.join(' ') || ''} ${user.property_association || ''}` }));
     const unavailable = (!loading && allocator && !users.some(user => user.id === allocator)) || (!loading && approver && !users.some(user => user.id === approver));
     const ready = !loading && !error && !busy && property && allocator && approver && allocator !== approver && !unavailable;
-    return <form className="pc-panel" onSubmit={async event => {
+    return <form className="pc-panel rounded-3xl bg-white dark:bg-[#161b22] border border-slate-100 dark:border-[#30363d] shadow-sm overflow-hidden" onSubmit={async event => {
         event.preventDefault(); if (!ready) return; setBusy(true); setMessage(''); setError('');
         try {
             await pcFetch('/api/petty-cash/assignments', pcJson({ organization_id: context.organization_id, property_id: property, allocator_id: allocator, approver_id: approver, allocator_backups: [], approver_backups: [] }, 'PUT'));
             setMessage('Routing saved. New requests will use these users; reassign pending requests explicitly.'); onSaved();
         } catch (reason) { setError(reason instanceof Error ? reason.message : 'Save failed'); } finally { setBusy(false); }
     }}>
-        <div className="pc-panel-heading"><div className="pc-icon-tile"><Building2 size={20} /></div><div><h2 className="text-base font-semibold">Property Routing</h2><p className="text-sm text-text-secondary mt-1">Choose who allocates and approves cash for each property.</p></div></div>
-        {!context.configuration_properties.length ? <div className="pc-empty"><Building2 size={24} /><h3>No properties available</h3><p>Add a property to configure its petty cash routing.</p></div> : <>
+        <div className="pc-panel-heading p-6 border-b border-slate-100 dark:border-[#30363d] flex items-center gap-3.5"><div className="pc-icon-tile w-11 h-11 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0"><Building2 size={20} /></div><div><h2 className="text-xl font-black text-slate-900 dark:text-white tracking-tight">Property Routing</h2><p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Configure dedicated allocator and approver routing for each managed property.</p></div></div>
+        {!context.configuration_properties.length ? <div className="pc-empty p-12 text-center"><Building2 size={28} className="text-slate-400 mb-2" /><h3>No properties available</h3><p>Add a property to configure its petty cash routing.</p></div> : <>
             <div className="pc-routing-body space-y-5">
                 <div className="max-w-xl"><SearchableSelect label="Property" value={property} options={context.configuration_properties.map(item => ({ value: item.id, label: item.name }))} onChange={setProperty} disabled={busy} /></div>
                 <div className="grid md:grid-cols-2 gap-4">

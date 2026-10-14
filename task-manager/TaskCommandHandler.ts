@@ -1,5 +1,7 @@
 import { TaskDatabaseService } from './TaskDatabaseService';
 import { TaskMessagingService } from './TaskMessagingService';
+import { personLabel, sendTaskAssigned } from './taskAlerts';
+import { notifyGiversOfCompletion } from './completionNotice';
 import { TaskErrorHandler } from './TaskErrorHandler';
 import { TaskAccessService } from './TaskAccessService';
 import { PermissionService } from './PermissionService';
@@ -65,16 +67,25 @@ export class TaskCommandHandler {
             };
         }
 
-        // Set or renew active Task Manager conversation context (30 min TTL)
-        await TaskDatabaseService.setConversationContext({
-            phone: params.phone,
-            system: 'TASK_MANAGER',
-            contextType: 'ACTIVE_SESSION',
-            ttlMinutes: 30
-        });
+        // Set or renew active Task Manager conversation context (30 min TTL).
+        // Group 3 (2026-10-13): never overwrite a conversation still in progress (a task-list preview waiting for YES, a
+        // question the bot asked). Priyanka's photo preview was lost when her "tasks" came through here. Only the old idle
+        // markers are renewed.
+        const existingContext = await TaskDatabaseService.getConversationContext(params.phone, 'TASK_MANAGER').catch(() => null);   // unreadable → as before
+        const keepOpen = !!existingContext && existingContext.context_type !== 'ACTIVE_SESSION' && existingContext.context_type !== 'DISAMBIGUATION';
+        if (!keepOpen) {
+            await TaskDatabaseService.setConversationContext({
+                phone: params.phone,
+                system: 'TASK_MANAGER',
+                contextType: 'ACTIVE_SESSION',
+                ttlMinutes: 30
+            });
+        }
+        const previewWaiting = keepOpen && existingContext?.context_type === 'IMPORT_PREVIEW'
+            ? '📥 Your task list preview is still waiting: reply YES to save it, or NO to cancel.' : null;
 
-        // 2. Fetch today's tasks
-        const tasks = await TaskDatabaseService.getDailyAssignments({
+        // 2. The numbered list: older open tasks first, then today's — the same numbers as the person's messages
+        const tasks = await TaskDatabaseService.getNumberedList({
             employeeId: employee.id,
             date: targetDate
         });
@@ -276,22 +287,11 @@ export class TaskCommandHandler {
             });
 
             // Notify assigned employee via WhatsApp if they have a phone number
-            if (targetEmployee.phone_number && targetEmployee.phone_number.trim().length >= 10) {
-                const managerDept = employee.department_name ? ` (${employee.department_name})` : '';
-                const empAlert = [
-                    `🔔 *New Task Assigned!*`,
-                    ``,
-                    `*Task:* ${taskTitle}`,
-                    `*Assigned By:* ${employee.name}${managerDept}`,
-                    `*Date:* ${targetDate}`,
-                    ``,
-                    `Reply *tasks* to view your full list, or *done <number>* once completed!`
-                ].join('\n');
-
-                TaskMessagingService.sendMessage(targetEmployee.phone_number, empAlert).catch(err => {
-                    console.error('[WhatsAppAssign] Failed to notify target employee:', err);
-                });
-            }
+            // Same approved template as the Tasks tab (task_assigned_v1), so it also reaches people outside the 24-hour window.
+            void sendTaskAssigned(targetEmployee.phone_number, {
+                titles: [taskTitle], fromLabel: personLabel(employee.name, employee.department_name), date: targetDate,
+                departmentId: targetEmployee.department_id || undefined,
+            });
 
             // Confirm back to the Manager
             const managerReply = [
@@ -334,7 +334,7 @@ export class TaskCommandHandler {
             const taskLines = tasks.map((t, idx) => {
                 const icon = t.status === 'completed' ? '✅' : '⏳';
                 const statusStr = t.status === 'completed' ? 'Completed' : 'Pending';
-                return `${idx + 1}. ${t.title} [${statusStr} ${icon}]`;
+                return `${idx + 1}. ${t.isCarriedForward ? '🔄 ' : ''}${t.title} [${statusStr} ${icon}]`;
             }).join('\n');
 
             const reply = [
@@ -344,7 +344,8 @@ export class TaskCommandHandler {
                 '',
                 `Progress: ${completedCount}/${tasks.length} (${percent}%)`,
                 '',
-                `💡 Reply "done 1" to complete a task, or "done all" to finish all.`
+                `💡 Reply "done 1" to complete a task, or "done all" to finish all.`,
+                ...(previewWaiting ? ['', previewWaiting] : []),
             ].join('\n');
 
             if (shouldSend) await TaskMessagingService.sendMessage(params.phone, reply);
@@ -405,6 +406,8 @@ export class TaskCommandHandler {
 
             const reply = `🎉 All your tasks for today have been completed (${tasks.length}/${tasks.length} - 100%)!\n\nHave a great rest of your day!`;
             if (shouldSend) await TaskMessagingService.sendMessage(params.phone, reply);
+            // Tell each giver once, listing their tasks (approved template; never blocks or fails the reply).
+            if (shouldSend) void notifyGiversOfCompletion(pendingTasks);
 
             return {
                 success: true,
@@ -470,6 +473,8 @@ export class TaskCommandHandler {
             const reply = `✅ Marked task #${taskNum} ("${targetTask.title}") as completed!\n\nProgress: ${newCompletedCount}/${tasks.length} (${percent}%)${allDoneCelebration}`;
 
             if (shouldSend) await TaskMessagingService.sendMessage(params.phone, reply);
+            // Tell whoever gave this task (approved template; never blocks or fails the reply).
+            if (shouldSend) void notifyGiversOfCompletion([targetTask]);
 
             return {
                 success: true,

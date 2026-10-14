@@ -104,6 +104,7 @@ async function run() {
     db.getSendControls = async () => ({ killSwitches: db.getDefaultKillSwitches(), pretendMode: true });
     db.getDailyAssignments = async () => [{ id: 't', title: 'Task', status: 'pending', assigned_date: '2026-10-07' }];
     db.getFilteredAssignments = db.getDailyAssignments;
+    db.getNumberedList = db.getDailyAssignments;
     access.getSnapshot = async () => snap();
     access.isPeerAssignEnabled = async () => false; // Step 5 team sharing is not what this test is about
 

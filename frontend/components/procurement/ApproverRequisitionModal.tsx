@@ -8,6 +8,8 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ModalPortal from '../ui/ModalPortal';
+import { siteVendorQuotation, siteEstimatedAmount } from '@/backend/lib/procurement/requisition-approval.mjs';
+
 
 interface ApproverRequisitionModalProps {
     isOpen: boolean;
@@ -27,7 +29,6 @@ export default function ApproverRequisitionModal({
     isOpen,
     onClose,
     requisition,
-    allRequisitions = [],
     currentUser,
     onStatusUpdated
 }: ApproverRequisitionModalProps) {
@@ -37,20 +38,13 @@ export default function ApproverRequisitionModal({
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
     const [filterMode, setFilterMode] = useState<'all' | 'requested'>('all');
     const [searchQuery, setSearchQuery] = useState<string>('');
-    const [applyToAllInBatch, setApplyToAllInBatch] = useState<boolean>(true);
 
     if (!isOpen || !requisition) return null;
 
     const monthName = MONTH_NAMES[(requisition.requisition_month || 1) - 1] || 'Month';
     const items = requisition.items || [];
-    const vendorQuotation = requisition.vendor_quotation || null;
+    const vendorQuotation = siteVendorQuotation(requisition);
     const isAlreadyActioned = requisition.status === 'approved' || requisition.status === 'rejected';
-
-    // Check if requisition is part of a multi-site batch
-    const batchRequisitions = (allRequisitions && vendorQuotation?.batch_id) 
-        ? allRequisitions.filter(r => r.vendor_quotation?.batch_id === vendorQuotation.batch_id)
-        : [requisition];
-    const isMultiSiteBatch = batchRequisitions.length > 1;
 
     const userRole = (currentUser?.user_metadata?.role || '').toLowerCase();
     const isSuperAdmin = userRole === 'org_super_admin' || userRole === 'master_admin';
@@ -73,44 +67,14 @@ export default function ApproverRequisitionModal({
         setErrorMsg(null);
 
         try {
-            if (isMultiSiteBatch && applyToAllInBatch) {
-                const res = await fetch('/api/procurement/requisitions/bulk-approve-action', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        requisition_ids: batchRequisitions.map(r => r.id),
-                        action,
-                        approver_id: currentUser?.id,
-                        approver_name: currentUser?.user_metadata?.full_name || currentUser?.email || 'Approver',
-                        remarks: remarks.trim()
-                    })
-                });
-
-                const data = await res.json();
-                if (!res.ok) {
-                    throw new Error(data.error || 'Failed to update approval status');
-                }
-
-                alert(`✅ Multi-Site Requisitions (${batchRequisitions.length} sites) ${action === 'approve' ? 'Approved' : 'Rejected'} successfully! Procurement team has been notified.`);
-            } else {
-                const res = await fetch(`/api/procurement/requisitions/${requisition.id}/approve`, {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        action,
-                        approver_id: currentUser?.id,
-                        approver_name: currentUser?.user_metadata?.full_name || currentUser?.email || 'Approver',
-                        remarks: remarks.trim()
-                    })
-                });
-
-                const data = await res.json();
-                if (!res.ok) {
-                    throw new Error(data.error || 'Failed to update approval status');
-                }
-
-                alert(`✅ Requisition for ${requisition.property?.name || 'Property'} ${action === 'approve' ? 'Approved' : 'Rejected'} successfully! Procurement team has been notified.`);
-            }
+            const res = await fetch(`/api/procurement/requisitions/${requisition.id}/approve`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action, remarks: remarks.trim() })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to update approval status');
+            alert(`✅ Requisition for ${requisition.property?.name || 'Property'} ${action === 'approve' ? 'Approved' : 'Rejected'} successfully! Procurement team has been notified.`);
 
             onStatusUpdated();
             onClose();
@@ -192,7 +156,7 @@ export default function ApproverRequisitionModal({
                             <div className="bg-emerald-50/70 dark:bg-emerald-950/30 p-4 rounded-2xl border border-emerald-200/80 dark:border-emerald-800/50">
                                 <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider block">Total Estimated Amount</span>
                                 <span className="text-xl font-black text-emerald-800 dark:text-emerald-300 mt-0.5 block">
-                                    ₹{(vendorQuotation?.total_quoted_amount || requisition.total_estimated_amount || 0).toLocaleString('en-IN')}
+                                    ₹{siteEstimatedAmount(requisition).toLocaleString('en-IN')}
                                 </span>
                                 <span className="text-xs text-emerald-700 dark:text-emerald-400 font-medium mt-1 block">
                                     {items.length} total line items ({items.filter((i: any) => (i.requested_qty || 0) > 0).length} with requested qty)
@@ -300,8 +264,8 @@ export default function ApproverRequisitionModal({
                                         <span className="font-bold text-slate-900 dark:text-white">{vendorQuotation.vendor_name || 'Vendor Quote'}</span>
                                     </div>
                                     <div>
-                                        <span className="text-slate-500 dark:text-slate-400 font-semibold block">Final Quoted Total:</span>
-                                        <span className="font-bold text-emerald-700 dark:text-emerald-400">₹{(vendorQuotation.total_quoted_amount || 0).toLocaleString('en-IN')}</span>
+                                        <span className="text-slate-500 dark:text-slate-400 font-semibold block">{vendorQuotation.amount_source === 'site_estimate' ? 'Site Amount (Estimated):' : 'Site Quoted Amount:'}</span>
+                                        <span className="font-bold text-emerald-700 dark:text-emerald-400">₹{Number(vendorQuotation.total_quoted_amount ?? 0).toLocaleString('en-IN')}</span>
                                     </div>
                                     <div>
                                         <span className="text-slate-500 dark:text-slate-400 font-semibold block">Attachment:</span>
@@ -465,41 +429,9 @@ export default function ApproverRequisitionModal({
                             </div>
                         </div>
 
-                        {/* Multi-Site Batch Overview (If Applicable) */}
-                        {isMultiSiteBatch && (
-                            <div className="bg-sky-50/80 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800 rounded-2xl p-4 space-y-3">
-                                <div className="flex flex-wrap items-center justify-between gap-2">
-                                    <div className="flex items-center gap-2">
-                                        <Building2 className="w-4 h-4 text-sky-600 dark:text-sky-400" />
-                                        <h4 className="text-xs font-black text-sky-900 dark:text-sky-300 uppercase tracking-wider">
-                                            Multi-Site Batch ({batchRequisitions.length} Sites Included)
-                                        </h4>
-                                    </div>
-                                    <label className="flex items-center gap-2 text-xs font-bold text-sky-800 dark:text-sky-300 cursor-pointer">
-                                        <input
-                                            type="checkbox"
-                                            checked={applyToAllInBatch}
-                                            onChange={e => setApplyToAllInBatch(e.target.checked)}
-                                            className="w-4 h-4 rounded text-sky-600 focus:ring-sky-500"
-                                        />
-                                        <span>Apply action to all {batchRequisitions.length} sites in this batch</span>
-                                    </label>
-                                </div>
-
-                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 text-xs">
-                                    {batchRequisitions.map(bReq => (
-                                        <div key={bReq.id} className="p-2.5 bg-white dark:bg-slate-800 rounded-xl border border-sky-100 dark:border-sky-900 flex items-center justify-between">
-                                            <span className="font-bold text-slate-800 dark:text-slate-200 truncate">
-                                                {bReq.property?.name || 'Property'} {bReq.floor_tag && bReq.floor_tag !== 'All Floors' ? `(${bReq.floor_tag})` : ''}
-                                            </span>
-                                            <span className="font-semibold text-emerald-700 dark:text-emerald-400">
-                                                ₹{(bReq.total_estimated_amount || 0).toLocaleString('en-IN')}
-                                            </span>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
+                        <p className="text-xs text-slate-500">
+                            Your decision applies only to this requisition. Review other sites separately.
+                        </p>
 
                         {/* Approval Remarks Input Box (Approver Only) */}
                         {!isAlreadyActioned && canTakeApprovalAction && (

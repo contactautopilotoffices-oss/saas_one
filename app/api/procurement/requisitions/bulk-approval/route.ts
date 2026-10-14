@@ -1,229 +1,166 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@/frontend/utils/supabase/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { WhatsAppEventProcessor } from '@/backend/services/WhatsAppEventProcessor';
 import { EmailService } from '@/backend/services/EmailService';
 import { EmailRecipientResolver } from '@/backend/services/EmailRecipientResolver';
+import { requisitionNotes, prepareBulkApproval, approvalBatchSummary, batchWhatsAppOptions } from '@/backend/lib/procurement/requisition-approval.mjs';
 
-const MONTH_NAMES = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December'
-];
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const submitterRoles = ['procurement', 'purchase_manager', 'purchase_executive', 'org_super_admin', 'ops_super_admin', 'master_admin'];
+const eligibleStatuses = ['submitted', 'uploaded', 'acknowledged', 'pending_approval', 'rejected'];
 
 export async function POST(request: NextRequest) {
     try {
-        const adminSupabase = createAdminClient();
-        const formData = await request.formData();
-
-        const requisitionIdsRaw = formData.get('requisition_ids') as string || '[]';
-        const vendorName = (formData.get('vendor_name') as string || '').trim() || 'Vendor Quote';
-        const totalQuotedAmount = parseFloat(formData.get('total_quoted_amount') as string || '0');
-        const vendorNotes = formData.get('vendor_notes') as string || '';
-        const targetApproverId = formData.get('target_approver_id') as string || '';
-        const quoteFile = formData.get('quote_file') as File | null;
-        const organizationId = formData.get('organization_id') as string || '';
-
-        let requisitionIds: string[] = [];
+        const client = await createClient();
+        const { data: { user }, error: authError } = await client.auth.getUser();
+        if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        const admin = createAdminClient();
+        const form = await request.formData();
+        const organizationId = String(form.get('organization_id') || '');
+        const targetApproverId = String(form.get('target_approver_id') || '');
+        let requisitionIds: string[];
         try {
-            requisitionIds = JSON.parse(requisitionIdsRaw);
+            const parsed = JSON.parse(String(form.get('requisition_ids') || '[]'));
+            if (!Array.isArray(parsed) || !parsed.length || parsed.length > 500 ||
+                parsed.some(id => typeof id !== 'string' || !UUID.test(id))) throw new Error('Invalid selection');
+            requisitionIds = [...new Set<string>(parsed)];
         } catch {
-            requisitionIds = requisitionIdsRaw.split(',').map(s => s.trim()).filter(Boolean);
+            return NextResponse.json({ error: 'Select valid requisitions (up to 500 per upload).' }, { status: 400 });
         }
-
-        if (!requisitionIds || requisitionIds.length === 0) {
-            return NextResponse.json({ error: 'Please select at least one property requisition.' }, { status: 400 });
+        if (!UUID.test(organizationId) || !UUID.test(targetApproverId)) {
+            return NextResponse.json({ error: 'Select an organization and designated approver.' }, { status: 400 });
         }
-
-        if (!targetApproverId) {
-            return NextResponse.json({ error: 'Please select an Approver.' }, { status: 400 });
-        }
-
-        // 1. Fetch Approver details
-        const { data: approverUser } = await adminSupabase
-            .from('users')
-            .select('id, full_name, email, phone')
-            .eq('id', targetApproverId)
-            .maybeSingle();
-
-        const approverInfoData = {
-            id: targetApproverId,
-            name: approverUser?.full_name || 'Approver',
-            email: approverUser?.email || '',
-            phone: approverUser?.phone || '',
-            assigned_at: new Date().toISOString(),
-            status: 'pending'
-        };
-
-        // 2. Upload Quote File if provided
-        let fileUrl = '';
-        let fileName = '';
-
-        if (quoteFile) {
-            const orgPrefix = organizationId || 'org_quotes';
-            const quotePath = `${orgPrefix}/bulk_quotes/quote_${Date.now()}_${quoteFile.name.replace(/\s+/g, '_')}`;
-            const arrayBuffer = await quoteFile.arrayBuffer();
-            const buffer = Buffer.from(arrayBuffer);
-
-            const { data: uploadData, error: quoteUploadErr } = await adminSupabase.storage
-                .from('procurement_requisitions')
-                .upload(quotePath, buffer, {
-                    upsert: true,
-                    contentType: quoteFile.type || 'application/octet-stream'
-                });
-
-            if (quoteUploadErr) {
-                console.error('[Bulk Quote Upload Storage Error]:', quoteUploadErr);
-                return NextResponse.json({ error: 'Failed to upload quotation file to storage', details: quoteUploadErr.message }, { status: 500 });
-            }
-
-            if (uploadData) {
-                fileUrl = adminSupabase.storage.from('procurement_requisitions').getPublicUrl(uploadData.path).data.publicUrl;
-                fileName = quoteFile.name;
+        const { data: profile, error: profileError } = await admin.from('users')
+            .select('is_master_admin,deleted_at').eq('id', user.id).maybeSingle();
+        if (profileError) throw profileError;
+        if (!profile || profile.deleted_at) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+        if (!profile.is_master_admin) {
+            const { data: memberships, error } = await admin.from('organization_memberships')
+                .select('role').eq('organization_id', organizationId).eq('user_id', user.id).eq('is_active', true);
+            if (error) throw error;
+            if (!memberships?.some(member => submitterRoles.includes(member.role))) {
+                return NextResponse.json({ error: 'Procurement or administrator access is required.' }, { status: 403 });
             }
         }
-
-        const batchId = `batch_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-
-        const vendorQuotationData = {
-            vendor_name: vendorName,
-            total_quoted_amount: totalQuotedAmount,
-            notes: vendorNotes,
-            file_url: fileUrl,
-            file_name: fileName,
-            uploaded_at: new Date().toISOString(),
-            batch_id: batchId,
-            is_bulk: true
-        };
-
-        // 3. Update all selected requisitions to pending_approval
-        const updatedRequisitions: any[] = [];
-        const affectedProperties: string[] = [];
-
-        for (const reqId of requisitionIds) {
-            const { data: existing } = await adminSupabase
-                .from('property_monthly_requisitions')
-                .select(`
-                    *,
-                    property:properties!property_id(id, name, address),
-                    uploader:users!uploaded_by(id, full_name, email, phone)
-                `)
-                .eq('id', reqId)
-                .maybeSingle();
-
-            if (!existing) continue;
-
-            let existingNotesObj: any = {};
-            try {
-                if (existing.notes && typeof existing.notes === 'string' && existing.notes.trim().startsWith('{')) {
-                    existingNotesObj = JSON.parse(existing.notes);
-                } else if (typeof existing.notes === 'object' && existing.notes !== null) {
-                    existingNotesObj = existing.notes;
-                }
-            } catch {
-                existingNotesObj = { site_notes: existing.notes || '' };
-            }
-
-            const mergedNotes = JSON.stringify({
-                ...existingNotesObj,
-                vendor_quotation: vendorQuotationData,
-                approver_info: approverInfoData,
-                batch_id: batchId,
-                updated_at: new Date().toISOString(),
-                status_history: [
-                    ...(existingNotesObj.status_history || []),
-                    {
-                        status: 'pending_approval',
-                        by_name: 'Procurement Team',
-                        remarks: `Quotation uploaded from ${vendorName} and assigned to ${approverInfoData.name}`,
-                        timestamp: new Date().toISOString()
-                    }
-                ]
-            });
-
-            const { data: updatedRecord, error: updateErr } = await adminSupabase
-                .from('property_monthly_requisitions')
-                .update({
-                    status: 'pending_approval',
-                    notes: mergedNotes,
-                    updated_at: new Date().toISOString()
-                })
-                .eq('id', reqId)
-                .select(`
-                    *,
-                    property:properties!property_id(id, name, address),
-                    uploader:users!uploaded_by(id, full_name, email, phone)
-                `)
-                .single();
-
-            if (!updateErr && updatedRecord) {
-                updatedRequisitions.push(updatedRecord);
-                const propLabel = `${existing.property?.name || 'Property'}${existing.floor_tag && existing.floor_tag !== 'All Floors' ? ` (${existing.floor_tag})` : ''}`;
-                affectedProperties.push(propLabel);
-            }
+        const { data: approverMembership, error: approverMembershipError } = await admin.from('organization_memberships')
+            .select('role').eq('organization_id', organizationId).eq('user_id', targetApproverId).eq('is_active', true).maybeSingle();
+        if (approverMembershipError) throw approverMembershipError;
+        if (!approverMembership || !['org_super_admin', 'ops_super_admin'].includes(approverMembership.role)) {
+            return NextResponse.json({ error: 'Choose an active Org Super Admin or Ops Super Admin in this organization.' }, { status: 400 });
         }
-
-        // 4. Dispatch Consolidated Notification to Approver (Email & WhatsApp)
-        (async () => {
-            try {
-                if (approverUser?.email) {
-                    const emailResolution = await EmailRecipientResolver.resolveRecipients({
-                        organizationId: organizationId || updatedRequisitions[0]?.organization_id,
-                        featureKey: 'requisition_approval_requested',
-                        contextualEmails: [approverUser.email]
-                    });
-
-                    if (emailResolution.enabled && emailResolution.emails.length > 0) {
-                        const sitesListHtml = affectedProperties.map(p => `<li><b>${p}</b></li>`).join('');
-                        await EmailService.sendGenericNotificationEmail({
-                            emailTo: emailResolution.emails.join(', '),
-                            subject: `[Action Required] Multi-Site Requisition Approval Request (${affectedProperties.length} Sites) - ${vendorName}`,
-                            title: `Multi-Site Requisition Approval Request`,
-                            htmlBody: `
-                                <p>Dear <b>${approverInfoData.name}</b>,</p>
-                                <p>Procurement team has uploaded a vendor quotation and submitted monthly requisitions for <b>${affectedProperties.length} sites</b> for your review and approval:</p>
-                                <ul>${sitesListHtml}</ul>
-                                <ul>
-                                    <li><b>Vendor Name:</b> ${vendorName}</li>
-                                    <li><b>Total Quoted Amount:</b> ₹${Number(totalQuotedAmount).toLocaleString('en-IN')}</li>
-                                    <li><b>Vendor Notes:</b> ${vendorNotes || 'Standard contracted quotation.'}</li>
-                                    ${fileUrl ? `<li><b>Quotation Attachment:</b> <a href="${fileUrl}">Download ${fileName}</a></li>` : ''}
-                                </ul>
-                                <p>Please open the SaaS One Procurement module to review the line items and approve or reject the requisition.</p>
-                            `
-                        });
-                    }
-                }
-
-                // WhatsApp dispatch to approver
-                await WhatsAppEventProcessor.dispatch({
-                    featureKey: 'requisition_approval_requested',
-                    templateEventKey: 'requisition_approval_requested',
-                    organizationId: organizationId || updatedRequisitions[0]?.organization_id,
-                    entityId: batchId,
-                    contextualUserIds: { approverId: targetApproverId },
-                    paramValues: {
-                        approver_name: approverInfoData.name,
-                        property: `${affectedProperties.length} Sites (${affectedProperties.slice(0, 2).join(', ')}${affectedProperties.length > 2 ? '...' : ''})`,
-                        month: MONTH_NAMES[new Date().getMonth()],
-                        year: String(new Date().getFullYear()),
-                        vendor_name: vendorName,
-                        total_amount: Number(totalQuotedAmount).toLocaleString('en-IN'),
-                        items_count: String(updatedRequisitions.length)
-                    },
-                    summaryMessage: `Multi-Site Requisition Approval requested for ${affectedProperties.length} sites by Procurement`
-                });
-            } catch (notifErr) {
-                console.error('[Bulk Requisition Notification Error]:', notifErr);
-            }
-        })();
-
-        return NextResponse.json({
-            success: true,
-            batch_id: batchId,
-            updated_count: updatedRequisitions.length,
-            requisitions: updatedRequisitions
+        const { data: approver, error: approverError } = await admin.from('users')
+            .select('id,full_name,email,phone,deleted_at').eq('id', targetApproverId).maybeSingle();
+        if (approverError) throw approverError;
+        if (!approver || approver.deleted_at) return NextResponse.json({ error: 'Approver is unavailable.' }, { status: 400 });
+        const { data: records, error: fetchError } = await admin.from('property_monthly_requisitions')
+            .select('*,property:properties!property_id(id,name),uploader:users!uploaded_by(id,full_name,email,phone)')
+            .eq('organization_id', organizationId).in('id', requisitionIds);
+        if (fetchError) throw fetchError;
+        if (!records || records.length !== requisitionIds.length || records.some(record => !eligibleStatuses.includes(record.status))) {
+            return NextResponse.json({ error: 'Some requisitions are unavailable or already approved/ordered. Refresh and select again.' }, { status: 409 });
+        }
+        const batchId = crypto.randomUUID();
+        const timestamp = new Date().toISOString();
+        const vendorName = String(form.get('vendor_name') || '').trim() || 'Vendor Quote';
+        const vendorNotes = String(form.get('vendor_notes') || '').trim();
+        let allocations;
+        try { allocations = prepareBulkApproval(records, { vendor_name: vendorName, notes: vendorNotes, batch_id: batchId, uploaded_at: timestamp }); }
+        catch { return NextResponse.json({ error: 'A selected requisition has an invalid estimated amount. Correct it before submitting.' }, { status: 400 }); }
+        let fileUrl = '', fileName = '';
+        const quoteFile = form.get('quote_file') as File | null;
+        if (quoteFile && quoteFile.size > 0) {
+            const path = organizationId + '/bulk_quotes/' + batchId + '_' + quoteFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+            const { data, error } = await admin.storage.from('procurement_requisitions')
+                .upload(path, Buffer.from(await quoteFile.arrayBuffer()), { contentType: quoteFile.type || 'application/octet-stream', upsert: false });
+            if (error || !data) throw error || new Error('Quotation upload failed');
+            fileUrl = admin.storage.from('procurement_requisitions').getPublicUrl(data.path).data.publicUrl;
+            fileName = quoteFile.name;
+        }
+        const approverInfo = { id: targetApproverId, name: approver.full_name || 'Approver', email: approver.email || '',
+            phone: approver.phone || '', assigned_at: timestamp, status: 'pending' };
+        const batchContext = { organization_id: organizationId, batch_id: batchId, requisition_ids: requisitionIds,
+            approver_id: targetApproverId, approver_name: approverInfo.name, vendor_name: vendorName, vendor_notes: vendorNotes };
+        // Persist recovery before mutating any requisition. A crashed request remains
+        // recoverable by the existing outbox sweeper, which selects only rows saved for this batch.
+        const { error: outboxError } = await admin.from('event_outbox').insert({
+            id: batchId, entity_id: batchId, event_type: 'REQUISITION_APPROVAL_BATCH_REQUESTED',
+            status: 'processing', payload: batchContext, updated_at: timestamp
         });
-    } catch (err: any) {
-        console.error('[Bulk Requisition Approval Server Error]:', err);
-        return NextResponse.json({ error: 'Internal server error', details: err.message }, { status: 500 });
+        if (outboxError) throw outboxError;
+        const updatedRecords: any[] = [], failedIds: string[] = [];
+        for (const existing of records) {
+            const notes = requisitionNotes(existing);
+            const allocation = allocations.find(item => item.id === existing.id)!;
+            const mergedNotes = JSON.stringify({
+                ...notes,
+                vendor_quotation: { ...allocation.vendor_quotation, file_url: fileUrl, file_name: fileName },
+                approver_info: approverInfo, batch_id: batchId, updated_at: timestamp,
+                status_history: [...(Array.isArray(notes.status_history) ? notes.status_history : []),
+                    { status: 'pending_approval', by_id: user.id, by_name: user.user_metadata?.full_name || 'Procurement Team',
+                        remarks: 'Quotation assigned to ' + approverInfo.name, timestamp }]
+            });
+            const { data, error } = await admin.from('property_monthly_requisitions')
+                .update({ status: 'pending_approval', notes: mergedNotes, updated_at: timestamp })
+                .eq('id', existing.id).eq('organization_id', organizationId)
+                .eq('status', existing.status).eq('updated_at', existing.updated_at).select('*').maybeSingle();
+            if (error || !data) { failedIds.push(existing.id); continue; }
+            updatedRecords.push({ ...data, property: existing.property, uploader: existing.uploader });
+        }
+        if (!updatedRecords.length) {
+            await admin.from('event_outbox').update({ status: 'completed' }).eq('id', batchId);
+            return NextResponse.json({ error: 'No requisitions were submitted. Refresh and try again.', failed_ids: failedIds }, { status: 409 });
+        }
+        // Only this batch summary sends WhatsApp. Per-record trigger events are
+        // suppressed by the batch_summary marker in the shared event processor.
+        const summary = approvalBatchSummary(updatedRecords);
+        const sites = summary.entries.join('; ');
+        const notificationResults = await Promise.allSettled([
+            (async () => {
+                if (!approver.email) return;
+                const resolution = await EmailRecipientResolver.resolveRecipients({
+                    organizationId, featureKey: 'requisition_approval_requested', contextualEmails: [approver.email]
+                });
+                if (!resolution.enabled || !resolution.emails.length) return;
+                const escapeHtml = (value: string) => value.replace(/[&<>"']/g, character => {
+                    switch (character) {
+                        case '&': return '&amp;';
+                        case '<': return '&lt;';
+                        case '>': return '&gt;';
+                        case '"': return '&quot;';
+                        default: return '&#39;';
+                    }
+                });
+                await EmailService.sendGenericNotificationEmail({
+                    emailTo: resolution.emails.join(', '),
+                    subject: '[Action Required] ' + updatedRecords.length + ' monthly requisitions for individual review',
+                    title: 'Monthly requisitions awaiting your review',
+                    htmlBody: '<p>Hello ' + escapeHtml(approverInfo.name) + ',</p><ul>' +
+                        summary.entries.map(entry => '<li>' + escapeHtml(entry) + '</li>').join('') + '</ul>' +
+                        '<p>Combined estimated amount: ₹' + summary.total.toLocaleString('en-IN') +
+                        '. Review and approve or reject each requisition separately in the app.</p>' +
+                        (fileUrl ? '<p><a href="' + escapeHtml(fileUrl) + '">View consolidated quotation</a></p>' : '') +
+                        '<p>' + escapeHtml(vendorNotes) + '</p>'
+                });
+            })(),
+            (async () => {
+                try {
+                    await WhatsAppEventProcessor.dispatch(batchWhatsAppOptions(updatedRecords, batchContext));
+                    const { error } = await admin.from('event_outbox').update({ status: 'completed' }).eq('id', batchId);
+                    if (error) throw error;
+                } catch (error) {
+                    await admin.from('event_outbox').update({ status: 'failed', retry_count: 0,
+                        error_message: error instanceof Error ? error.message : 'Batch summary enqueue failed' }).eq('id', batchId);
+                    throw error;
+                }
+            })()
+        ]);
+        const notificationWarning = notificationResults.some(result => result.status === 'rejected');
+        notificationResults.forEach(result => { if (result.status === 'rejected') console.error('[Bulk Approval Notification]', result.reason); });
+        return NextResponse.json({ success: true, batch_id: batchId, updated_count: updatedRecords.length,
+            failed_ids: failedIds, notification_warning: notificationWarning, requisitions: updatedRecords });
+    } catch (error) {
+        console.error('[Bulk Requisition Approval]', error);
+        return NextResponse.json({ error: 'Could not submit requisitions. Please retry.' }, { status: 500 });
     }
 }

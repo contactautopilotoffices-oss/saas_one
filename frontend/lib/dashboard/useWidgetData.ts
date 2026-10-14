@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { registerSessionCache } from './sessionCaches';
 
 /**
  * Shared fetch layer for dashboard widgets.
@@ -61,6 +62,9 @@ async function load(key: string): Promise<Entry> {
     notify(key);
     return entry;
 }
+
+// Emptied when the signed-in user changes or logs out (the keys are URLs, not per user).
+registerSessionCache(() => { cache.clear(); inflight.clear(); });
 
 /** Drop cached entries so the next read refetches. Used by the grid's Refresh control. */
 export function invalidateWidgetData(prefix?: string) {

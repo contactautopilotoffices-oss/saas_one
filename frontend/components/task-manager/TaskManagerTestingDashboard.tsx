@@ -6,14 +6,12 @@ import {
     Shield,
     CheckCircle2,
     AlertCircle,
-    UserCheck,
     UserX,
     Users,
     Send,
     RefreshCw,
     Search,
     Phone,
-    Mail,
     Building2,
     Sparkles,
     ArrowRight,
@@ -48,6 +46,7 @@ import {
 } from 'lucide-react';
 import OrgHierarchyPanel from '@/frontend/components/task-manager/OrgHierarchyPanel';
 import TaskAccessPanel from '@/frontend/components/task-manager/TaskAccessPanel';
+import BotLearningPanel from '@/frontend/components/task-manager/BotLearningPanel';
 import type {
     NotificationRule,
     NotificationRuleType,
@@ -335,18 +334,19 @@ function TwelveHourTimePicker({
     );
 }
 
+// The staged intro plays once per page load; coming back to this screen shows it fully drawn.
+let controlCenterIntroPlayed = false;
+
 export default function TaskManagerTestingDashboard({ orgId }: { orgId?: string }) {
     const [employees, setEmployees] = useState<EmployeeItem[]>([]);
     const [departments, setDepartments] = useState<DepartmentItem[]>([]);
     const [departmentSummaries, setDepartmentSummaries] = useState<Record<string, DepartmentSummaryItem>>({});
     const [selectedDepartmentId, setSelectedDepartmentId] = useState<string>('');
-    const [deptFilterScope, setDeptFilterScope] = useState<'department' | 'all'>('department');
     const [techSummary, setTechSummary] = useState<TechSummary | null>(null);
     const [loading, setLoading] = useState(true);
     const [actionLoading, setActionLoading] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>('');
-    const [sendKickoff, setSendKickoff] = useState(true);
 
     // Cron Schedule & Multi-Rule Engine State
     const [cronTiming, setCronTiming] = useState('09:00');
@@ -1506,13 +1506,18 @@ export default function TaskManagerTestingDashboard({ orgId }: { orgId?: string 
         }
     };
 
-    const [animationStep, setAnimationStep] = useState(0);
+    const [animationStep, setAnimationStep] = useState(controlCenterIntroPlayed ? 5 : 0);
 
     useEffect(() => {
         fetchData();
     }, []);
 
     useEffect(() => {
+        // The intro plays once per page load; later visits show everything at once
+        if (controlCenterIntroPlayed) {
+            setAnimationStep(5);
+            return;
+        }
         if (loading) {
             setAnimationStep(0);
             return;
@@ -1523,7 +1528,7 @@ export default function TaskManagerTestingDashboard({ orgId }: { orgId?: string 
         const t2 = setTimeout(() => setAnimationStep(2), 150);
         const t3 = setTimeout(() => setAnimationStep(3), 280);
         const t4 = setTimeout(() => setAnimationStep(4), 400);
-        const t5 = setTimeout(() => setAnimationStep(5), 520);
+        const t5 = setTimeout(() => { setAnimationStep(5); controlCenterIntroPlayed = true; }, 520);
 
         return () => {
             clearTimeout(t1);
@@ -1539,59 +1544,6 @@ export default function TaskManagerTestingDashboard({ orgId }: { orgId?: string 
         const full = `${e.first_name || ''} ${e.last_name || ''} ${e.email || ''} ${e.phone || ''} ${e.department || ''}`.toLowerCase();
         return full.includes(searchQuery.toLowerCase());
     });
-
-    const selectedEmployee = employees.find(e => e.id === selectedEmployeeId);
-
-    // Handle Assign, Remove Role, or Employee Kickoff
-    const handleRoleAction = async (action: 'assign_manager' | 'remove_manager' | 'send_employee_kickoff') => {
-        if (!selectedEmployee) return;
-        setActionLoading(true);
-        setStatusMessage(null);
-
-        try {
-            const res = await fetch('/api/task-manager/manager-role', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    employeeId: selectedEmployee.id,
-                    action,
-                    sendKickoff
-                })
-            });
-
-            const data = await res.json();
-            if (!res.ok || !data.success) {
-                throw new Error(data.error || 'Failed to execute action');
-            }
-
-            setStatusMessage({
-                type: 'success',
-                title: data.message,
-                details: data.whatsappDetails || (data.details ? JSON.stringify(data.details) : undefined)
-            });
-
-            // Refresh data
-            await fetchData();
-        } catch (err: any) {
-            setStatusMessage({
-                type: 'error',
-                title: 'Operation Failed',
-                details: err.message
-            });
-        } finally {
-            setActionLoading(false);
-        }
-    };
-
-    // Quick select helper
-    const quickSelect = (term: string) => {
-        const found = employees.find(e =>
-            e.phone?.includes(term) ||
-            e.first_name?.toLowerCase().includes(term.toLowerCase()) ||
-            e.email?.toLowerCase().includes(term.toLowerCase())
-        );
-        if (found) setSelectedEmployeeId(found.id);
-    };
 
     // Sleek Loading State matching Task Manager
     if (loading) {
@@ -1630,15 +1582,6 @@ export default function TaskManagerTestingDashboard({ orgId }: { orgId?: string 
         whatsappStatus: 'active',
         rulesCount: 3
     };
-
-    const departmentMembers = (employees || []).filter(e => 
-        e.department_id === currentDepartment?.id ||
-        (e.department && currentDepartment && e.department.toLowerCase() === currentDepartment.name.toLowerCase())
-    );
-
-    const displayedEmployees = deptFilterScope === 'department' && departmentMembers.length > 0
-        ? departmentMembers
-        : employees;
 
     const totalDepartmentsCount = departments.length || 14;
     const totalEmployeesCount = employees.length || 124;
@@ -2510,7 +2453,7 @@ export default function TaskManagerTestingDashboard({ orgId }: { orgId?: string 
                             </span>
                         </div>
                         <p className="text-xs text-slate-500 mt-1 max-w-3xl">
-                            Configure multiple daily notification schedules, custom WhatsApp message templates, task selection filters, and automated carry-forward rules for the Tech department. Changes apply immediately without redeploying.
+                            The master heartbeat and the test sandbox for every scheduled message. Each team sets its own schedules and wording in its Task Manager tab.
                         </p>
                     </div>
 
@@ -2576,708 +2519,10 @@ export default function TaskManagerTestingDashboard({ orgId }: { orgId?: string 
                     </div>
                 </div>
 
-                {/* Global Controls & Rules Toolbar */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1 border-t border-slate-100">
-                    <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-xs font-black uppercase tracking-wider text-slate-400">
-                            Active Schedules ({rules.length}):
-                        </span>
-                        <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                            {rules.filter(r => r.enabled).length} Enabled
-                        </span>
-                        <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
-                            {rules.filter(r => r.lastRunDate === new Date().toISOString().slice(0, 10)).length} Dispatched Today
-                        </span>
-                    </div>
-
-                    <div className="flex items-center gap-2 flex-wrap">
-                        {/* Generate Tasks Global Trigger */}
-                        <button
-                            type="button"
-                            disabled={triggerLoading}
-                            onClick={() => handleManualTrigger('trigger_generate')}
-                            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-xl font-bold text-xs shadow-2xs transition-all disabled:opacity-50 cursor-pointer"
-                            title="Generate today's fixed routine task assignments in the database"
-                        >
-                            {triggerLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5 text-primary" />}
-                            <span>⚡ Generate Tasks</span>
-                        </button>
-
-                        {/* Reset All Today */}
-                        <button
-                            type="button"
-                            disabled={actionLoading}
-                            onClick={handleResetAllRules}
-                            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-xl font-bold text-xs shadow-2xs transition-all disabled:opacity-50 cursor-pointer"
-                            title="Clear today's run stamp for all rules so they can fire again"
-                        >
-                            <RotateCcw className="w-3.5 h-3.5 text-amber-600" />
-                            <span>🔄 Reset All Today</span>
-                        </button>
-
-                        {/* Add Rule Button */}
-                        <button
-                            type="button"
-                            onClick={() => setShowAddRuleModal(true)}
-                            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold text-xs shadow-xs transition-all cursor-pointer"
-                        >
-                            <Plus className="w-3.5 h-3.5 text-amber-400" />
-                            <span>Add Notification Rule</span>
-                        </button>
-                    </div>
-                </div>
-
-                {/* Rules List Cards */}
-                <div className="space-y-4">
-                    {rules.map((rule) => {
-                        const todayIST = new Date().toISOString().slice(0, 10);
-                        const isDispatchedToday = rule.lastRunDate === todayIST;
-                        const isExpanded = expandedRuleId === rule.id;
-                        const isActionLoading = actionRuleId === rule.id;
-                        const edited = ruleEditState[rule.id] || rule;
-
-                        // Visual styling based on ruleType
-                        const typeInfo = (() => {
-                            switch (rule.ruleType) {
-                                case 'morning_digest':
-                                    return {
-                                        icon: Sun,
-                                        label: 'Morning Kickoff',
-                                        badgeClass: 'bg-amber-100 text-amber-900 border-amber-300',
-                                        borderClass: 'border-l-amber-500'
-                                    };
-                                case 'pending_reminder':
-                                    return {
-                                        icon: Clock,
-                                        label: 'Midday Reminder',
-                                        badgeClass: 'bg-sky-100 text-sky-900 border-sky-300',
-                                        borderClass: 'border-l-sky-500'
-                                    };
-                                case 'eod_summary':
-                                    return {
-                                        icon: Moon,
-                                        label: 'EOD Wrap-up',
-                                        badgeClass: 'bg-indigo-100 text-indigo-900 border-indigo-300',
-                                        borderClass: 'border-l-indigo-500'
-                                    };
-                                case 'overdue_alert':
-                                    return {
-                                        icon: AlertTriangle,
-                                        label: 'Overdue Alert',
-                                        badgeClass: 'bg-rose-100 text-rose-900 border-rose-300',
-                                        borderClass: 'border-l-rose-500'
-                                    };
-                                default:
-                                    return {
-                                        icon: Clock,
-                                        label: 'Custom Rule',
-                                        badgeClass: 'bg-slate-100 text-slate-800 border-slate-300',
-                                        borderClass: 'border-l-slate-400'
-                                    };
-                            }
-                        })();
-
-                        const TypeIcon = typeInfo.icon;
-
-                        return (
-                            <div
-                                key={rule.id}
-                                className={`relative border border-slate-200 rounded-2xl transition-all duration-200 border-l-4 hover:z-20 focus-within:z-30 ${typeInfo.borderClass} ${
-                                    rule.enabled ? 'bg-white shadow-xs' : 'bg-slate-50/80 opacity-75'
-                                }`}
-                            >
-                                {/* Rule Card Header Bar */}
-                                <div className="p-4 sm:p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                                    <div className="space-y-1.5 flex-1">
-                                        <div className="flex items-center gap-2 flex-wrap">
-                                            <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider border ${typeInfo.badgeClass}`}>
-                                                <TypeIcon className="w-3 h-3" />
-                                                {typeInfo.label}
-                                            </span>
-
-                                            <h3 className="text-sm md:text-base font-black text-slate-900">
-                                                {rule.name}
-                                            </h3>
-
-                                            {/* Status Badge */}
-                                            {isDispatchedToday ? (
-                                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-200">
-                                                    <Check className="w-3 h-3" /> Dispatched Today
-                                                </span>
-                                            ) : !rule.enabled ? (
-                                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-slate-200 text-slate-700">
-                                                    Paused
-                                                </span>
-                                            ) : (
-                                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-50 text-amber-800 border border-amber-200">
-                                                    <Clock className="w-3 h-3 text-amber-600" /> Pending for {rule.targetTimeIST} IST
-                                                </span>
-                                            )}
-                                        </div>
-
-                                        {/* Run summary if available */}
-                                        {rule.lastRunSummary && (
-                                            <p className="text-[11px] font-mono text-slate-500 truncate max-w-2xl">
-                                                {rule.lastRunSummary}
-                                            </p>
-                                        )}
-                                    </div>
-
-                                    {/* Enable / Disable Toggle Switch */}
-                                    <div className="flex items-center gap-3 self-start md:self-auto flex-shrink-0">
-                                        <span className="text-xs font-bold text-slate-600">
-                                            {rule.enabled ? 'Rule Active' : 'Rule Paused'}
-                                        </span>
-                                        <button
-                                            type="button"
-                                            onClick={() => handleToggleRule(rule)}
-                                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none cursor-pointer ${
-                                                rule.enabled ? 'bg-emerald-600' : 'bg-slate-300'
-                                            }`}
-                                            title={rule.enabled ? 'Click to Pause this rule' : 'Click to Enable this rule'}
-                                        >
-                                            <span
-                                                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                                                    rule.enabled ? 'translate-x-6' : 'translate-x-1'
-                                                }`}
-                                            />
-                                        </button>
-                                    </div>
-                                </div>
-
-                                {/* Rule Card Controls Row: Time Picker, Days Chips & Action Buttons */}
-                                <div className={`px-4 sm:px-5 pb-4 pt-1 flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-t border-slate-100 bg-slate-50/50 ${!isExpanded ? 'rounded-b-2xl' : ''}`}>
-                                    {/* Left: Timing and Weekdays */}
-                                    <div className="flex flex-col sm:flex-row sm:items-center gap-4 flex-wrap">
-                                        {/* Target Time Picker */}
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex-shrink-0">
-                                                Time (IST):
-                                            </span>
-                                            <div className="w-[270px] relative z-30">
-                                                <TwelveHourTimePicker
-                                                    value={rule.targetTimeIST}
-                                                    onChange={(val) => handleUpdateRuleTime(rule.id, val)}
-                                                />
-                                            </div>
-                                        </div>
-
-                                        {/* Quick Test Offset Chips */}
-                                        <div className="flex items-center gap-1.5 flex-wrap">
-                                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Test:</span>
-                                            <button
-                                                type="button"
-                                                onClick={() => handleQuickOffset(rule.id, 2)}
-                                                className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200/80 rounded-md text-[10px] font-bold transition-colors cursor-pointer"
-                                                title="Set to 2 minutes from current IST for instant testing"
-                                            >
-                                                +2m
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => handleQuickOffset(rule.id, 5)}
-                                                className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200/80 rounded-md text-[10px] font-bold transition-colors cursor-pointer"
-                                                title="Set to 5 minutes from current IST"
-                                            >
-                                                +5m
-                                            </button>
-                                        </div>
-
-                                        {/* Days of Week selector chips */}
-                                        <div className="flex items-center gap-1">
-                                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-1">Days:</span>
-                                            {[
-                                                { day: 1, label: 'M' },
-                                                { day: 2, label: 'T' },
-                                                { day: 3, label: 'W' },
-                                                { day: 4, label: 'T' },
-                                                { day: 5, label: 'F' },
-                                                { day: 6, label: 'S' },
-                                                { day: 0, label: 'S' }
-                                            ].map(({ day, label }, idx) => {
-                                                const isActive = (rule.daysOfWeek || []).includes(day);
-                                                return (
-                                                    <button
-                                                        key={`${rule.id}-day-${day}-${idx}`}
-                                                        type="button"
-                                                        onClick={() => handleToggleDay(rule, day)}
-                                                        className={`w-6 h-6 rounded-md text-[10px] font-bold transition-all flex items-center justify-center cursor-pointer ${
-                                                            isActive
-                                                                ? 'bg-slate-900 text-white shadow-2xs font-black'
-                                                                : 'bg-white border border-slate-200 text-slate-400 hover:border-slate-300'
-                                                        }`}
-                                                        title={`Click to toggle ${['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][day]}`}
-                                                    >
-                                                        {label}
-                                                    </button>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-
-                                    {/* Right: Actions Button Group */}
-                                    <div className="flex items-center gap-2 flex-wrap self-start lg:self-auto">
-                                        {/* Run Now Button */}
-                                        <button
-                                            type="button"
-                                            disabled={isActionLoading}
-                                            onClick={() => handleTriggerRule(rule.id, false)}
-                                            className="flex items-center gap-1 px-3 py-1.5 bg-primary hover:bg-primary/90 text-white rounded-xl font-bold text-xs shadow-2xs transition-all disabled:opacity-50 cursor-pointer"
-                                            title="Dispatch live notification now (strictly targets Sahil Gorde whitelist)"
-                                        >
-                                            {isActionLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-                                            <span>⚡ Run Now</span>
-                                        </button>
-
-                                        {/* Dry Run Button */}
-                                        <button
-                                            type="button"
-                                            disabled={isActionLoading}
-                                            onClick={() => handleTriggerRule(rule.id, true)}
-                                            className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-300 hover:bg-slate-100 text-slate-800 rounded-xl font-bold text-xs shadow-2xs transition-all disabled:opacity-50 cursor-pointer"
-                                            title="Simulate dispatch without sending any WhatsApp messages"
-                                        >
-                                            <Play className="w-3.5 h-3.5 text-amber-500" />
-                                            <span>🛡️ Dry-Run</span>
-                                        </button>
-
-                                        {/* Reset Today Button */}
-                                        {isDispatchedToday && (
-                                            <button
-                                                type="button"
-                                                disabled={isActionLoading}
-                                                onClick={() => handleResetRule(rule.id)}
-                                                className="flex items-center gap-1 px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 rounded-xl font-bold text-xs shadow-2xs transition-all disabled:opacity-50 cursor-pointer"
-                                                title="Clear today's run record so the rule can trigger again today"
-                                            >
-                                                <RotateCcw className="w-3.5 h-3.5 text-amber-700" />
-                                                <span>Reset Run</span>
-                                            </button>
-                                        )}
-
-                                        {/* Expand Filters & Template Button */}
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                if (isExpanded) {
-                                                    setExpandedRuleId(null);
-                                                } else {
-                                                    setExpandedRuleId(rule.id);
-                                                    setRuleEditState(prev => ({
-                                                        ...prev,
-                                                        [rule.id]: JSON.parse(JSON.stringify(rule))
-                                                    }));
-                                                }
-                                            }}
-                                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold text-xs transition-all border cursor-pointer ${
-                                                isExpanded
-                                                    ? 'bg-slate-900 text-white border-slate-900 shadow-2xs'
-                                                    : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-300'
-                                            }`}
-                                        >
-                                            <Sliders className="w-3.5 h-3.5" />
-                                            <span>{isExpanded ? 'Hide Settings' : 'Filters & Template'}</span>
-                                            {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                                        </button>
-
-                                        {/* Delete Custom Rule Button */}
-                                        <button
-                                            type="button"
-                                            onClick={() => handleDeleteRule(rule.id, rule.name)}
-                                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                                            title="Delete this rule"
-                                        >
-                                            <Trash2 className="w-4 h-4" />
-                                        </button>
-                                    </div>
-                                </div>
-
-                                {/* Expandable Drawer: Filters, Conditions, Custom Template & Live Preview */}
-                                {isExpanded && (
-                                    <div className="p-5 md:p-6 bg-slate-50 border-t border-slate-200 space-y-6 animate-in fade-in duration-200 rounded-b-2xl">
-                                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                                            {/* Column 1: Task Selection Filters & Conditions */}
-                                            <div className="space-y-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs">
-                                                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                                                    <h4 className="text-xs font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
-                                                        <Filter className="w-3.5 h-3.5 text-primary" /> Task Filters & Selection
-                                                    </h4>
-                                                    <span className="text-[10px] text-slate-400 font-bold">Rule ID: {rule.id}</span>
-                                                </div>
-
-                                                <div className="space-y-3">
-                                                    {/* Filter 1: Fixed Routine Tasks */}
-                                                    <label className="flex items-center justify-between p-2.5 bg-slate-50 rounded-xl border border-slate-200/80 cursor-pointer hover:bg-slate-100 transition-colors">
-                                                        <div>
-                                                            <span className="text-xs font-bold text-slate-900 block">
-                                                                Include Today&apos;s Fixed Routine Tasks
-                                                            </span>
-                                                            <span className="text-[11px] text-slate-500">
-                                                                Routine daily fixed tasks generated automatically for the Tech department.
-                                                            </span>
-                                                        </div>
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={edited.taskFilters?.includeTodayFixed ?? true}
-                                                            onChange={(e) => {
-                                                                setRuleEditState(prev => ({
-                                                                    ...prev,
-                                                                    [rule.id]: {
-                                                                        ...edited,
-                                                                        taskFilters: { ...edited.taskFilters, includeTodayFixed: e.target.checked }
-                                                                    }
-                                                                }));
-                                                            }}
-                                                            className="w-4 h-4 text-primary rounded border-slate-300 focus:ring-primary ml-3"
-                                                        />
-                                                    </label>
-
-                                                    {/* Filter 2: Ad-Hoc Assigned Tasks */}
-                                                    <label className="flex items-center justify-between p-2.5 bg-slate-50 rounded-xl border border-slate-200/80 cursor-pointer hover:bg-slate-100 transition-colors">
-                                                        <div>
-                                                            <span className="text-xs font-bold text-slate-900 block">
-                                                                Include Today&apos;s Assigned / Ad-Hoc Tasks
-                                                            </span>
-                                                            <span className="text-[11px] text-slate-500">
-                                                                Non-routine tasks assigned specifically for today by managers.
-                                                            </span>
-                                                        </div>
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={edited.taskFilters?.includeTodayAssigned ?? true}
-                                                            onChange={(e) => {
-                                                                setRuleEditState(prev => ({
-                                                                    ...prev,
-                                                                    [rule.id]: {
-                                                                        ...edited,
-                                                                        taskFilters: { ...edited.taskFilters, includeTodayAssigned: e.target.checked }
-                                                                    }
-                                                                }));
-                                                            }}
-                                                            className="w-4 h-4 text-primary rounded border-slate-300 focus:ring-primary ml-3"
-                                                        />
-                                                    </label>
-
-                                                    {/* Filter 3: Carry-Forward Past Uncompleted Tasks */}
-                                                    <label className="flex items-center justify-between p-2.5 bg-amber-50/60 rounded-xl border border-amber-200/80 cursor-pointer hover:bg-amber-100/60 transition-colors">
-                                                        <div>
-                                                            <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                                                                <span>🔄 Carry-Forward Incomplete Past Tasks</span>
-                                                                <span className="px-1.5 py-0.2 bg-amber-200 text-amber-900 rounded text-[9px] font-black uppercase">Carry-Forward</span>
-                                                            </span>
-                                                            <span className="text-[11px] text-slate-600 block mt-0.5">
-                                                                Queries unfinished tasks from previous days and tags them with [Carried Forward].
-                                                            </span>
-                                                        </div>
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={edited.taskFilters?.includeYesterdayPending ?? true}
-                                                            onChange={(e) => {
-                                                                setRuleEditState(prev => ({
-                                                                    ...prev,
-                                                                    [rule.id]: {
-                                                                        ...edited,
-                                                                        taskFilters: { ...edited.taskFilters, includeYesterdayPending: e.target.checked }
-                                                                    }
-                                                                }));
-                                                            }}
-                                                            className="w-4 h-4 text-amber-600 rounded border-slate-300 focus:ring-amber-500 ml-3"
-                                                        />
-                                                    </label>
-
-                                                    {/* Lookback window days */}
-                                                    {edited.taskFilters?.includeYesterdayPending && (
-                                                        <div className="pl-4 flex items-center justify-between text-xs py-1">
-                                                            <span className="font-bold text-slate-600">
-                                                                Lookback Window (Days):
-                                                            </span>
-                                                            <select
-                                                                value={edited.taskFilters?.lookbackDays || 1}
-                                                                onChange={(e) => {
-                                                                    const val = parseInt(e.target.value, 10);
-                                                                    setRuleEditState(prev => ({
-                                                                        ...prev,
-                                                                        [rule.id]: {
-                                                                            ...edited,
-                                                                            taskFilters: { ...edited.taskFilters, lookbackDays: val }
-                                                                        }
-                                                                    }));
-                                                                }}
-                                                                className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800"
-                                                            >
-                                                                <option value="1">1 Day (Yesterday only)</option>
-                                                                <option value="2">2 Days</option>
-                                                                <option value="3">3 Days (Recommended)</option>
-                                                                <option value="7">7 Days (Full past week)</option>
-                                                            </select>
-                                                        </div>
-                                                    )}
-
-                                                    {/* Filter 4: Only Pending (Incomplete) */}
-                                                    <label className="flex items-center justify-between p-2.5 bg-slate-50 rounded-xl border border-slate-200/80 cursor-pointer hover:bg-slate-100 transition-colors">
-                                                        <div>
-                                                            <span className="text-xs font-bold text-slate-900 block">
-                                                                Incomplete / Pending Tasks Only
-                                                            </span>
-                                                            <span className="text-[11px] text-slate-500">
-                                                                Hide completed tasks from the notification copy (ideal for midday reminders).
-                                                            </span>
-                                                        </div>
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={edited.taskFilters?.onlyPending ?? false}
-                                                            onChange={(e) => {
-                                                                setRuleEditState(prev => ({
-                                                                    ...prev,
-                                                                    [rule.id]: {
-                                                                        ...edited,
-                                                                        taskFilters: { ...edited.taskFilters, onlyPending: e.target.checked }
-                                                                    }
-                                                                }));
-                                                            }}
-                                                            className="w-4 h-4 text-primary rounded border-slate-300 focus:ring-primary ml-3"
-                                                        />
-                                                    </label>
-                                                </div>
-
-                                                {/* Conditions Subsection */}
-                                                <div className="pt-3 border-t border-slate-100 space-y-2">
-                                                    <h5 className="text-[11px] font-black uppercase tracking-wider text-slate-400">
-                                                        Execution Conditions
-                                                    </h5>
-                                                    <label className="flex items-center justify-between text-xs font-bold text-slate-700 cursor-pointer">
-                                                        <span>Skip Notification if 0 matching tasks</span>
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={edited.conditions?.skipIfZeroTasks ?? true}
-                                                            onChange={(e) => {
-                                                                setRuleEditState(prev => ({
-                                                                    ...prev,
-                                                                    [rule.id]: {
-                                                                        ...edited,
-                                                                        conditions: { ...edited.conditions, skipIfZeroTasks: e.target.checked }
-                                                                    }
-                                                                }));
-                                                            }}
-                                                            className="w-4 h-4 text-primary rounded border-slate-300 ml-2"
-                                                        />
-                                                    </label>
-                                                    <label className="flex items-center justify-between text-xs font-bold text-slate-700 cursor-pointer">
-                                                        <span>Skip Notification if all tasks already completed</span>
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={edited.conditions?.requirePendingOnly ?? false}
-                                                            onChange={(e) => {
-                                                                setRuleEditState(prev => ({
-                                                                    ...prev,
-                                                                    [rule.id]: {
-                                                                        ...edited,
-                                                                        conditions: { ...edited.conditions, requirePendingOnly: e.target.checked }
-                                                                    }
-                                                                }));
-                                                            }}
-                                                            className="w-4 h-4 text-primary rounded border-slate-300 ml-2"
-                                                        />
-                                                    </label>
-                                                </div>
-                                            </div>
-
-                                            {/* Column 2: Custom WhatsApp Template & Live Preview */}
-                                            <div className="space-y-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs">
-                                                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                                                    <h4 className="text-xs font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
-                                                        <FileText className="w-3.5 h-3.5 text-primary" /> Custom WhatsApp Template
-                                                    </h4>
-                                                    <span className="text-[10px] text-emerald-600 font-bold flex items-center gap-1">
-                                                        <Sparkles className="w-3 h-3" /> Dynamic Tags
-                                                    </span>
-                                                </div>
-
-                                                {/* Header Greeting */}
-                                                <div>
-                                                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                                                        Custom Header Greeting:
-                                                    </label>
-                                                    <input
-                                                        type="text"
-                                                        value={edited.customTemplate?.headerGreeting || ''}
-                                                        placeholder="e.g. Good morning {{firstName}}! 📋"
-                                                        onChange={(e) => {
-                                                            const val = e.target.value;
-                                                            setRuleEditState(prev => ({
-                                                                ...prev,
-                                                                [rule.id]: {
-                                                                    ...edited,
-                                                                    customTemplate: { ...edited.customTemplate, headerGreeting: val }
-                                                                }
-                                                            }));
-                                                        }}
-                                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-sans text-slate-800 focus:bg-white focus:outline-none focus:ring-1 focus:ring-primary"
-                                                    />
-                                                </div>
-
-                                                {/* Announcement Note */}
-                                                <div>
-                                                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                                                        Custom Announcement / Note (Optional):
-                                                    </label>
-                                                    <textarea
-                                                        rows={2}
-                                                        value={edited.customTemplate?.customMessage || ''}
-                                                        placeholder="e.g. 📢 Reminder: Complete client deployments before 4 PM today."
-                                                        onChange={(e) => {
-                                                            const val = e.target.value;
-                                                            setRuleEditState(prev => ({
-                                                                ...prev,
-                                                                [rule.id]: {
-                                                                    ...edited,
-                                                                    customTemplate: { ...edited.customTemplate, customMessage: val }
-                                                                }
-                                                            }));
-                                                        }}
-                                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-sans text-slate-800 focus:bg-white focus:outline-none focus:ring-1 focus:ring-primary"
-                                                    />
-                                                </div>
-
-                                                {/* Footer Instruction */}
-                                                <div>
-                                                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                                                        Custom Footer Instructions:
-                                                    </label>
-                                                    <input
-                                                        type="text"
-                                                        value={edited.customTemplate?.footerInstruction || ''}
-                                                        placeholder="e.g. Reply 'done 1' to mark complete. Have a great day! 🚀"
-                                                        onChange={(e) => {
-                                                            const val = e.target.value;
-                                                            setRuleEditState(prev => ({
-                                                                ...prev,
-                                                                [rule.id]: {
-                                                                    ...edited,
-                                                                    customTemplate: { ...edited.customTemplate, footerInstruction: val }
-                                                                }
-                                                            }));
-                                                        }}
-                                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-sans text-slate-800 focus:bg-white focus:outline-none focus:ring-1 focus:ring-primary"
-                                                    />
-                                                </div>
-
-                                                {/* Quick Replies Toggle */}
-                                                <label className="flex items-center justify-between text-xs font-bold text-slate-700 cursor-pointer pt-1">
-                                                    <span>Include Quick Reply Guide (done 1, done all)</span>
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={edited.customTemplate?.includeQuickReplies !== false}
-                                                        onChange={(e) => {
-                                                            setRuleEditState(prev => ({
-                                                                ...prev,
-                                                                [rule.id]: {
-                                                                    ...edited,
-                                                                    customTemplate: { ...edited.customTemplate, includeQuickReplies: e.target.checked }
-                                                                }
-                                                            }));
-                                                        }}
-                                                        className="w-4 h-4 text-primary rounded border-slate-300 ml-2"
-                                                    />
-                                                </label>
-
-                                                {/* Dynamic Variables Pill Tags */}
-                                                <div className="pt-2 border-t border-slate-100">
-                                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
-                                                        Supported Dynamic Tags:
-                                                    </span>
-                                                    <div className="flex flex-wrap gap-1.5 text-[10px] font-mono">
-                                                        {['{{firstName}}', '{{fullName}}', '{{totalTasks}}', '{{pendingTasks}}', '{{completedTasks}}', '{{date}}'].map(tag => (
-                                                            <span
-                                                                key={tag}
-                                                                className="px-2 py-0.5 bg-slate-100 border border-slate-200 text-slate-700 rounded-md font-bold select-all cursor-pointer hover:bg-slate-200"
-                                                                title={`Copy tag ${tag}`}
-                                                            >
-                                                                {tag}
-                                                            </span>
-                                                        ))}
-                                                    </div>
-                                                </div>
-
-                                                {/* Realtime WhatsApp Bubble Preview */}
-                                                <div className="mt-3 bg-[#EFEAE2] p-3.5 rounded-2xl border border-[#D1D7DB] shadow-inner font-sans space-y-2">
-                                                    <div className="flex items-center justify-between pb-1.5 border-b border-[#D1D7DB]/60">
-                                                        <span className="text-[10px] font-black text-slate-600 uppercase tracking-wider flex items-center gap-1">
-                                                            <MessageSquare className="w-3 h-3 text-emerald-600" /> WhatsApp Live Preview (Sahil Gorde)
-                                                        </span>
-                                                        <span className="text-[9px] font-mono text-slate-400">IST</span>
-                                                    </div>
-                                                    <div className="bg-white rounded-xl p-3 shadow-xs border border-emerald-100 text-slate-800 text-[11px] font-sans leading-relaxed whitespace-pre-line">
-                                                        {/* Header */}
-                                                        {edited.customTemplate?.headerGreeting
-                                                            ? edited.customTemplate.headerGreeting
-                                                                .replace(/\{\{firstName\}\}/g, 'Sahil')
-                                                                .replace(/\{\{fullName\}\}/g, 'Sahil Gorde')
-                                                                .replace(/\{\{date\}\}/g, 'Mon, Oct 5')
-                                                                .replace(/\{\{totalTasks\}\}/g, '3')
-                                                                .replace(/\{\{pendingTasks\}\}/g, '2')
-                                                                .replace(/\{\{completedTasks\}\}/g, '1')
-                                                            : (rule.ruleType === 'morning_digest'
-                                                                ? '☀️ *Good Morning Sahil!* 👋\nHere are your tasks for today (Mon, Oct 5):'
-                                                                : rule.ruleType === 'pending_reminder'
-                                                                ? '⏳ *Midday Progress Check-in*\nHello Sahil, here is your remaining task list:'
-                                                                : rule.ruleType === 'eod_summary'
-                                                                ? '🏁 *End-of-Day Task Summary*\nHello Sahil, here is your daily wrap-up:'
-                                                                : '⚠️ *Urgent: Overdue Tasks Alert*\nHello Sahil, the following tasks are past due:')}
-
-                                                        {/* Optional note */}
-                                                        {edited.customTemplate?.customMessage && (
-                                                            `\n\n📢 *Note:* ${edited.customTemplate.customMessage}`
-                                                        )}
-
-                                                        {/* Tasks mockup */}
-                                                        {rule.ruleType === 'eod_summary' ? (
-                                                            '\n\n✅ Completed: 1\n⏳ Outstanding: 2\n\n1. Review System Architecture [Fixed] - ✅ Completed\n2. 🔄 Update API Gateway Endpoint [Carried Forward] - ⏳ Pending\n3. Deploy Test Beta Tab [Assigned] - ⏳ Pending'
-                                                        ) : rule.ruleType === 'overdue_alert' ? (
-                                                            '\n\n1. ⚠️ Update API Gateway Endpoint [⚠️ 2d overdue]\n2. ⚠️ Database Migration Check [⚠️ 1d overdue]'
-                                                        ) : (
-                                                            '\n\n1. Review System Architecture [Fixed]\n2. 🔄 Update API Gateway Endpoint [Carried Forward]\n3. Deploy Test Beta Tab [Assigned]'
-                                                        )}
-
-                                                        {/* Footer */}
-                                                        {edited.customTemplate?.footerInstruction && (
-                                                            `\n\n${edited.customTemplate.footerInstruction}`
-                                                        )}
-
-                                                        {/* Quick replies */}
-                                                        {edited.customTemplate?.includeQuickReplies !== false && (
-                                                            '\n\n💡 *Quick Reply:* Type "done 1" to mark complete, or "tasks" to refresh.'
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        {/* Drawer Footer Actions */}
-                                        <div className="pt-2 flex items-center justify-end gap-3 border-t border-slate-200">
-                                            <button
-                                                type="button"
-                                                onClick={() => setExpandedRuleId(null)}
-                                                className="px-4 py-2 bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 rounded-xl font-bold text-xs transition-colors cursor-pointer"
-                                            >
-                                                Close
-                                            </button>
-
-                                            <button
-                                                type="button"
-                                                disabled={isActionLoading}
-                                                onClick={() => handleSaveRuleAdvanced(rule.id)}
-                                                className="flex items-center gap-1.5 px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold text-xs shadow-xs transition-all disabled:opacity-50 cursor-pointer"
-                                            >
-                                                {isActionLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5 text-emerald-400" />}
-                                                <span>Save Rule Settings</span>
-                                            </button>
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-                        );
-                    })}
+                {/* Schedules now live with each team: Task Manager > Notifications. The old department-less list is retired. */}
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs leading-relaxed text-slate-600">
+                    <span className="font-black text-slate-800">Schedules are managed per team.</span> Each department sets its own morning, midday and evening messages in its Task Manager &gt; Notifications tab
+                    (switch on &ldquo;notifications delegated&rdquo; for a department below to let its managers do that). The master heartbeat and the sandbox above still control everything.
                 </div>
             </div>
 
@@ -3554,7 +2799,7 @@ export default function TaskManagerTestingDashboard({ orgId }: { orgId?: string 
                     }
 
                     return (
-                        <div className="space-y-3">
+                        <div className="space-y-3 max-h-[600px] overflow-y-auto pr-2">
                             {filteredLogs.map(log => {
                                 const details = log.details || {};
                                 const isExpanded = expandedLogId === log.id;
@@ -3882,198 +3127,10 @@ export default function TaskManagerTestingDashboard({ orgId }: { orgId?: string 
 
             {/* Step 3: Who is unlocked for the Task Manager (department switch + kickoff status) */}
             <TaskAccessPanel orgId={orgId} />
+            <BotLearningPanel orgId={orgId} />
 
             {/* Step 2: Read-only reporting chain preview (from reporting_manager_id) */}
             <OrgHierarchyPanel orgId={orgId} />
-
-            {/* Main Interactive Control Card */}
-            <div className={`bg-white border border-slate-200 rounded-3xl p-6 md:p-8 shadow-sm space-y-6 ${animationStep >= 4 ? 'tm-slide-up-visible' : 'tm-slide-up-hidden'}`}>
-                <div>
-                    <h2 className="text-lg font-black text-slate-900 tracking-tight flex items-center gap-2">
-                        <UserCheck className="w-5 h-5 text-primary" />
-                        Manager Role Assignment & WhatsApp Kickoff
-                    </h2>
-                    <p className="text-xs text-slate-500 mt-1">
-                        Select an employee to promote to Reporting Manager or demote back to Employee. When promoted, an official Meta-approved kickoff template is sent to open their 24h WhatsApp window.
-                    </p>
-                </div>
-
-                {/* Quick Shortcuts */}
-                <div className="flex items-center gap-2 flex-wrap text-xs">
-                    <span className="font-bold text-slate-400">Quick Select:</span>
-                    <button
-                        type="button"
-                        onClick={() => quickSelect('8433649199')}
-                        className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-bold transition-colors cursor-pointer"
-                    >
-                        👤 Myself (Sahil Gorde)
-                    </button>
-                    {currentDepartmentSummary?.manager && (
-                        <button
-                            type="button"
-                            onClick={() => setSelectedEmployeeId(currentDepartmentSummary.manager!.id)}
-                            className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-bold transition-colors cursor-pointer"
-                        >
-                            👑 {currentDepartment?.name} Manager ({currentDepartmentSummary.manager.first_name})
-                        </button>
-                    )}
-                    <button
-                        type="button"
-                        onClick={() => quickSelect('9100256500')}
-                        className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-bold transition-colors cursor-pointer"
-                    >
-                        👑 Lohitaksha Ranganathan
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => quickSelect('7028232515')}
-                        className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-bold transition-colors cursor-pointer"
-                    >
-                        ⚡ Harsh Patil
-                    </button>
-                </div>
-
-                {/* Dropdown Selector */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                        <div className="flex items-center justify-between mb-2">
-                            <label className="text-xs font-black text-slate-700 uppercase tracking-wider">
-                                Select Employee
-                            </label>
-                            {/* Scope Filter: Selected Dept vs All Company Staff */}
-                            <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200">
-                                <button
-                                    type="button"
-                                    onClick={() => setDeptFilterScope('department')}
-                                    className={`px-2 py-0.5 text-[10px] font-extrabold rounded-md transition-all cursor-pointer ${
-                                        deptFilterScope === 'department'
-                                            ? 'bg-white text-slate-900 shadow-2xs'
-                                            : 'text-slate-500 hover:text-slate-900'
-                                    }`}
-                                >
-                                    {currentDepartment?.name || 'Dept'} ({departmentMembers.length})
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setDeptFilterScope('all')}
-                                    className={`px-2 py-0.5 text-[10px] font-extrabold rounded-md transition-all cursor-pointer ${
-                                        deptFilterScope === 'all'
-                                            ? 'bg-white text-slate-900 shadow-2xs'
-                                            : 'text-slate-500 hover:text-slate-900'
-                                    }`}
-                                >
-                                    All Staff ({employees.length})
-                                </button>
-                            </div>
-                        </div>
-                        <select
-                            value={selectedEmployeeId}
-                            onChange={(e) => setSelectedEmployeeId(e.target.value)}
-                            className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
-                        >
-                            {displayedEmployees.map(emp => (
-                                <option key={emp.id} value={emp.id}>
-                                    {emp.first_name} {emp.last_name || ''} ({emp.department || 'No Dept'}) — [{emp.task_role}]
-                                </option>
-                            ))}
-                        </select>
-                    </div>
-
-                    {/* Kickoff Template Toggle */}
-                    <div className="flex items-center">
-                        <label className="flex items-center gap-3 p-3 bg-slate-50 border border-slate-200 rounded-xl cursor-pointer w-full hover:bg-slate-100/70 transition-colors">
-                            <input
-                                type="checkbox"
-                                checked={sendKickoff}
-                                onChange={(e) => setSendKickoff(e.target.checked)}
-                                className="w-4 h-4 text-primary rounded border-slate-300 focus:ring-primary"
-                            />
-                            <div>
-                                <span className="text-xs font-bold text-slate-900 block">
-                                    Send Meta-approved WhatsApp Kickoff Template
-                                </span>
-                                <span className="text-[11px] text-slate-500 block">
-                                    Dispatches campaign template to invite the user and open the 24-hr session.
-                                </span>
-                            </div>
-                        </label>
-                    </div>
-                </div>
-
-                {/* Selected Employee Card */}
-                {selectedEmployee && (
-                    <div className="p-4 bg-slate-50/80 border border-slate-200 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4">
-                        <div className="space-y-1">
-                            <div className="flex items-center gap-2">
-                                <span className="text-sm font-black text-slate-900">
-                                    {selectedEmployee.first_name} {selectedEmployee.last_name || ''}
-                                </span>
-                                <span className={`text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full ${
-                                    selectedEmployee.task_role === 'reporting_manager'
-                                        ? 'bg-emerald-500 text-white'
-                                        : 'bg-slate-300 text-slate-700'
-                                }`}>
-                                    Current: {selectedEmployee.task_role}
-                                </span>
-                            </div>
-                            <div className="flex flex-wrap items-center gap-4 text-xs text-slate-500 font-medium">
-                                <span className="flex items-center gap-1 font-mono">
-                                    <Phone className="w-3 h-3 text-slate-400" />
-                                    {selectedEmployee.phone || 'No phone set'}
-                                </span>
-                                <span className="flex items-center gap-1">
-                                    <Mail className="w-3 h-3 text-slate-400" />
-                                    {selectedEmployee.email}
-                                </span>
-                                <span className="flex items-center gap-1">
-                                    <Building2 className="w-3 h-3 text-slate-400" />
-                                    {selectedEmployee.department || 'Unassigned'}
-                                </span>
-                            </div>
-                        </div>
-
-                        {/* Action Buttons */}
-                        <div className="flex items-center gap-2 self-start md:self-auto flex-wrap">
-                            {/* Assign Role Button */}
-                            <button
-                                type="button"
-                                disabled={actionLoading || !selectedEmployee.phone}
-                                onClick={() => handleRoleAction('assign_manager')}
-                                className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs shadow-sm hover:shadow transition-all disabled:opacity-50"
-                            >
-                                {actionLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <UserCheck className="w-4 h-4" />}
-                                {actionLoading ? 'Assigning...' : 'Assign Reporting Manager & Kickoff'}
-                            </button>
-
-                            {/* Send Employee Kickoff Button */}
-                            <button
-                                type="button"
-                                disabled={actionLoading || !selectedEmployee.phone}
-                                onClick={() => {
-                                    if (window.confirm(`Send official Employee Kickoff (tm_employee_kickoff_v1) to ${selectedEmployee.first_name} on ${selectedEmployee.phone}?`)) {
-                                        handleRoleAction('send_employee_kickoff');
-                                    }
-                                }}
-                                className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs shadow-sm hover:shadow transition-all disabled:opacity-50"
-                            >
-                                {actionLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                                {actionLoading ? 'Sending Kickoff...' : 'Send Employee Kickoff'}
-                            </button>
-
-                            {/* Remove Role Button */}
-                            <button
-                                type="button"
-                                disabled={actionLoading}
-                                onClick={() => handleRoleAction('remove_manager')}
-                                className="flex items-center gap-2 px-4 py-2.5 bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 rounded-xl font-bold text-xs shadow-sm transition-all disabled:opacity-50"
-                            >
-                                {actionLoading ? <RefreshCw className="w-4 h-4 animate-spin text-rose-500" /> : <UserX className="w-4 h-4 text-rose-500" />}
-                                {actionLoading ? 'Removing...' : 'Remove Manager Role (Revert)'}
-                            </button>
-                        </div>
-                    </div>
-                )}
-            </div>
 
             {/* Meta Approved Templates & WhatsApp Quick Reply Cheatsheet */}
             <div className={`bg-slate-900 text-white rounded-3xl p-6 md:p-8 space-y-5 ${animationStep >= 5 ? 'tm-slide-up-visible' : 'tm-slide-up-hidden'}`}>

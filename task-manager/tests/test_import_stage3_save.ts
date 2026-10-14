@@ -55,7 +55,7 @@ async function run() {
         task('Call vendor')]) }, io);
     check('3 saved, none skipped or failed', out.saved === 3 && out.skipped === 0 && out.failed === 0 && out.taskIds?.length === 3, out);
     check('saved on the SHEET date, in the sender\'s own list, assigned by themself', db.rows.every((r: any) => r.assigned_date === '2026-09-25' && r.employee_id === 'u1' && r.assigned_by === 'u1'), db.rows);
-    check('WIP → in_progress, Done → completed, blank → pending', db.rows.map((r: any) => r.status).join() === 'in_progress,completed,pending', db.rows.map((r: any) => r.status));
+    check('WIP → To do (new work never starts in progress), Done → completed, blank → pending', db.rows.map((r: any) => r.status).join() === 'pending,completed,pending', db.rows.map((r: any) => r.status));
     check('site / remark / final status are in the description', db.rows[0].description === 'Site: All Center\nRemark: Payment align\nFinal status: Send for approval' && db.rows[2].description === null, db.rows[0]);
     check('one audit row per task, same shape as the web Tasks tab (task_assigned)', db.audits.length === 3 && db.audits.every((a: any) => a.eventType === 'task_assigned' && a.details.via === 'whatsapp_import' && a.targetEmployeeId === 'u1') && db.audits[0].taskId === 't1', db.audits[0]);
 
@@ -200,7 +200,7 @@ async function run() {
     const yes = await I.claimTaskImport(body({ message_type: 'text', text: { body: 'yes' } }, 'wamid.E2'), hookIO);
     check('YES (sandbox number, switch ON) → handled, 3 tasks written', yes.handled && w.db.rows.length === 3, w.db.rows);
     check('statuses, dates and descriptions are right in the database rows',
-        w.db.rows.map((r: any) => r.status).join() === 'in_progress,completed,pending' && w.db.rows.every((r: any) => r.assigned_date === '2026-09-25') &&
+        w.db.rows.map((r: any) => r.status).join() === 'pending,completed,pending' && w.db.rows.every((r: any) => r.assigned_date === '2026-09-25') &&
         w.db.rows[0].description === 'Site: All Center\nRemark: Payment align\nFinal status: Have to send for approval' && w.db.rows[1].description === 'Site: Noida\nRemark: Urgent requirement', w.db.rows);
     const stranger = body({ message_type: 'text', text: { body: 'yes' } }, 'wamid.E3') as any; stranger.data.messages[0].phone_number = '919876543210';
     const rowsBefore = w.db.rows.length;

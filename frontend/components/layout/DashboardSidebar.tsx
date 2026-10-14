@@ -459,11 +459,6 @@ export default function DashboardSidebar({
                         </div>
                     )}
 
-                    <div data-navigation-section="management-hub">
-                        <p className="px-4 mb-2 text-[10px] font-bold uppercase tracking-widest text-text-secondary">Management Hub</p>
-                        <PettyCashNavLink onNavigate={handleLinkClick} />
-                    </div>
-
                     {/* 4. SYSTEM & PERSONAL Section (Always below primary role navigation) */}
                     {!isExternalRole && (
                         <div className="pt-3 mt-3 border-t border-slate-200/60 dark:border-slate-800 space-y-1">
@@ -474,6 +469,7 @@ export default function DashboardSidebar({
                                 </p>
                             </div>
 
+                            <PettyCashNavLink onNavigate={handleLinkClick} />
                             {!['hr', 'hr_head', 'hr_manager', 'hr_ops'].includes(userRole) && (
                                 <Link
                                     href={isOrgSuperAdmin ? `/${orgId}/dashboard?tab=grievance` : `/${orgId}/hr-tickets?tab=tickets`}

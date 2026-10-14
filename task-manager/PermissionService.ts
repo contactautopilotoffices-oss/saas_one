@@ -134,6 +134,12 @@ export class PermissionService {
             return { actor, target };
         }
 
+        // Working with a superuser: ONLY when the actor's department has that switch ON (Control Center, OFF by default),
+        // and ONLY for a superuser target. Nothing else about who may assign to whom is changed.
+        if (target.role === 'superuser' && actor.department_id && await TaskAccessService.isSuperuserCollabEnabled(actor.department_id)) {
+            return { actor, target };
+        }
+
         // Standard employees cannot assign tasks
         await TaskDatabaseService.logAudit({
             eventType: 'permission_denied',

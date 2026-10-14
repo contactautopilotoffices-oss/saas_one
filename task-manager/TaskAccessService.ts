@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { TaskDatabaseService } from './TaskDatabaseService';
+import { SuperuserReminder, normalizeReminder } from './pingMessage';
 
 /**
  * Step 3 — Task Manager access control.
@@ -129,6 +130,17 @@ export class TaskAccessService {
         snapshot?: AccessSnapshot
     ): Promise<AccessDecision> {
         return this.decide(snapshot || await this.getSnapshot(), person);
+    }
+
+    /**
+     * Departments where the Task Manager is switched ON (same rule as `decide`): not provisioned → Tech only; unreadable
+     * settings → none (fail closed). Used to keep team / company progress to active departments only.
+     */
+    static async activeDepartmentIds(snapshot?: AccessSnapshot): Promise<Set<string>> {
+        const snap = snapshot || await this.getSnapshot();
+        if (!snap.readable) return new Set();
+        if (!snap.provisioned) return new Set([TECH_DEPARTMENT_ID]);
+        return new Set([...snap.departmentEnabled].filter(([, on]) => on).map(([id]) => id));
     }
 
     /** Splits a list of employees into unlocked and locked, using ONE snapshot read. */
@@ -275,6 +287,44 @@ export class TaskAccessService {
         });
     }
 
+    // ── Reporting manager role ───────────────────────────────────────────────────
+
+    /**
+     * Makes a person a reporting manager, or returns them to a normal employee. Same database change and the same audit
+     * events (manager_role_assigned / manager_role_removed) as the old "Manager Role Assignment" card it replaces.
+     * A superuser is never silently downgraded: remove the superuser role first.
+     */
+    static async setReportingManager(userId: string, enabled: boolean, actor?: string): Promise<void> {
+        const { data: rows, error } = await supabaseAdmin
+            .from('employee_profiles')
+            .select('id, task_role, first_name, last_name, department')
+            .eq('user_id', userId)
+            .eq('is_active', true);
+        if (error) throw error;
+        if (!rows || rows.length === 0) throw new Error('Active employee with a user account not found');
+
+        const previousRole = rows[0].task_role as string;
+        if (previousRole === 'superuser') throw new Error('This person is a superuser. Remove the superuser role first.');
+        if (enabled && previousRole === 'reporting_manager') return;
+        if (!enabled && previousRole !== 'reporting_manager') return;
+
+        const { error: upErr } = await supabaseAdmin
+            .from('employee_profiles')
+            .update({ task_role: enabled ? 'reporting_manager' : 'employee', updated_at: new Date().toISOString() })
+            .eq('user_id', userId)
+            .eq('is_active', true);
+        if (upErr) throw upErr;
+
+        await TaskDatabaseService.logAudit({
+            event_type: enabled ? 'manager_role_assigned' : 'manager_role_removed',
+            actor_id: null,
+            target_employee_id: userId,
+            details: enabled
+                ? { role: 'reporting_manager', department: rows[0].department ?? null, profileId: rows[0].id, actor: actor || null }
+                : { previousRole: 'reporting_manager', newRole: 'employee', department: rows[0].department ?? null, profileId: rows[0].id, actor: actor || null },
+        });
+    }
+
     // ── Superuser role ───────────────────────────────────────────────────────────
 
     /**
@@ -410,6 +460,105 @@ export class TaskAccessService {
         });
     }
 
+    // ── Smart chat: a department's people may talk to the Task Manager in plain language (smart_chat_enabled) ────
+    // Same tolerance and FAIL-CLOSED behaviour as Task Import: a missing column or a read problem means nobody has it.
+
+    static async getSmartChatDepartments(): Promise<{ departments: Set<string>; columnMissing: boolean }> {
+        try {
+            const { data, error } = await supabaseAdmin
+                .from('task_manager_department_settings')
+                .select('department_id, smart_chat_enabled');
+            if (error) return { departments: new Set(), columnMissing: true };
+            return {
+                departments: new Set((data || []).filter(r => r.smart_chat_enabled === true).map(r => r.department_id as string)),
+                columnMissing: false,
+            };
+        } catch {
+            return { departments: new Set(), columnMissing: true };
+        }
+    }
+
+    static async isSmartChatEnabled(departmentId: string | null | undefined): Promise<boolean> {
+        if (!departmentId) return false;
+        return (await this.getSmartChatDepartments()).departments.has(departmentId);
+    }
+
+    static async setSmartChatEnabled(departmentId: string, enabled: boolean, actor?: string): Promise<void> {
+        const snapshot = await this.getSnapshot();
+        if (!snapshot.provisioned) throw new AccessNotProvisionedError();
+
+        const dept = await TaskDatabaseService.getDepartmentById(departmentId);
+        if (!dept) throw new Error('Department not found');
+
+        const { error } = await supabaseAdmin
+            .from('task_manager_department_settings')
+            .upsert({ department_id: departmentId, smart_chat_enabled: enabled, updated_by: actor || null, updated_at: new Date().toISOString() },
+                { onConflict: 'department_id' });
+        if (error) {
+            throw new Error('Could not save this setting. Run supabase/migrations/20261007000005_task_manager_smart_chat.sql in the Supabase SQL Editor first.');
+        }
+
+        await TaskDatabaseService.logAudit({
+            event_type: 'task_access_smart_chat_updated',
+            details: { departmentId, departmentName: dept.name, smartChatEnabled: enabled, actor: actor || null },
+        });
+    }
+
+    // ── Working with a superuser: a department may give tasks to a superuser and remind them (superuser_collab_enabled) ────
+    // Same tolerance and FAIL-CLOSED behaviour as the other switches. Also carries the team's one shared reminder schedule.
+
+    static async getSuperuserCollab(): Promise<{ departments: Set<string>; reminders: Map<string, SuperuserReminder>; columnMissing: boolean }> {
+        try {
+            const { data, error } = await supabaseAdmin
+                .from('task_manager_department_settings')
+                .select('department_id, superuser_collab_enabled, superuser_reminder');
+            if (error) return { departments: new Set(), reminders: new Map(), columnMissing: true };
+            const rows = data || [];
+            return {
+                departments: new Set(rows.filter(r => r.superuser_collab_enabled === true).map(r => r.department_id as string)),
+                reminders: new Map(rows.filter(r => r.superuser_reminder).map(r => [r.department_id as string, normalizeReminder(r.superuser_reminder)] as [string, SuperuserReminder])),
+                columnMissing: false,
+            };
+        } catch {
+            return { departments: new Set(), reminders: new Map(), columnMissing: true };
+        }
+    }
+
+    static async isSuperuserCollabEnabled(departmentId: string | null | undefined): Promise<boolean> {
+        if (!departmentId) return false;
+        return (await this.getSuperuserCollab()).departments.has(departmentId);
+    }
+
+    static async setSuperuserCollabEnabled(departmentId: string, enabled: boolean, actor?: string): Promise<void> {
+        const snapshot = await this.getSnapshot();
+        if (!snapshot.provisioned) throw new AccessNotProvisionedError();
+
+        const dept = await TaskDatabaseService.getDepartmentById(departmentId);
+        if (!dept) throw new Error('Department not found');
+
+        const { error } = await supabaseAdmin
+            .from('task_manager_department_settings')
+            .upsert({ department_id: departmentId, superuser_collab_enabled: enabled, updated_by: actor || null, updated_at: new Date().toISOString() },
+                { onConflict: 'department_id' });
+        if (error) {
+            throw new Error('Could not save this setting. Run supabase/migrations/20261007000006_task_manager_superuser_pings.sql in the Supabase SQL Editor first.');
+        }
+
+        await TaskDatabaseService.logAudit({
+            event_type: 'task_access_superuser_collab_updated',
+            details: { departmentId, departmentName: dept.name, superuserCollabEnabled: enabled, actor: actor || null },
+        });
+    }
+
+    /** Saves the team's shared reminder schedule (used by the Tasks tab and by the scheduler to remember the last run). */
+    static async saveSuperuserReminder(departmentId: string, reminder: SuperuserReminder, actor?: string): Promise<void> {
+        const { error } = await supabaseAdmin
+            .from('task_manager_department_settings')
+            .upsert({ department_id: departmentId, superuser_reminder: reminder, updated_by: actor || null, updated_at: new Date().toISOString() },
+                { onConflict: 'department_id' });
+        if (error) throw new Error('Could not save the reminder schedule. Run supabase/migrations/20261007000006_task_manager_superuser_pings.sql in the Supabase SQL Editor first.');
+    }
+
     // ── Overview for the Control Center ─────────────────────────────────────────
 
     static async getOverview(): Promise<{
@@ -418,6 +567,8 @@ export class TaskAccessService {
         teamSharingColumnMissing: boolean;
         notificationsColumnMissing: boolean;
         taskImportColumnMissing: boolean;
+        smartChatColumnMissing: boolean;
+        superuserCollabColumnMissing: boolean;
         departments: Array<{
             departmentId: string;
             name: string;
@@ -425,6 +576,8 @@ export class TaskAccessService {
             peerAssign: boolean;
             notificationsDelegated: boolean;
             taskImportEnabled: boolean;
+            smartChatEnabled: boolean;
+            superuserCollabEnabled: boolean;
             memberCount: number;
             onboardedCount: number;
             members: Array<{
@@ -442,6 +595,8 @@ export class TaskAccessService {
         const peer = await this.getPeerAssignDepartments();
         const delegated = await this.getDelegatedDepartments();
         const imports = await this.getTaskImportDepartments();
+        const smartChat = await this.getSmartChatDepartments();
+        const collab = await this.getSuperuserCollab();
 
         const { data: profiles, error } = await supabaseAdmin
             .from('employee_profiles')
@@ -463,6 +618,8 @@ export class TaskAccessService {
             teamSharingColumnMissing: peer.columnMissing,
             notificationsColumnMissing: delegated.columnMissing,
             taskImportColumnMissing: imports.columnMissing,
+            smartChatColumnMissing: smartChat.columnMissing,
+            superuserCollabColumnMissing: collab.columnMissing,
             departments: departments.map(d => {
                 const members = people
                     .filter(p => p.department_id === d.id)
@@ -491,6 +648,8 @@ export class TaskAccessService {
                     peerAssign: peer.departments.has(d.id),
                     notificationsDelegated: delegated.departments.has(d.id),
                     taskImportEnabled: imports.departments.has(d.id),
+                    smartChatEnabled: smartChat.departments.has(d.id),
+                    superuserCollabEnabled: collab.departments.has(d.id),
                     memberCount: members.length,
                     onboardedCount: members.filter(m => m.onboarded).length,
                     members,

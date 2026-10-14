@@ -74,10 +74,9 @@ export default function AccountsWorkspace({ children }: { children: React.ReactN
                         </Link>
                     );
                 })}
-                {canSeePettyCash && <div className="pt-5" data-navigation-section="management-hub">
-                    <p className="px-3 mb-2 text-[10px] font-bold uppercase tracking-widest text-text-secondary">Management Hub</p>
+                {canSeePettyCash && <>
                     <Link href={`/${orgId}/petty-cash`} onClick={() => setMobileOpen(false)} aria-current={pettyCashWorkspace ? 'page' : undefined} className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold ${pettyCashWorkspace ? 'bg-primary text-white' : 'text-text-secondary hover:bg-surface-elevated'}`}><Wallet className="w-4 h-4" />Petty Cash</Link>
-                </div>}
+                </>}
             </nav>
 
             <div className="px-3 py-4 border-t border-border space-y-1 shrink-0">

@@ -5,23 +5,38 @@ import { useRouter } from 'next/navigation';
 import { useDashboardContent } from '@/frontend/components/layout/DashboardContentSlot';
 import AccountsWorkspace from '@/frontend/components/layout/AccountsWorkspace';
 import DashboardSidebar, { MobileHeader } from '@/frontend/components/layout/DashboardSidebar';
-import StaffDashboard from './StaffDashboard';
-import MstDashboard from './MstDashboard';
-import SecurityDashboard from './SecurityDashboard';
-import PropertyAdminDashboard from './PropertyAdminDashboard';
-import OrgAdminDashboard from './OrgAdminDashboard';
-import MasterAdminDashboard from './MasterAdminDashboard';
-import SoftServiceManagerDashboard from './SoftServiceManagerDashboard';
-import SuperTenantDashboard from './SuperTenantDashboard';
-import TenantDashboard from './TenantDashboard';
-import VendorDashboard from '@/frontend/components/vendors/VendorDashboard';
-import ProcurementDashboard from './ProcurementDashboard';
 import Loader from '@/frontend/components/ui/Loader';
 import { useAppSession } from '@/frontend/hooks/useAppSession';
 import { AlertCircle, TrendingUp, ArrowRight, IndianRupee } from 'lucide-react';
 import Link from 'next/link';
 import { TextShimmer } from '@/frontend/components/ui/text-shimmer';
 import BorderGlow from '@/frontend/components/ui/BorderGlow';
+import dynamic from 'next/dynamic';
+
+// Each role's dashboard is downloaded only for that role, not all eleven for everyone (performance plan Phase 1).
+// While it downloads — once, right after login — the same screen as the session loader is shown. Sidebar tabs have their
+// OWN waiting spot inside the content area (TabLoading), so clicking a tab never brings this screen back (owner, 2026-10-13).
+function RoleLoading() {
+    return (
+        <div className="h-screen w-full flex flex-col items-center justify-center bg-background gap-3">
+            <Loader size="lg" />
+            <TextShimmer duration={1.2} className="text-sm font-medium" baseColor="#64748b" gradientColor="#cbd5e1">
+                Loading your dashboard…
+            </TextShimmer>
+        </div>
+    );
+}
+const StaffDashboard = dynamic(() => import('./StaffDashboard'), { loading: RoleLoading });
+const MstDashboard = dynamic(() => import('./MstDashboard'), { loading: RoleLoading });
+const SecurityDashboard = dynamic(() => import('./SecurityDashboard'), { loading: RoleLoading });
+const PropertyAdminDashboard = dynamic(() => import('./PropertyAdminDashboard'), { loading: RoleLoading });
+const OrgAdminDashboard = dynamic(() => import('./OrgAdminDashboard'), { loading: RoleLoading });
+const MasterAdminDashboard = dynamic(() => import('./MasterAdminDashboard'), { loading: RoleLoading });
+const SoftServiceManagerDashboard = dynamic(() => import('./SoftServiceManagerDashboard'), { loading: RoleLoading });
+const SuperTenantDashboard = dynamic(() => import('./SuperTenantDashboard'), { loading: RoleLoading });
+const TenantDashboard = dynamic(() => import('./TenantDashboard'), { loading: RoleLoading });
+const VendorDashboard = dynamic(() => import('@/frontend/components/vendors/VendorDashboard'), { loading: RoleLoading });
+const ProcurementDashboard = dynamic(() => import('./ProcurementDashboard'), { loading: RoleLoading });
 
 interface BDQuickStatsData {
     total_leads: number;

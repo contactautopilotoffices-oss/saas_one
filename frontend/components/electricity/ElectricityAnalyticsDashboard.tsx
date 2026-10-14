@@ -107,11 +107,16 @@ const TabNotice: React.FC<{ title: string; detail?: string; onRetry?: () => void
     </div>
 );
 
+/** Cached data younger than this is shown without refreshing; older data is shown and refreshed in the background. */
+const CACHE_FRESH_MS = 60_000;
+
 const ElectricityAnalyticsDashboard: React.FC<ElectricityAnalyticsDashboardProps> = ({ propertyId: propIdFromProps, orgId, properties = [] }) => {
     const params = useParams();
     const propertyId = propIdFromProps || (params?.propertyId as string);
     const supabase = useMemo(() => createClient(), []);
-    const { getCachedData, setCachedData, invalidateCache } = useDataCache();
+    const { getCachedData, setCachedData } = useDataCache();
+    // Coming back to the tab: start from the last data at once (no loader), then refresh in the background.
+    const initialCached = useMemo(() => getCachedData(`electricity-analytics-${propertyId || orgId}`), []); // eslint-disable-line react-hooks/exhaustive-deps
     const { membership } = useAuth();
 
     // UI State
@@ -127,9 +132,9 @@ const ElectricityAnalyticsDashboard: React.FC<ElectricityAnalyticsDashboardProps
     const [showOCRCenter, setShowOCRCenter] = useState(false);
 
     // Data State
-    const [property, setProperty] = useState<{ name: string } | null>(null);
-    const [meters, setMeters] = useState<ElectricityMeter[]>([]);
-    const [categories, setCategories] = useState<any[]>([]);
+    const [property, setProperty] = useState<{ name: string } | null>(initialCached?.property ?? null);
+    const [meters, setMeters] = useState<ElectricityMeter[]>(initialCached?.meters ?? []);
+    const [categories, setCategories] = useState<any[]>(initialCached?.categories ?? []);
     const [rawReadings, setRawReadings] = useState<{
         today: ElectricityReading[];
         month: ElectricityReading[];
@@ -146,8 +151,8 @@ const ElectricityAnalyticsDashboard: React.FC<ElectricityAnalyticsDashboardProps
     const [pendingDateTo, setPendingDateTo] = useState<string>('');
     const [isCustomRange, setIsCustomRange] = useState(false);
 
-    const [activeTariff, setActiveTariff] = useState<number>(0);
-    const [isLoading, setIsLoading] = useState(true);
+    const [activeTariff, setActiveTariff] = useState<number>(initialCached?.activeTariff ?? 0);
+    const [isLoading, setIsLoading] = useState(!initialCached);
 
     // Bill Tracker State — a second, independent lifecycle. It must NOT share isLoading:
     // that one gates the readings skeleton, and folding the two together would hide the
@@ -184,7 +189,8 @@ const ElectricityAnalyticsDashboard: React.FC<ElectricityAnalyticsDashboardProps
     const canSetTarget = isMasterAdmin || orgRoles.some(r => SUPER_ADMIN_ROLES.includes(r));
 
     // Fetch Initial Data
-    const fetchData = useCallback(async () => {
+    // force = refresh even if the cached data is recent (a reading or tariff was just saved).
+    const fetchData = useCallback(async (force = false) => {
         if (!isValidId(propertyId) && !isValidId(orgId)) return;
         
         const supabase = createClient();
@@ -201,10 +207,11 @@ const ElectricityAnalyticsDashboard: React.FC<ElectricityAnalyticsDashboardProps
             setActiveTariff(cached.activeTariff);
             setRawReadings(cached.rawReadings);
             setIsLoading(false);
-            return;
+            // Fresh enough: done. Older: keep showing it and refresh quietly below (no loader).
+            if (!force && cached.savedAt && Date.now() - cached.savedAt < CACHE_FRESH_MS) return;
+        } else {
+            setIsLoading(true);
         }
-
-        setIsLoading(true);
 
         let metersData: ElectricityMeter[] = [];
         let activeTariffValue = 0;
@@ -311,7 +318,8 @@ const ElectricityAnalyticsDashboard: React.FC<ElectricityAnalyticsDashboardProps
                 meters: metersData,
                 categories: categoriesData,
                 activeTariff: activeTariffValue || activeTariff,
-                rawReadings: readingsData
+                rawReadings: readingsData,
+                savedAt: Date.now(),
             });
 
         } catch (error) {
@@ -1101,8 +1109,7 @@ const ElectricityAnalyticsDashboard: React.FC<ElectricityAnalyticsDashboardProps
                             <div className="sticky top-0 right-0 z-10 flex justify-end p-4">
                                 <button onClick={() => { 
                                     setShowLogModal(false); 
-                                    invalidateCache(`electricity-analytics-${propertyId || orgId}`);
-                                    fetchData(); 
+                                    fetchData(true); 
                                 }} className="p-2 bg-slate-100 hover:bg-slate-200 rounded-full transition-colors">
                                     <X className="w-5 h-5 text-slate-500" />
                                 </button>
@@ -1120,8 +1127,7 @@ const ElectricityAnalyticsDashboard: React.FC<ElectricityAnalyticsDashboardProps
                     isOpen={showTariffModal}
                     onClose={() => {
                         setShowTariffModal(false);
-                        invalidateCache(`electricity-analytics-${propertyId || orgId}`);
-                        fetchData();
+                        fetchData(true);
                     }}
                     propertyId={propertyId}
                 />

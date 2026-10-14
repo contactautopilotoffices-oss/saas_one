@@ -4,6 +4,10 @@ import type { WhatsAppKillSwitches } from './types';
 import { providerIds } from '@/backend/lib/whatsapp/interpreter/delivery.mjs';
 import { recordOutgoingContext } from '@/backend/lib/whatsapp/interpreter/context';
 import { randomUUID } from 'node:crypto';
+import { markReplied } from './InboundLedger';
+import { appendTurn } from './ConversationMemory';
+import { primeBotSwitches } from './BotSwitches';
+import { clearAnsweredObservations } from './BotLearningService';
 
 const PROJECT_API_BASE = 'https://apis.aisensy.com/project-apis/v1/project';
 
@@ -13,6 +17,8 @@ export type SendMode = 'send' | 'pretend' | 'blocked';
 export interface SendControls {
     killSwitches: WhatsAppKillSwitches;
     pretendMode: boolean;
+    /** The bot-upgrade switches, read from the SAME settings row (so a send never needs a second read). */
+    botFeatures?: Partial<Record<import('./BotSwitches').BotSwitch, boolean>> & { neverSilent: boolean; conversationMemory: boolean };
 }
 
 export interface GateOptions {
@@ -90,6 +96,7 @@ export class TaskMessagingService {
             console.error('[TaskMessagingService] Could not read WhatsApp safety settings; withholding message:', err?.message);
             return { mode: 'blocked', reason: 'Safety settings could not be read; sending is withheld as a precaution.' };
         }
+        primeBotSwitches(controls.botFeatures); // the "replied" stamp and memory after this send reuse this read
         return this.decideSendMode(controls, options);
     }
 
@@ -109,6 +116,9 @@ export class TaskMessagingService {
         options?: GateOptions;
     }): Promise<void> {
         const type = params.options?.ruleType || params.options?.messageType || 'bot_reply';
+        void markReplied(params.phone); // Pretend Mode counts as answered, so the watchdog does not log pointless apologies
+        void clearAnsweredObservations(params.phone);
+        void appendTurn(params.phone, 'bot', params.preview); // conversation memory: in Pretend Mode the chat still "happened"
         await TaskDatabaseService.logAudit({
             eventType: 'whatsapp_sent',
             details: {
@@ -180,6 +190,9 @@ export class TaskMessagingService {
                 console.error(`[TaskMessagingService] Freeform send failed with status ${res.status}:`, body);
                 return false;
             }
+            void markReplied(phone); // "never silent" ledger: this person got an answer (no-op while the switch is OFF)
+            void clearAnsweredObservations(phone);
+            void appendTurn(phone, 'bot', text); // conversation memory (no-op while the switch is OFF)
 
             if (process.env.WHATSAPP_LLM_INTERPRETER_ENABLED === 'true') {
                 const body = await res.json().catch(() => null);
@@ -205,6 +218,7 @@ export class TaskMessagingService {
             campaignName,
             templateParams: params.templateParams,
         });
+        if (res.success) { void markReplied(params.phone); void clearAnsweredObservations(params.phone); } // bot ledgers (no-op while switches are OFF)
         if (res.success && res.messageIds?.length) await recordOutgoingContext(this.formatPhone(params.phone),res.messageIds,{workflow:'task',conversationId:randomUUID()})
             .catch(() => console.warn('[TaskMessagingService] Template reply context could not be saved'));
         return res.success;
@@ -234,16 +248,25 @@ export class TaskMessagingService {
     static getCampaignForRuleType(ruleType?: string): string {
         switch (ruleType) {
             case 'morning_digest':
-                return process.env.AISENSY_TASK_MORNING_CAMPAIGN || 'task_morning_kickoff_v1';
+                return process.env.AISENSY_TASK_MORNING_CAMPAIGN || 'task_morning_kickoff_v2';
             case 'pending_reminder':
                 return process.env.AISENSY_TASK_MIDDAY_CAMPAIGN || 'task_midday_reminder_v1';
             case 'eod_summary':
                 return process.env.AISENSY_TASK_EOD_CAMPAIGN || 'task_eod_summary_v1';
             case 'overdue_alert':
-                return process.env.AISENSY_TASK_MIDDAY_CAMPAIGN || 'task_midday_reminder_v1';
+                return process.env.AISENSY_TASK_OVERDUE_CAMPAIGN || 'task_overdue_alert_v1';
+            case 'team_digest':
+                return process.env.AISENSY_TASK_TEAM_DIGEST_CAMPAIGN || 'task_manager_team_digest_v1';
             default:
-                return process.env.AISENSY_TASK_MORNING_CAMPAIGN || process.env.AISENSY_TASK_CAMPAIGN_NAME || 'task_morning_kickoff_v1';
+                return process.env.AISENSY_TASK_MORNING_CAMPAIGN || process.env.AISENSY_TASK_CAMPAIGN_NAME || 'task_morning_kickoff_v2';
         }
+    }
+
+    /**
+     * Alias for sendFreeformReply for backwards and caller compatibility.
+     */
+    static async sendFreeformMessage(phone: string, text: string): Promise<boolean> {
+        return this.sendMessage(phone, text);
     }
 
     /**
@@ -325,6 +348,11 @@ export class TaskMessagingService {
             campaignName?: string;
             templateParams?: string[];
             bypassKillSwitch?: boolean;
+            /** Plain text only: if the 24-hour window is closed the message is NOT sent (no template fallback). */
+            freeformOnly?: boolean;
+            /** Approved template only, no free-text attempt. For scheduled messages: free text outside the 24-hour window is
+             *  accepted by AiSensy but then rejected by WhatsApp ("Re-engagement message"), so the fallback never runs. */
+            templateOnly?: boolean;
         }
     ): Promise<boolean> {
         const gate = await this.resolveSendMode(options);
@@ -340,8 +368,11 @@ export class TaskMessagingService {
             return true;
         }
 
-        const sent = await this.postFreeform(phone, text);
-        if (sent) return true;
+        if (!options?.templateOnly) {
+            const sent = await this.postFreeform(phone, text);
+            if (sent) return true;
+            if (options?.freeformOnly) return false;
+        }
 
         // Fallback to Meta-approved template if outside 24h window or freeform fails
         const campaignName = options?.campaignName || this.getCampaignForRuleType(options?.ruleType);
@@ -349,14 +380,12 @@ export class TaskMessagingService {
             ? options.templateParams
             : [text];
 
-        return this.postTemplate({
+        const delivered = await this.postTemplate({
             phone,
             campaignName,
             templateParams: params,
         });
-    }
-
-    static async sendFreeformMessage(phone: string, text: string): Promise<boolean> {
-        return this.sendMessage(phone, text);
+        if (delivered) void appendTurn(phone, 'bot', text); // conversation memory (no-op while the switch is OFF)
+        return delivered;
     }
 }

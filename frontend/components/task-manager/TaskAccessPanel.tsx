@@ -25,6 +25,8 @@ interface AccessDepartment {
     peerAssign: boolean;
     notificationsDelegated: boolean;
     taskImportEnabled: boolean;
+    smartChatEnabled: boolean;
+    superuserCollabEnabled: boolean;
     memberCount: number;
     onboardedCount: number;
     members: AccessMember[];
@@ -52,7 +54,11 @@ export default function TaskAccessPanel({ orgId }: { orgId?: string }) {
     const [notice, setNotice] = useState<string | null>(null);
     const [provisioned, setProvisioned] = useState(true);
     const [nlGateway, setNlGateway] = useState(false);
+    type BotFeature = 'neverSilent' | 'conversationMemory' | 'frontDoor' | 'teamReports' | 'learningLoop' | 'promptVersions' | 'nightlyAutoTune' | 'voiceNotes';
+    const [botFeatures, setBotFeatures] = useState<Record<BotFeature, boolean>>({ neverSilent: false, conversationMemory: false, frontDoor: false, teamReports: false, learningLoop: false, promptVersions: false, nightlyAutoTune: false, voiceNotes: false });
     const [taskImportColumnMissing, setTaskImportColumnMissing] = useState(false);
+    const [smartChatColumnMissing, setSmartChatColumnMissing] = useState(false);
+    const [collabColumnMissing, setCollabColumnMissing] = useState(false);
     const [sharingColumnMissing, setSharingColumnMissing] = useState(false);
     const [notificationsColumnMissing, setNotificationsColumnMissing] = useState(false);
     const [departments, setDepartments] = useState<AccessDepartment[]>([]);
@@ -69,7 +75,10 @@ export default function TaskAccessPanel({ orgId }: { orgId?: string }) {
             if (!res.ok || !data.success) throw new Error(data.error || 'Failed to load access settings');
             setProvisioned(Boolean(data.provisioned));
             setNlGateway(Boolean(data.nlGatewayEnabled));
+            setBotFeatures({ neverSilent: data.botFeatures?.neverSilent === true, conversationMemory: data.botFeatures?.conversationMemory === true, frontDoor: data.botFeatures?.frontDoor === true, teamReports: data.botFeatures?.teamReports === true, learningLoop: data.botFeatures?.learningLoop === true, promptVersions: data.botFeatures?.promptVersions === true, nightlyAutoTune: data.botFeatures?.nightlyAutoTune === true, voiceNotes: data.botFeatures?.voiceNotes === true });
             setTaskImportColumnMissing(Boolean(data.taskImportColumnMissing));
+            setSmartChatColumnMissing(Boolean(data.smartChatColumnMissing));
+            setCollabColumnMissing(Boolean(data.superuserCollabColumnMissing));
             setSharingColumnMissing(Boolean(data.teamSharingColumnMissing));
             setNotificationsColumnMissing(Boolean(data.notificationsColumnMissing));
             if (data.readable === false) setError('Access settings could not be read. Everyone is treated as locked until this works again.');
@@ -134,6 +143,16 @@ export default function TaskAccessPanel({ orgId }: { orgId?: string }) {
         post(`notif-${d.departmentId}`, { action: 'set_notifications_delegated', departmentId: d.departmentId, enabled: next });
     };
 
+    // Reporting manager (moved here from the old "Manager Role Assignment & WhatsApp Kickoff" card, 2026-10-12).
+    const toggleManager = (m: AccessMember) => {
+        const next = m.taskRole !== 'reporting_manager';
+        const text = next
+            ? `Make ${m.name} a REPORTING MANAGER?\n\nThey can see and assign tasks across their department, and get their team's progress at midday (if anything is pending) and in the evening. No WhatsApp message is sent by this button. You can remove this later.`
+            : `Remove ${m.name}'s manager role?\n\nThey go back to a normal employee.`;
+        if (!window.confirm(text)) return;
+        post(`manager-${m.userId}`, { action: 'set_manager', userId: m.userId, enabled: next });
+    };
+
     const toggleSuperuser = (m: AccessMember) => {
         const next = m.taskRole !== 'superuser';
         const text = next
@@ -165,6 +184,32 @@ export default function TaskAccessPanel({ orgId }: { orgId?: string }) {
         post('nl-gateway', { action: 'set_nl_gateway', enabled: next });
     };
 
+    const toggleBotFeature = (feature: BotFeature) => {
+        const next = !botFeatures[feature];
+        const phase5 = feature === 'learningLoop' ? 'Capture likely mistakes for admin review? Requires Phase 5 SQL.' : feature === 'promptVersions' ? 'Use approved database prompt versions? Invalid or unavailable versions fall back to built-in instructions.' : feature === 'nightlyAutoTune' ? 'Draft and safety-test at most one candidate per night after 02:00 IST? Nothing activates automatically.' : null;
+        const text = phase5 ? `Switch "${feature}" ${next ? 'ON' : 'OFF'}?\n\n${phase5}` : feature === 'voiceNotes'
+            ? (next
+                ? 'Switch "Voice notes" ON?\n\nEveryone who uses the Task Manager can send a WhatsApp voice note instead of typing. It is turned into text, they see "🎙️ I heard: …", and changes still need their YES. While the sandbox is ON, only sandbox numbers can use it.\n\nNo SQL file needed. Needs GROQ_VOICE_API_KEY on the server.'
+                : 'Switch "Voice notes" OFF? Voice notes are ignored again; typing works as before.')
+            : feature === 'teamReports'
+            ? (next
+                ? 'Switch "Team reports" ON?\n\nIn Smart chat, anyone who can give work to others can ask "how is my team doing today?" or "anything overdue in my team?". The answer only includes people they are already allowed to see. Read-only: nothing is changed.\n\nNo SQL file needed.'
+                : 'Switch "Team reports" OFF? Team questions stop working; the AI goes back to exactly its previous instructions.')
+            : feature === 'frontDoor'
+            ? (next
+                ? 'Switch "One front door" ON?\n\nFor departments with Smart chat ON:\n• "done 2", "done all" and "tasks" are answered at once (no AI, no YES).\n• "undo" reverses your own last change within 10 minutes (not hand-overs).\n• When the AI is down, people get a short help line instead of the 1 / 2 menu.\n\nNo SQL file needed.'
+                : 'Switch "One front door" OFF? Smart chat goes back to asking YES for every completion, and "undo" stops working.')
+            : feature === 'neverSilent'
+            ? (next
+                ? 'Switch "Never silent" ON?\n\nNeeds the SQL file supabase/migrations/20261011000001_whatsapp_inbound_ledger.sql run once first.\n\nEvery Task Manager WhatsApp message is noted (no message text). If the bot does not reply, the person gets one short apology at the next 15-minute check. While Pretend Mode is ON no apology is actually sent.'
+                : 'Switch "Never silent" OFF? Messages are no longer noted and no apologies are sent.')
+            : (next
+                ? 'Switch "Conversation memory" ON?\n\nNeeds the SQL file supabase/migrations/20261011000002_whatsapp_conversation_memory.sql run once first.\n\nThe last 20 messages of each person\'s chat with the bot are kept for 24 hours so the AI can follow the conversation, then deleted. Nobody can see them in the app.'
+                : 'Switch "Conversation memory" OFF?\n\nThe AI stops reading earlier messages and ALL stored chat memories are deleted now.');
+        if (!window.confirm(text)) return;
+        post(`bot-${feature}`, { action: 'set_bot_feature', feature, enabled: next });
+    };
+
     const toggleTaskImport = (d: AccessDepartment) => {
         const next = !d.taskImportEnabled;
         const text = next
@@ -176,6 +221,24 @@ Anyone in ${d.name} who is unlocked for the Task Manager can then send an Excel 
 Their files and images go back to being handled exactly as before.`;
         if (!window.confirm(text)) return;
         post(`import-${d.departmentId}`, { action: 'set_task_import', departmentId: d.departmentId, enabled: next });
+    };
+
+    const toggleSuperuserCollab = (d: AccessDepartment) => {
+        const next = !d.superuserCollabEnabled;
+        const text = next
+            ? `Let ${d.name} give tasks to a superuser?\n\nThis is a PERMISSION change. People in ${d.name} will be able to give tasks to a superuser (for example Saniel), see the tasks they gave him, and send him "these are pending for you" reminders, now or scheduled, plus one shared regular reminder for the team. His replies ("working on it", "done") are passed back to whoever gave him each task, as a summary, not his exact words. Nothing else about who can assign to whom changes. While Pretend Mode is ON no WhatsApp message is actually sent.`
+            : `Stop ${d.name} from giving tasks to a superuser?\n\nThe "superuser" tab disappears for them and scheduled reminders will no longer be sent. Tasks already given stay where they are.`;
+        if (!window.confirm(text)) return;
+        post(`collab-${d.departmentId}`, { action: 'set_superuser_collab', departmentId: d.departmentId, enabled: next });
+    };
+
+    const toggleSmartChat = (d: AccessDepartment) => {
+        const next = !d.smartChatEnabled;
+        const text = next
+            ? `Let ${d.name} talk to the Task Manager in plain language?\n\nAnyone in ${d.name} who is unlocked can then write normally on WhatsApp ("what's pending?", "give Vidya a task to chase the quote", "finished the carpet one"). Every change is confirmed first, and anything unclear is asked about, never guessed. If the AI is unavailable, or a message is about rooms or tickets, the old bot answers as before. While Pretend Mode is ON no reply is actually sent (changes after YES still happen). While the sandbox is ON only the sandbox numbers can use it.`
+            : `Switch smart chat OFF for ${d.name}?\n\nThe bot answers them exactly as before.`;
+        if (!window.confirm(text)) return;
+        post(`smart-${d.departmentId}`, { action: 'set_smart_chat', departmentId: d.departmentId, enabled: next });
     };
 
     const toggleExpanded = (id: string) => {
@@ -240,6 +303,20 @@ Their files and images go back to being handled exactly as before.`;
                 </div>
             )}
 
+            {provisioned && collabColumnMissing && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs">
+                    <p className="font-black flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Working with a superuser needs one more SQL file</p>
+                    <p>Run <code className="font-mono bg-white/70 px-1 rounded">supabase/migrations/20261007000006_task_manager_superuser_pings.sql</code> once in the Supabase SQL Editor. Until then no team can give tasks to a superuser and its buttons are disabled.</p>
+                </div>
+            )}
+
+            {provisioned && smartChatColumnMissing && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs">
+                    <p className="font-black flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Smart chat needs one more SQL file</p>
+                    <p>Run <code className="font-mono bg-white/70 px-1 rounded">supabase/migrations/20261007000005_task_manager_smart_chat.sql</code> once in the Supabase SQL Editor. Until then smart chat is OFF for every team and its buttons are disabled.</p>
+                </div>
+            )}
+
             {provisioned && taskImportColumnMissing && (
                 <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs">
                     <p className="font-black flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Task import needs one more SQL file</p>
@@ -261,6 +338,32 @@ Their files and images go back to being handled exactly as before.`;
                     {nlGateway ? 'ON' : 'OFF'}
                 </button>
             </div>
+
+            {([
+                { key: 'neverSilent', title: 'Never silent', body: 'If the bot does not reply to a Task Manager message, the person gets one short "Sorry, please try again" at the next 15-minute check. No message text is stored. Needs SQL file 20261011000001 run once.' },
+                { key: 'frontDoor', title: 'One front door', body: 'For Smart-chat departments: "done 2" / "done all" / "tasks" answered instantly without AI, "undo" within 10 minutes, and a short help line instead of the 1 / 2 menu when the AI is down. No SQL file needed.' },
+                { key: 'teamReports', title: 'Team reports', body: 'In Smart chat, managers (anyone who can give work to others) can ask "how is my team doing today?" — done / in progress / overdue for the people they may already see. Read-only. No SQL file needed.' },
+                { key: 'conversationMemory', title: 'Conversation memory', body:'The AI remembers the last 20 messages of each chat for 24 hours, so "make it tomorrow" or "the second one" are understood. Nobody can see them in the app. Needs SQL file 20261011000002 run once.' },
+                { key: 'learningLoop', title: 'Learning loop', body: 'Capture likely mistakes for admin review and permanent live test cases. Needs SQL file 20261011000003 run once.' },
+                { key: 'promptVersions', title: 'Prompt versions', body: 'Use approved tunable instruction versions without redeploying. Locked safety rules remain in code.' },
+                { key: 'voiceNotes', title: 'Voice notes', body: 'Everyone using the Task Manager can send a WhatsApp voice note instead of typing: it is turned into text and handled like a typed message (changes still need YES). Sandbox ON → only sandbox numbers. No SQL needed.' },
+                { key: 'nightlyAutoTune', title: 'Nightly auto-tune', body: 'After 02:00 IST, draft and safety-test one candidate only when new labelled cases exist. Never auto-activates.' },
+            ] as const).map(f => (
+                <div key={f.key} className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                        <p className="font-black text-slate-900">{f.title} <span className="text-[10px] font-black uppercase tracking-wider text-indigo-700">WhatsApp bot</span></p>
+                        <p className="text-slate-600">{f.body}</p>
+                    </div>
+                    <button
+                        type="button"
+                        disabled={busyKey === `bot-${f.key}`}
+                        onClick={() => toggleBotFeature(f.key)}
+                        className={`px-3.5 py-1.5 rounded-xl font-black text-xs uppercase tracking-wider cursor-pointer disabled:opacity-50 whitespace-nowrap ${botFeatures[f.key] ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-slate-200 hover:bg-slate-300 text-slate-700'}`}
+                    >
+                        {botFeatures[f.key] ? 'ON' : 'OFF'}
+                    </button>
+                </div>
+            ))}
 
             <div className="p-3 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-950 text-xs">
                 While Pretend Mode is ON no kickoff is really sent. After you send a kickoff yourself, use
@@ -299,6 +402,32 @@ Their files and images go back to being handled exactly as before.`;
                                     )}
                                 </button>
                                 <div className="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    disabled={!provisioned || collabColumnMissing || busyKey === `collab-${d.departmentId}`}
+                                    onClick={() => toggleSuperuserCollab(d)}
+                                    className={`px-3 py-1.5 rounded-xl font-bold text-[11px] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                                        d.superuserCollabEnabled
+                                            ? 'bg-amber-600 hover:bg-amber-700 text-white'
+                                            : 'bg-white border border-slate-300 hover:bg-slate-100 text-slate-600'
+                                    }`}
+                                    title="This team can give tasks to a superuser and send them reminders"
+                                >
+                                    Send tasks to a superuser: {d.superuserCollabEnabled ? 'ON' : 'OFF'}
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={!provisioned || smartChatColumnMissing || busyKey === `smart-${d.departmentId}`}
+                                    onClick={() => toggleSmartChat(d)}
+                                    className={`px-3 py-1.5 rounded-xl font-bold text-[11px] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                                        d.smartChatEnabled
+                                            ? 'bg-violet-600 hover:bg-violet-700 text-white'
+                                            : 'bg-white border border-slate-300 hover:bg-slate-100 text-slate-600'
+                                    }`}
+                                    title="People in this team can talk to the Task Manager in plain language on WhatsApp"
+                                >
+                                    Smart chat: {d.smartChatEnabled ? 'ON' : 'OFF'}
+                                </button>
                                 <button
                                     type="button"
                                     disabled={!provisioned || taskImportColumnMissing || busyKey === `import-${d.departmentId}`}
@@ -382,6 +511,16 @@ Their files and images go back to being handled exactly as before.`;
                                                         </span>
                                                     )}
                                                 </div>
+                                                {provisioned && m.taskRole !== 'superuser' && (
+                                                    <button
+                                                        type="button"
+                                                        disabled={busyKey === `manager-${m.userId}`}
+                                                        onClick={() => toggleManager(m)}
+                                                        className={`text-[11px] font-bold underline cursor-pointer disabled:opacity-50 mr-3 ${m.taskRole === 'reporting_manager' ? 'text-rose-600 hover:text-rose-800' : 'text-emerald-700 hover:text-emerald-900'}`}
+                                                    >
+                                                        {m.taskRole === 'reporting_manager' ? 'Remove manager' : 'Make manager'}
+                                                    </button>
+                                                )}
                                                 {provisioned && (
                                                     <button
                                                         type="button"

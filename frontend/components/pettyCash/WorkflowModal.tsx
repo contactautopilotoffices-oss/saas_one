@@ -26,10 +26,13 @@ export default function WorkflowModal({ title, children, onClose, busy = false }
         window.addEventListener('keydown', handler); return () => window.removeEventListener('keydown', handler);
     }, [onClose, busy]);
     if (!mounted) return null;
-    return createPortal(<div className="fixed inset-0 z-[100] bg-black/60 flex items-center justify-center p-3 sm:p-6" role="presentation">
-        <section ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-label={title} className="petty-cash-workflow w-full max-w-3xl max-h-[90dvh] overflow-y-auto rounded-2xl bg-surface text-text-primary shadow-2xl">
-            <div className="sticky top-0 z-10 flex justify-between items-center gap-4 bg-surface border-b border-border px-5 py-4 sm:px-6"><h2 className="text-lg font-semibold">{title}</h2><button type="button" disabled={busy} onClick={onClose} aria-label="Close dialog" className="flex items-center justify-center w-9 h-9 rounded-lg border border-border text-text-secondary hover:bg-surface-elevated"><X size={18} /></button></div>
-            <div className="pc-modal-body space-y-4">{children}</div>
+    return createPortal(<div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6" role="presentation">
+        <section ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-label={title} className="petty-cash-workflow w-full max-w-3xl max-h-[90dvh] overflow-y-auto rounded-3xl bg-white dark:bg-[#161b22] text-slate-900 dark:text-white shadow-2xl border border-slate-100 dark:border-[#30363d]">
+            <div className="sticky top-0 z-10 flex justify-between items-center gap-4 bg-white/95 dark:bg-[#161b22]/95 backdrop-blur-md border-b border-slate-100 dark:border-[#30363d] px-6 py-4.5">
+                <h2 className="text-xl font-black text-slate-900 dark:text-white tracking-tight">{title}</h2>
+                <button type="button" disabled={busy} onClick={onClose} aria-label="Close dialog" className="flex items-center justify-center w-9 h-9 rounded-xl border border-slate-200 dark:border-[#30363d] text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#21262d] transition-colors"><X size={18} /></button>
+            </div>
+            <div className="pc-modal-body p-6 space-y-4">{children}</div>
         </section>
     </div>, document.body);
 }

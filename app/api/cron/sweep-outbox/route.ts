@@ -68,7 +68,8 @@ export async function GET(request: NextRequest) {
                 .from('event_outbox')
                 .update({ status: 'processing', updated_at: new Date().toISOString() })
                 .eq('id', event.id)
-                .eq('status', event.status) 
+                .eq('status', event.status)
+                .eq('updated_at', event.updated_at) 
                 .select()
                 .maybeSingle();
 
@@ -111,7 +112,7 @@ export async function GET(request: NextRequest) {
                     const { WhatsAppEventProcessor } = await import('@/backend/services/WhatsAppEventProcessor');
                     await WhatsAppEventProcessor.processEvent(claimData);
                 } catch (waErr) {
-                    if(claimData.event_type?.startsWith('PETTY_CASH_'))throw waErr;
+                    if(claimData.event_type?.startsWith('PETTY_CASH_') || claimData.event_type === 'REQUISITION_APPROVAL_BATCH_REQUESTED') throw waErr;
                     console.error(`[SweepOutbox] WhatsAppEventProcessor error for event ${event.id}:`, waErr);
                 }
                 

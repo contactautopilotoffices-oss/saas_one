@@ -2,9 +2,10 @@
 
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Send, Lock, Clock, AlertTriangle, ShieldCheck, ArrowUpRight, User, UserCheck, CheckCircle, CheckCheck, MessageSquare, Paperclip, ExternalLink } from 'lucide-react';
+import { X, Send, Lock, Clock, AlertTriangle, ShieldCheck, ShieldAlert, ArrowUpRight, User, UserCheck, CheckCircle, CheckCheck, MessageSquare, Paperclip, ExternalLink } from 'lucide-react';
 import SLALiveTimer from '@/frontend/components/hr/SLALiveTimer';
 import { formatDateIN, formatDateTimeIN, formatDateTimeShortIN } from '@/frontend/lib/dateFormat';
+import { hrDataCache } from '@/frontend/components/hr/hrDataCache';
 
 function getInitials(name?: string | null): string {
     if (!name) return 'U';
@@ -208,6 +209,8 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
     const [activeTab, setActiveTab] = useState<'discussion' | 'audit'>('discussion');
     const [resolutionNoteInput, setResolutionNoteInput] = useState('');
     const [showResolutionForm, setShowResolutionForm] = useState(false);
+    const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
+    const [resolutionError, setResolutionError] = useState('');
 
     const [replyAttachments, setReplyAttachments] = useState<string[]>([]);
     const [uploadingReplyFile, setUploadingReplyFile] = useState(false);
@@ -216,6 +219,10 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
     const [escalationReasonInput, setEscalationReasonInput] = useState('');
     const [escalating, setEscalating] = useState(false);
     const [escalateError, setEscalateError] = useState('');
+    const [showForceCloseModal, setShowForceCloseModal] = useState(false);
+    const [forceCloseNoteInput, setForceCloseNoteInput] = useState('');
+    const [forceClosing, setForceClosing] = useState(false);
+    const [fetchError, setFetchError] = useState<string | null>(null);
 
     useEffect(() => {
         setMounted(true);
@@ -223,33 +230,63 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
 
     useEffect(() => {
         if (isOpen && ticketId) {
-            if (initialTicket) {
+            setFetchError(null);
+
+            // 1. Instant Cache Check: If already viewed, load instantly in 0ms!
+            const cached = hrDataCache.getTicketDetail(ticketId);
+            if (cached.data) {
+                setTicket(cached.data);
+                setLoading(false);
+                // Silent background revalidation
+                fetchTicketDetail(true);
+            } else if (initialTicket) {
+                // 2. Instant initial ticket display from list row
                 setTicket(initialTicket);
+                setLoading(false);
+                // Background fetch for comments and audit logs
+                fetchTicketDetail(true);
+            } else {
+                // 3. Fallback when opening directly with no local cache
+                setTicket(null);
+                setLoading(true);
+                fetchTicketDetail(false);
             }
-            fetchTicketDetail();
         } else if (!isOpen) {
-            setTicket(null);
+            setFetchError(null);
             setCommentText('');
             setResolutionNoteInput('');
             setShowResolutionForm(false);
             setShowEscalateForm(false);
             setEscalationReasonInput('');
             setEscalateError('');
+            setShowForceCloseModal(false);
+            setForceCloseNoteInput('');
         }
     }, [isOpen, ticketId]);
 
-    const fetchTicketDetail = async () => {
-        setLoading(true);
+    const fetchTicketDetail = async (silent = false) => {
+        if (!ticketId) return;
+        if (!silent) setLoading(true);
+        setFetchError(null);
         try {
             const res = await fetch(`/api/hr/tickets/${ticketId}?userId=${currentUserId || ''}&role=${currentUserRole || ''}`);
             const text = await res.text();
             let data: any = {};
             try { data = text ? JSON.parse(text) : {}; } catch {}
-            if (data.success) {
+            if (data.success && data.data) {
+                hrDataCache.setTicketDetail(ticketId, data.data);
                 setTicket(data.data);
+                setFetchError(null);
+            } else {
+                if (!silent) {
+                    setFetchError(data.error || 'Failed to load ticket information.');
+                }
             }
-        } catch (err) {
+        } catch (err: any) {
             console.error('Error fetching HR ticket detail:', err);
+            if (!silent) {
+                setFetchError(err.message || 'Failed to load ticket information.');
+            }
         } finally {
             setLoading(false);
         }
@@ -322,7 +359,40 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
     };
 
     const handleUpdateStatus = async (newStatus: string, escalate: boolean = false, resolutionNote?: string, action?: string) => {
+        setResolutionError('');
+
+        // MANDATORY RESOLUTION NOTE CHECK: Only required when resolving, not when acknowledging
+        if ((newStatus === 'pending_acknowledgement' || newStatus === 'resolved' || action === 'resolve') && action !== 'acknowledge') {
+            const finalNote = (resolutionNote !== undefined ? resolutionNote : resolutionNoteInput)?.trim();
+            if (!finalNote) {
+                setResolutionError('A resolution note is strictly mandatory before resolving this ticket.');
+                return;
+            }
+        }
+
+        setUpdatingStatus(newStatus || action || 'loading');
+
+        const optimisticStatus = (newStatus === 'resolved' || action === 'resolve') ? 'pending_acknowledgement' : newStatus;
+
+        // Optimistic UI state update so user sees instant feedback
+        setTicket((prev: any) => {
+            if (!prev) return prev;
+            return {
+                ...prev,
+                status: optimisticStatus,
+                resolution_note: resolutionNote || prev.resolution_note,
+                resolved_by_user_id: currentUserId || prev.resolved_by_user_id,
+                resolved_at: prev.resolved_at || new Date().toISOString()
+            };
+        });
+
+        // Immediately update cache and local session
+        if (ticketId) {
+            hrDataCache.updateTicketStatus(ticketId, optimisticStatus);
+        }
+
         try {
+            const effectiveNote = resolutionNote !== undefined ? resolutionNote : (resolutionNoteInput?.trim() || undefined);
             const res = await fetch(`/api/hr/tickets/${ticketId}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
@@ -330,7 +400,7 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
                     status: newStatus,
                     actor_user_id: currentUserId,
                     escalate,
-                    resolution_note: resolutionNote,
+                    resolution_note: effectiveNote,
                     resolved_by_user_id: currentUserId,
                     action
                 })
@@ -341,15 +411,32 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
             if (data.success) {
                 setShowResolutionForm(false);
                 setResolutionNoteInput('');
-                fetchTicketDetail();
+                setResolutionError('');
+                const finalStatus = data.data?.status || optimisticStatus;
+                if (data.data) {
+                    setTicket(data.data);
+                    hrDataCache.setTicketDetail(ticketId, data.data);
+                } else {
+                    fetchTicketDetail();
+                }
+                if (ticketId) {
+                    hrDataCache.updateTicketStatus(ticketId, finalStatus);
+                }
                 onRefresh();
                 if (typeof window !== 'undefined') {
-                    window.dispatchEvent(new CustomEvent('hr-ticket-updated', { detail: { ticketId, status: newStatus, action } }));
+                    window.dispatchEvent(new CustomEvent('hr-ticket-updated', { detail: { ticketId, status: finalStatus, action, updatedTicket: data.data } }));
                     window.dispatchEvent(new CustomEvent('app-pending-actions-refresh'));
                 }
+            } else {
+                setResolutionError(data.error || 'Failed to update ticket status');
+                fetchTicketDetail(); // Rollback to authoritative state
             }
-        } catch (err) {
+        } catch (err: any) {
             console.error('Error updating status:', err);
+            setResolutionError(err.message || 'Error updating status');
+            fetchTicketDetail();
+        } finally {
+            setUpdatingStatus(null);
         }
     };
 
@@ -388,28 +475,83 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
         }
     };
 
+    const handleForceClose = async () => {
+        if (!forceCloseNoteInput || !forceCloseNoteInput.trim()) {
+            setResolutionError('A reason note is strictly mandatory to force close this ticket.');
+            return;
+        }
+        setForceClosing(true);
+        setResolutionError('');
+        try {
+            const res = await fetch(`/api/hr/tickets/${ticketId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    status: 'pending_acknowledgement',
+                    action: 'force_close',
+                    force_close: true,
+                    force_close_note: forceCloseNoteInput.trim(),
+                    resolution_note: forceCloseNoteInput.trim(),
+                    actor_user_id: currentUserId,
+                    actor_role: currentUserRole,
+                    resolved_by_user_id: currentUserId
+                })
+            });
+            const text = await res.text();
+            let data: any = {};
+            try { data = text ? JSON.parse(text) : {}; } catch {}
+            if (data.success) {
+                setShowForceCloseModal(false);
+                setForceCloseNoteInput('');
+                fetchTicketDetail();
+                onRefresh();
+                if (typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('hr-ticket-updated', { detail: { ticketId, status: 'pending_acknowledgement', action: 'force_close' } }));
+                    window.dispatchEvent(new CustomEvent('app-pending-actions-refresh'));
+                }
+            } else {
+                setResolutionError(data.error || 'Failed to force close ticket.');
+            }
+        } catch (err: any) {
+            setResolutionError(err.message || 'Failed to force close ticket.');
+        } finally {
+            setForceClosing(false);
+        }
+    };
+
     if (!isOpen || !ticketId || !mounted) return null;
 
     const currentLvl = ticket?.current_level || 1;
     const isConfOrAnon = Boolean(ticket?.is_confidential || ticket?.is_anonymous || ticket?.ticket_type === 'confidential_feedback' || ticket?.ticket_type === 'anonymous_feedback' || ticket?.ticket_type === 'confidential');
 
+    // ONLY the user who is actively assigned to this ticket at the current level is considered assigned.
+    // Managers are NOT assigned unless the ticket is explicitly assigned to them (or an unassigned level 1 grievance).
     const isAssignedToMe = Boolean(
         currentUserId && (
             ticket?.assigned_to_user_id === currentUserId ||
             ticket?.assigned_to?.id === currentUserId ||
-            (!isConfOrAnon && currentLvl === 1 && ticket?.manager_user_id === currentUserId) ||
-            (!isConfOrAnon && currentLvl === 1 && ticket?.employee_snapshot?.manager_user_id === currentUserId)
+            (!ticket?.assigned_to_user_id && !isConfOrAnon && currentLvl === 1 && ticket?.ticket_type === 'grievance' && (ticket?.manager_user_id === currentUserId || ticket?.employee_snapshot?.manager_user_id === currentUserId))
         )
     );
-    const isRaisedByMe = Boolean(currentUserId && ticket?.raised_by_user_id === currentUserId);
+    const isRaisedByMe = Boolean(
+        currentUserId && (
+            ticket?.raised_by_user_id === currentUserId ||
+            ticket?.raised_by?.id === currentUserId
+        )
+    );
+    const isSubmitter = isRaisedByMe;
     
     // Check if user is active authority for current level
     const normalizedRole = (currentUserRole || '').toLowerCase();
-    const isHrRole = ['hr', 'hr_head', 'hr_manager', 'hr_ops'].includes(normalizedRole);
-    const isSuperAdmin = ['org_super_admin', 'master_admin', 'super_admin', 'ops_super_admin'].includes(normalizedRole);
-    const isHandler = isAssignedToMe || (Array.isArray(ticket?.assigned_history) && ticket.assigned_history.includes(currentUserId) && (!isConfOrAnon || (currentUserId !== ticket.manager_user_id && currentUserId !== ticket.employee_snapshot?.manager_user_id)));
+    const isSuperAdmin = ['org_super_admin', 'master_admin', 'super_admin', 'ops_super_admin', 'org_admin'].includes(normalizedRole);
+    // HR roles ONLY: Super Admins are strictly excluded from Force Close
+    const isHrRole = !isSuperAdmin && (
+        ticket?.user_is_hr_authority === true ||
+        ['hr', 'hr_head', 'hr_manager', 'hr_ops', 'hr_admin', 'director'].includes(normalizedRole) ||
+        (normalizedRole.includes('hr') && !normalizedRole.includes('super_admin'))
+    );
+    const isHandler = isAssignedToMe || (Array.isArray(ticket?.assigned_history) && ticket.assigned_history.includes(currentUserId) && currentUserId !== ticket?.manager_user_id);
 
-    const isSubmitter = Boolean(currentUserId && ticket?.raised_by_user_id === currentUserId);
     const canViewInternalNotes = Boolean(isSuperAdmin || (isHandler && !isSubmitter) || (isHrRole && !isSubmitter));
 
     const visibleAuditLogs = (() => {
@@ -423,40 +565,102 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
         });
     })();
 
-    let canChangeStatus = isSuperAdmin || isAssignedToMe;
-    if (!canChangeStatus) {
-        if (currentLvl === 2 && (normalizedRole === 'hr' || normalizedRole === 'hr_head' || normalizedRole === 'hr_manager')) {
-            canChangeStatus = true;
-        } else if (currentLvl === 3 && (normalizedRole === 'hr' || normalizedRole === 'hr_head')) {
-            canChangeStatus = true;
-        } else if (currentLvl === 4 && normalizedRole === 'director') {
-            canChangeStatus = true;
+    // SUBMITTER PROTECTION: A ticket submitter can NEVER resolve, mark in progress, or advance status on their own ticket!
+    // Even if the submitter is Ops Super Admin, Org Super Admin, HR, or Manager.
+    // Resolution can ONLY be completed by the assigned handler or an HR/Super authority who did NOT submit the ticket.
+    let canChangeStatus = false;
+    if (!isRaisedByMe) {
+        canChangeStatus = isSuperAdmin || isAssignedToMe || isHrRole;
+        if (!canChangeStatus) {
+            if (currentLvl === 2 && (normalizedRole === 'hr' || normalizedRole === 'hr_head' || normalizedRole === 'hr_manager')) {
+                canChangeStatus = true;
+            } else if (currentLvl === 3 && (normalizedRole === 'hr' || normalizedRole === 'hr_head')) {
+                canChangeStatus = true;
+            } else if (currentLvl === 4 && (normalizedRole === 'director' || normalizedRole.includes('director'))) {
+                canChangeStatus = true;
+            }
         }
     }
 
-    // Submitter cannot resolve or change progress on their own ticket unless they are the active assigned handler
-    if (isRaisedByMe && !isAssignedToMe && !isSuperAdmin) {
-        canChangeStatus = false;
-    }
-
-    // HR roles, Admins, and Handlers can ALWAYS add internal notes even if ticket is assigned to someone else
-    const canAddInternalNote = isHrRole || isSuperAdmin || isHandler || canChangeStatus;
+    // HR roles, Admins, and Handlers can ALWAYS add internal notes even if ticket is assigned to someone else (unless they submitted it)
+    const canAddInternalNote = !isSubmitter && (isHrRole || isSuperAdmin || isHandler || canChangeStatus);
 
     const isTicketResolvedOrClosed = ticket?.status === 'resolved' || ticket?.status === 'closed' || ticket?.status === 'pending_acknowledgement';
 
-    // Manual escalation: enabled per ticket type in Admin Config, available to current handler and authorized admins
+    // HR Authority Force Close: STRICTLY HR roles only (Super Admins and ticket submitters are NOT allowed to force close)
+    // Preserves submitter acknowledgement: routes open tickets to pending_acknowledgement
+    const canForceClose = isHrRole && !isRaisedByMe && !isTicketResolvedOrClosed;
+
+    // Manual escalation: ONLY the user who is actively assigned at this level can manually escalate it to the next level
+    // (Submitters, non-assigned managers, and non-assigned admins cannot manually escalate)
     const nextEscalationLevel = currentLvl + 1;
     const nextEscalationOwner = ticket?.escalation_flow?.find((s: any) => s.level === nextEscalationLevel)?.assignee;
-    const canActorEscalate = (isAssignedToMe || isSuperAdmin || isHrRole || canChangeStatus) && !(isRaisedByMe && !isAssignedToMe && !isSuperAdmin);
+    const canActorEscalate = isAssignedToMe && !isRaisedByMe;
     const canManuallyEscalate = Boolean(ticket?.manual_escalation_enabled) && canActorEscalate && !isTicketResolvedOrClosed && currentLvl < (ticket?.max_level || 4);
 
     const getClosingDetails = () => {
         if (!ticket) return { levelNum: 1, levelLabel: 'Level 1', resolverName: 'HR Head' };
         const levelNum = ticket.current_level || 1;
-        const levelLabel = `Level ${levelNum} (${ticket.level_owners?.[`l${levelNum}`] || 'HR Head'})`;
-        const resolverName = ticket.resolved_by_user_id === ticket.assigned_to_user_id && ticket.assigned_to?.full_name
-            ? ticket.assigned_to.full_name
-            : (ticket.level_owners?.[`l${levelNum}`] || 'HR Head');
+        const isForceClosed = Boolean(ticket.employee_snapshot?.force_closed);
+        const levelLabel = isForceClosed
+            ? 'HR Authority Intervention'
+            : `Level ${levelNum} (${ticket.level_owners?.[`l${levelNum}`] || 'HR Head'})`;
+
+        // 1. Identify the EXACT individual who closed / resolved the ticket
+        let resolverName = '';
+        if (ticket.resolved_by?.full_name) {
+            resolverName = ticket.resolved_by.full_name;
+        } else if (ticket.resolved_by?.name) {
+            resolverName = ticket.resolved_by.name;
+        } else if (ticket.resolved_by?.email) {
+            resolverName = ticket.resolved_by.email;
+        } else if (ticket.employee_snapshot?.resolved_by_name) {
+            resolverName = ticket.employee_snapshot.resolved_by_name;
+        }
+
+        // 2. Search audit logs for the individual actor who resolved or force closed
+        if (!resolverName && Array.isArray(ticket.audit_logs)) {
+            const resolveLog = ticket.audit_logs.find((l: any) => {
+                const act = (l.action || '').toUpperCase();
+                return act.includes('RESOLV') || act.includes('FORCE_CLOSE');
+            });
+            if (resolveLog?.actor?.full_name) {
+                resolverName = resolveLog.actor.full_name;
+            } else if (resolveLog?.actor?.name) {
+                resolverName = resolveLog.actor.name;
+            } else if (resolveLog?.actor?.email) {
+                resolverName = resolveLog.actor.email;
+            }
+        }
+
+        // 3. Match resolved_by_user_id with assigned_to
+        if (!resolverName && ticket.resolved_by_user_id) {
+            if (ticket.assigned_to_user_id === ticket.resolved_by_user_id && ticket.assigned_to?.full_name) {
+                resolverName = ticket.assigned_to.full_name;
+            }
+        }
+
+        // 4. Fallbacks
+        if (!resolverName) {
+            if (isForceClosed) {
+                resolverName = 'HR Authority';
+            } else {
+                const owner = ticket.level_owners?.[`l${levelNum}`];
+                // Only use level_owners if it's a single person without '&'
+                if (owner && !owner.includes('&')) {
+                    resolverName = owner;
+                } else if (ticket.assigned_to?.full_name && !ticket.assigned_to.full_name.includes('&')) {
+                    resolverName = ticket.assigned_to.full_name;
+                } else {
+                    resolverName = owner || 'HR Authority';
+                }
+            }
+        }
+
+        if (isForceClosed && !resolverName.includes('HR Authority')) {
+            resolverName = `${resolverName} (HR Authority)`;
+        }
+
         return { levelNum, levelLabel, resolverName };
     };
 
@@ -466,6 +670,7 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
         if (act.includes('CREATED')) return { bg: 'bg-[#587e85]/10 text-[#587e85] dark:text-[#6c9a9e] border-[#587e85]/20', label: 'Ticket Created' };
         if (act.includes('ESCALATED')) return { bg: 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20', label: action };
         if (act.includes('RESOLVED')) return { bg: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20', label: 'Resolved' };
+        if (act.includes('FORCE_CLOSED') || act.includes('FORCE_CLOSE')) return { bg: 'bg-rose-500/10 text-rose-700 dark:text-rose-400 border-rose-500/20', label: 'Force Closed by HR (Pending Submitter Acknowledgement)' };
         if (act.includes('ACKNOWLEDGED')) return { bg: 'bg-teal-500/10 text-teal-700 dark:text-teal-400 border-teal-500/20', label: 'Acknowledged by Employee' };
         if (act.includes('REOPENED')) return { bg: 'bg-rose-500/10 text-rose-700 dark:text-rose-400 border-rose-500/20', label: 'Reopened' };
         return { bg: 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200', label: action };
@@ -648,16 +853,17 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
                     </button>
                 </div>
 
-                {loading && !ticket ? (
-                    <TicketDetailSkeleton />
-                ) : !ticket ? (
-                    <div className="flex-1 flex items-center justify-center py-16 text-xs text-red-500 font-medium">
-                        Failed to load ticket information.
+                {fetchError && !ticket ? (
+                    <div className="flex-1 flex flex-col items-center justify-center py-16 text-xs text-red-500 font-medium gap-2">
+                        <AlertTriangle className="w-5 h-5 text-red-500" />
+                        <span>{fetchError}</span>
                     </div>
+                ) : !ticket ? (
+                    <TicketDetailSkeleton />
                 ) : (
-                    <div className="flex-1 flex flex-col md:flex-row overflow-hidden min-h-0">
+                    <div className="flex-1 flex flex-col md:flex-row overflow-y-auto md:overflow-hidden min-h-0">
                         {/* Left Main Section: Context, Attachments & Discussion Thread */}
-                        <div className="flex-1 flex flex-col gap-4 p-4 sm:p-6 overflow-y-auto min-h-0 border-r border-slate-100 dark:border-slate-800">
+                        <div className="flex-1 flex flex-col gap-4 p-3.5 sm:p-6 md:overflow-y-auto min-h-0 border-b md:border-b-0 md:border-r border-slate-100 dark:border-slate-800">
                             {/* Badges & Meta Bar */}
                             <div className="flex flex-wrap items-center gap-2">
                                 <span className="px-2.5 py-1 bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20 text-[11px] font-black rounded-lg uppercase tracking-wider">
@@ -869,12 +1075,12 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
                                 </div>
 
                                 {activeTab === 'discussion' ? (
-                                    <div className="flex-1 flex flex-col justify-between gap-3 min-h-[250px]">
+                                    <div className="flex-1 flex flex-col justify-between gap-3 min-h-[220px]">
                                         {/* WhatsApp Chat Area */}
-                                        <div className="space-y-3 max-h-[340px] overflow-y-auto pr-1.5 p-3 rounded-2xl bg-[#efeae2]/60 dark:bg-[#0b141a] border border-slate-200/80 dark:border-slate-800/90 shadow-inner">
+                                        <div className={`space-y-3 p-3 rounded-2xl bg-[#efeae2]/60 dark:bg-[#0b141a] border border-slate-200/80 dark:border-slate-800/90 shadow-inner ${(ticket.comments?.length || 0) > 0 ? 'max-h-[340px] overflow-y-auto pr-1.5' : ''}`}>
                                             {ticket.comments?.length === 0 ? (
-                                                <div className="text-center py-8 space-y-1">
-                                                    <MessageSquare className="w-8 h-8 text-slate-300 dark:text-slate-600 mx-auto" />
+                                                <div className="text-center py-7 space-y-1.5">
+                                                    <MessageSquare className="w-7 h-7 text-slate-300 dark:text-slate-600 mx-auto" />
                                                     <p className="text-xs text-slate-400 font-medium">No messages yet in this conversation.</p>
                                                 </div>
                                             ) : (
@@ -1194,8 +1400,8 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
                         </div>
 
                         {/* Right Sidebar Section: SLA Timer, Assigned Handler Circle Profile, Employee Snapshot & Lifecycle Actions */}
-                        <div className="w-full md:w-[350px] p-4 sm:p-5 bg-slate-50/50 dark:bg-slate-800/30 flex flex-col justify-between gap-5 overflow-y-auto shrink-0">
-                            <div className="space-y-5">
+                        <div className="w-full md:w-[350px] p-3.5 sm:p-5 bg-slate-50/50 dark:bg-slate-800/30 flex flex-col gap-4 md:overflow-y-auto shrink-0">
+                            <div className="space-y-4">
                                 {/* SLA / TAT Timer */}
                                 <div className="p-3.5 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-2 shadow-xs">
                                     <div className="flex items-center justify-between">
@@ -1265,14 +1471,9 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
                                                 <div className="font-extrabold text-xs text-slate-900 dark:text-white leading-snug break-words" title={ticket.assigned_to_details?.full_name || ticket.assigned_to?.full_name || ticket.current_level_owner || 'Assigned Authority'}>
                                                     {ticket.assigned_to_details?.full_name || ticket.assigned_to?.full_name || ticket.current_level_owner || 'Assigned Authority'}
                                                 </div>
-                                                {ticket.assigned_to_details?.app_role && (
+                                                {(ticket.assigned_to_details?.designation || ticket.assigned_to_details?.employee_role) && (
                                                     <div className="text-[10px] font-bold text-[#587e85] dark:text-[#6c9a9e] leading-tight break-words">
-                                                        {ticket.assigned_to_details.app_role}
-                                                    </div>
-                                                )}
-                                                {ticket.assigned_to_details?.employee_role && ticket.assigned_to_details.employee_role.toLowerCase().trim() !== ticket.assigned_to_details?.app_role?.toLowerCase()?.trim() && (
-                                                    <div className="text-[10px] text-slate-500 dark:text-slate-400 font-medium leading-tight break-words">
-                                                        {ticket.assigned_to_details.employee_role}
+                                                        {ticket.assigned_to_details.designation || ticket.assigned_to_details.employee_role}
                                                     </div>
                                                 )}
                                             </div>
@@ -1301,9 +1502,9 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
                                                 </span>
                                             </div>
                                             <div className="p-2 bg-slate-50 dark:bg-slate-900/50 rounded-xl min-w-0">
-                                                <span className="text-[9px] font-bold text-slate-400 block uppercase tracking-wider mb-0.5">App Role</span>
-                                                <span className="font-semibold text-indigo-600 dark:text-indigo-400 block break-words leading-snug" title={ticket.assigned_to_details?.app_role || 'HR Admin'}>
-                                                    {ticket.assigned_to_details?.app_role || 'HR Admin'}
+                                                <span className="text-[9px] font-bold text-slate-400 block uppercase tracking-wider mb-0.5">Designation</span>
+                                                <span className="font-semibold text-indigo-600 dark:text-indigo-400 block break-words leading-snug" title={ticket.assigned_to_details?.designation || ticket.assigned_to_details?.employee_role || 'N/A'}>
+                                                    {ticket.assigned_to_details?.designation || ticket.assigned_to_details?.employee_role || 'N/A'}
                                                 </span>
                                             </div>
                                         </div>
@@ -1364,9 +1565,6 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
                                                 </div>
                                                 <div className="text-[10px] font-bold text-[#587e85] dark:text-[#6c9a9e] leading-tight break-words">
                                                     {ticket.is_anonymous ? 'Confidential Identity' : (ticket.submitter_details?.designation || ticket.employee_snapshot?.designation || 'Staff')}
-                                                </div>
-                                                <div className="text-[10px] text-slate-500 dark:text-slate-400 font-medium leading-tight break-words">
-                                                    {ticket.is_anonymous ? 'Identity Masked' : `Manager: ${ticket.submitter_details?.manager_name || ticket.employee_snapshot?.manager_name || ticket.employee_snapshot?.reporting_manager_name || 'N/A'}`}
                                                 </div>
                                             </div>
                                         </div>
@@ -1523,39 +1721,74 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
                                             )}
 
                                             {/* 2. Resolve Ticket Button & Resolution Form */}
-                                            <button
-                                                type="button"
-                                                onClick={() => setShowResolutionForm(!showResolutionForm)}
-                                                className="w-full py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-xs font-bold transition-all shadow-md shadow-emerald-600/20 flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
-                                            >
-                                                <CheckCircle className="w-4 h-4" />
-                                                {showResolutionForm ? 'Hide Resolution Form' : 'Resolve Ticket'}
-                                            </button>
+                                            {!showResolutionForm && (
+                                                <>
+                                                    <button
+                                                        type="button"
+                                                        disabled={updatingStatus !== null}
+                                                        onClick={() => { setShowResolutionForm(true); setResolutionError(''); }}
+                                                        className="w-full py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-2xl text-xs font-bold transition-all shadow-md shadow-emerald-600/20 flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
+                                                    >
+                                                        <CheckCircle className="w-4 h-4" />
+                                                        Resolve Ticket
+                                                    </button>
+
+                                                    {canForceClose && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => { setShowForceCloseModal(true); setForceCloseNoteInput(''); setResolutionError(''); }}
+                                                            className="w-full py-2.5 px-3 bg-rose-600 hover:bg-rose-700 text-white rounded-2xl text-xs font-bold transition-all shadow-md shadow-rose-600/20 flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer mt-1"
+                                                            title="Force close this ticket as HR Authority"
+                                                        >
+                                                            <ShieldAlert className="w-4 h-4" />
+                                                            Force Close Ticket (HR Authority)
+                                                        </button>
+                                                    )}
+                                                </>
+                                            )}
 
                                             {showResolutionForm && (
                                                 <div className="p-3.5 bg-emerald-50/80 dark:bg-emerald-950/50 rounded-2xl border border-emerald-200 dark:border-emerald-800 space-y-2.5 animate-in fade-in duration-200">
-                                                    <label className="block text-[10px] font-black text-emerald-800 dark:text-emerald-300 uppercase tracking-wider">
-                                                        Resolution Note / Action Taken
+                                                    <label className="block text-[10px] font-black text-emerald-800 dark:text-emerald-300 uppercase tracking-wider flex items-center justify-between">
+                                                        <span>Resolution Note / Action Taken *</span>
+                                                        <span className="text-[9px] text-emerald-600 font-bold lowercase">mandatory</span>
                                                     </label>
                                                     <textarea
-                                                        rows={2}
+                                                        rows={3}
                                                         value={resolutionNoteInput}
-                                                        onChange={(e) => setResolutionNoteInput(e.target.value)}
-                                                        placeholder="Summarize resolution action taken at Level 1 / Level 2..."
+                                                        onChange={(e) => {
+                                                            setResolutionNoteInput(e.target.value);
+                                                            if (e.target.value.trim()) setResolutionError('');
+                                                        }}
+                                                        placeholder="Summarize resolution action taken at Level 1 / Level 2 (Mandatory before closing)..."
                                                         className="w-full p-2.5 text-xs rounded-xl border border-emerald-300 dark:border-emerald-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500 resize-none font-medium"
                                                     />
+                                                    {resolutionError && (
+                                                        <div className="p-2 rounded-lg bg-red-100 dark:bg-red-950/60 border border-red-300 dark:border-red-800 text-[11px] font-bold text-red-700 dark:text-red-300 flex items-center gap-1.5">
+                                                            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                                                            <span>{resolutionError}</span>
+                                                        </div>
+                                                    )}
                                                     <div className="flex gap-2">
                                                         <button
                                                             type="button"
+                                                            disabled={updatingStatus === 'pending_acknowledgement'}
                                                             onClick={() => handleUpdateStatus('pending_acknowledgement', false, resolutionNoteInput, 'resolve')}
-                                                            className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm cursor-pointer"
+                                                            className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-sm cursor-pointer flex items-center justify-center gap-1.5"
                                                         >
-                                                            Confirm Resolution (Request Acknowledgment)
+                                                            {updatingStatus === 'pending_acknowledgement' ? (
+                                                                <>
+                                                                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                                                    <span>Resolving...</span>
+                                                                </>
+                                                            ) : (
+                                                                <span>Confirm Resolution (Request Acknowledgment)</span>
+                                                            )}
                                                         </button>
                                                         <button
                                                             type="button"
-                                                            onClick={() => setShowResolutionForm(false)}
-                                                            className="px-3 py-2 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold cursor-pointer"
+                                                            onClick={() => { setShowResolutionForm(false); setResolutionError(''); }}
+                                                            className="px-3 py-2.5 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors cursor-pointer"
                                                         >
                                                             Cancel
                                                         </button>
@@ -1619,17 +1852,112 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
                                             )}
                                         </div>
                                     ) : (
-                                        <div className="p-3.5 bg-amber-50/80 dark:bg-amber-950/40 border border-amber-200/80 dark:border-amber-800 rounded-2xl text-xs space-y-1">
-                                            <div className="font-extrabold text-amber-900 dark:text-amber-300 flex items-center gap-1.5">
-                                                <Lock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                                                {isRaisedByMe ? 'Active Level Handler' : 'Tracking Mode — Read Only'}
+                                        <div className="space-y-2.5">
+                                            <div className="p-3.5 bg-amber-50/80 dark:bg-amber-950/40 border border-amber-200/80 dark:border-amber-800 rounded-2xl text-xs space-y-1">
+                                                <div className="font-extrabold text-amber-900 dark:text-amber-300 flex items-center gap-1.5">
+                                                    <Lock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                                                    {isRaisedByMe ? 'Under Review by Active Level Handler' : 'Tracking Mode — Read Only'}
+                                                </div>
+                                                <p className="text-[11px] text-amber-800/90 dark:text-amber-300/90 leading-relaxed font-medium">
+                                                    Active level: <strong>Level {ticket.current_level} ({ticket.escalation_flow?.find((s: any) => s.level === ticket.current_level)?.assignee || ticket.level_owners?.[`l${ticket.current_level}`] || ticket.assigned_to?.full_name || 'Level Authority'})</strong>. {isRaisedByMe ? 'You can communicate directly with the handler in the conversation thread.' : 'You can view all overall progress and live updates.'}
+                                                </p>
                                             </div>
-                                            <p className="text-[11px] text-amber-800/90 dark:text-amber-300/90 leading-relaxed font-medium">
-                                                Active level: <strong>Level {ticket.current_level} ({ticket.escalation_flow?.find((s: any) => s.level === ticket.current_level)?.assignee || ticket.level_owners?.[`l${ticket.current_level}`] || ticket.assigned_to?.full_name || 'Level Authority'})</strong>. {isRaisedByMe ? 'You can communicate directly with the handler in the conversation thread.' : 'You can view all overall progress and live updates.'}
-                                            </p>
+                                            {canForceClose && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => { setShowForceCloseModal(true); setForceCloseNoteInput(''); setResolutionError(''); }}
+                                                    className="w-full py-2.5 px-3 bg-rose-600 hover:bg-rose-700 text-white rounded-2xl text-xs font-bold transition-all shadow-md shadow-rose-600/20 flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
+                                                >
+                                                    <ShieldAlert className="w-4 h-4" />
+                                                    Force Close Ticket (HR Authority)
+                                                </button>
+                                            )}
                                         </div>
                                     )}
                                 </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+                {/* Force Close Modal (HR Authority) */}
+                {showForceCloseModal && (
+                    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+                        <div className="bg-white dark:bg-slate-900 rounded-3xl border border-rose-200 dark:border-rose-900 shadow-2xl max-w-md w-full p-5 space-y-4 animate-in zoom-in-95 duration-150">
+                            <div className="flex items-start justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-3">
+                                <div className="flex items-center gap-2.5">
+                                    <div className="w-9 h-9 rounded-xl bg-rose-100 dark:bg-rose-950/60 flex items-center justify-center text-rose-600 shrink-0">
+                                        <ShieldAlert className="w-5 h-5" />
+                                    </div>
+                                    <div>
+                                        <h4 className="text-sm font-black text-slate-900 dark:text-white">Force Close Ticket</h4>
+                                        <p className="text-[11px] text-slate-500 dark:text-slate-400">HR Authority Administrative Action</p>
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => { setShowForceCloseModal(false); setResolutionError(''); }}
+                                    className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                >
+                                    <X className="w-4 h-4" />
+                                </button>
+                            </div>
+
+                            <div className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed space-y-2">
+                                <p>
+                                    You are force closing ticket <strong>{ticket.ticket_number}</strong> as HR Authority. This records your mandatory justification note, resolves the ticket under HR Authority, and routes it directly to the submitter for acknowledgement.
+                                </p>
+                                <div>
+                                    <label className="block text-[10px] font-black uppercase tracking-wider text-rose-700 dark:text-rose-400 mb-1 flex items-center justify-between">
+                                        <span>Reason for Force Close *</span>
+                                        <span className="text-[9px] text-rose-600 font-bold lowercase bg-rose-50 dark:bg-rose-950/60 px-1.5 py-0.5 rounded border border-rose-200 dark:border-rose-800">Mandatory</span>
+                                    </label>
+                                    <textarea
+                                        rows={3}
+                                        value={forceCloseNoteInput}
+                                        onChange={(e) => {
+                                            setForceCloseNoteInput(e.target.value);
+                                            if (e.target.value.trim()) setResolutionError('');
+                                        }}
+                                        placeholder="Enter mandatory justification note (e.g. Discussed with employee verbally, resolved during HR 1-on-1 meeting)..."
+                                        className="w-full p-2.5 text-xs rounded-xl border border-rose-300 dark:border-rose-800 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-rose-500 resize-none font-medium"
+                                    />
+                                </div>
+                            </div>
+
+                            {resolutionError && (
+                                <div className="p-2.5 rounded-xl bg-red-100 dark:bg-red-950/60 border border-red-300 dark:border-red-800 text-xs font-bold text-red-700 dark:text-red-300 flex items-center gap-1.5">
+                                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                                    <span>{resolutionError}</span>
+                                </div>
+                            )}
+
+                            <div className="flex gap-2 pt-1">
+                                <button
+                                    type="button"
+                                    disabled={forceClosing}
+                                    onClick={handleForceClose}
+                                    className="flex-1 py-2.5 px-3 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-sm cursor-pointer flex items-center justify-center gap-1.5 transition-all active:scale-95"
+                                >
+                                    {forceClosing ? (
+                                        <>
+                                            <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                            <span>Submitting...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <ShieldAlert className="w-3.5 h-3.5" />
+                                            <span>Confirm Force Close & Send for Acknowledgement</span>
+                                        </>
+                                    )}
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={forceClosing}
+                                    onClick={() => { setShowForceCloseModal(false); setResolutionError(''); }}
+                                    className="py-2.5 px-3 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 rounded-xl text-xs font-bold cursor-pointer"
+                                >
+                                    Cancel
+                                </button>
                             </div>
                         </div>
                     </div>

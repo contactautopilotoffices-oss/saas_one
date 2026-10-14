@@ -522,10 +522,7 @@ const MasterAdminDashboard = () => {
                         </React.Fragment>
                     ))}
 
-                    <div className="mb-6" data-navigation-section="management-hub">
-                        <p className="px-4 mb-3 text-[10px] font-bold uppercase tracking-widest text-text-secondary">Management Hub</p>
-                        <PettyCashNavLink onNavigate={() => setSidebarOpen(false)} />
-                    </div>
+                    <PettyCashNavLink onNavigate={() => setSidebarOpen(false)} />
 </nav>
 
                 <div className="pt-6 pb-12 border-t border-border flex-shrink-0">
@@ -782,8 +779,12 @@ const MasterAdminDashboard = () => {
                         isAdminMode={true}
                         showInternalToggle={true}
                         organizations={organizations}
-                        onSuccess={() => {
+                        onSuccess={(ticket) => {
                             showToast('Request created successfully', 'success');
+                            if (typeof window !== 'undefined') {
+                                window.dispatchEvent(new CustomEvent('ticket-created', { detail: { ticket } }));
+                                window.dispatchEvent(new CustomEvent('request-created', { detail: { ticket } }));
+                            }
                         }}
                     />
                 )}

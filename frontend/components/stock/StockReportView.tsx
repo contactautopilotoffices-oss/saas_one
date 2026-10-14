@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useDataCache } from '@/frontend/context/DataCacheContext';
 import {
     Package, AlertTriangle, ArrowUpCircle, ArrowDownCircle,
     TrendingUp, Loader2, BarChart3, Activity, ShieldAlert, Box,
@@ -37,9 +38,14 @@ interface Movement {
 }
 
 const StockReportView: React.FC<StockReportViewProps> = ({ propertyId, propertyName }) => {
-    const [items, setItems] = useState<StockItem[]>([]);
-    const [movements, setMovements] = useState<Movement[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
+    // Coming back to the tab: the default (last 30 days) report is shown at once from memory (per user), then refreshed quietly.
+    const { getCachedData, setCachedData } = useDataCache();
+    const cacheKey = `tab-stock-report-${propertyId}`;
+    const initialCached = useMemo(() => (propertyId ? getCachedData(cacheKey) : null), []); // eslint-disable-line react-hooks/exhaustive-deps
+    const quietFirstLoad = useRef(!!initialCached);
+    const [items, setItems] = useState<StockItem[]>(initialCached?.items ?? []);
+    const [movements, setMovements] = useState<Movement[]>(initialCached?.movements ?? []);
+    const [isLoading, setIsLoading] = useState(!initialCached);
     const [dateRange, setDateRange] = useState<'today' | '7d' | '30d' | 'this_month' | 'all' | 'custom'>('30d');
     const [customStart, setCustomStart] = useState<string>(format(subDays(new Date(), 7), 'yyyy-MM-dd'));
     const [customEnd, setCustomEnd] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
@@ -48,7 +54,7 @@ const StockReportView: React.FC<StockReportViewProps> = ({ propertyId, propertyN
 
     const fetchData = useCallback(async () => {
         if (!propertyId) return;
-        setIsLoading(true);
+        if (quietFirstLoad.current) quietFirstLoad.current = false; else setIsLoading(true);
 
         try {
             // Fetch items
@@ -98,12 +104,13 @@ const StockReportView: React.FC<StockReportViewProps> = ({ propertyId, propertyN
 
             setItems(itemsData || []);
             setMovements((movementsData as unknown as Movement[]) || []);
+            if (dateRange === '30d') setCachedData(cacheKey, { items: itemsData || [], movements: movementsData || [] });
         } catch (err) {
             console.error('Error fetching report data:', err);
         } finally {
             setIsLoading(false);
         }
-    }, [propertyId, supabase, dateRange, customStart, customEnd]);
+    }, [propertyId, supabase, dateRange, customStart, customEnd, cacheKey, setCachedData]);
 
     useEffect(() => {
         fetchData();

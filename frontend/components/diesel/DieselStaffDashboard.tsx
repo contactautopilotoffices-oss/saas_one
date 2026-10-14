@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { useDataCache } from '@/frontend/context/DataCacheContext';
 import {
     Fuel, Zap, Settings, CheckCircle, Plus,
     AlertTriangle, History, BarChart3, Coins, ArrowLeft, Upload
@@ -63,16 +64,20 @@ const DieselStaffDashboard: React.FC<DieselStaffDashboardProps> = ({ propertyId:
     const router = useRouter();
     const propertyId = propIdFromProps || (params?.propertyId as string);
     const supabase = React.useMemo(() => createClient(), []);
+    // Coming back to the tab: show the last loaded data at once (no loader); fetchData still refreshes it every time.
+    const { getCachedData, setCachedData } = useDataCache();
+    const cacheKey = `tab-diesel-logger-${propertyId}`;
+    const initialCached = React.useMemo(() => (propertyId ? getCachedData(cacheKey) : null), []); // eslint-disable-line react-hooks/exhaustive-deps
 
     // State
     const [viewMode, setViewMode] = useState<'cards' | 'spreadsheet'>(initialViewMode);
-    const [property, setProperty] = useState<Property | null>(null);
-    const [generators, setGenerators] = useState<Generator[]>([]);
+    const [property, setProperty] = useState<Property | null>(initialCached?.property ?? null);
+    const [generators, setGenerators] = useState<Generator[]>(initialCached?.generators ?? []);
     const [readings, setReadings] = useState<Record<string, DieselReading>>({});
-    const [previousClosings, setPreviousClosings] = useState<Record<string, any>>({});
-    const [averages, setAverages] = useState<Record<string, number>>({});
-    const [activeTariffs, setActiveTariffs] = useState<Record<string, any>>({});
-    const [isLoading, setIsLoading] = useState(true);
+    const [previousClosings, setPreviousClosings] = useState<Record<string, any>>(initialCached?.previousClosings ?? {});
+    const [averages, setAverages] = useState<Record<string, number>>(initialCached?.averages ?? {});
+    const [activeTariffs, setActiveTariffs] = useState<Record<string, any>>(initialCached?.activeTariffs ?? {});
+    const [isLoading, setIsLoading] = useState(!initialCached);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [showConfigModal, setShowConfigModal] = useState(false);
     const [showTariffModal, setShowTariffModal] = useState(false);
@@ -91,7 +96,7 @@ const DieselStaffDashboard: React.FC<DieselStaffDashboardProps> = ({ propertyId:
     // Fetch data
     const fetchData = useCallback(async (isInitial = false) => {
         if (!propertyId) return;
-        if (isInitial) setIsLoading(true);
+        if (isInitial && !initialCached) setIsLoading(true);
         setError(null);
 
         try {
@@ -199,11 +204,17 @@ const DieselStaffDashboard: React.FC<DieselStaffDashboardProps> = ({ propertyId:
         } finally {
             setIsLoading(false);
         }
-    }, [propertyId, supabase]);
+    }, [propertyId, supabase, initialCached]);
 
     useEffect(() => {
         fetchData(true);
     }, [fetchData]);
+
+    // Keep a copy of what was loaded, for the next visit to this tab (saved once loading has finished).
+    useEffect(() => {
+        if (isLoading || !propertyId || !property) return;
+        setCachedData(cacheKey, { property, generators, previousClosings, averages, activeTariffs });
+    }, [isLoading, propertyId, property, generators, previousClosings, averages, activeTariffs, cacheKey, setCachedData]);
 
     // Handle reading changes
     const handleReadingChange = (generatorId: string, reading: DieselReading) => {

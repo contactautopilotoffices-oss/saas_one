@@ -426,6 +426,27 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
 
     const loadMoreTickets = () => fetchTickets(tickets.length);
 
+    // Listen for globally raised tickets to instantly display without page reload
+    useEffect(() => {
+        const handleCreated = (e: any) => {
+            const newTicket = e?.detail?.ticket;
+            if (newTicket && newTicket.id) {
+                setTickets(prev => [newTicket, ...prev.filter(t => t.id !== newTicket.id)]);
+                setTotalCount(prev => (prev !== null ? prev + 1 : null));
+            }
+            invalidateCache('tickets-');
+            fetchTickets(0);
+            fetchFilterOptions();
+        };
+
+        window.addEventListener('ticket-created', handleCreated);
+        window.addEventListener('request-created', handleCreated);
+        return () => {
+            window.removeEventListener('ticket-created', handleCreated);
+            window.removeEventListener('request-created', handleCreated);
+        };
+    }, [invalidateCache]);
+
     const handleUpdateStatus = async (ticketId: string, newStatus: string) => {
         try {
             const response = await fetch(`/api/tickets/${ticketId}`, {

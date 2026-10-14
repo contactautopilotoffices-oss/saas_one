@@ -192,6 +192,12 @@ export default function TicketCreateModal({
             setSuccess(true);
             onSuccess?.(data.ticket);
 
+            // Dispatch global event so dashboards, lists, and boards update immediately
+            if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('ticket-created', { detail: { ticket: data.ticket } }));
+                window.dispatchEvent(new CustomEvent('request-created', { detail: { ticket: data.ticket } }));
+            }
+
             setTimeout(() => {
                 handleReset();
                 onClose();

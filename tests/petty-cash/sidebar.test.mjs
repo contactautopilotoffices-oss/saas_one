@@ -19,7 +19,7 @@ test('all 42 internal/external role fixtures render exactly the intended shared-
   assert.equal(count,/tenant|vendor/.test(role)?0:1,role);
  }
 });
-test('role dashboards reuse their established body and put Petty Cash in Management Hub',()=>{
+test('role dashboards reuse their established body and place Petty Cash in existing role navigation',()=>{
  for(const name of ['OrgDashboard','OrgAdminDashboard','MasterAdminDashboard','PropertyAdminDashboard','StaffDashboard','MstDashboard','SecurityDashboard','ProcurementDashboard','SoftServiceManagerDashboard']){
   const source=readFileSync(`frontend/components/dashboard/${name}.tsx`,'utf8');
   assert.match(source,/useDashboardContent\(\)/,name);
@@ -27,9 +27,10 @@ test('role dashboards reuse their established body and put Petty Cash in Managem
   assert.equal((source.match(/<PettyCashNavLink/g)||[]).length,1,name);
   const hub=source.indexOf('Management Hub');
   const petty=source.indexOf('<PettyCashNavLink');
-  assert.ok(hub!==-1&&hub<petty,name);
+  if(['OrgAdminDashboard','PropertyAdminDashboard','SecurityDashboard'].includes(name)) assert.ok(hub!==-1&&hub<petty,name);
+  else assert.doesNotMatch(source,/data-navigation-section="management-hub"/,name);
   const personal=source.indexOf('System & Personal',hub);
-  if(personal!==-1) assert.ok(petty<personal,name);
+  if(hub!==-1&&personal!==-1) assert.ok(petty<personal,name);
  }
  const nested=readFileSync('app/(dashboard)/[orgId]/petty-cash/layout.tsx','utf8');
  assert.doesNotMatch(nested,/AccountsWorkspace/);
@@ -40,7 +41,7 @@ test('role dashboards reuse their established body and put Petty Cash in Managem
 test('shared email handler changes leave all non-petty-cash action functions unchanged',async()=>{
  const ts=(await import('typescript')).default;
  const path='backend/lib/emailActions/handlers.ts';
- const before=execFileSync('git',['show',`5140c02a7f0e2692f8c33c5663ad9ec28576ee6a:${path}`],{encoding:'utf8'});const after=readFileSync(path,'utf8');
+ const before=execFileSync('git',['show',`5140c02a7f0e2692f8c33c5663ad9ec28576ee6a:${path}`],{encoding:'utf8'}).replace(/\r\n/g,'\n');const after=readFileSync(path,'utf8').replace(/\r\n/g,'\n');
  const functions=source=>{const ast=ts.createSourceFile(path,source,ts.ScriptTarget.Latest,true);return new Map(ast.statements.filter(n=>ts.isFunctionDeclaration(n)&&n.name?.text!=='handlePettyCash').map(n=>[n.name.text,n.getText(ast)]));};
  assert.deepEqual(functions(after),functions(before));
 });

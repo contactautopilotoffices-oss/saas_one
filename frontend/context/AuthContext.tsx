@@ -7,6 +7,7 @@ import { User, Session } from '@supabase/supabase-js';
 // Cached membership data structure
 interface UserMembership {
     org_id: string | null;
+    organization_id?: string | null;
     org_name: string | null;
     org_role: string | null;
     is_master_admin: boolean;

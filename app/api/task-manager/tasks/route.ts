@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { PermissionService, PermissionDeniedError } from '@/task-manager/PermissionService';
 import { TaskDatabaseService } from '@/task-manager/TaskDatabaseService';
-import { TaskMessagingService } from '@/task-manager/TaskMessagingService';
+import { personLabel, sendTaskAssigned } from '@/task-manager/taskAlerts';
+import { notifyGiversOfCompletion } from '@/task-manager/completionNotice';
 import { TaskAccessService } from '@/task-manager/TaskAccessService';
 import { requireActor } from '../_shared/adminGuard';
 import { TaskAssignment } from '@/task-manager/types';
@@ -174,28 +175,11 @@ export async function POST(request: NextRequest) {
             });
 
             // Send instant WhatsApp notification to the assigned employee (non-blocking)
-            if (target.phone_number && target.phone_number.trim().length >= 10) {
-                const managerDept = actor.department_name ? ` (${actor.department_name})` : '';
-                const lines = [
-                    `🔔 *New Task Assigned!*`,
-                    ``,
-                    `*Task:* ${newTask.title}`,
-                ];
-                if (newTask.description) {
-                    lines.push(`*Details:* ${newTask.description}`);
-                }
-                lines.push(`*Assigned By:* ${actor.name}${managerDept}`);
-                if (newTask.assigned_date) {
-                    lines.push(`*Date:* ${newTask.assigned_date}`);
-                }
-                lines.push(``);
-                lines.push(`Reply *tasks* to view your full list, or *done <number>* once completed!`);
-
-                const messageText = lines.join('\n');
-                TaskMessagingService.sendMessage(target.phone_number, messageText).catch(err => {
-                    console.error('[AssignTask] Failed to send instant WhatsApp alert:', err);
-                });
-            }
+            // Same approved template as the Tasks tab (task_assigned_v1), so it also reaches people outside the 24-hour window.
+            void sendTaskAssigned(target.phone_number, {
+                titles: [newTask.title], fromLabel: personLabel(actor.name, actor.department_name),
+                date: newTask.assigned_date || new Date().toISOString().slice(0, 10), departmentId: target.department_id || undefined,
+            });
 
             return NextResponse.json({ success: true, task: newTask });
         }
@@ -268,6 +252,9 @@ export async function POST(request: NextRequest) {
                 taskId: updated.id,
                 details: { newStatus: status }
             });
+
+            // Tell whoever gave the task (approved template, every completion; never fails the request).
+            if (status === 'completed' && (taskRow as TaskAssignment).status !== 'completed') void notifyGiversOfCompletion([taskRow as TaskAssignment]);
 
             return NextResponse.json({ success: true, task: updated });
         }

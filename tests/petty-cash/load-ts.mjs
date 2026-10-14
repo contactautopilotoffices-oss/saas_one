@@ -1,13 +1,14 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve, dirname, extname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
 import ts from 'typescript';
 const require = createRequire(new URL('../../package.json', import.meta.url));
-const root = resolve(new URL('../..', import.meta.url).pathname);
+const root = fileURLToPath(new URL('../..', import.meta.url));
 export function loadTs(file, mocks = {}) {
     const filename = resolve(root, file); const module = { exports: {} };
-    const output = ts.transpileModule(readFileSync(filename, 'utf8'), { fileName: filename, compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true, target: ts.ScriptTarget.ES2022 } }).outputText;
+    const output = ts.transpileModule(readFileSync(filename, 'utf8'), { fileName: filename.replace(/\.mjs$/, '.ts'), compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true, target: ts.ScriptTarget.ES2022, allowJs: true } }).outputText;
     const localRequire = name => {
         if (name in mocks) return mocks[name];
         if (name.startsWith('@/') || name.startsWith('.')) {

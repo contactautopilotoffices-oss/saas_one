@@ -2,8 +2,9 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { AlertTriangle, Bell, CheckCircle2, Clock, Eye, Loader2, Lock, Moon, Plus, Sun, Trash2 } from 'lucide-react';
+import { AlertTriangle, Bell, CheckCircle2, Clock, Eye, Loader2, Lock, Moon, Plus, Send, Sun, Trash2 } from 'lucide-react';
 import { EASE } from './types';
+import TimeWheelPicker from './TimeWheelPicker';
 
 /**
  * Notifications view: a team sets WHEN its Task Manager messages go out and WHAT they say.
@@ -11,8 +12,7 @@ import { EASE } from './types';
  * "Preview" is a simulation that sends and writes nothing.
  */
 
-type RuleType = 'morning_digest' | 'pending_reminder' | 'eod_summary';
-type Field = 'headerGreeting' | 'customMessage' | 'footerInstruction';
+type RuleType = 'morning_digest' | 'pending_reminder' | 'eod_summary' | 'overdue_alert';
 
 interface ServerRule {
     id: string;
@@ -50,8 +50,9 @@ interface Preview {
 
 const TYPES: Array<{ id: RuleType; label: string; time: string; blurb: string; icon: React.ReactNode }> = [
     { id: 'morning_digest', label: 'Morning list', time: '09:00', blurb: 'Everyone gets their tasks for the day.', icon: <Sun className="h-4 w-4" /> },
-    { id: 'pending_reminder', label: 'Midday reminder', time: '14:30', blurb: 'Only people with unfinished tasks.', icon: <Clock className="h-4 w-4" /> },
-    { id: 'eod_summary', label: 'Evening summary', time: '18:30', blurb: 'What got done and what carries over.', icon: <Moon className="h-4 w-4" /> },
+    { id: 'pending_reminder', label: 'Midday reminder', time: '14:30', blurb: 'Only people with unfinished tasks. Managers also get team progress if anything is pending.', icon: <Clock className="h-4 w-4" /> },
+    { id: 'eod_summary', label: 'Evening summary', time: '18:30', blurb: 'What got done and what carries over. Managers also get a team summary.', icon: <Moon className="h-4 w-4" /> },
+    { id: 'overdue_alert', label: 'Overdue alert', time: '10:00', blurb: 'Only people with tasks overdue from earlier days.', icon: <AlertTriangle className="h-4 w-4" /> },
 ];
 const typeOf = (t: RuleType) => TYPES.find(x => x.id === t) ?? TYPES[0];
 
@@ -59,9 +60,6 @@ const DAYS: Array<{ n: number; short: string; long: string }> = [
     { n: 1, short: 'M', long: 'Monday' }, { n: 2, short: 'T', long: 'Tuesday' }, { n: 3, short: 'W', long: 'Wednesday' },
     { n: 4, short: 'T', long: 'Thursday' }, { n: 5, short: 'F', long: 'Friday' }, { n: 6, short: 'S', long: 'Saturday' }, { n: 0, short: 'S', long: 'Sunday' },
 ];
-const VARIABLE_HELP: Record<string, string> = {
-    firstName: 'first name', fullName: 'full name', totalTasks: 'task count', pendingTasks: 'unfinished', completedTasks: 'finished', date: 'date',
-};
 
 const fromServer = (r: ServerRule): Draft => ({
     key: r.id, id: r.id, name: r.name, ruleType: r.ruleType, targetTimeIST: r.targetTimeIST, daysOfWeek: r.daysOfWeek || [], enabled: r.enabled !== false,
@@ -71,7 +69,9 @@ const fromServer = (r: ServerRule): Draft => ({
 
 const toPayload = (d: Draft) => ({
     id: d.id, name: d.name, ruleType: d.ruleType, targetTimeIST: d.targetTimeIST, daysOfWeek: d.daysOfWeek, enabled: d.enabled,
-    customTemplate: { headerGreeting: d.headerGreeting, customMessage: d.customMessage, footerInstruction: d.footerInstruction, includeQuickReplies: d.includeQuickReplies },
+    // Custom wording was removed (2026-10-12): scheduled messages are sent ONLY as approved templates, so custom text was
+    // never delivered — it only showed in the preview. Saving sends the standard wording, which also clears any old custom text.
+    customTemplate: { headerGreeting: '', customMessage: '', footerInstruction: '', includeQuickReplies: true },
 });
 
 const signature = (d: Draft) => JSON.stringify({ ...toPayload(d), lastRunSummary: undefined });
@@ -87,18 +87,18 @@ function Switch({ on, disabled, onChange, label }: { on: boolean; disabled?: boo
     );
 }
 
-function RuleCard({ draft, baseline, canEdit, variables, department, onChange, onSave, onDelete, saving }: {
-    draft: Draft; baseline: string | null; canEdit: boolean; variables: string[]; department: string;
-    onChange: (d: Draft) => void; onSave: () => void; onDelete: () => void; saving: boolean;
+function RuleCard({ draft, baseline, canEdit, department, endpoint, personal, onChange, onSave, onDelete, onSendNow, countAudience, saving }: {
+    draft: Draft; baseline: string | null; canEdit: boolean; department: string; endpoint: string; personal: boolean;
+    onChange: (d: Draft) => void; onSave: () => void; onDelete: () => void; onSendNow: (confirm: boolean) => Promise<void>; countAudience: () => Promise<number>; saving: boolean;
 }) {
     const reduce = !!useReducedMotion();
-    const [customize, setCustomize] = useState(!!(draft.headerGreeting || draft.customMessage || draft.footerInstruction));
     const [showPreview, setShowPreview] = useState(false);
     const [preview, setPreview] = useState<Preview | null>(null);
     const [previewError, setPreviewError] = useState<string | null>(null);
     const [previewing, setPreviewing] = useState(false);
     const [confirmDelete, setConfirmDelete] = useState(false);
-    const lastField = useRef<Field>('customMessage');
+    const [sending, setSending] = useState(false);
+    const [confirmSend, setConfirmSend] = useState<number | null>(null); // how many people a team send would reach
     const t = typeOf(draft.ruleType);
     const dirty = baseline === null || baseline !== signature(draft);
 
@@ -108,7 +108,7 @@ function RuleCard({ draft, baseline, canEdit, variables, department, onChange, o
         const timer = setTimeout(async () => {
             setPreviewing(true);
             try {
-                const res = await fetch('/api/task-manager/department-rules', {
+                const res = await fetch(endpoint, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ action: 'preview', department, rule: toPayload(draft) }),
                 });
@@ -125,11 +125,24 @@ function RuleCard({ draft, baseline, canEdit, variables, department, onChange, o
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [showPreview, sig, department]);
 
+    const startSend = async () => {
+        setSending(true);
+        try {
+            if (personal) await onSendNow(true);
+            else setConfirmSend(await countAudience());
+        } finally {
+            setSending(false);
+        }
+    };
+    const confirmTeamSend = async () => {
+        setConfirmSend(null);
+        setSending(true);
+        try { await onSendNow(true); } finally { setSending(false); }
+    };
+
     const set = (patch: Partial<Draft>) => onChange({ ...draft, ...patch });
     const toggleDay = (n: number) => set({ daysOfWeek: draft.daysOfWeek.includes(n) ? draft.daysOfWeek.filter(d => d !== n) : [...draft.daysOfWeek, n] });
-    const insertVariable = (v: string) => set({ [lastField.current]: `${draft[lastField.current]}{{${v}}}` } as Partial<Draft>);
 
-    const input = 'w-full rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition-colors placeholder:text-zinc-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100';
     const cap = 'text-[10px] font-black uppercase tracking-widest text-zinc-500';
 
     return (
@@ -151,7 +164,10 @@ function RuleCard({ draft, baseline, canEdit, variables, department, onChange, o
             <div className="grid gap-4 sm:grid-cols-[auto_1fr]">
                 <div>
                     <p className={cap}>Send at (IST)</p>
-                    <input id={`rule-time-${draft.key}`} type="time" value={draft.targetTimeIST} disabled={!canEdit} onChange={e => set({ targetTimeIST: e.target.value })} className={`${input} mt-1.5 w-36`} />
+                    <div className="mt-1.5">
+                        <TimeWheelPicker id={`rule-time-${draft.key}`} value={draft.targetTimeIST} disabled={!canEdit} onChange={v => set({ targetTimeIST: v })}
+                            presets={TYPES.map(x => ({ label: x.label, value: x.time }))} ariaLabel="Send at (IST)" />
+                    </div>
                 </div>
                 <div>
                     <p className={cap}>On these days</p>
@@ -167,39 +183,6 @@ function RuleCard({ draft, baseline, canEdit, variables, department, onChange, o
                 </div>
             </div>
 
-            {canEdit && (
-                <div>
-                    <button type="button" onClick={() => setCustomize(c => !c)} className="text-xs font-bold text-indigo-600 hover:underline dark:text-indigo-300">
-                        {customize ? 'Use the standard wording' : 'Customize the wording'}
-                    </button>
-                    <AnimatePresence initial={false}>
-                        {customize && (
-                            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.35, ease: EASE }} className="overflow-hidden">
-                                <div className="space-y-3 pt-3">
-                                    <label className="block"><span className={cap}>Greeting</span>
-                                        <input id={`rule-greeting-${draft.key}`} value={draft.headerGreeting} onFocus={() => { lastField.current = 'headerGreeting'; }} onChange={e => set({ headerGreeting: e.target.value })} maxLength={300} placeholder="Good morning {{firstName}}!" className={`${input} mt-1.5`} /></label>
-                                    <label className="block"><span className={cap}>Message</span>
-                                        <textarea id={`rule-message-${draft.key}`} rows={2} value={draft.customMessage} onFocus={() => { lastField.current = 'customMessage'; }} onChange={e => set({ customMessage: e.target.value })} maxLength={1000} placeholder="Optional note for the team" className={`${input} mt-1.5 resize-none`} /></label>
-                                    <label className="block"><span className={cap}>Closing line</span>
-                                        <input id={`rule-footer-${draft.key}`} value={draft.footerInstruction} onFocus={() => { lastField.current = 'footerInstruction'; }} onChange={e => set({ footerInstruction: e.target.value })} maxLength={500} placeholder="You have {{pendingTasks}} left today" className={`${input} mt-1.5`} /></label>
-                                    <div className="flex flex-wrap items-center gap-1.5">
-                                        <span className="text-[11px] font-bold text-zinc-500">Insert:</span>
-                                        {variables.map(v => (
-                                            <button key={v} type="button" onClick={() => insertVariable(v)} className="rounded-lg bg-zinc-100 px-2 py-1 text-[11px] font-bold text-zinc-700 transition-colors hover:bg-indigo-100 hover:text-indigo-700 dark:bg-zinc-800 dark:text-zinc-300">
-                                                {VARIABLE_HELP[v] || v}
-                                            </button>
-                                        ))}
-                                    </div>
-                                    <label className="flex items-center gap-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300">
-                                        <input id={`rule-quick-${draft.key}`} type="checkbox" checked={draft.includeQuickReplies} onChange={e => set({ includeQuickReplies: e.target.checked })} />
-                                        Add the reply hints (&ldquo;done 1&rdquo;, &ldquo;done all&rdquo;)
-                                    </label>
-                                </div>
-                            </motion.div>
-                        )}
-                    </AnimatePresence>
-                </div>
-            )}
 
             <div>
                 <button type="button" onClick={() => setShowPreview(p => !p)} className="flex items-center gap-1.5 text-xs font-bold text-zinc-600 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100">
@@ -242,7 +225,13 @@ function RuleCard({ draft, baseline, canEdit, variables, department, onChange, o
                 <p className="min-w-0 flex-1 truncate text-[11px] text-zinc-400">{draft.lastRunSummary ? `Last run: ${draft.lastRunSummary}` : 'Has not run yet'}</p>
                 {canEdit && (
                     <div className="flex items-center gap-2">
-                        {confirmDelete ? (
+                        {confirmSend !== null ? (
+                            <>
+                                <span className="text-xs font-bold text-zinc-700 dark:text-zinc-200">{confirmSend === 0 ? 'Nobody would get this right now.' : `Send to ${confirmSend} ${confirmSend === 1 ? 'person' : 'people'} now?`}</span>
+                                {confirmSend > 0 && <button type="button" onClick={confirmTeamSend} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-black text-white hover:bg-indigo-700">Send now</button>}
+                                <button type="button" onClick={() => setConfirmSend(null)} className="rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-bold dark:border-zinc-700">{confirmSend === 0 ? 'Close' : 'Cancel'}</button>
+                            </>
+                        ) : confirmDelete ? (
                             <>
                                 <span className="text-xs font-bold text-rose-600">Delete this notification?</span>
                                 <button type="button" onClick={onDelete} className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-black text-white hover:bg-rose-700">Delete</button>
@@ -250,6 +239,11 @@ function RuleCard({ draft, baseline, canEdit, variables, department, onChange, o
                             </>
                         ) : (
                             <>
+                                <button type="button" disabled={!draft.id || dirty || sending} onClick={startSend}
+                                    title={!draft.id || dirty ? 'Save your changes first, then send' : personal ? 'Send this to me now' : 'Send this to the team now'}
+                                    className="flex items-center gap-1.5 rounded-xl border border-indigo-300 px-3 py-2 text-xs font-black text-indigo-700 transition-colors hover:bg-indigo-50 disabled:opacity-40 dark:border-indigo-700 dark:text-indigo-300 dark:hover:bg-indigo-950/40">
+                                    {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Send now
+                                </button>
                                 <button type="button" onClick={() => (draft.id ? setConfirmDelete(true) : onDelete())} aria-label="Delete notification" className="rounded-lg p-2 text-zinc-400 transition-colors hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/30"><Trash2 className="h-4 w-4" /></button>
                                 <button type="button" disabled={!dirty || saving || draft.daysOfWeek.length === 0} onClick={onSave}
                                     className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-black text-white shadow-sm transition-all hover:bg-indigo-700 disabled:opacity-40">
@@ -264,7 +258,9 @@ function RuleCard({ draft, baseline, canEdit, variables, department, onChange, o
     );
 }
 
-export default function NotificationsView({ departmentName = 'Procurement' }: { departmentName?: string }) {
+/** `personal`: the signed-in superuser's OWN notifications (sent only to them) instead of a department's. */
+export default function NotificationsView({ departmentName = 'Procurement', personal = false }: { departmentName?: string; personal?: boolean }) {
+    const endpoint = personal ? '/api/task-manager/personal-rules' : '/api/task-manager/department-rules';
     const reduce = !!useReducedMotion();
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -283,7 +279,7 @@ export default function NotificationsView({ departmentName = 'Procurement' }: { 
 
     const load = useCallback(async () => {
         try {
-            const res = await fetch(`/api/task-manager/department-rules?department=${encodeURIComponent(departmentName)}`);
+            const res = await fetch(personal ? endpoint : `${endpoint}?department=${encodeURIComponent(departmentName)}`);
             const data = await res.json();
             if (!res.ok || !data.success) throw new Error(data.error || 'Could not load notifications');
             const list: Draft[] = (data.rules as ServerRule[]).map(fromServer);
@@ -296,12 +292,12 @@ export default function NotificationsView({ departmentName = 'Procurement' }: { 
         } finally {
             setLoading(false);
         }
-    }, [departmentName]);
+    }, [departmentName, personal, endpoint]);
 
     useEffect(() => { load(); }, [load]);
 
     const post = async (body: Record<string, unknown>) => {
-        const res = await fetch('/api/task-manager/department-rules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ department: departmentName, ...body }) });
+        const res = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ department: departmentName, ...body }) });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'That did not work');
         return data;
@@ -333,6 +329,30 @@ export default function NotificationsView({ departmentName = 'Procurement' }: { 
         }
     };
 
+    /** How many people this notification would reach right now (the same simulation as Preview). */
+    const countAudience = async (d: Draft) => {
+        try {
+            const data = await post({ action: 'preview', rule: toPayload(d) });
+            return ((data.audience || []) as Array<{ status: string }>).filter(a => a.status === 'would_receive').length;
+        } catch (e) {
+            say('err', e instanceof Error ? e.message : 'Could not check who would receive this');
+            return 0;
+        }
+    };
+
+    const sendNow = async (d: Draft, confirm: boolean) => {
+        try {
+            const data = await post({ action: 'send_now', ruleId: d.id, confirm });
+            const r = data.result as { sent: number; skippedNoTasks: number; pretend: boolean; blockedReason: string | null };
+            if (r.blockedReason) say('err', `Not sent: ${r.blockedReason}`);
+            else if (r.pretend) say('ok', `Pretend Mode is on, so nothing was delivered. It would have gone to ${r.sent} ${r.sent === 1 ? 'person' : 'people'}.`);
+            else if (r.sent === 0) say('ok', r.skippedNoTasks > 0 ? 'Nothing to send: there are no tasks for this message.' : 'Nothing to send: nobody to message right now.');
+            else say('ok', `Sent to ${r.sent} ${r.sent === 1 ? 'person' : 'people'}.`);
+        } catch (e) {
+            say('err', e instanceof Error ? e.message : 'Could not send');
+        }
+    };
+
     const addNew = (type: RuleType) => {
         const t = typeOf(type);
         newCounter.current += 1;
@@ -360,10 +380,10 @@ export default function NotificationsView({ departmentName = 'Procurement' }: { 
             <div className="flex items-start gap-3 rounded-3xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
                 <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-indigo-700 text-white"><Bell className="h-5 w-5" /></span>
                 <div className="min-w-0 space-y-1">
-                    <h3 className="text-sm font-black text-zinc-900 dark:text-zinc-100">WhatsApp notifications for {meta.departmentName}</h3>
+                    <h3 className="text-sm font-black text-zinc-900 dark:text-zinc-100">{personal ? 'Your own WhatsApp notifications' : `WhatsApp notifications for ${meta.departmentName}`}</h3>
                     <p className="text-xs leading-relaxed text-zinc-500">
-                        Choose when your team gets its task messages. A message goes out within about 15 minutes of the time you pick.
-                        Your own wording is delivered as written to people who messaged the bot in the last 24 hours; everyone else gets the approved template.
+                        {personal ? 'Choose when you get your own task messages. They go only to you, with the tasks assigned to you.' : 'Choose when your team gets its task messages.'} A message goes out within about 15 minutes of the time you pick.
+                        Messages are sent as WhatsApp&apos;s approved templates, so they reach everyone, even people who have not messaged the bot recently.
                     </p>
                 </div>
             </div>
@@ -390,9 +410,9 @@ export default function NotificationsView({ departmentName = 'Procurement' }: { 
 
             <AnimatePresence initial={false}>
                 {ordered.map(d => (
-                    <RuleCard key={d.key} draft={d} baseline={d.id ? baselines[d.key] ?? null : null} canEdit={meta.canEdit} variables={meta.variables} department={departmentName}
+                    <RuleCard key={d.key} draft={d} baseline={d.id ? baselines[d.key] ?? null : null} canEdit={meta.canEdit} department={departmentName} endpoint={endpoint} personal={personal}
                         onChange={next => setDrafts(prev => prev.map(x => (x.key === d.key ? next : x)))}
-                        onSave={() => save(d)} onDelete={() => remove(d)} saving={savingKey === d.key} />
+                        onSave={() => save(d)} onDelete={() => remove(d)} onSendNow={c => sendNow(d, c)} countAudience={() => countAudience(d)} saving={savingKey === d.key} />
                 ))}
             </AnimatePresence>
 

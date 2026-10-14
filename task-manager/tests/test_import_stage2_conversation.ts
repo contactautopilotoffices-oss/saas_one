@@ -4,6 +4,8 @@
  * Run: npx tsx task-manager/tests/test_import_stage2_conversation.ts
  */
 import ExcelJS from 'exceljs';
+import fs from 'node:fs';
+import path from 'node:path';
 
 let failures = 0;
 const check = (n: string, ok: boolean, x?: unknown) => { if (ok) console.log(`  ✓ ${n}`); else { failures++; console.error(`  ✗ ${n}`, x ?? ''); } };
@@ -281,6 +283,42 @@ async function run() {
     check('image with caption', e2?.mediaClass === 'image' && e2.text === 'tasks');
     check('plain text', I.extractCandidate(text('hi'))?.mediaClass === 'text');
     check('garbage / outbound / empty → null (never throws)', I.extractCandidate(null) === null && I.extractCandidate('x') === null && I.extractCandidate({}) === null && I.extractCandidate({ topic: 'message.sent.user', fromMe: true }) === null);
+
+    console.log('\n11. A photo with NO caption → "task list or facility issue?" (group 3, 2026-10-13)');
+    const photoWorld = (facilityOpen = false) => {
+        const x = world(); x.io.facilityActive = async () => facilityOpen;
+        x.files['https://cdn.example.com/a.jpg'] = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(50)]);
+        x.llmImage = 'Sr | Task | Site | Remark | Status\n1 | Electricity bills | All Sites | One email | WIP';
+        return x;
+    };
+    w = photoWorld();
+    const photo = image('', 'wamid.P1');
+    cl = await I.claimTaskImport(photo, w.io);
+    check('no caption → asks once, nothing is read or downloaded yet', cl.handled && !cl.background && w.replies[0] === I.PHOTO_CHOICE_TEXT && w.downloads.length === 0 && w.ctx?.type === 'IMPORT_PHOTO_CHOICE', w.replies);
+    cl = await I.claimTaskImport(text('yes', 'wamid.P2'), w.io);
+    check('"yes" → the SAME photo is read as a task list (the usual "reading…" then preview)', cl.handled && !!cl.background && /Got your image/.test(w.replies[1]));
+    await cl.background!();
+    check('…and previewed for YES as usual (nothing saved yet)', w.ctx?.type === 'IMPORT_PREVIEW' && w.ctx.data.tasks[0].title === 'Electricity bills' && w.downloads[0] === 'https://cdn.example.com/a.jpg', w.replies);
+    w = photoWorld();
+    await I.claimTaskImport(photo, w.io);
+    cl = await I.claimTaskImport(text('ticket', 'wamid.P3'), w.io);
+    check('"ticket" → not ours: the SAME photo is handed back for the facility assistant, and the question is closed', !cl.handled && JSON.stringify(cl.rewrite) === JSON.stringify(photo) && w.ctx === null && w.downloads.length === 0);
+    w = photoWorld();
+    await I.claimTaskImport(photo, w.io);
+    cl = await I.claimTaskImport(text('no', 'wamid.P4'), w.io);
+    check('"no" → left alone, said so', cl.handled && /left that photo alone/.test(w.replies[1]) && w.ctx === null);
+    w = photoWorld();
+    await I.claimTaskImport(photo, w.io);
+    cl = await I.claimTaskImport(text('please list the steps for the review in detail\nand share by evening', 'wamid.P5'), w.io);
+    check('they moved on → the question is dropped and the message is handled as usual', w.ctx === null && !cl.rewrite);
+    w = photoWorld(true);
+    cl = await I.claimTaskImport(image('', 'wamid.P6'), w.io);
+    check('a ticket conversation is open → the photo belongs to it (never asked, never taken)', !cl.handled && w.replies.length === 0);
+    w = photoWorld();
+    cl = await I.claimTaskImport(image('AC is leaking on floor 2', 'wamid.P7'), w.io);
+    check('a caption about something else → the facility assistant, exactly as before', !cl.handled && w.replies.length === 0);
+    const hook = fs.readFileSync(path.resolve(__dirname, '../../app/api/webhooks/aisensy/route.ts'), 'utf8');
+    check('the webhook carries on with the handed-back photo (so the facility flow sees it as just arrived)', /if \(taskImport\.rewrite\) \{ body = taskImport\.rewrite; input = normalizeInbound\(body\); \}/.test(hook));
 
     console.log(failures === 0 ? '\n🎉 IMPORT STAGE 2 TESTS PASSED\n' : `\n❌ ${failures} FAILED\n`);
     process.exit(failures === 0 ? 0 : 1);

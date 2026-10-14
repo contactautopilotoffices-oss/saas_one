@@ -64,6 +64,7 @@ async function run() {
     db.setConversationContext = async (p: any) => { contexts.set(p.system, { context_type: p.contextType, context_data: p.contextData || {} }); return {}; };
     db.clearConversationContext = async (_p: string, sys?: string) => { if (sys) contexts.delete(sys); else contexts.clear(); };
     db.getDailyAssignments = async () => tasks;
+    db.getNumberedList = async () => tasks;
     db.logAudit = async () => {};
     db.updateAssignmentStatus = async (p: any) => { const t = tasks.find(x => x.id === p.assignmentId); t.status = p.status; return t; };
     (TaskMessagingService as any).sendMessage = async (_p: string, text: string) => { replies.push(text); return true; };

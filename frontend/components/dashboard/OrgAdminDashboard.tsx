@@ -3,7 +3,6 @@
 import { resolveOrgDashboardTab, pushDashboardNavigation, type OrgDashboardTab } from '@/frontend/lib/dashboard/orgTabs';
 import { useDashboardContent } from '@/frontend/components/layout/DashboardContentSlot';
 import PettyCashNavLink from '@/frontend/components/pettyCash/PettyCashNavLink';
-import HRTicketsContent from '@/frontend/components/hr/HRTicketsContent';
 import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from 'react';
 import {
     LayoutDashboard, Building2, Users, UserPlus, Ticket, Settings, UserCircle, Activity,
@@ -19,53 +18,94 @@ import { useAuth } from '@/frontend/context/AuthContext';
 import { useDataCache } from '@/frontend/context/DataCacheContext';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { HapticCard } from '@/frontend/components/ui/HapticCard';
-import { RosterDashboard } from '@/frontend/components/roster/RosterDashboard';
-import { WaterDashboard } from '@/frontend/components/water/WaterDashboard';
-import UserDirectory from './UserDirectory';
 import SignOutModal from '@/frontend/components/ui/SignOutModal';
-import AdminSPOCDashboard from '../tickets/AdminSPOCDashboard';
 import TicketsView from './TicketsView';
-import SettingsView from './SettingsView';
-import DieselAnalyticsDashboard from '../diesel/DieselAnalyticsDashboard';
-import DieselStaffDashboard from '../diesel/DieselStaffDashboard';
-import ElectricityAnalyticsDashboard from '../electricity/ElectricityAnalyticsDashboard';
-import ElectricityStaffDashboard from '../electricity/ElectricityStaffDashboard';
 import InviteMemberModal from './InviteMemberModal';
 import NotificationBell from './NotificationBell';
 import Image from 'next/image';
-import { ImportReportsView } from '@/frontend/components/snags';
 import TicketCreateModal from '@/frontend/components/tickets/TicketCreateModal';
-import StockReportView from '@/frontend/components/stock/StockReportView';
 import StockMovementModal from '@/frontend/components/stock/StockMovementModal';
-import SOPDashboard from '@/frontend/components/sop/SOPDashboard';
-import PropertyFeaturesModal from './PropertyFeaturesModal';
-import EscalationHierarchyBuilder from '@/frontend/components/escalation/EscalationHierarchyBuilder';
-import AdminRoomManager from '@/frontend/components/meeting-rooms/AdminRoomManager';
-import PPMModule from '@/frontend/components/ppm/PPMModule';
-import AssetsModule from '@/frontend/components/assets/AssetsModule';
 import { assetCaps } from '@/frontend/lib/assets/roles';
-import DocumentBank from '@/frontend/components/audit/DocumentBank';
-import VendorManagement from '@/frontend/components/vendors/VendorManagement';
 import { UniversalSearch } from '@/frontend/components/shared/UniversalSearch';
-import TicketFlowMap from '../ops/TicketFlowMap';
-import ProcurementModule from '../procurement/ProcurementModule';
-import VMSOrgVisitorDashboard from '@/frontend/components/vms/VMSOrgVisitorDashboard';
-import UniversalQRScannerModal, { QRScanResult } from '@/frontend/components/shared/UniversalQRScannerModal';
-import WaterAnalyticsDashboard from '@/frontend/components/water/WaterAnalyticsDashboard';
-import VendorManagementModal from '@/frontend/components/vendor/VendorManagementModal';
-import GuestExperienceDashboard from '@/frontend/components/guest-experience/GuestExperienceDashboard';
-import AITicketsDashboard from '@/frontend/components/ai-tickets/AITicketsDashboard';
-import TaskManagerSuperuserDashboard from '@/frontend/components/task-manager/TaskManagerSuperuserDashboard';
-import TaskManagerTestingDashboard from '@/frontend/components/task-manager/TaskManagerTestingDashboard';
+import type { QRScanResult } from '@/frontend/components/shared/UniversalQRScannerModal';
 
 import { BDQuickStats } from './UnifiedDashboard';
-import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
-import OrgProgressTracker from '@/frontend/components/org-efficiency/OrgProgressTracker';
-import OrgEfficiencyMeter from '@/frontend/components/org-efficiency/OrgEfficiencyMeter';
 import CommandCenter from '@/frontend/components/dashboard/command-center/CommandCenter';
-import AgentConsole from '@/frontend/components/agents/AgentConsole';
 import AgentPulse from '@/frontend/components/agents/AgentPulse';
 import type { ModuleKey } from '@/frontend/types/agentRuntime';
+import dynamic from 'next/dynamic';
+import { usePreloadTabs } from '@/frontend/lib/dashboard/preloadTabs';
+import TabLoading from './TabLoading';
+
+const HRTicketsContent = dynamic(() => import('@/frontend/components/hr/HRTicketsContent'), { loading: TabLoading });
+const UserDirectory = dynamic(() => import('./UserDirectory'), { loading: TabLoading });
+const AdminSPOCDashboard = dynamic(() => import('../tickets/AdminSPOCDashboard'), { loading: TabLoading });
+const SettingsView = dynamic(() => import('./SettingsView'), { loading: TabLoading });
+const DieselAnalyticsDashboard = dynamic(() => import('../diesel/DieselAnalyticsDashboard'), { loading: TabLoading });
+const DieselStaffDashboard = dynamic(() => import('../diesel/DieselStaffDashboard'), { loading: TabLoading });
+const ElectricityAnalyticsDashboard = dynamic(() => import('../electricity/ElectricityAnalyticsDashboard'), { loading: TabLoading });
+const ElectricityStaffDashboard = dynamic(() => import('../electricity/ElectricityStaffDashboard'), { loading: TabLoading });
+const StockReportView = dynamic(() => import('@/frontend/components/stock/StockReportView'), { loading: TabLoading });
+const SOPDashboard = dynamic(() => import('@/frontend/components/sop/SOPDashboard'), { loading: TabLoading });
+const PropertyFeaturesModal = dynamic(() => import('./PropertyFeaturesModal'), { loading: () => null });
+const EscalationHierarchyBuilder = dynamic(() => import('@/frontend/components/escalation/EscalationHierarchyBuilder'), { loading: TabLoading });
+const AdminRoomManager = dynamic(() => import('@/frontend/components/meeting-rooms/AdminRoomManager'), { loading: TabLoading });
+const PPMModule = dynamic(() => import('@/frontend/components/ppm/PPMModule'), { loading: TabLoading });
+const AssetsModule = dynamic(() => import('@/frontend/components/assets/AssetsModule'), { loading: TabLoading });
+const DocumentBank = dynamic(() => import('@/frontend/components/audit/DocumentBank'), { loading: TabLoading });
+const VendorManagement = dynamic(() => import('@/frontend/components/vendors/VendorManagement'), { loading: TabLoading });
+const TicketFlowMap = dynamic(() => import('../ops/TicketFlowMap'), { loading: TabLoading });
+const ProcurementModule = dynamic(() => import('../procurement/ProcurementModule'), { loading: TabLoading });
+const VMSOrgVisitorDashboard = dynamic(() => import('@/frontend/components/vms/VMSOrgVisitorDashboard'), { loading: TabLoading });
+const WaterAnalyticsDashboard = dynamic(() => import('@/frontend/components/water/WaterAnalyticsDashboard'), { loading: TabLoading });
+const VendorManagementModal = dynamic(() => import('@/frontend/components/vendor/VendorManagementModal'), { loading: () => null });
+const GuestExperienceDashboard = dynamic(() => import('@/frontend/components/guest-experience/GuestExperienceDashboard'), { loading: TabLoading });
+const AITicketsDashboard = dynamic(() => import('@/frontend/components/ai-tickets/AITicketsDashboard'), { loading: TabLoading });
+const TaskManagerSuperuserDashboard = dynamic(() => import('@/frontend/components/task-manager/TaskManagerSuperuserDashboard'), { loading: TabLoading });
+const TaskManagerTestingDashboard = dynamic(() => import('@/frontend/components/task-manager/TaskManagerTestingDashboard'), { loading: TabLoading });
+const OrgProgressTracker = dynamic(() => import('@/frontend/components/org-efficiency/OrgProgressTracker'), { loading: TabLoading });
+const OrgEfficiencyMeter = dynamic(() => import('@/frontend/components/org-efficiency/OrgEfficiencyMeter'), { loading: TabLoading });
+const AgentConsole = dynamic(() => import('@/frontend/components/agents/AgentConsole'), { loading: TabLoading });
+const RosterDashboard = dynamic(() => import('@/frontend/components/roster/RosterDashboard').then(m => m.RosterDashboard), { loading: TabLoading });
+const WaterDashboard = dynamic(() => import('@/frontend/components/water/WaterDashboard').then(m => m.WaterDashboard), { loading: TabLoading });
+const ImportReportsView = dynamic(() => import('@/frontend/components/snags').then(m => m.ImportReportsView), { loading: TabLoading });
+
+// Tabs live in their own files so the dashboard opens faster; once it is on screen they are downloaded quietly in
+// the background (usePreloadTabs), so opening a tab shows no extra spinner (performance plan Phase 1).
+const TAB_PRELOADS = [
+    () => import('@/frontend/components/hr/HRTicketsContent'),
+    () => import('./UserDirectory'),
+    () => import('../tickets/AdminSPOCDashboard'),
+    () => import('./SettingsView'),
+    () => import('../diesel/DieselAnalyticsDashboard'),
+    () => import('../diesel/DieselStaffDashboard'),
+    () => import('../electricity/ElectricityAnalyticsDashboard'),
+    () => import('../electricity/ElectricityStaffDashboard'),
+    () => import('@/frontend/components/stock/StockReportView'),
+    () => import('@/frontend/components/sop/SOPDashboard'),
+    () => import('./PropertyFeaturesModal'),
+    () => import('@/frontend/components/escalation/EscalationHierarchyBuilder'),
+    () => import('@/frontend/components/meeting-rooms/AdminRoomManager'),
+    () => import('@/frontend/components/ppm/PPMModule'),
+    () => import('@/frontend/components/assets/AssetsModule'),
+    () => import('@/frontend/components/audit/DocumentBank'),
+    () => import('@/frontend/components/vendors/VendorManagement'),
+    () => import('../ops/TicketFlowMap'),
+    () => import('../procurement/ProcurementModule'),
+    () => import('@/frontend/components/vms/VMSOrgVisitorDashboard'),
+    () => import('@/frontend/components/water/WaterAnalyticsDashboard'),
+    () => import('@/frontend/components/vendor/VendorManagementModal'),
+    () => import('@/frontend/components/guest-experience/GuestExperienceDashboard'),
+    () => import('@/frontend/components/ai-tickets/AITicketsDashboard'),
+    () => import('@/frontend/components/task-manager/TaskManagerSuperuserDashboard'),
+    () => import('@/frontend/components/task-manager/TaskManagerTestingDashboard'),
+    () => import('@/frontend/components/org-efficiency/OrgProgressTracker'),
+    () => import('@/frontend/components/org-efficiency/OrgEfficiencyMeter'),
+    () => import('@/frontend/components/agents/AgentConsole'),
+    () => import('@/frontend/components/roster/RosterDashboard'),
+    () => import('@/frontend/components/water/WaterDashboard'),
+    () => import('@/frontend/components/snags'),
+];
 
 // Types
 type Tab = OrgDashboardTab;
@@ -125,6 +165,7 @@ interface Organization {
 }
 
 const OrgAdminDashboard = () => {
+    usePreloadTabs(TAB_PRELOADS);
     const { dashboardContent, navigateDashboard } = useDashboardContent();
     const { user, signOut, membership } = useAuth();
     const params = useParams();
@@ -803,6 +844,21 @@ const OrgAdminDashboard = () => {
     useEffect(() => {
         if (dashboardContent === undefined) fetchSummaries();
     }, [fetchSummaries, dashboardContent]);
+
+    useEffect(() => {
+        const handleCreated = () => {
+            invalidateCache('org-summaries-');
+            invalidateCache('tickets-');
+            invalidateCache('spoc-dashboard-');
+            fetchSummaries();
+        };
+        window.addEventListener('ticket-created', handleCreated);
+        window.addEventListener('request-created', handleCreated);
+        return () => {
+            window.removeEventListener('ticket-created', handleCreated);
+            window.removeEventListener('request-created', handleCreated);
+        };
+    }, [fetchSummaries, invalidateCache]);
 
     const uploadBase64IfNeeded = async (url: string | undefined) => {
         if (!url || !url.startsWith('data:image/')) return url;
@@ -1762,7 +1818,7 @@ const OrgAdminDashboard = () => {
                             </div>
                         )}
                         {activeTab === 'grievance' && (
-                            <HRTicketsContent orgId={org?.id || membership?.org_id || 'org'} />
+                            <HRTicketsContent orgId={org?.id || membership?.org_id || membership?.organization_id || (user as any)?.organization_id || user?.user_metadata?.organization_id || '211e1330-ad83-446d-941f-dcea48396798'} />
                         )}
                         
                         {activeTab === 'water' && (
@@ -2158,6 +2214,16 @@ const OrgAdminDashboard = () => {
                     propertyId={selectedPropertyId === 'all' ? undefined : selectedPropertyId}
                     isAdminMode={true}
                     showInternalToggle={true}
+                    onSuccess={(ticket) => {
+                        invalidateCache('org-summaries-');
+                        invalidateCache('tickets-');
+                        invalidateCache('spoc-dashboard-');
+                        fetchSummaries();
+                        if (typeof window !== 'undefined') {
+                            window.dispatchEvent(new CustomEvent('ticket-created', { detail: { ticket } }));
+                            window.dispatchEvent(new CustomEvent('request-created', { detail: { ticket } }));
+                        }
+                    }}
                     organizations={(() => {
                         const orgs = org ? [org] : [];
                         // If user is from Autopilot Offices but viewing another org, add Autopilot to the list

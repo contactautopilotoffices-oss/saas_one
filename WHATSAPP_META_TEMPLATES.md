@@ -1446,6 +1446,141 @@ Thank you for ensuring prompt maintenance service!
   - `{{5}}`: `Sunil Kumar (MST)`
   - `{{6}}` *(Dynamic URL Path)*: `guest-requests`
 
+---
+
+## 11. Task Manager & Bot Operations
+
+All `UTILITY`. Sent **template-only** (never free text first): WhatsApp rejects free text to anyone who has not messaged in
+24 hours ("Re-engagement message"). Every blank is filled on **one line** — Meta rejects line breaks inside a variable, so
+lists use ` | `. Each name can be overridden with the env variable shown (only needed if a template is renamed).
+
+### Which template is used when
+
+| When | Template | Env override |
+|---|---|---|
+| Morning rule (standup — also greets people with no tasks yet) | `task_morning_kickoff_v2` (v1 still works if the env says v1: one blank) | `AISENSY_TASK_MORNING_CAMPAIGN` |
+| Midday / Evening rule | `task_midday_reminder_v1` · `task_eod_summary_v1` | `AISENSY_TASK_MIDDAY_CAMPAIGN` · `AISENSY_TASK_EOD_CAMPAIGN` |
+| **Overdue alert** rule (Notifications tab) — only people with open tasks from earlier days | `task_overdue_alert_v1` | `AISENSY_TASK_OVERDUE_CAMPAIGN` |
+| **Midday rule → managers and superusers** get team progress **only if something is still pending**; **Evening rule → always** (each once a day) | `task_manager_team_digest_v1` | `AISENSY_TASK_TEAM_DIGEST_CAMPAIGN` |
+| A task is assigned (Tasks tab, WhatsApp AI, old Assign tab, "assign …") | `task_assigned_v1` | `AISENSY_TASK_ASSIGNED_CAMPAIGN` |
+| A task is **handed over** ("Give to…") | `task_handover_v1` | `AISENSY_TASK_HANDOVER_CAMPAIGN` |
+| **Any** task someone gave you is completed → the giver | `task_completed_notice_v1` | `AISENSY_TASK_COMPLETED_CAMPAIGN` |
+| A superuser replies to a reminder ("working on it", "stuck", "done") → the giver | `task_update_v2` | `AISENSY_TASK_UPDATE_CAMPAIGN` |
+| A team reminds the superuser about pending tasks | `task_user_mentioned_v1` | `AISENSY_TASK_PING_CAMPAIGN` |
+| Bot health incident / new AI-instruction version waiting → configured admins | `whatsapp_bot_admin_alert_v2` | `AISENSY_BOT_ADMIN_ALERT_CAMPAIGN` |
+
+### Template 27: `whatsapp_bot_admin_alert_v2` (System Incident Alert)
+*(To the bot-alert admins on an apology / AI-failure spike — at most once an hour — and when a new AI-instruction version waits for approval)*
+
+- **Category:** `UTILITY` · **Language:** `English (en)` · **Header:** `Text` &rarr; `System Incident Alert`
+- **Body:**
+```text
+Technical Alert: A system operational incident has been logged.
+
+Incident Details: {{1}}
+
+Please review system telemetry in your administrative console.
+```
+- **Button:** `Open Dashboard`
+- **Params:** `[incidentDetails]` (one line, at most 900 characters)
+
+---
+
+### Template 28: `task_overdue_alert_v1` (Task Overdue Alert)
+*(The "Overdue alert" rule in the Notifications tab. People with nothing overdue are skipped.)*
+
+- **Category:** `UTILITY` · **Language:** `English (en)` · **Header:** `Text` &rarr; `Task Overdue Alert ⚠️`
+- **Body:**
+```text
+Hello {{1}},
+You have {{2}} overdue task(s) requiring your immediate attention:
+📋 Overdue List:
+{{3}}
+Please update your progress or mark them completed today.
+```
+- **Footer:** `AutoPilot Task Management` · **Button:** `Quick Reply` &rarr; `View My Tasks`
+- **Params:** `[firstName, overdueCount, list]` — oldest first, e.g. `1. DG Meter Log (Due: 10 Oct) | 2. Chiller Filter Check (Due: 9 Oct)`
+- **Sample:** `{{1}}` Rahul · `{{2}}` 2 · `{{3}}` `1. DG Meter Log (Due: 10 Oct) | 2. Chiller Filter Check (Due: 09 Oct)`
+
+---
+
+### Template 29: `task_handover_v1` (Task Handed Over)
+*(To the new holder when someone uses "Give to…", on the web or through WhatsApp)*
+
+- **Category:** `UTILITY` · **Language:** `English (en)` · **Header:** `Text` &rarr; `Task Handed Over 🤝`
+- **Body:**
+```text
+Hello {{1}},
+{{2}} has handed over a task to you:
+📋 Task: {{3}}
+📅 Target Date: {{4}}
+Reply "tasks" or tap below to view your task queue.
+```
+- **Footer:** `AutoPilot Task Management` · **Button:** `Quick Reply` &rarr; `View My Tasks`
+- **Params:** `[recipientFirstName, giver (Department), taskTitle, targetDate "12 Oct 2026"]`
+- **Sample:** `{{1}}` Vidya · `{{2}}` Priyanka (Procurement) · `{{3}}` Single Disc Machine Vendor PO Follow-up · `{{4}}` 12 Oct 2026
+
+---
+
+### Template 30: `task_manager_team_digest_v1` (Daily Team Progress Summary)
+*(A reporting manager gets their department, a superuser gets all departments. With the **Midday** rule — only if something in that scope is still pending; with the **Evening** rule — always, in addition to their own evening summary. Once per person per day for each.)*
+
+- **Category:** `UTILITY` · **Language:** `English (en)` · **Header:** `Text` &rarr; `Daily Team Progress Summary 📊`
+- **Body:**
+```text
+Hello {{1}},
+Here is today's task completion summary for {{2}}:
+📅 Date: {{3}}
+👥 Total Members: {{4}}
+✅ Tasks Completed Today: {{5}}
+⏳ Tasks Remaining Pending: {{6}}
+📋 Team Status:
+{{7}}
+Review your full team board on the portal.
+```
+- **Footer:** `AutoPilot Task Intelligence` · **Button:** `Call to Action (Website URL)` &rarr; `Open Team Board` &rarr; `https://autopilotoffices.com/task-manager`
+- **Params:** `[firstName, scope, date, members, completed, pending, statusList]` — scope `Tech Department` or `All Active Departments`;
+  status list e.g. `• Tech: 12/12 Done (100% ✅) | • Ops: 18/20 Done (2 Pending ⏳)` (per person for a manager, per department for a superuser)
+
+---
+
+### Template 31: `task_completed_notice_v1` (Task Completed)
+*(To the person who GAVE the task, for every completion — Tasks tab, WhatsApp, "done 2", old dashboard. Several tasks finished together → one message listing them; at most once an hour per task; not sent when a superuser's "done" reply is already relayed with `task_update_v2`.)*
+
+- **Category:** `UTILITY` · **Language:** `English (en)` · **Header:** `Text` &rarr; `Task Completed ✅`
+- **Body:**
+```text
+Hello {{1}},
+A task you assigned has been completed:
+📋 Task: {{2}}
+👤 Completed By: {{3}} ({{4}})
+⏰ Completed At: {{5}}
+Thank you for keeping team workflows moving!
+```
+- **Footer:** `AutoPilot Task Management` · **Button:** `Quick Reply` &rarr; `View Task Details`
+- **Params:** `[giverFirstName, task(s), completedByName, department, "11 Oct 2026, 04:30 PM" (India time)]`
+
+---
+
+### Template 32: `task_morning_kickoff_v2` (Daily Task Standup)
+*(The Morning rule. Replaces `task_morning_kickoff_v1`. On a rule set to "don't skip people with no tasks" (the morning default) it also greets people with nothing logged yet.)*
+
+- **Category:** `UTILITY` · **Language:** `English (en)` · **Header:** `Text` &rarr; `Daily Task Standup 📋`
+- **Body:**
+```text
+Good morning {{1}}!
+Your Task Manager workspace is open for today ({{2}}).
+{{3}}
+💡 Quick Guide:
+• 🎙️ Send a voice note or text to add or assign tasks
+• Ask "how is my team doing" to check team progress
+• Reply "tasks" to view your board, or "done 1" when finished
+```
+- **Footer:** `AutoPilot Task Manager` · **Button:** `Quick Reply` &rarr; `View My Tasks`
+- **Params:** `[firstName, "12 Oct 2026", summary]` — summary on one line: `You have 3 tasks today: 1. Submit EOD report ⏳ | 2. Call vendor 🔄 | 3. 🔄 Old one ⏳`,
+  or with no tasks: `You have no tasks logged yet. Speak or type your priorities for today to add them to your board.`
+- **Sample:** `{{1}}` Harsh · `{{2}}` 12 Oct 2026 · `{{3}}` You have no tasks logged yet. Speak or type your priorities for today to add them to your board.
+
 
 
 

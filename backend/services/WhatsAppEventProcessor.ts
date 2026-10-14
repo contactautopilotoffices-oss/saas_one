@@ -1,9 +1,12 @@
+import { usesBulkApprovalSummary, siteVendorQuotation } from '@/backend/lib/procurement/requisition-approval.mjs';
+import { requisitionNotes, batchWhatsAppOptions } from '@/backend/lib/procurement/requisition-approval.mjs';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { WhatsAppRecipientResolver, ResolvedWhatsAppUser } from '@/backend/services/WhatsAppRecipientResolver';
 import { WhatsAppQueueService } from '@/backend/services/WhatsAppQueueService';
 import { PettyCashNotificationService } from '@/backend/services/PettyCashNotificationService';
 
 interface DispatchOptions {
+    durableBatch?: boolean;
     featureKey: string;
     templateEventKey: string;
     organizationId: string;
@@ -154,6 +157,9 @@ export const WhatsAppEventProcessor = {
             case 'MONTHLY_REQUISITION_UPLOADED':
                 await this.handleRequisitionUploaded(payload);
                 break;
+            case 'REQUISITION_APPROVAL_BATCH_REQUESTED':
+                await this.handleRequisitionApprovalBatchRequested(payload);
+                break;
             case 'REQUISITION_APPROVAL_REQUESTED':
                 await this.handleRequisitionApprovalRequested(payload);
                 break;
@@ -278,6 +284,7 @@ export const WhatsAppEventProcessor = {
             organizationId,
             propertyId,
             featureKey,
+            strictReads: options.durableBatch,
             contextualUsers: contextualUserIds ? {
                 assigneeId: contextualUserIds.assigneeId,
                 requesterId: contextualUserIds.requesterId,
@@ -303,10 +310,11 @@ export const WhatsAppEventProcessor = {
 
         const missingIds = contextualIds.filter(id => !userMap.has(id));
         if (missingIds.length > 0) {
-            const { data: contextualUsers } = await supabaseAdmin
+            const { data: contextualUsers, error: contextualError } = await supabaseAdmin
                 .from('users')
                 .select('id, phone, full_name')
                 .in('id', missingIds);
+            if (contextualError && options.durableBatch) throw contextualError;
             (contextualUsers || [])
                 .filter((u: any) => u?.phone && String(u.phone).trim())
                 .forEach((u: any) => {
@@ -333,12 +341,13 @@ export const WhatsAppEventProcessor = {
         }
 
         // Read the org's template map
-        const { data: orgData } = await supabaseAdmin
+        const { data: orgData, error: templateError } = await supabaseAdmin
             .from('organization_settings')
             .select('whatsapp_templates')
             .eq('organization_id', organizationId)
             .maybeSingle();
 
+        if (templateError && options.durableBatch) throw templateError;
         const templatesMap = (orgData as any)?.whatsapp_templates || {};
 
         const DEFAULT_TEMPLATES: Record<string, { campaign_name: string; params: string[] }> = {
@@ -354,26 +363,26 @@ export const WhatsAppEventProcessor = {
             lead_assigned: { campaign_name: 'crm_lead_assigned_v1', params: ['user_name', 'company_name', 'contact_person', 'phone', 'property_interest', 'next_followup'] },
             crm_lead_assigned: { campaign_name: 'crm_lead_assigned_v1', params: ['user_name', 'company_name', 'contact_person', 'phone', 'property_interest', 'next_followup'] },
             ticket_created: { campaign_name: 'ticket_created_v3', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'] },
-            ticket_created_media: { campaign_name: 'ticket_created_v3_media', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'] },
+            ticket_created_media: { campaign_name: 'ticket_created_v3_media', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'] },
             ticket_assigned: { campaign_name: 'ticket_assigned_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone'] },
             ticket_completed: { campaign_name: 'ticket_completed_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'resolved_by'] },
             ticket_completed_media: { campaign_name: 'ticket_completed_v1_media', params: ['user_name', 'ticket_number', 'title', 'property', 'resolved_by'] },
             daily_property_report: { campaign_name: 'ai_property_report_v1', params: ['user_name', 'org_name', 'date', 'critical_count', 'open_count', 'resolved_count', 'electricity_kwh', 'dg_liters', 'ppm_completed', 'ppm_missed', 'sop_compliance', 'property_summary', 'ai_insights'] },
             ai_property_report: { campaign_name: 'ai_property_report_v1', params: ['user_name', 'org_name', 'date', 'critical_count', 'open_count', 'resolved_count', 'electricity_kwh', 'dg_liters', 'ppm_completed', 'ppm_missed', 'sop_compliance', 'property_summary', 'ai_insights'] },
-            material_request_created: { campaign_name: 'material_request_created_v4', params: ['user_name', 'ticket_number', 'property', 'requested_by', 'requester_phone', 'items_summary'] },
-            comparative_uploaded: { campaign_name: 'comparative_approval_requested_v1', params: ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'notes'] },
-            comparative_approval_requested: { campaign_name: 'comparative_approval_requested_v1', params: ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'notes'] },
-            comparative_uploaded_info: { campaign_name: 'comparative_uploaded_info_v1', params: ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'approver_name', 'notes'] },
-            comparative_approved: { campaign_name: 'comparative_approved_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'approved_by', 'total_cost', 'approver_comment'] },
-            comparative_rejected: { campaign_name: 'comparative_rejected_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'total_cost', 'action_by', 'rejection_reason'] },
-            material_delivered: { campaign_name: 'material_delivered_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'delivered_items', 'verified_by'] },
-            procurement_vendor_tag: { campaign_name: 'procurement_vendor_tag_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'tagged_by', 'note', 'assigned_procurement'] },
-            procurement_vendor_aligned: { campaign_name: 'procurement_vendor_aligned_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'vendor_details', 'arranged_by'] },
+            material_request_created: { campaign_name: 'material_request_created_v4', params: ['user_name', 'ticket_number', 'property', 'requested_by', 'requester_phone', 'items_summary', 'ticket_id'] },
+            comparative_uploaded: { campaign_name: 'comparative_approval_requested_v1', params: ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'notes', 'ticket_id'] },
+            comparative_approval_requested: { campaign_name: 'comparative_approval_requested_v1', params: ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'notes', 'ticket_id'] },
+            comparative_uploaded_info: { campaign_name: 'comparative_uploaded_info_v1', params: ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'approver_name', 'notes', 'ticket_id'] },
+            comparative_approved: { campaign_name: 'comparative_approved_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'approved_by', 'total_cost', 'approver_comment', 'ticket_id'] },
+            comparative_rejected: { campaign_name: 'comparative_rejected_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'total_cost', 'action_by', 'rejection_reason', 'ticket_id'] },
+            material_delivered: { campaign_name: 'material_delivered_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'delivered_items', 'verified_by', 'ticket_id'] },
+            procurement_vendor_tag: { campaign_name: 'procurement_vendor_tag_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'tagged_by', 'note', 'assigned_procurement', 'ticket_id'] },
+            procurement_vendor_aligned: { campaign_name: 'procurement_vendor_aligned_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'vendor_details', 'arranged_by', 'ticket_id'] },
             reminder_ppm: { campaign_name: 'reminder_ppm_v2', params: ['user_name', 'system_name', 'property', 'due_date', 'vendor_name', 'location'] },
             ppm_reminder: { campaign_name: 'reminder_ppm_v2', params: ['user_name', 'system_name', 'property', 'due_date', 'vendor_name', 'location'] },
             reminder_ticket_sla: { campaign_name: 'reminder_ticket_sla_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'sla_time'] },
             reminder_lead_followup: { campaign_name: 'reminder_lead_followup_v1', params: ['user_name', 'company_name', 'contact_person', 'phone', 'followup_time', 'lead_id'] },
-            checklist_slot_reminder: { campaign_name: 'checklist_slot_reminder_v2', params: ['user_name', 'checklist_name', 'property', 'due_time'] },
+            checklist_slot_reminder: { campaign_name: 'checklist_slot_reminder_v2', params: ['user_name', 'checklist_name', 'property', 'due_time', 'property_id'] },
             checklist_started: { campaign_name: 'checklist_started_v1', params: ['user_name', 'checklist_name', 'property', 'start_time'] },
             checklist_completed: { campaign_name: 'checklist_completed_v1', params: ['user_name', 'checklist_name', 'property', 'completed_by', 'time'] },
             checklist_overdue_alert: { campaign_name: 'checklist_overdue_alert_v2', params: ['checklist_name', 'property', 'slot_time'] },
@@ -443,9 +452,9 @@ export const WhatsAppEventProcessor = {
             'lead_assigned': ['user_name', 'company_name', 'contact_person', 'phone', 'property_interest', 'next_followup'],
 
             'ticket_created_v3': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'],
-            'ticket_created_v3_media': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'],
+            'ticket_created_v3_media': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'],
             'ticket_created': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'],
-            'ticket_created_media': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'],
+            'ticket_created_media': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'],
 
             'ticket_assigned_v1': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone'],
             'ticket_assigned': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone'],
@@ -458,23 +467,23 @@ export const WhatsAppEventProcessor = {
             'ai_property_report_v1': ['user_name', 'org_name', 'date', 'critical_count', 'open_count', 'resolved_count', 'electricity_kwh', 'dg_liters', 'ppm_completed', 'ppm_missed', 'sop_compliance', 'property_summary', 'ai_insights'],
             'daily_property_report': ['user_name', 'org_name', 'date', 'critical_count', 'open_count', 'resolved_count', 'electricity_kwh', 'dg_liters', 'ppm_completed', 'ppm_missed', 'sop_compliance', 'property_summary', 'ai_insights'],
 
-            'material_request_created_v4': ['user_name', 'ticket_number', 'property', 'requested_by', 'requester_phone', 'items_summary'],
-            'material_request_created_v3': ['user_name', 'ticket_number', 'property', 'requested_by', 'requester_phone', 'items_summary'],
-            'material_request_created': ['user_name', 'ticket_number', 'property', 'requested_by', 'requester_phone', 'items_summary'],
+            'material_request_created_v4': ['user_name', 'ticket_number', 'property', 'requested_by', 'requester_phone', 'items_summary', 'ticket_id'],
+            'material_request_created_v3': ['user_name', 'ticket_number', 'property', 'requested_by', 'requester_phone', 'items_summary', 'ticket_id'],
+            'material_request_created': ['user_name', 'ticket_number', 'property', 'requested_by', 'requester_phone', 'items_summary', 'ticket_id'],
 
-            'comparative_approval_requested_v1': ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'notes'],
-            'comparative_approval_requested': ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'notes'],
-            'comparative_uploaded_v1': ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'notes'],
-            'comparative_uploaded': ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'notes'],
+            'comparative_approval_requested_v1': ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'notes', 'ticket_id'],
+            'comparative_approval_requested': ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'notes', 'ticket_id'],
+            'comparative_uploaded_v1': ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'notes', 'ticket_id'],
+            'comparative_uploaded': ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'notes', 'ticket_id'],
 
-            'comparative_uploaded_info_v1': ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'approver_name', 'notes'],
-            'comparative_uploaded_info': ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'approver_name', 'notes'],
+            'comparative_uploaded_info_v1': ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'approver_name', 'notes', 'ticket_id'],
+            'comparative_uploaded_info': ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'approver_name', 'notes', 'ticket_id'],
 
-            'comparative_approved_v1': ['user_name', 'ticket_number', 'title', 'property', 'approved_by', 'total_cost', 'approver_comment'],
-            'comparative_approved': ['user_name', 'ticket_number', 'title', 'property', 'approved_by', 'total_cost', 'approver_comment'],
+            'comparative_approved_v1': ['user_name', 'ticket_number', 'title', 'property', 'approved_by', 'total_cost', 'approver_comment', 'ticket_id'],
+            'comparative_approved': ['user_name', 'ticket_number', 'title', 'property', 'approved_by', 'total_cost', 'approver_comment', 'ticket_id'],
 
-            'comparative_rejected_v1': ['user_name', 'ticket_number', 'title', 'property', 'total_cost', 'action_by', 'rejection_reason'],
-            'comparative_rejected': ['user_name', 'ticket_number', 'title', 'property', 'total_cost', 'action_by', 'rejection_reason'],
+            'comparative_rejected_v1': ['user_name', 'ticket_number', 'title', 'property', 'total_cost', 'action_by', 'rejection_reason', 'ticket_id'],
+            'comparative_rejected': ['user_name', 'ticket_number', 'title', 'property', 'total_cost', 'action_by', 'rejection_reason', 'ticket_id'],
 
             'vendor_revenue_recorded_v1': ['user_name', 'shop_name', 'property_name', 'date', 'revenue_amount', 'commission_rate', 'commission_due', 'property_id'],
             'vendor_revenue_recorded': ['user_name', 'shop_name', 'property_name', 'date', 'revenue_amount', 'commission_rate', 'commission_due', 'property_id'],
@@ -487,11 +496,11 @@ export const WhatsAppEventProcessor = {
             'material_delivered_v': ['user_name', 'ticket_number', 'title', 'property', 'delivered_items', 'verified_by', 'ticket_id'],
             'material_delivered': ['user_name', 'ticket_number', 'title', 'property', 'delivered_items', 'verified_by', 'ticket_id'],
 
-            'procurement_vendor_tag_v1': ['user_name', 'ticket_number', 'title', 'property', 'tagged_by', 'note', 'assigned_procurement'],
-            'procurement_vendor_tag': ['user_name', 'ticket_number', 'title', 'property', 'tagged_by', 'note', 'assigned_procurement'],
+            'procurement_vendor_tag_v1': ['user_name', 'ticket_number', 'title', 'property', 'tagged_by', 'note', 'assigned_procurement', 'ticket_id'],
+            'procurement_vendor_tag': ['user_name', 'ticket_number', 'title', 'property', 'tagged_by', 'note', 'assigned_procurement', 'ticket_id'],
 
-            'procurement_vendor_aligned_v1': ['user_name', 'ticket_number', 'title', 'property', 'vendor_details', 'arranged_by'],
-            'procurement_vendor_aligned': ['user_name', 'ticket_number', 'title', 'property', 'vendor_details', 'arranged_by'],
+            'procurement_vendor_aligned_v1': ['user_name', 'ticket_number', 'title', 'property', 'vendor_details', 'arranged_by', 'ticket_id'],
+            'procurement_vendor_aligned': ['user_name', 'ticket_number', 'title', 'property', 'vendor_details', 'arranged_by', 'ticket_id'],
 
             'reminder_ppm_v2': ['user_name', 'system_name', 'property', 'due_date', 'vendor_name', 'location'],
             'reminder_ppm': ['user_name', 'system_name', 'property', 'due_date', 'vendor_name', 'location'],
@@ -505,9 +514,9 @@ export const WhatsAppEventProcessor = {
 
             'fms_welcome_onboarding_v1': ['user_name', 'helpdesk_contact'],
 
-            'checklist_slot_reminder_v1': ['user_name', 'checklist_name', 'property', 'due_time'],
-            'checklist_slot_reminder_v2': ['user_name', 'checklist_name', 'property', 'due_time'],
-            'checklist_slot_reminder': ['user_name', 'checklist_name', 'property', 'due_time'],
+            'checklist_slot_reminder_v1': ['user_name', 'checklist_name', 'property', 'due_time', 'property_id'],
+            'checklist_slot_reminder_v2': ['user_name', 'checklist_name', 'property', 'due_time', 'property_id'],
+            'checklist_slot_reminder': ['user_name', 'checklist_name', 'property', 'due_time', 'property_id'],
 
             'checklist_started_v1': ['user_name', 'checklist_name', 'property', 'start_time'],
             'checklist_started': ['user_name', 'checklist_name', 'property', 'start_time'],
@@ -596,7 +605,8 @@ export const WhatsAppEventProcessor = {
                 templateParams: orderedParams,
                 entityId: entityId || undefined,
                 mediaUrl: effectiveMediaUrl,
-                mediaType: effectiveMediaType
+                mediaType: effectiveMediaType,
+                durableBatch: options.durableBatch
             });
         }
     },
@@ -1182,21 +1192,35 @@ export const WhatsAppEventProcessor = {
         });
     },
 
+    async handleRequisitionApprovalBatchRequested(payload: any) {
+        const { data: records, error } = await supabaseAdmin.from('property_monthly_requisitions')
+            .select('*,property:properties!property_id(id,name)').eq('organization_id', payload.organization_id)
+            .in('id', payload.requisition_ids);
+        if (error) throw error;
+        const saved = (records || []).filter(record =>
+            requisitionNotes(record).vendor_quotation?.batch_id === payload.batch_id);
+        if (!saved.length) return;
+        await this.dispatch(batchWhatsAppOptions(saved, payload));
+    },
+
     async handleRequisitionApprovalRequested(payload: any): Promise<void> {
         let { organization_id, property_id, requisition_month, requisition_year, target_approver_id, vendor_name, total_final_amount, vendor_notes } = payload;
         let isOverBudget = !!payload.is_over_budget;
         let overBudgetAmount = Number(payload.over_budget_amount) || 0;
         let budgetLimit = Number(payload.budget_limit) || 0;
 
+        if (usesBulkApprovalSummary({ notes: payload.notes })) return;
         if (payload.requisition_id) {
             try {
-                const { data: req } = await supabaseAdmin
+                const { data: req, error: hydrateError } = await supabaseAdmin
                     .from('property_monthly_requisitions')
-                    .select('notes, floor_tag, property_id, organization_id, requisition_month, requisition_year, is_over_budget, budget_limit, over_budget_amount')
+                    .select('notes, total_estimated_amount, floor_tag, property_id, organization_id, requisition_month, requisition_year, is_over_budget, budget_limit, over_budget_amount')
                     .eq('id', payload.requisition_id)
                     .maybeSingle();
 
+                if (hydrateError) throw hydrateError;
                 if (req) {
+                    if (usesBulkApprovalSummary(req)) return;
                     if (!organization_id) organization_id = req.organization_id;
                     if (!property_id) property_id = req.property_id;
                     if (!requisition_month) requisition_month = req.requisition_month;
@@ -1214,10 +1238,11 @@ export const WhatsAppEventProcessor = {
                         } catch {}
                     }
 
-                    if (parsedNotes?.vendor_quotation) {
-                        if (!vendor_name) vendor_name = parsedNotes.vendor_quotation.vendor_name;
-                        if (!total_final_amount) total_final_amount = parsedNotes.vendor_quotation.total_quoted_amount;
-                        if (!vendor_notes) vendor_notes = parsedNotes.vendor_quotation.notes;
+                    const siteQuote = siteVendorQuotation(req);
+                    if (siteQuote) {
+                        if (!vendor_name) vendor_name = siteQuote.vendor_name;
+                        if (siteQuote.is_bulk || !total_final_amount) total_final_amount = siteQuote.total_quoted_amount;
+                        if (!vendor_notes) vendor_notes = siteQuote.notes;
                     }
                     if (parsedNotes?.approver_info && !target_approver_id) {
                         target_approver_id = parsedNotes.approver_info.id;
@@ -1227,6 +1252,7 @@ export const WhatsAppEventProcessor = {
                 }
             } catch (err) {
                 console.warn('[Requisition Approval Hydrate Error]:', err);
+                throw err;
             }
         }
 
@@ -1362,7 +1388,8 @@ export const WhatsAppEventProcessor = {
                 property: propertyName,
                 tagged_by: tagger.name,
                 note: payload.note || 'Vendor arrangement requested',
-                assigned_procurement: procurement.name || 'Procurement Team'
+                assigned_procurement: procurement.name || 'Procurement Team',
+                ticket_id: payload.ticket_id || ''
             },
             summaryMessage: `Vendor procurement tagged on Ticket #${payload.ticket_number} at ${propertyName}`,
             contextualUserIds: { assigneeId: payload.assigned_procurement_user_id }
@@ -1386,7 +1413,8 @@ export const WhatsAppEventProcessor = {
                 title: payload.title || 'Site Issue',
                 property: propertyName,
                 vendor_details: payload.details || 'Vendor visit aligned',
-                arranged_by: arranger.name || 'Procurement Team'
+                arranged_by: arranger.name || 'Procurement Team',
+                ticket_id: payload.ticket_id || ''
             },
             summaryMessage: `Vendor arranged for Ticket #${payload.ticket_number} at ${propertyName}`,
             contextualUserIds: { requesterId, assigneeId: payload.assigned_to },
@@ -1560,7 +1588,8 @@ export const WhatsAppEventProcessor = {
                 user_name: assignedUser.name || 'Technician',
                 checklist_name: payload.template_title || 'SOP Checklist',
                 property: propertyName,
-                due_time: payload.due_time || '30 mins'
+                due_time: payload.due_time || '30 mins',
+                property_id: payload.property_id || ''
             },
             summaryMessage: `Checklist "${payload.template_title}" at ${propertyName} is due at ${payload.due_time || 'soon'}`,
             contextualUserIds: { assigneeId: payload.assigned_to }

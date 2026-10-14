@@ -66,6 +66,10 @@ export interface TaskTemplate {
     created_by: string | null;
     task_type: TaskType;
     is_active: boolean;
+    /** Personal fixed task: only ever created for this person. Null/absent = the original department-wide fixed task. */
+    owner_id?: string | null;
+    /** Days a fixed task comes back (0 = Sunday ... 6 = Saturday). Default Monday to Saturday. */
+    days_of_week?: number[];
     created_at: string;
     updated_at: string;
     department?: Department | null;
@@ -86,6 +90,13 @@ export interface TaskAssignment {
     employee?: Employee | null;
     template?: TaskTemplate | null;
 }
+
+/**
+ * One line of a person's numbered task list: open tasks from earlier days first (oldest first), then today's tasks.
+ * `listNumber` is the SAME in every message (morning, midday, evening, overdue) and in the bot, so "done 1" always means
+ * the task shown as 1.
+ */
+export type NumberedAssignment = TaskAssignment & { listNumber: number; isCarriedForward?: boolean };
 
 export interface ConversationContext {
     id: string;
@@ -156,12 +167,14 @@ export interface NotificationRule {
     daysOfWeek: number[];           // [1, 2, 3, 4, 5, 6] (1=Mon ... 6=Sat, 0=Sun)
     ruleType: NotificationRuleType;
     departmentId?: string | null;   // Phase 5: Optional Department-scope (null/'all' = company-wide or default)
+    ownerUserId?: string | null;    // Personal rule: it only ever reaches this one person (a superuser's own notifications)
     taskFilters: NotificationTaskFilters;
     conditions: NotificationConditions;
     recipients: NotificationRecipients;
     customTemplate?: NotificationCustomTemplate;
     lastRunDate?: string | null;    // "2026-10-05"
     lastRunSummary?: string | null; // Summary string of last run
+    lastManualSendAt?: string | null; // ISO time of the last "Send now" (cooldown against double sends)
 }
 
 
@@ -194,6 +207,14 @@ export interface TestingConfig {
     killSwitches?: WhatsAppKillSwitches; // Phase 2: Multi-level WhatsApp kill switches
     nlGatewayEnabled?: boolean; // Step 4: natural-language front door (OFF unless explicitly switched on)
     whatsappPretendMode?: boolean; // Step 1: when not explicitly false, NO Task Manager WhatsApp message is sent (saved to history only)
+    neverSilentEnabled?: boolean; // Bot plan Phase 1: note each message, apologise when no reply came (OFF unless switched on)
+    conversationMemoryEnabled?: boolean; // Bot plan Phase 2: remember the last 20 messages of each chat for 24 hours (OFF unless switched on)
+    frontDoorEnabled?: boolean; // Bot plan Phase 3: Smart chat exact commands without AI, "undo", no menu when the AI is down (OFF unless switched on)
+    teamReportsEnabled?: boolean; // Bot plan Phase 4: "how is my team doing today?" (OFF unless switched on)
+    learningLoopEnabled?: boolean; // Bot plan Phase 5: capture likely mistakes for admin review
+    promptVersionsEnabled?: boolean; // Bot plan Phase 5: active database prompt sections
+    voiceNotesEnabled?: boolean; // WhatsApp voice notes for everyone using the Task Manager (Task Access panel; OFF unless switched on)
+    nightlyAutoTuneEnabled?: boolean; // Bot plan Phase 5: draft and evaluate prompt candidates after 02:00 IST
+    botAlertAdmins?: Array<{ name: string; phone: string }>;
 }
-
 

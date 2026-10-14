@@ -16,6 +16,7 @@ export const IMPORT_CONTEXT = {
     AWAITING: 'IMPORT_AWAITING',   // "send me your list" — waiting for the file/text
     PROCESSING: 'IMPORT_PROCESSING', // reading the file right now
     PREVIEW: 'IMPORT_PREVIEW',     // shown the list, waiting for YES / NO / edits
+    PHOTO_CHOICE: 'IMPORT_PHOTO_CHOICE', // a photo came with no caption: "task list or facility issue?" (group 3, 2026-10-13)
 } as const;
 
 export const AWAITING_TTL_MIN = 10;
@@ -57,6 +58,8 @@ export interface ImportClaim {
     handled: boolean;
     /** Slow work (download + AI read). The caller runs it AFTER answering the webhook. Never throws. */
     background?: () => Promise<void>;
+    /** Not ours after all: carry on with THIS message body instead (a photo the person said is for a facility ticket). */
+    rewrite?: unknown;
 }
 
 const NOT_HANDLED: ImportClaim = { handled: false };

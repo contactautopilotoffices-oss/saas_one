@@ -4,6 +4,12 @@ import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+interface EmployeesCacheEntry {
+    data: any;
+    timestamp: number;
+}
+const serverEmployeesCache = new Map<string, EmployeesCacheEntry>();
+const CACHE_TTL_MS = 60 * 1000;
 
 export async function GET(request: Request) {
     try {
@@ -11,6 +17,13 @@ export async function GET(request: Request) {
         const department = searchParams.get('department');
         const queryStr = searchParams.get('q');
         const orgId = searchParams.get('organization_id') || searchParams.get('orgId');
+        const cacheKey = `${orgId || 'all'}_${department || 'all'}_${queryStr || 'all'}`;
+        const cached = serverEmployeesCache.get(cacheKey);
+        if (cached && (Date.now() - cached.timestamp < CACHE_TTL_MS)) {
+            return NextResponse.json(cached.data, {
+                headers: { 'Cache-Control': 'private, max-age=30, stale-while-revalidate=60' }
+            });
+        }
 
         // 1. Fetch profiles from employee_profiles table (active profiles only)
         let query = supabaseAdmin
@@ -73,44 +86,7 @@ export async function GET(request: Request) {
             !u.deleted_at && !excludedUserIds.has(u.id)
         );
 
-        if (appUsers.length > 0 && profiles.length > 0) {
-            const updatesToPersist: { id: string; user_id: string }[] = [];
-
-            for (const p of profiles) {
-                if (!p.user_id) {
-                    const pName = `${p.first_name || ''} ${p.last_name || ''}`.toLowerCase().trim();
-                    const pEmail = (p.email || '').toLowerCase().trim();
-                    const pPhone = (p.contact_number || p.phone || '').replace(/\D/g, '');
-
-                    const match = appUsers.find(u => {
-                        const uEmail = (u.email || '').toLowerCase().trim();
-                        const uPhone = (u.phone || '').replace(/\D/g, '');
-                        const uName = (u.full_name || '').toLowerCase().trim();
-
-                        return (uEmail && pEmail && uEmail === pEmail) ||
-                               (uPhone && pPhone && uPhone.length >= 10 && uPhone === pPhone) ||
-                               (uName && pName && uName.length >= 5 && uName === pName);
-                    });
-
-                    if (match) {
-                        p.user_id = match.id;
-                        p.reconciliation_status = 'linked';
-                        p.user = match;
-                        updatesToPersist.push({ id: p.id, user_id: match.id });
-                    }
-                }
-            }
-
-            // Persist auto-links in DB
-            if (updatesToPersist.length > 0) {
-                Promise.all(updatesToPersist.map(u =>
-                    supabaseAdmin
-                        .from('employee_profiles')
-                        .update({ user_id: u.user_id, reconciliation_status: 'linked', updated_at: new Date().toISOString() })
-                        .eq('id', u.id)
-                )).catch(err => console.error('Error persisting auto-links:', err));
-            }
-        }
+        // Note: Automatic DB reconciling writes are handled by /api/hr/admin/reconcile to keep GET pure & ultra-fast.
 
         // Build role lookup map for linked users
         const userRoleMap = new Map<string, string>();
@@ -190,12 +166,17 @@ export async function GET(request: Request) {
             .eq('is_active', true)
             .order('name');
 
-        return NextResponse.json({
+        const responseData = {
             success: true,
             data: combined,
             unlinked_users: unlinkedUsers,
             departments: dbDepts || []
-        });
+        };
+        serverEmployeesCache.set(cacheKey, { data: responseData, timestamp: Date.now() });
+        return NextResponse.json(
+            responseData,
+            { headers: { 'Cache-Control': 'private, max-age=30, stale-while-revalidate=60' } }
+        );
     } catch (err: any) {
         return NextResponse.json({ success: false, error: err.message }, { status: 500 });
     }
@@ -203,6 +184,7 @@ export async function GET(request: Request) {
 
 export async function PATCH(request: Request) {
     try {
+        serverEmployeesCache.clear();
         const body = await request.json();
         const {
             employee_id,
@@ -464,6 +446,7 @@ export async function PATCH(request: Request) {
 
 export async function POST(request: Request) {
     try {
+        serverEmployeesCache.clear();
         const body = await request.json();
         const {
             user_id,
@@ -744,6 +727,7 @@ export async function POST(request: Request) {
 
 export async function DELETE(request: Request) {
     try {
+        serverEmployeesCache.clear();
         const { searchParams } = new URL(request.url);
         const id = searchParams.get('id') || searchParams.get('employee_id');
 

@@ -38,7 +38,7 @@ async function run() {
     check('a bad time is refused', validateRuleInput({ ...good, targetTimeIST: '25:99' }).ok === false);
     check('no days is refused', validateRuleInput({ ...good, daysOfWeek: [] }).ok === false);
     check('an unknown placeholder is refused', validateRuleInput({ ...good, customTemplate: { customMessage: 'Hello {{secretData}}' } }).ok === false);
-    check('overdue alerts are not on offer', validateRuleInput({ ...good, ruleType: 'overdue_alert' }).ok === false);
+    check('overdue alerts are on offer (approved task_overdue_alert_v1, owner request 2026-10-12)', validateRuleInput({ ...good, ruleType: 'overdue_alert' }).ok === true);
     check('empty wording means the standard message (no custom template)', (validateRuleInput({ ...good, customTemplate: { headerGreeting: '', customMessage: '' } }) as any).value.customTemplate === undefined);
 
     // ── stubbed world ────────────────────────────────────────────────────────
@@ -70,6 +70,7 @@ async function run() {
     db.getEmployeesByDepartment = async (d: string) => Object.values(people).filter((p: any) => p.department_id === d);
     db.getFilteredAssignments = async () => [{ id: 't', title: 'Call vendor', status: 'pending', assigned_date: '2026-10-07' }];
     db.getDailyAssignments = db.getFilteredAssignments;
+    db.getNumberedList = db.getFilteredAssignments;
     db.getSendControls = async () => ({ killSwitches: db.getDefaultKillSwitches(), pretendMode: true });
     access.isNotificationsDelegated = async () => delegated;
     access.getSnapshot = async () => ({
@@ -135,7 +136,7 @@ async function run() {
     const { GET } = await import('../../app/api/cron/task-manager/route');
     const { NextRequest } = await import('next/server');
     await GET(new NextRequest('http://localhost/api/cron/task-manager?action=auto&force=true'));
-    check('the original Tech rule still runs for the default (Tech) department', calls.some(c => c.rule === 'rule_morning_digest' && c.dept === '94a74961-2dd8-453d-9728-f6f2b9ade99b'), calls);
+    check('the original department-less Tech rule is retired: it no longer runs', !calls.some(c => c.rule === 'rule_morning_digest'), calls);
     check('the Procurement rule runs for Procurement', calls.some(c => c.rule === 'rule_proc_x' && c.dept === PROC), calls);
     check('nothing was sent during the run', sent.length === 0);
 

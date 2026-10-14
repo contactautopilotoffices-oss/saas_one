@@ -1,3 +1,4 @@
+import { siteVendorQuotation } from '@/backend/lib/procurement/requisition-approval.mjs';
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { generateRequisitionExcelWorkbook, RequisitionItemData } from '@/backend/lib/excel/requisitionExcelGenerator';
@@ -87,7 +88,7 @@ export async function GET(request: NextRequest) {
                 total_estimated_amount: parsedData.total_estimated_amount || req.total_estimated_amount || 0,
                 total_items_count: parsedData.items?.length || 0,
                 site_notes: parsedData.site_notes || req.notes || '',
-                vendor_quotation: parsedData.vendor_quotation || null,
+                vendor_quotation: siteVendorQuotation({ ...req, vendor_quotation: parsedData.vendor_quotation }),
                 approver_info: parsedData.approver_info || null,
                 is_over_budget: Boolean(isOverBudget),
                 budget_limit: Number(budgetLimit) || 0,

@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Search, UserCheck, Edit2, Edit3, UserCog, Check, AlertCircle, RefreshCw, UserPlus, Eye, ShieldCheck, AlertTriangle, Info, X, Trash2, ChevronDown } from 'lucide-react';
 import { formatAppRole } from '../../lib/accounts/roles';
+import { hrDataCache } from './hrDataCache';
 
 interface SearchableManagerDropdownProps {
     value: string;
@@ -218,14 +219,21 @@ interface HREmployeeDirectoryProps {
     orgId?: string;
     organizationId?: string;
     onRefresh?: () => void;
+    cachedEmployees?: any[];
 }
 
-export default function HREmployeeDirectory({ orgId, organizationId, onRefresh }: HREmployeeDirectoryProps) {
-    const [employees, setEmployees] = useState<any[]>([]);
-    const [allManagers, setAllManagers] = useState<any[]>([]);
+export default function HREmployeeDirectory({ orgId, organizationId, onRefresh, cachedEmployees }: HREmployeeDirectoryProps) {
+    const effectiveOrgId = orgId || organizationId || '';
+    const initialCached = (cachedEmployees && cachedEmployees.length > 0)
+        ? cachedEmployees
+        : (hrDataCache.getEmployees(effectiveOrgId).data || []);
+
+    const [employees, setEmployees] = useState<any[]>(initialCached);
+    const [allManagers, setAllManagers] = useState<any[]>(initialCached);
     const [unlinkedUsers, setUnlinkedUsers] = useState<any[]>([]);
     const [departmentsList, setDepartmentsList] = useState<{ id: string; name: string; code: string }[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(initialCached.length === 0);
+    const [isRevalidating, setIsRevalidating] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [deptFilter, setDeptFilter] = useState('');
     const [statusFilter, setStatusFilter] = useState<'all' | 'linked' | 'unlinked'>('all');
@@ -386,17 +394,21 @@ export default function HREmployeeDirectory({ orgId, organizationId, onRefresh }
     };
 
     useEffect(() => {
-        fetchAllManagers();
-    }, []);
+        if (allManagers.length === 0) {
+            fetchAllManagers();
+        }
+    }, [effectiveOrgId]);
 
     const fetchAllManagers = async () => {
         try {
-            const res = await fetch('/api/hr/admin/employees');
+            const url = effectiveOrgId ? `/api/hr/admin/employees?orgId=${effectiveOrgId}` : '/api/hr/admin/employees';
+            const res = await fetch(url);
             if (res.ok) {
                 const text = await res.text();
                 const data = text ? JSON.parse(text) : {};
-                if (data.success) {
+                if (data.success && data.data) {
                     setAllManagers(data.data || []);
+                    hrDataCache.setEmployees(effectiveOrgId, data.data || []);
                     if (data.unlinked_users) {
                         setUnlinkedUsers(data.unlinked_users);
                     }
@@ -415,12 +427,17 @@ export default function HREmployeeDirectory({ orgId, organizationId, onRefresh }
             fetchEmployees();
         }, 200);
         return () => clearTimeout(timer);
-    }, [deptFilter, searchQuery]);
+    }, [deptFilter, searchQuery, effectiveOrgId]);
 
     const fetchEmployees = async () => {
-        setLoading(true);
+        if (employees.length === 0) {
+            setLoading(true);
+        } else {
+            setIsRevalidating(true);
+        }
         try {
             const url = new URL('/api/hr/admin/employees', window.location.origin);
+            if (effectiveOrgId) url.searchParams.append('orgId', effectiveOrgId);
             if (deptFilter) url.searchParams.append('department', deptFilter);
             if (searchQuery) url.searchParams.append('q', searchQuery);
 
@@ -439,6 +456,7 @@ export default function HREmployeeDirectory({ orgId, organizationId, onRefresh }
                     }
                     if (!deptFilter && !searchQuery) {
                         setAllManagers(list);
+                        hrDataCache.setEmployees(effectiveOrgId, list);
                     }
                 }
             }
@@ -446,6 +464,7 @@ export default function HREmployeeDirectory({ orgId, organizationId, onRefresh }
             console.error('Error fetching employees:', err);
         } finally {
             setLoading(false);
+            setIsRevalidating(false);
         }
     };
 
@@ -796,7 +815,7 @@ export default function HREmployeeDirectory({ orgId, organizationId, onRefresh }
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-700 dark:text-slate-300">
-                            {loading ? (
+                            {loading && employees.length === 0 ? (
                                 <tr>
                                     <td colSpan={6} className="p-8 text-center text-slate-400">Loading directory...</td>
                                 </tr>

@@ -88,6 +88,7 @@ async function run() {
     db.setConversationContext = async (p: any) => { contexts.set(p.system, { context_type: p.contextType, context_data: p.contextData || {} }); return {}; };
     db.clearConversationContext = async (_p: string, s?: string) => { if (s) contexts.delete(s); else contexts.clear(); };
     db.getDailyAssignments = async () => [];
+    db.getNumberedList = async () => [];
     db.logAudit = async () => {};
     db.createTaskAssignment = async (p: any) => { created.push(p); return { id: 'new', title: p.title }; };
     (TaskMessagingService as any).sendMessage = async (_p: string, t: string) => { replies.push(t); return true; };

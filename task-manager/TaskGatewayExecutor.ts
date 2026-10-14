@@ -67,7 +67,7 @@ export class TaskGatewayExecutor {
         }
 
         if (decision.kind === 'task_complete_all' || decision.kind === 'task_complete') {
-            const tasks = await TaskDatabaseService.getDailyAssignments({ employeeId: employee.id, date });
+            const tasks = await TaskDatabaseService.getNumberedList({ employeeId: employee.id, date });
             if (tasks.length === 0) return run('tasks');
 
             let numbers: number[];
@@ -269,7 +269,7 @@ export class TaskGatewayExecutor {
         const employee = await TaskDatabaseService.getEmployeeByPhone(params.phone);
         const doneNumbers = commands.map(c => /^done\s+(\d+)$/i.exec(c)?.[1]).filter(Boolean).map(Number);
         if (employee && doneNumbers.length > 0 && taskIds.length === doneNumbers.length) {
-            const tasks = await TaskDatabaseService.getDailyAssignments({ employeeId: employee.id, date });
+            const tasks = await TaskDatabaseService.getNumberedList({ employeeId: employee.id, date });
             const stale = doneNumbers.some((n, i) => tasks[n - 1]?.id !== taskIds[i]);
             if (stale) {
                 const reply = `Your task list has changed since I asked. Reply "tasks" to see it, then tell me again.`;

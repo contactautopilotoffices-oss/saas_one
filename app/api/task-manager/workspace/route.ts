@@ -8,7 +8,8 @@ export const dynamic = 'force-dynamic';
 /**
  * Step 5 — the Procurement "Tasks" tab.
  *   GET  /api/task-manager/workspace?date=YYYY-MM-DD[&department=Procurement]
- *   POST /api/task-manager/workspace   { action: 'assign' | 'set_status', ... }
+ *   GET  /api/task-manager/workspace?scope=console   (superusers: my tasks + tasks I gave, all departments)
+ *   POST /api/task-manager/workspace   { action: 'assign' | 'set_status' | 'hand_over' | 'delete_task' | 'set_locked', ... }
  *
  * WHO is acting always comes from the signed-in session. The request body can never name the actor,
  * so nobody can act as someone else (unlike the older /tasks route that trusts an actorId).
@@ -35,6 +36,12 @@ export async function GET(request: NextRequest) {
         const userId = await sessionUserId();
         if (!userId) return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
 
+        // The superuser's cross-department view (the console "My tasks" sub-tab). Superusers only; the service checks.
+        if (request.nextUrl.searchParams.get('scope') === 'console') {
+            const consoleView = await WorkspaceService.loadConsole(userId);
+            return NextResponse.json({ success: true, console: consoleView });
+        }
+
         const workspace = await WorkspaceService.load(userId, {
             date: request.nextUrl.searchParams.get('date') || undefined,
             departmentName: request.nextUrl.searchParams.get('department') || undefined,
@@ -60,6 +67,21 @@ export async function POST(request: NextRequest) {
                 date: body.date,
             });
             return NextResponse.json({ success: true, task });
+        }
+
+        if (body.action === 'hand_over') {
+            const result = await WorkspaceService.handOver(userId, { taskId: body.taskId, targetUserId: body.targetUserId });
+            return NextResponse.json({ success: true, task: result.task, toName: result.toName });
+        }
+
+        if (body.action === 'set_locked') {
+            const result = await WorkspaceService.setLocked(userId, { taskId: body.taskId, locked: body.locked });
+            return NextResponse.json({ success: true, locked: result.locked });
+        }
+
+        if (body.action === 'delete_task') {
+            const result = await WorkspaceService.deleteTask(userId, { taskId: body.taskId });
+            return NextResponse.json({ success: true, id: result.id });
         }
 
         if (body.action === 'set_status') {

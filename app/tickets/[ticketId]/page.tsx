@@ -427,132 +427,146 @@ export default function TicketDetailPage() {
       if (!t) throw { message: "Ticket not found", code: "NOT_FOUND" };
       setTicket(t);
 
+      // Fire all secondary lookups concurrently in parallel to eliminate sequential network latency
+      const secondaryTasks: Promise<any>[] = [
+        fetchActivities(),
+        fetchComments(),
+        fetchEscalationLogs(),
+        fetchMaterialRequests(),
+        fetchLinkedAssets(),
+        fetchProcurementUsersList(),
+      ];
+
       if (t.property_id) {
-        fetchResolvers(t.property_id);
-        // Check if validation is enabled for this property
-        try {
-          const featRes = await fetch(
-            `/api/properties/${t.property_id}/features`,
-          );
-          if (featRes.ok) {
-            const featData = await featRes.json();
-            const valFeature = featData.features?.find(
-              (f: any) => f.feature_key === "ticket_validation",
-            );
-            setValidationEnabled(valFeature ? valFeature.is_enabled : true);
-          }
-        } catch (e) {
-          console.error("Error fetching property features:", e);
-        }
+        secondaryTasks.push(fetchResolvers(t.property_id));
+        secondaryTasks.push(
+          fetch(`/api/properties/${t.property_id}/features`)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((featData) => {
+              if (featData) {
+                const valFeature = featData.features?.find(
+                  (f: any) => f.feature_key === "ticket_validation",
+                );
+                setValidationEnabled(valFeature ? valFeature.is_enabled : true);
+              }
+            })
+            .catch((e) => console.error("Error fetching property features:", e)),
+        );
       }
 
-      // Fetch creator's role from property_memberships
       if (t.raised_by && t.property_id) {
-        const { data: creatorMembership } = await supabase
-          .from("property_memberships")
-          .select("role")
-          .eq("user_id", t.raised_by)
-          .eq("property_id", t.property_id)
-          .maybeSingle();
+        secondaryTasks.push(
+          (async () => {
+            try {
+              const { data: creatorMembership } = await supabase
+                .from("property_memberships")
+                .select("role")
+                .eq("user_id", t.raised_by)
+                .eq("property_id", t.property_id)
+                .maybeSingle();
 
-        if (creatorMembership?.role) {
-          const formattedRole =
-            creatorMembership.role === "mst"
-              ? "MST"
-              : creatorMembership.role === "tenant"
-                ? "Client"
-                : creatorMembership.role
+              if (creatorMembership?.role) {
+                const formattedRole =
+                  creatorMembership.role === "mst"
+                    ? "MST"
+                    : creatorMembership.role === "tenant"
+                      ? "Client"
+                      : creatorMembership.role
+                          .split("_")
+                          .map(
+                            (word: string) =>
+                              word.charAt(0).toUpperCase() + word.slice(1),
+                          )
+                          .join(" ");
+                setCreatorRole(formattedRole);
+              } else if ((t.property as any)?.organization_id) {
+                const { data: orgMembership } = await supabase
+                  .from("organization_memberships")
+                  .select("role")
+                  .eq("user_id", t.raised_by)
+                  .eq("organization_id", (t.property as any).organization_id)
+                  .maybeSingle();
+
+                if (orgMembership?.role) {
+                  const formattedRole = orgMembership.role
                     .split("_")
                     .map(
                       (word: string) =>
                         word.charAt(0).toUpperCase() + word.slice(1),
                     )
                     .join(" ");
-          setCreatorRole(formattedRole);
-        } else if ((t.property as any)?.organization_id) {
-          const { data: orgMembership } = await supabase
-            .from("organization_memberships")
-            .select("role")
-            .eq("user_id", t.raised_by)
-            .eq("organization_id", (t.property as any).organization_id)
-            .maybeSingle();
-
-          if (orgMembership?.role) {
-            const formattedRole = orgMembership.role
-              .split("_")
-              .map(
-                (word: string) =>
-                  word.charAt(0).toUpperCase() + word.slice(1),
-              )
-              .join(" ");
-            setCreatorRole(formattedRole);
-          } else {
-            setCreatorRole("Client");
-          }
-        } else {
-          setCreatorRole("Client");
-        }
+                  setCreatorRole(formattedRole);
+                } else {
+                  setCreatorRole("Client");
+                }
+              } else {
+                setCreatorRole("Client");
+              }
+            } catch {
+              setCreatorRole("Client");
+            }
+          })(),
+        );
       }
 
-      // Fetch assignee's role from property_memberships
       if (t.assigned_to && t.property_id) {
-        const { data: assigneeMembership } = await supabase
-          .from("property_memberships")
-          .select("role")
-          .eq("user_id", t.assigned_to)
-          .eq("property_id", t.property_id)
-          .maybeSingle();
+        secondaryTasks.push(
+          (async () => {
+            try {
+              const { data: assigneeMembership } = await supabase
+                .from("property_memberships")
+                .select("role")
+                .eq("user_id", t.assigned_to)
+                .eq("property_id", t.property_id)
+                .maybeSingle();
 
-        if (assigneeMembership?.role) {
-          const formattedRole =
-            assigneeMembership.role === "mst"
-              ? "MST"
-              : assigneeMembership.role
-                  .split("_")
-                  .map(
-                    (word: string) =>
-                      word.charAt(0).toUpperCase() + word.slice(1),
-                  )
-                  .join(" ");
-          setAssigneeRole(formattedRole);
-        } else if ((t.property as any)?.organization_id) {
-          const { data: orgMembership } = await supabase
-            .from("organization_memberships")
-            .select("role")
-            .eq("user_id", t.assigned_to)
-            .eq("organization_id", (t.property as any).organization_id)
-            .maybeSingle();
+              if (assigneeMembership?.role) {
+                const formattedRole =
+                  assigneeMembership.role === "mst"
+                    ? "MST"
+                    : assigneeMembership.role
+                        .split("_")
+                        .map(
+                          (word: string) =>
+                            word.charAt(0).toUpperCase() + word.slice(1),
+                        )
+                        .join(" ");
+                setAssigneeRole(formattedRole);
+              } else if ((t.property as any)?.organization_id) {
+                const { data: orgMembership } = await supabase
+                  .from("organization_memberships")
+                  .select("role")
+                  .eq("user_id", t.assigned_to)
+                  .eq("organization_id", (t.property as any).organization_id)
+                  .maybeSingle();
 
-          if (orgMembership?.role) {
-            const formattedRole = orgMembership.role
-              .split("_")
-              .map(
-                (word: string) =>
-                  word.charAt(0).toUpperCase() + word.slice(1),
-              )
-              .join(" ");
-            setAssigneeRole(formattedRole);
-          } else {
-            setAssigneeRole("MST");
-          }
-        } else {
-          setAssigneeRole("MST");
-        }
+                if (orgMembership?.role) {
+                  const formattedRole = orgMembership.role
+                    .split("_")
+                    .map(
+                      (word: string) =>
+                        word.charAt(0).toUpperCase() + word.slice(1),
+                    )
+                    .join(" ");
+                  setAssigneeRole(formattedRole);
+                } else {
+                  setAssigneeRole("MST");
+                }
+              } else {
+                setAssigneeRole("MST");
+              }
+            } catch {
+              setAssigneeRole("MST");
+            }
+          })(),
+        );
       }
 
-      if (!skipRoleCheck && currentUserId) {
-        await determineUserRole(currentUserId, t.property_id);
-        fetchResolvers(t.property_id);
+      if (!skipRoleCheck && currentUserId && t.property_id) {
+        secondaryTasks.push(determineUserRole(currentUserId, t.property_id));
       }
 
-      fetchProcurementUsersList();
-      await Promise.all([
-        fetchActivities(),
-        fetchComments(),
-        fetchEscalationLogs(),
-        fetchMaterialRequests(),
-        fetchLinkedAssets(),
-      ]);
+      await Promise.all(secondaryTasks);
     } catch (err: any) {
       // Supabase errors have non-enumerable props — extract them explicitly
       const msg =
@@ -1010,15 +1024,12 @@ export default function TicketDetailPage() {
   const handleStatusChange = async (newStatus: string) => {
     if (!ticket) return;
 
-    // MST Close Validation - Photos are now optional per user request
-    /*
-        if (newStatus === 'closed' && userRole === 'staff') {
-            if (!ticket.photo_before_url || !ticket.photo_after_url) {
-                const proceed = window.confirm('⚠️ You haven’t attached before/after photos. Do you want to proceed?');
-                if (!proceed) return;
-            }
-        }
-        */
+    // Optimistic status update for instant UI feedback
+    setTicket((prev: any) => (prev ? { ...prev, status: newStatus } : null));
+    if (newStatus === "resolved" || newStatus === "closed") {
+      playTickleSound();
+    }
+    showToast(`Ticket ${newStatus.replace("_", " ")}`, "success");
 
     try {
       const res = await fetch(`/api/tickets/${ticketId}`, {
@@ -1032,19 +1043,30 @@ export default function TicketDetailPage() {
         throw new Error(data.error || "Failed to update status");
       }
 
-      // Refresh ticket data
+      // Refresh ticket data in background
       fetchTicketDetails(userId, true);
-      if (newStatus === "resolved" || newStatus === "closed") {
-        playTickleSound();
-      }
-      showToast(`Ticket ${newStatus.replace("_", " ")}`, "success");
     } catch (err: any) {
       console.error("Status Change Error:", err);
       showToast(err.message || "Failed to update status", "error");
+      fetchTicketDetails(userId, true);
     }
   };
 
   const handleComplete = async () => {
+    const nextStatus = validationEnabled ? "pending_validation" : "closed";
+    // Optimistic update so button responds in 0ms!
+    setTicket((prev: any) =>
+      prev
+        ? {
+            ...prev,
+            status: nextStatus,
+            resolved_at: new Date().toISOString(),
+          }
+        : null,
+    );
+    playTickleSound();
+    showToast("Task submitted for client approval", "success");
+
     try {
       const res = await fetch(`/api/tickets/${ticketId}`, {
         method: "PATCH",
@@ -1055,11 +1077,11 @@ export default function TicketDetailPage() {
         const data = await res.json();
         throw new Error(data.error || "Failed to complete ticket");
       }
+      // Revalidate in background
       fetchTicketDetails(userId, true);
-      playTickleSound();
-      showToast("Task submitted for client approval", "success");
     } catch (err: any) {
       showToast(err.message || "Failed to complete ticket", "error");
+      fetchTicketDetails(userId, true);
     }
   };
 
@@ -1353,17 +1375,19 @@ export default function TicketDetailPage() {
 
       if (dbError) throw dbError;
 
-      const takenAt = new Date(file.lastModified).toISOString();
-      await logActivity(`photo_${type}_uploaded`, takenAt, publicUrl);
-
-      // Final update with actual public URL
+      // Update state immediately with public URL and clear spinner
       setTicket((prev) =>
         prev ? { ...prev, [updateField]: publicUrl } : null,
       );
+      setUploading(false);
       showToast(
         `${type.charAt(0).toUpperCase() + type.slice(1)} photo uploaded`,
         "success",
       );
+
+      // Log activity in background without blocking UI
+      const takenAt = new Date(file.lastModified).toISOString();
+      logActivity(`photo_${type}_uploaded`, takenAt, publicUrl).catch(console.error);
     } catch (err: any) {
       // Revert to old value on error
       setTicket((prev) => (prev ? { ...prev, [updateField]: oldVal } : null));

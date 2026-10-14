@@ -2,7 +2,6 @@
 
 import { useDashboardContent } from '@/frontend/components/layout/DashboardContentSlot';
 import PettyCashNavLink from '@/frontend/components/pettyCash/PettyCashNavLink';
-import HRTicketsContent from '@/frontend/components/hr/HRTicketsContent';
 import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from 'react';
 import {
     LayoutDashboard, Users, Ticket, Settings, UserCircle, UsersRound,
@@ -16,46 +15,79 @@ import { createClient } from '@/frontend/utils/supabase/client';
 import { useAuth } from '@/frontend/context/AuthContext';
 import { useDataCache } from '@/frontend/context/DataCacheContext';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
-import UserDirectory from './UserDirectory';
 import SignOutModal from '@/frontend/components/ui/SignOutModal';
-import DieselAnalyticsDashboard from '@/frontend/components/diesel/DieselAnalyticsDashboard';
-import DieselStaffDashboard from '@/frontend/components/diesel/DieselStaffDashboard';
-import ElectricityStaffDashboard from '@/frontend/components/electricity/ElectricityStaffDashboard';
-import ElectricityAnalyticsDashboard from '@/frontend/components/electricity/ElectricityAnalyticsDashboard';
 import NotificationBell from './NotificationBell';
 import Image from 'next/image';
 import Skeleton from '@/frontend/components/ui/Skeleton';
 import VendorExportModal from '@/frontend/components/vendor/VendorExportModal';
 import { Toast } from '@/frontend/components/ui/Toast';
-import VMSAdminDashboard from '@/frontend/components/vms/VMSAdminDashboard';
-import TenantTicketingDashboard from '@/frontend/components/tickets/TenantTicketingDashboard';
 import TicketCreateModal from '@/frontend/components/tickets/TicketCreateModal';
-import TicketsView from './TicketsView';
 import { useTheme } from '@/frontend/context/ThemeContext';
 import { Sun, Moon } from 'lucide-react';
-import SettingsView from './SettingsView';
 import AddMemberModal from './InviteMemberModal';
-import { ImportReportsView } from '@/frontend/components/snags';
-import AdminRoomManager from '@/frontend/components/meeting-rooms/AdminRoomManager';
-import StockDashboard from '@/frontend/components/stock/StockDashboard';
 import StockMovementModal from '@/frontend/components/stock/StockMovementModal';
-import SOPDashboard from '@/frontend/components/sop/SOPDashboard';
-import AssetsModule from '@/frontend/components/assets/AssetsModule';
 import { assetCaps } from '@/frontend/lib/assets/roles';
-import EscalationHierarchyBuilder from '@/frontend/components/escalation/EscalationHierarchyBuilder';
-import PPMModule from '@/frontend/components/ppm/PPMModule';
-import ProcurementModule from '@/frontend/components/procurement/ProcurementModule';
-import UniversalQRScannerModal, { QRScanResult } from '@/frontend/components/shared/UniversalQRScannerModal';
-import { RosterDashboard } from '@/frontend/components/roster/RosterDashboard';
-import { WaterDashboard } from '@/frontend/components/water/WaterDashboard';
-import WaterAnalyticsDashboard from '@/frontend/components/water/WaterAnalyticsDashboard';
+import type { QRScanResult } from '@/frontend/components/shared/UniversalQRScannerModal';
 import ClientQRGeneratorModal from '@/frontend/components/vms/ClientQRGeneratorModal';
 
 import VendorManagementModal from '@/frontend/components/vendor/VendorManagementModal';
-import GuestExperienceDashboard from '@/frontend/components/guest-experience/GuestExperienceDashboard';
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
-import AITicketsDashboard from '@/frontend/components/ai-tickets/AITicketsDashboard';
-import TaskManagerSuperuserDashboard from '@/frontend/components/task-manager/TaskManagerSuperuserDashboard';
+import dynamic from 'next/dynamic';
+import { usePreloadTabs } from '@/frontend/lib/dashboard/preloadTabs';
+import TabLoading from './TabLoading';
+
+const HRTicketsContent = dynamic(() => import('@/frontend/components/hr/HRTicketsContent'), { loading: TabLoading });
+const UserDirectory = dynamic(() => import('./UserDirectory'), { loading: TabLoading });
+const DieselAnalyticsDashboard = dynamic(() => import('@/frontend/components/diesel/DieselAnalyticsDashboard'), { loading: TabLoading });
+const DieselStaffDashboard = dynamic(() => import('@/frontend/components/diesel/DieselStaffDashboard'), { loading: TabLoading });
+const ElectricityStaffDashboard = dynamic(() => import('@/frontend/components/electricity/ElectricityStaffDashboard'), { loading: TabLoading });
+const ElectricityAnalyticsDashboard = dynamic(() => import('@/frontend/components/electricity/ElectricityAnalyticsDashboard'), { loading: TabLoading });
+const VMSAdminDashboard = dynamic(() => import('@/frontend/components/vms/VMSAdminDashboard'), { loading: TabLoading });
+const TicketsView = dynamic(() => import('./TicketsView'), { loading: TabLoading });
+const SettingsView = dynamic(() => import('./SettingsView'), { loading: TabLoading });
+const AdminRoomManager = dynamic(() => import('@/frontend/components/meeting-rooms/AdminRoomManager'), { loading: TabLoading });
+const StockDashboard = dynamic(() => import('@/frontend/components/stock/StockDashboard'), { loading: TabLoading });
+const SOPDashboard = dynamic(() => import('@/frontend/components/sop/SOPDashboard'), { loading: TabLoading });
+const AssetsModule = dynamic(() => import('@/frontend/components/assets/AssetsModule'), { loading: TabLoading });
+const EscalationHierarchyBuilder = dynamic(() => import('@/frontend/components/escalation/EscalationHierarchyBuilder'), { loading: TabLoading });
+const PPMModule = dynamic(() => import('@/frontend/components/ppm/PPMModule'), { loading: TabLoading });
+const ProcurementModule = dynamic(() => import('@/frontend/components/procurement/ProcurementModule'), { loading: TabLoading });
+const WaterAnalyticsDashboard = dynamic(() => import('@/frontend/components/water/WaterAnalyticsDashboard'), { loading: TabLoading });
+const GuestExperienceDashboard = dynamic(() => import('@/frontend/components/guest-experience/GuestExperienceDashboard'), { loading: TabLoading });
+const AITicketsDashboard = dynamic(() => import('@/frontend/components/ai-tickets/AITicketsDashboard'), { loading: TabLoading });
+const TaskManagerSuperuserDashboard = dynamic(() => import('@/frontend/components/task-manager/TaskManagerSuperuserDashboard'), { loading: TabLoading });
+const RosterDashboard = dynamic(() => import('@/frontend/components/roster/RosterDashboard').then(m => m.RosterDashboard), { loading: TabLoading });
+const WaterDashboard = dynamic(() => import('@/frontend/components/water/WaterDashboard').then(m => m.WaterDashboard), { loading: TabLoading });
+const ImportReportsView = dynamic(() => import('@/frontend/components/snags').then(m => m.ImportReportsView), { loading: TabLoading });
+const UniversalQRScannerModal = dynamic(() => import('@/frontend/components/shared/UniversalQRScannerModal'), { ssr: false });
+
+// Tabs live in their own files so the dashboard opens faster; once it is on screen they are downloaded quietly in
+// the background (usePreloadTabs), so opening a tab shows no extra spinner (performance plan Phase 1).
+const TAB_PRELOADS = [
+    () => import('@/frontend/components/hr/HRTicketsContent'),
+    () => import('./UserDirectory'),
+    () => import('@/frontend/components/diesel/DieselAnalyticsDashboard'),
+    () => import('@/frontend/components/diesel/DieselStaffDashboard'),
+    () => import('@/frontend/components/electricity/ElectricityStaffDashboard'),
+    () => import('@/frontend/components/electricity/ElectricityAnalyticsDashboard'),
+    () => import('@/frontend/components/vms/VMSAdminDashboard'),
+    () => import('./TicketsView'),
+    () => import('./SettingsView'),
+    () => import('@/frontend/components/meeting-rooms/AdminRoomManager'),
+    () => import('@/frontend/components/stock/StockDashboard'),
+    () => import('@/frontend/components/sop/SOPDashboard'),
+    () => import('@/frontend/components/assets/AssetsModule'),
+    () => import('@/frontend/components/escalation/EscalationHierarchyBuilder'),
+    () => import('@/frontend/components/ppm/PPMModule'),
+    () => import('@/frontend/components/procurement/ProcurementModule'),
+    () => import('@/frontend/components/water/WaterAnalyticsDashboard'),
+    () => import('@/frontend/components/guest-experience/GuestExperienceDashboard'),
+    () => import('@/frontend/components/ai-tickets/AITicketsDashboard'),
+    () => import('@/frontend/components/task-manager/TaskManagerSuperuserDashboard'),
+    () => import('@/frontend/components/roster/RosterDashboard'),
+    () => import('@/frontend/components/water/WaterDashboard'),
+    () => import('@/frontend/components/snags'),
+];
 
 // Types
 type Tab = 'overview' | 'requests' | 'guest_experience' | 'reports' | 'users' | 'visitors' | 'rooms' | 'diesel' | 'diesel_analytics' | 'electricity' | 'electricity_analytics' | 'cafeteria' | 'settings' | 'profile' | 'units' | 'vendor_revenue' | 'stock' | 'checklist' | 'escalation' | 'ppm' | 'procurement' | 'roster' | 'water' | 'water_analytics' | 'ai_tickets' | 'grievance' | 'assets' | 'tasks';
@@ -291,6 +323,7 @@ const PropertySelectorDropdown = memo(function PropertySelectorDropdown({
 });
 
 const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDashboardProps = {}) => {
+    usePreloadTabs(TAB_PRELOADS);
     const { dashboardContent, dashboardPropertyId, navigateDashboard } = useDashboardContent();
     const { user, signOut, membership } = useAuth();
     const { theme, toggleTheme } = useTheme();
@@ -318,7 +351,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
     const [dashboardTab, setActiveTab] = useState<Tab>('overview');
     const openTab = dashboardContent !== undefined ? 'petty-cash' as Tab : dashboardTab;
     const supabase = useMemo(() => createClient(), []);
-    const { getCachedData, setCachedData } = useDataCache();
+    const { getCachedData, setCachedData, invalidateCache } = useDataCache();
     const cacheKey = `property-${propertyId}`;
 
     // State initialized from cache if available
@@ -984,8 +1017,14 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                         propertyId={property.id}
                         organizationId={property.organization_id}
                         showInternalToggle={true}
-                        onSuccess={() => {
+                        onSuccess={(ticket) => {
+                            invalidateCache('tickets-');
+                            invalidateCache('spoc-dashboard-');
                             setStatsVersion(v => v + 1);
+                            if (typeof window !== 'undefined') {
+                                window.dispatchEvent(new CustomEvent('ticket-created', { detail: { ticket } }));
+                                window.dispatchEvent(new CustomEvent('request-created', { detail: { ticket } }));
+                            }
                         }}
                     />
                 )
@@ -995,7 +1034,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
             <main className="flex-1 min-w-0 overflow-x-hidden lg:ml-72 flex flex-col bg-white border-l border-slate-300 shadow-[-4px_0_12px_-4px_rgba(0,0,0,0.05)] relative z-10">
 
                 {openTab !== 'overview' && (
-                    <header className="h-14 flex justify-between items-center px-3 md:px-8 lg:px-12 mb-2 md:mb-4 border-b border-border/10">
+                    <header className="relative z-40 h-14 flex justify-between items-center px-3 md:px-8 lg:px-12 mb-2 md:mb-4 border-b border-border/10">
                         <div className="flex items-center gap-3">
                             {/* Mobile Menu Toggle */}
                             <button
@@ -1107,7 +1146,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                             />
                         )}
                         {openTab === 'grievance' && (
-                            <HRTicketsContent orgId={property?.organization_id || membership?.org_id || 'org'} />
+                            <HRTicketsContent orgId={property?.organization_id || membership?.org_id || membership?.organization_id || (user as any)?.organization_id || user?.user_metadata?.organization_id || '211e1330-ad83-446d-941f-dcea48396798'} />
                         )}
                         {openTab === 'visitors' && property && (
                             <VMSAdminDashboard propertyId={property.id} />
@@ -1754,8 +1793,8 @@ const OverviewTab = memo(function OverviewTab({
     return (
         <div className="min-h-screen bg-background">
             {/* Header Section */}
-            <div className="bg-[#708F96] px-2 lg:px-12 py-8 border-b border-white/10 shadow-lg">
-                <div className="flex flex-wrap items-center justify-between gap-y-3 mb-5">
+            <div className="relative z-30 bg-[#708F96] px-2 lg:px-12 py-8 border-b border-white/10 shadow-lg">
+                <div className="relative z-50 flex flex-wrap items-center justify-between gap-y-3 mb-5">
                     <div className="flex items-center gap-3">
                         {/* Mobile Menu Toggle */}
                         <button
@@ -1768,6 +1807,11 @@ const OverviewTab = memo(function OverviewTab({
                     </div>
 
                     <div className="flex items-center gap-2 md:gap-3">
+                        {/* Notification Bell */}
+                        <div className="relative z-[300] bg-white/15 hover:bg-white/25 rounded-full p-0.5 border border-white/20 shadow-inner flex items-center justify-center transition-all">
+                            <NotificationBell align="right" />
+                        </div>
+
                         {/* Global Time Period Filter — always visible, smaller on mobile */}
                         <div className="flex items-center bg-white/15 backdrop-blur-sm rounded-full p-0.5 md:p-1 border border-white/20 shadow-inner">
                             {([

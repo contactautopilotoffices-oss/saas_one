@@ -82,14 +82,16 @@ const ElectricityStaffDashboard: React.FC<ElectricityStaffDashboardProps> = ({ i
     const propertyId = propIdFromProps || (params?.propertyId as string);
     const supabase = createClient();
     const { getCachedData, setCachedData, invalidateCache } = useDataCache();
+    // Coming back to the tab: show the last data at once (no loader flash); fetchData still refreshes it every time.
+    const initialCached = React.useMemo(() => (propertyId ? getCachedData(`electricity-data-${propertyId}`) : null), []); // eslint-disable-line react-hooks/exhaustive-deps
 
     // State
-    const [property, setProperty] = useState<Property | null>(null);
-    const [meters, setMeters] = useState<ElectricityMeter[]>([]);
+    const [property, setProperty] = useState<Property | null>(initialCached?.property ?? null);
+    const [meters, setMeters] = useState<ElectricityMeter[]>(initialCached?.meters ?? []);
     const [readings, setReadings] = useState<Record<string, ElectricityReading>>({});
-    const [previousClosings, setPreviousClosings] = useState<Record<string, number>>({});
-    const [averages, setAverages] = useState<Record<string, number>>({});
-    const [isLoading, setIsLoading] = useState(true);
+    const [previousClosings, setPreviousClosings] = useState<Record<string, number>>(initialCached?.previousClosings ?? {});
+    const [averages, setAverages] = useState<Record<string, number>>(initialCached?.averages ?? {});
+    const [isLoading, setIsLoading] = useState(!initialCached);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [showConfigModal, setShowConfigModal] = useState(false);
     const [editingMeter, setEditingMeter] = useState<ElectricityMeter | null>(null);
@@ -107,9 +109,9 @@ const ElectricityStaffDashboard: React.FC<ElectricityStaffDashboardProps> = ({ i
     });
 
     // v2: Multipliers and Tariffs state
-    const [multipliersMap, setMultipliersMap] = useState<Record<string, MeterMultiplier[]>>({});
-    const [activeTariff, setActiveTariff] = useState<GridTariff | null>(null);
-    const [retakeTasks, setRetakeTasks] = useState<Record<string, any>>({});
+    const [multipliersMap, setMultipliersMap] = useState<Record<string, MeterMultiplier[]>>(initialCached?.multipliersMap ?? {});
+    const [activeTariff, setActiveTariff] = useState<GridTariff | null>(initialCached?.activeTariff ?? null);
+    const [retakeTasks, setRetakeTasks] = useState<Record<string, any>>(initialCached?.retakeTasks ?? {});
 
     const meterLayoutMap = React.useMemo(() => {
         const map: Record<string, { sheetName: string, locationName: string }> = {};

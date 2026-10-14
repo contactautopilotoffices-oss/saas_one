@@ -4,7 +4,8 @@ import {readdirSync,readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import ts from 'typescript';
 import {loadTs} from './load-ts.mjs';
-const root=new URL('../..',import.meta.url).pathname;
+import {fileURLToPath} from 'node:url';
+const root=fileURLToPath(new URL('../..',import.meta.url));
 function files(path){return readdirSync(path,{withFileTypes:true}).flatMap(entry=>entry.isDirectory()?files(join(path,entry.name)):entry.name.endsWith('.ts')?[join(path,entry.name)]:[]);}
 test('financial Petty Cash routes and helpers have no notification hook or provider send path',()=>{
  for(const file of [...files(join(root,'app/api/petty-cash')),join(root,'backend/lib/pettyCash/actions.ts')]){

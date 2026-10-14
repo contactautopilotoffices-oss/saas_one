@@ -97,9 +97,35 @@ export async function GET(
         );
         const isSubmitter = Boolean(reqUserId && ticket.raised_by_user_id === reqUserId);
 
+        let isDesignatedAdminConfigAssignee = false;
+        try {
+            const { data: orgSettings } = await supabaseAdmin
+                .from('organization_settings')
+                .select('hr_escalation_config, notification_matrix')
+                .eq('organization_id', ticket.organization_id)
+                .maybeSingle();
+
+            const configObj = orgSettings?.notification_matrix?.hr_escalation_config || orgSettings?.hr_escalation_config || {};
+            let flowAssigneesConfig = configObj.flow_assignees || {};
+            while (flowAssigneesConfig && flowAssigneesConfig.flow_assignees) {
+                flowAssigneesConfig = flowAssigneesConfig.flow_assignees;
+            }
+            const tType = ticket.ticket_type || ticket.category?.ticket_type || '';
+            const configAssigneesForType = new Set<string>();
+            const flowObj = flowAssigneesConfig[tType] || {};
+            Object.values(flowObj).forEach((val: any) => {
+                if (Array.isArray(val)) val.forEach((id: string) => configAssigneesForType.add(id));
+            });
+            if (reqUserId && configAssigneesForType.has(reqUserId)) {
+                isDesignatedAdminConfigAssignee = true;
+            }
+        } catch (e) {
+            console.warn('Could not read escalation config for ticket authorization:', e);
+        }
+
         if (ticket.is_anonymous) {
-            // Anonymous feedback tickets are strictly accessible to Org Super Admin, the assigned handler, or the submitter
-            if (!isSuperAdmin && !isAssigned && !isSubmitter) {
+            // Anonymous feedback tickets are strictly accessible to Org Super Admin, the assigned handler, designated Admin Config assignees, or the submitter
+            if (!isSuperAdmin && !isAssigned && !isSubmitter && !isDesignatedAdminConfigAssignee) {
                 return NextResponse.json({ success: false, error: 'Anonymous feedback tickets are restricted to Org Super Admin, assigned users, and the submitter.' }, { status: 403 });
             }
             if (!isSubmitter) {
@@ -114,8 +140,8 @@ export async function GET(
                 };
             }
         } else if (isConfidential) {
-            // Confidential tickets are strictly restricted to Org Super Admin, the explicitly assigned user, or the submitter
-            if (!isSuperAdmin && !isAssigned && !isSubmitter) {
+            // Confidential tickets are strictly restricted to Org Super Admin, the explicitly assigned user, designated Admin Config assignees, or the submitter
+            if (!isSuperAdmin && !isAssigned && !isSubmitter && !isDesignatedAdminConfigAssignee) {
                 return NextResponse.json({ success: false, error: 'Confidential tickets are not accessible to unauthorized roles and are restricted to Org Super Admin, Director, and assigned users.' }, { status: 403 });
             }
         }
@@ -147,14 +173,26 @@ export async function GET(
             }
 
             try {
-                const { data: hrMgrs, error: mgrErr } = await supabaseAdmin
-                    .from('employee_profiles')
-                    .select('user:users!employee_profiles_user_id_fkey(full_name, email), designation')
-                    .or('designation.eq.Designated HR Manager,is_hr_manager_authority.eq.true')
-                    .limit(1);
-                let hrMgrUser = hrMgrs?.[0]?.user as any;
+                const [hrMgrsRes, hrHeadsRes, dirsRes] = await Promise.all([
+                    supabaseAdmin
+                        .from('employee_profiles')
+                        .select('user:users!employee_profiles_user_id_fkey(full_name, email), designation')
+                        .or('designation.eq.Designated HR Manager,is_hr_manager_authority.eq.true')
+                        .limit(1),
+                    supabaseAdmin
+                        .from('employee_profiles')
+                        .select('user:users!employee_profiles_user_id_fkey(full_name, email)')
+                        .eq('is_hr_authority', true)
+                        .limit(1),
+                    supabaseAdmin
+                        .from('employee_profiles')
+                        .select('user:users!employee_profiles_user_id_fkey(full_name, email)')
+                        .eq('is_director_authority', true)
+                        .limit(1)
+                ]);
 
-                if (mgrErr || !hrMgrUser) {
+                let hrMgrUser = hrMgrsRes?.data?.[0]?.user as any;
+                if (!hrMgrUser) {
                     const { data: fallbackMgrs } = await supabaseAdmin
                         .from('employee_profiles')
                         .select('user:users!employee_profiles_user_id_fkey(full_name, email)')
@@ -162,40 +200,21 @@ export async function GET(
                         .limit(1);
                     hrMgrUser = fallbackMgrs?.[0]?.user as any;
                 }
-
                 if (hrMgrUser) {
                     l2Name = hrMgrUser.full_name || hrMgrUser.email || l2Name;
                 }
-            } catch (e) {
-                console.warn('Error resolving L2 owner:', e);
-            }
 
-            try {
-                const { data: hrHeads } = await supabaseAdmin
-                    .from('employee_profiles')
-                    .select('user:users!employee_profiles_user_id_fkey(full_name, email)')
-                    .eq('is_hr_authority', true)
-                    .limit(1);
-                const hrHeadUser = hrHeads?.[0]?.user as any;
+                const hrHeadUser = hrHeadsRes?.data?.[0]?.user as any;
                 if (hrHeadUser) {
                     l3Name = hrHeadUser.full_name || hrHeadUser.email || l3Name;
                 }
-            } catch (e) {
-                console.warn('Error resolving L3 owner:', e);
-            }
 
-            try {
-                const { data: dirs } = await supabaseAdmin
-                    .from('employee_profiles')
-                    .select('user:users!employee_profiles_user_id_fkey(full_name, email)')
-                    .eq('is_director_authority', true)
-                    .limit(1);
-                const dirUser = dirs?.[0]?.user as any;
+                const dirUser = dirsRes?.data?.[0]?.user as any;
                 if (dirUser) {
                     l4Name = dirUser.full_name || dirUser.email || l4Name;
                 }
             } catch (e) {
-                console.warn('Error resolving L4 owner:', e);
+                console.warn('Error resolving level owners:', e);
             }
         } catch (e) {
             console.error('Error resolving level owners:', e);
@@ -270,11 +289,11 @@ export async function GET(
                     .or(filterOr);
                 
                 if (targetProfs && targetProfs.length > 0) {
-                    const names = targetProfs.map(tp => {
+                    const uniqueNames = Array.from(new Set(targetProfs.map(tp => {
                         return (tp.user as any)?.full_name || (tp.user as any)?.email || `${tp.first_name || ''} ${tp.last_name || ''}`.trim();
-                    }).filter(Boolean);
-                    if (names.length > 0) {
-                        assigneeName = names.join(' & ');
+                    }).filter(Boolean)));
+                    if (uniqueNames.length > 0) {
+                        assigneeName = uniqueNames.join(' & ');
                     }
                 }
             }
@@ -287,26 +306,11 @@ export async function GET(
                 if (ownerType === 'reporting_manager' || i === 1) {
                     assigneeName = l1Name;
                 } else if (ownerType === 'hr' || (!ownerType && i === 2)) {
-                    const { data: hrMgrs } = await supabaseAdmin
-                        .from('employee_profiles')
-                        .select('user:users!employee_profiles_user_id_fkey(full_name, email), first_name, last_name')
-                        .or('designation.eq.Designated HR Manager,is_hr_manager_authority.eq.true');
-                    const names = (hrMgrs || []).map(p => (p.user as any)?.full_name || (p.user as any)?.email || `${p.first_name || ''} ${p.last_name || ''}`.trim()).filter(Boolean);
-                    assigneeName = names.length > 0 ? names.join(' & ') : l2Name;
+                    assigneeName = l2Name;
                 } else if (ownerType === 'hr_head' || (!ownerType && i === 3)) {
-                    const { data: hrHeads } = await supabaseAdmin
-                        .from('employee_profiles')
-                        .select('user:users!employee_profiles_user_id_fkey(full_name, email), first_name, last_name')
-                        .eq('is_hr_authority', true);
-                    const names = (hrHeads || []).map(p => (p.user as any)?.full_name || (p.user as any)?.email || `${p.first_name || ''} ${p.last_name || ''}`.trim()).filter(Boolean);
-                    assigneeName = names.length > 0 ? names.join(' & ') : l3Name;
+                    assigneeName = l3Name;
                 } else if (ownerType === 'director' || ownerType === 'super_admin' || (!ownerType && i === 4)) {
-                    const { data: dirs } = await supabaseAdmin
-                        .from('employee_profiles')
-                        .select('user:users!employee_profiles_user_id_fkey(full_name, email), first_name, last_name')
-                        .eq('is_director_authority', true);
-                    const names = (dirs || []).map(p => (p.user as any)?.full_name || (p.user as any)?.email || `${p.first_name || ''} ${p.last_name || ''}`.trim()).filter(Boolean);
-                    assigneeName = names.length > 0 ? names.join(' & ') : l4Name;
+                    assigneeName = l4Name;
                 } else {
                     assigneeName = `Level ${i} Authority`;
                 }
@@ -344,23 +348,27 @@ export async function GET(
         // Enrich assigned_to_details with complete location, app_role, employee_role, photo_url
         if (ticket.assigned_to_user_id) {
             try {
-                const { data: assignedProfile } = await supabaseAdmin
-                    .from('employee_profiles')
-                    .select('employee_code, first_name, last_name, designation, department, location, phone, email, is_hr_authority, is_hr_manager_authority, is_director_authority')
-                    .eq('user_id', ticket.assigned_to_user_id)
-                    .maybeSingle();
+                const [assignedProfileRes, assignedMemRes, userRecordRes] = await Promise.all([
+                    supabaseAdmin
+                        .from('employee_profiles')
+                        .select('employee_code, first_name, last_name, designation, department, location, phone, email, is_hr_authority, is_hr_manager_authority, is_director_authority')
+                        .eq('user_id', ticket.assigned_to_user_id)
+                        .maybeSingle(),
+                    supabaseAdmin
+                        .from('organization_memberships')
+                        .select('role')
+                        .eq('user_id', ticket.assigned_to_user_id)
+                        .maybeSingle(),
+                    supabaseAdmin
+                        .from('users')
+                        .select('user_photo_url, role')
+                        .eq('id', ticket.assigned_to_user_id)
+                        .maybeSingle()
+                ]);
 
-                const { data: assignedMem } = await supabaseAdmin
-                    .from('organization_memberships')
-                    .select('role')
-                    .eq('user_id', ticket.assigned_to_user_id)
-                    .maybeSingle();
-
-                const { data: userRecord } = await supabaseAdmin
-                    .from('users')
-                    .select('user_photo_url, role')
-                    .eq('id', ticket.assigned_to_user_id)
-                    .maybeSingle();
+                const assignedProfile = assignedProfileRes.data;
+                const assignedMem = assignedMemRes.data;
+                const userRecord = userRecordRes.data;
 
                 const photoUrl = (userRecord as any)?.user_photo_url || null;
                 const appRole = assignedMem?.role || (userRecord as any)?.role || (assignedProfile?.is_director_authority ? 'Director' : assignedProfile?.is_hr_authority ? 'HR Head' : assignedProfile?.is_hr_manager_authority ? 'HR Manager' : 'Staff');
@@ -394,12 +402,44 @@ export async function GET(
                     avatar_url: photoUrl,
                     location: handlerLocation,
                     department: assignedProfile?.department || 'Operations',
+                    designation: assignedProfile?.designation || (assignedProfile as any)?.job_title || 'Level Owner',
                     employee_role: assignedProfile?.designation || 'Level Owner',
                     app_role: appRole,
                     employee_code: handlerEmpCode
                 };
             } catch (e) {
                 console.warn('Error fetching assigned user details:', e);
+            }
+        }
+
+        // Enrich resolved_by details
+        if (ticket.resolved_by_user_id && (!ticket.resolved_by?.full_name || !ticket.resolved_by?.email)) {
+            try {
+                const [profRes, userRes] = await Promise.all([
+                    supabaseAdmin
+                        .from('employee_profiles')
+                        .select('first_name, last_name, email')
+                        .eq('user_id', ticket.resolved_by_user_id)
+                        .maybeSingle(),
+                    supabaseAdmin
+                        .from('users')
+                        .select('full_name, email')
+                        .eq('id', ticket.resolved_by_user_id)
+                        .maybeSingle()
+                ]);
+
+                const rProf = profRes.data;
+                const rUser = userRes.data;
+                const rName = rUser?.full_name || (rProf ? `${rProf.first_name || ''} ${rProf.last_name || ''}`.trim() : null) || rUser?.email || rProf?.email;
+                if (rName) {
+                    if (ticket.resolved_by) {
+                        ticket.resolved_by.full_name = ticket.resolved_by.full_name || rName;
+                    } else {
+                        ticket.resolved_by = { id: ticket.resolved_by_user_id, full_name: rName, email: rUser?.email || rProf?.email };
+                    }
+                }
+            } catch (e) {
+                console.warn('Error resolving resolver user details:', e);
             }
         }
 
@@ -521,6 +561,47 @@ export async function GET(
             }
         }
 
+        // Check if requesting user has HR authority (strictly HR roles only - NOT Super Admins)
+        let requesterIsHr = false;
+        if (reqUserId) {
+            try {
+                const { data: actMems } = await supabaseAdmin
+                    .from('organization_memberships')
+                    .select('role')
+                    .eq('user_id', reqUserId);
+                const actRoles = (actMems || []).map((m: any) => (m.role || '').toLowerCase().trim());
+                if (reqRole) actRoles.push(reqRole);
+
+                const hrRoleKeywords = ['hr', 'hr_head', 'hr_manager', 'hr_ops', 'hr_admin', 'director'];
+                requesterIsHr = actRoles.some((r: string) => {
+                    if (['org_super_admin', 'ops_super_admin', 'master_admin', 'super_admin', 'property_admin'].includes(r)) {
+                        return false;
+                    }
+                    return hrRoleKeywords.includes(r) || (r.includes('hr') && !r.includes('super_admin'));
+                });
+
+                if (!requesterIsHr) {
+                    const { data: actProfile } = await supabaseAdmin
+                        .from('employee_profiles')
+                        .select('is_hr_authority, is_hr_manager_authority, is_director_authority, department, designation')
+                        .eq('user_id', reqUserId)
+                        .maybeSingle();
+                    if (
+                        actProfile?.is_hr_authority ||
+                        actProfile?.is_hr_manager_authority ||
+                        actProfile?.is_director_authority ||
+                        (actProfile?.department && /hr|human resources/i.test(actProfile.department)) ||
+                        (actProfile?.designation && /hr|human resources/i.test(actProfile.designation))
+                    ) {
+                        requesterIsHr = true;
+                    }
+                }
+            } catch (authErr) {
+                console.warn('Error determining requester HR authority:', authErr);
+            }
+        }
+        ticket.user_is_hr_authority = requesterIsHr;
+
         return NextResponse.json({ success: true, data: ticket });
     } catch (err: any) {
         return NextResponse.json({ success: false, error: err.message }, { status: 500 });
@@ -598,68 +679,143 @@ export async function PATCH(
         const isSubmitter = Boolean(safeActorId && safeActorId === existing.raised_by_user_id);
         const isAssignedHandler = Boolean(safeActorId && (existing.assigned_to_user_id === safeActorId || (Array.isArray(existing.assigned_history) && existing.assigned_history.includes(safeActorId))));
         const isAcknowledgeAction = action === 'acknowledge';
+        const isReopenAction = action === 'reopen' || status === 'reopened';
+        const isForceCloseAction = action === 'force_close' || Boolean(body.force_close);
 
-        // Submitter cannot resolve or change progress on their own ticket unless they are the active assigned handler
-        if (isSubmitter && !isAssignedHandler && (status === 'resolved' || status === 'pending_acknowledgement' || action === 'resolve' || status === 'in_progress')) {
-            return NextResponse.json({ success: false, error: 'Ticket submitters cannot resolve or advance status on their own tickets. Resolution must be completed by the assigned handler or HR.' }, { status: 403 });
+        // Check if actor has HR authority (strictly HR roles only - NOT Super Admins)
+        let isHrAuthority = false;
+        let isSuperOrHr = false;
+        const passedRole = (body.actor_role || body.role || '').toLowerCase().trim();
+        if (safeActorId) {
+            try {
+                const { data: actMems } = await supabaseAdmin
+                    .from('organization_memberships')
+                    .select('role')
+                    .eq('user_id', safeActorId);
+                const actRoles = (actMems || []).map((m: any) => (m.role || '').toLowerCase().trim());
+                if (passedRole) actRoles.push(passedRole);
+
+                // HR roles only: hr, hr_head, hr_manager, hr_ops, hr_admin, director
+                // Super Admins (org_super_admin, ops_super_admin, master_admin, super_admin, property_admin) are NOT HR authorities for force close
+                const hrRoleKeywords = ['hr', 'hr_head', 'hr_manager', 'hr_ops', 'hr_admin', 'director'];
+                isHrAuthority = actRoles.some((r: string) => {
+                    if (['org_super_admin', 'ops_super_admin', 'master_admin', 'super_admin', 'property_admin'].includes(r)) {
+                        return false;
+                    }
+                    return hrRoleKeywords.includes(r) || (r.includes('hr') && !r.includes('super_admin'));
+                });
+
+                isSuperOrHr = isHrAuthority || actRoles.some((r: string) =>
+                    ['org_super_admin', 'master_admin', 'super_admin', 'ops_super_admin', 'org_admin'].includes(r) || r.includes('admin')
+                );
+
+                if (!isHrAuthority) {
+                    const { data: actProfile } = await supabaseAdmin
+                        .from('employee_profiles')
+                        .select('is_hr_authority, is_hr_manager_authority, is_director_authority, department, designation')
+                        .eq('user_id', safeActorId)
+                        .maybeSingle();
+                    if (
+                        actProfile?.is_hr_authority ||
+                        actProfile?.is_hr_manager_authority ||
+                        actProfile?.is_director_authority ||
+                        (actProfile?.department && /hr|human resources/i.test(actProfile.department)) ||
+                        (actProfile?.designation && /hr|human resources/i.test(actProfile.designation))
+                    ) {
+                        isHrAuthority = true;
+                        isSuperOrHr = true;
+                    }
+                }
+            } catch (authErr) {
+                console.warn('Error checking HR authority:', authErr);
+            }
+        }
+
+        // Submitter cannot resolve, advance status, or force close their own ticket!
+        // (Submitters can only acknowledge resolution or reopen)
+        if (isSubmitter && !isAcknowledgeAction && !isReopenAction && (status === 'resolved' || status === 'pending_acknowledgement' || action === 'resolve' || status === 'in_progress' || isForceCloseAction)) {
+            return NextResponse.json({ success: false, error: 'Ticket submitters cannot resolve, advance status, or force close their own tickets. Resolution must be completed by the assigned handler or HR.' }, { status: 403 });
         }
 
         // ESCALATED TICKET PROTECTION: Once escalated, previous handlers from earlier levels CANNOT resolve or advance status!
         // Only the CURRENT active handler (assigned_to_user_id) or authorized HR / Super Admin can resolve it.
         const isCurrentActiveHandler = Boolean(safeActorId && existing.assigned_to_user_id === safeActorId);
-        if ((status === 'resolved' || status === 'pending_acknowledgement' || action === 'resolve' || status === 'in_progress') && !isCurrentActiveHandler) {
-            let isSuperOrHr = false;
-            if (safeActorId) {
-                try {
-                    const { data: actMems } = await supabaseAdmin
-                        .from('organization_memberships')
-                        .select('role')
-                        .eq('user_id', safeActorId)
-                        .eq('organization_id', existing.organization_id);
-                    const actRoles = (actMems || []).map((m: any) => (m.role || '').toLowerCase());
-                    isSuperOrHr = actRoles.some((r: string) => ['org_super_admin', 'master_admin', 'super_admin', 'hr', 'hr_head', 'hr_manager', 'director'].includes(r));
-                    if (!isSuperOrHr) {
-                        const { data: actProfile } = await supabaseAdmin
-                            .from('employee_profiles')
-                            .select('is_hr_authority, is_hr_manager_authority, is_director_authority')
-                            .eq('user_id', safeActorId)
-                            .maybeSingle();
-                        if (actProfile?.is_hr_authority || actProfile?.is_hr_manager_authority || actProfile?.is_director_authority) {
-                            isSuperOrHr = true;
-                        }
-                    }
-                } catch (authErr) {
-                    console.warn('Error checking actor authority:', authErr);
-                }
+        if ((status === 'resolved' || status === 'pending_acknowledgement' || action === 'resolve' || status === 'in_progress') && !isCurrentActiveHandler && !isSuperOrHr) {
+            return NextResponse.json({ success: false, error: 'Only the current level assignee (or HR authority) can resolve or advance it.' }, { status: 403 });
+        }
+
+        // Force close authority check: STRICTLY HR ROLES ONLY (Super Admins and submitters are not allowed)
+        if (isForceCloseAction) {
+            if (isSubmitter) {
+                return NextResponse.json({
+                    success: false,
+                    error: 'Ticket submitters cannot force close their own tickets.'
+                }, { status: 403 });
             }
-            if (!isSuperOrHr) {
-                return NextResponse.json({ success: false, error: 'This ticket has been escalated. Only the current level assignee (or HR authority) can resolve or advance it.' }, { status: 403 });
+            if (!isHrAuthority) {
+                return NextResponse.json({
+                    success: false,
+                    error: 'Only HR roles (e.g. HR, HR Head, HR Manager) have permission to force close tickets. Super Admins and other administrative roles cannot force close tickets.'
+                }, { status: 403 });
+            }
+            const forceCloseNote = (body.force_close_note || body.resolution_note || '').trim();
+            if (!forceCloseNote) {
+                return NextResponse.json({
+                    success: false,
+                    error: 'A reason note is strictly mandatory to force close this ticket.'
+                }, { status: 400 });
             }
         }
 
-        if (status === 'resolved' || status === 'pending_acknowledgement' || action === 'resolve') {
+        // MANDATORY RESOLUTION NOTE: A ticket cannot be resolved without a non-empty resolution note.
+        // For regular resolve actions, a non-empty resolution note is required.
+        // For force close, the mandatory force_close_note serves as the resolution note.
+        if (!isForceCloseAction && (status === 'resolved' || status === 'pending_acknowledgement' || action === 'resolve' || (status === 'closed' && !isAcknowledgeAction))) {
+            const effectiveResolutionNote = (resolution_note !== undefined ? resolution_note : existing.resolution_note)?.trim();
+            if (!effectiveResolutionNote) {
+                return NextResponse.json({
+                    success: false,
+                    error: 'A resolution note is strictly mandatory before resolving this ticket.'
+                }, { status: 400 });
+            }
+            updates.resolution_note = effectiveResolutionNote;
+        }
+
+        if (isForceCloseAction) {
+            // FORCE CLOSE BY HR ROLES ONLY:
+            // Submitter acknowledgement is NOT bypassed - ticket transitions to pending_acknowledgement under HR authority
+            const forceCloseNote = (body.force_close_note || body.resolution_note || '').trim();
+            updates.status = 'pending_acknowledgement';
+            updates.resolved_at = new Date().toISOString();
+            updates.resolved_by_user_id = safeActorId;
+            updates.resolution_note = forceCloseNote;
+            currentSnapshot.force_closed = true;
+            currentSnapshot.force_closed_at = new Date().toISOString();
+            currentSnapshot.force_closed_by_user_id = safeActorId;
+            currentSnapshot.force_close_note = forceCloseNote;
+            updates.employee_snapshot = currentSnapshot;
+        } else if (status === 'resolved' || status === 'pending_acknowledgement' || action === 'resolve') {
             updates.status = 'pending_acknowledgement';
             updates.resolved_at = new Date().toISOString();
             if (safeResolvedById) {
                 updates.resolved_by_user_id = safeResolvedById;
             }
         } else if (status === 'closed' || isAcknowledgeAction) {
-            // STRICT TWO-STEP CLOSING LIFECYCLE ENFORCEMENT:
-            // Handlers cannot directly jump to 'closed'. If the actor is NOT the submitter and action !== 'acknowledge':
-            // Route strictly to 'pending_acknowledgement' so submitter can review & confirm.
-            if (!isSubmitter && !isAcknowledgeAction) {
-                updates.status = 'pending_acknowledgement';
-                updates.resolved_at = new Date().toISOString();
-                if (safeResolvedById) {
-                    updates.resolved_by_user_id = safeResolvedById;
-                }
-            } else {
+            if (isAcknowledgeAction || isSubmitter) {
+                // Submitter Acknowledgement:
                 updates.status = 'closed';
                 updates.closed_at = new Date().toISOString();
                 currentSnapshot.acknowledged_at = new Date().toISOString();
                 currentSnapshot.acknowledged_by_user_id = safeActorId || cleanUuid(body.acknowledged_by_user_id);
                 currentSnapshot.acknowledgement_note = acknowledgement_note || 'Confirmed & Acknowledged by Submitter';
                 updates.employee_snapshot = currentSnapshot;
+            } else {
+                // Non-submitter attempts to close directly route to pending_acknowledgement
+                updates.status = 'pending_acknowledgement';
+                updates.resolved_at = new Date().toISOString();
+                if (safeResolvedById) {
+                    updates.resolved_by_user_id = safeResolvedById;
+                }
             }
         }
         if (status === 'reopened' || action === 'reopen') {
@@ -787,6 +943,8 @@ export async function PATCH(
         let auditAction = 'STATUS_UPDATE';
         if (escalate) {
             auditAction = `ESCALATED_L${updates.current_level}`;
+        } else if (isForceCloseAction) {
+            auditAction = 'FORCE_CLOSED_BY_HR';
         } else if (action === 'acknowledge' || (updates.status === 'closed' && safeActorId === existing.raised_by_user_id)) {
             auditAction = 'ACKNOWLEDGED_BY_CREATOR';
         } else if (updates.status === 'pending_acknowledgement' || updates.status === 'resolved') {

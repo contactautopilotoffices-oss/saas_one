@@ -3,8 +3,9 @@ import type { AccessDecision } from './TaskAccessService';
 import type { Employee, TestingConfig } from './types';
 import type { ParseInput } from './TaskImportParser';
 import {
-    ImportClaim, ImportDeps, IMPORT_TEXT, TaskImportService, captionMentionsTasks, looksLikeImportText,
+    AWAITING_TTL_MIN, IMPORT_CONTEXT, ImportClaim, ImportDeps, IMPORT_TEXT, TaskImportService, captionMentionsTasks, looksLikeImportText,
 } from './TaskImportService';
+import { parseConfirmAnswer } from './TaskGateway';
 
 /**
  * Task Import — Stage 2: the webhook adapter.
@@ -191,6 +192,8 @@ export interface InboundIO {
     getEmployee(phone: string): Promise<Employee | null>;
     checkAccess(employee: Employee): Promise<AccessDecision>;
     fetchMedia(url: string): Promise<MediaFetchResult>;
+    /** Is a room / ticket conversation open? (a caption-less photo then belongs to it). Absent → treated as open (never asks). */
+    facilityActive?(phone: string): Promise<boolean>;
     /** Duplicate-delivery guard for claimed messages only (never marks a message we did not claim). */
     seenBefore(messageId: string): boolean;
     markSeen(messageId: string): void;
@@ -209,7 +212,7 @@ export async function claimTaskImport(body: unknown, io?: InboundIO): Promise<Im
 
     try {
         // Cheap checks first: ordinary chat never costs a database read.
-        if (cand.mediaClass === 'text' && !looksLikeImportText(cand.text, deps.today())) return NOT_HANDLED;
+        if (cand.mediaClass === 'text' && !looksLikeImportText(cand.text, deps.today()) && !PHOTO_ANSWER.test(cand.text)) return NOT_HANDLED;
 
         // One small read first: while no department has Task Import ON (the default), nothing else is read.
         const importDepartments = await real.getImportDepartments();
@@ -222,7 +225,7 @@ export async function claimTaskImport(body: unknown, io?: InboundIO): Promise<Im
 
         if (cand.messageId && real.seenBefore(cand.messageId)) return HANDLED; // a repeat delivery of something we already took
 
-        const claim = await route(cand, real);
+        const claim = await route(cand, real, body);
         if (claim.handled && cand.messageId) real.markSeen(cand.messageId);
         return claim;
     } catch (err) {
@@ -231,17 +234,54 @@ export async function claimTaskImport(body: unknown, io?: InboundIO): Promise<Im
     }
 }
 
-async function route(cand: InboundCandidate, io: InboundIO): Promise<ImportClaim> {
+// ── A photo with no caption (group 3, 2026-10-13) ────────────────────────────
+// A photo may be a task list OR a facility problem. With no caption we cannot tell, so we ask once — and a "ticket" answer
+// hands the SAME photo to the facility assistant, exactly as if it had just arrived.
+
+export const PHOTO_CHOICE_TEXT = '📷 Got your photo. Is this your task list?\nReply *yes* and I\'ll read the tasks from it.\nIf it\'s a facility issue instead, reply *ticket*.';
+const PHOTO_ANSWER = /^\s*(?:1|2|ticket|facility(?:\s+issue)?|issue|complaint|task\s*list)\s*[.!]*\s*$/i;
+const PHOTO_YES = /^(?:1|task\s*list|tasks?|my tasks)$/;
+const PHOTO_TICKET = /^(?:2|ticket|facility(?:\s+issue)?|issue|complaint)$/;
+
+async function answerPhotoChoice(cand: InboundCandidate, stored: unknown, io: InboundIO): Promise<ImportClaim> {
+    const deps = io.importDeps;
+    const t = cand.text.trim().toLowerCase().replace(/[.!\s]+$/g, '');
+    if (parseConfirmAnswer(cand.text) === 'yes' || PHOTO_YES.test(t)) {
+        const photo = stored ? extractCandidate(stored) : null;
+        if (!photo?.mediaUrl || !isSafeMediaUrl(photo.mediaUrl)) { await deps.clearContext(cand.phone); await deps.reply(cand.phone, DOWNLOAD_FAILED_TEXT); return HANDLED; }
+        const url = photo.mediaUrl;
+        return TaskImportService.begin(cand.phone, { label: 'image', load: () => loadMedia(url, io) }, deps);
+    }
+    await deps.clearContext(cand.phone);
+    if (PHOTO_TICKET.test(t)) return { handled: false, rewrite: stored };          // → the facility assistant, with the photo
+    if (parseConfirmAnswer(cand.text) === 'no') { await deps.reply(cand.phone, 'Okay, I\'ve left that photo alone.'); return HANDLED; }
+    return NOT_HANDLED;                                                              // they moved on: handled as usual
+}
+
+async function route(cand: InboundCandidate, io: InboundIO, body?: unknown): Promise<ImportClaim> {
     const deps = io.importDeps;
 
-    if (cand.mediaClass === 'text') return TaskImportService.handleText(cand.phone, cand.text, deps);
+    if (cand.mediaClass === 'text') {
+        const ctx = await deps.getContext(cand.phone);
+        if (ctx?.type === IMPORT_CONTEXT.PHOTO_CHOICE) return answerPhotoChoice(cand, ctx.data?.body, io);
+        return TaskImportService.handleText(cand.phone, cand.text, deps);
+    }
 
     const url = cand.mediaUrl as string;
 
     if (cand.mediaClass === 'image') {
         // A photo may be a facility ticket. Only take it when the caption talks about tasks, or they said "add tasks" first.
         const awaiting = await TaskImportService.isAwaiting(cand.phone, deps);
-        if (!awaiting && !captionMentionsTasks(cand.text)) return NOT_HANDLED;
+        if (!awaiting && !captionMentionsTasks(cand.text)) {
+            // A caption about something else → the facility assistant, as before. NO caption → ask (unless a ticket is open).
+            if (cand.text.trim() || !body) return NOT_HANDLED;
+            if (!io.facilityActive || await io.facilityActive(cand.phone).catch(() => true)) return NOT_HANDLED;
+            if (await TaskImportService.busy(cand.phone, deps)) return HANDLED;
+            await deps.setContext(cand.phone, IMPORT_CONTEXT.PHOTO_CHOICE, { body, at: new Date().toISOString() }, AWAITING_TTL_MIN);
+            await deps.reply(cand.phone, PHOTO_CHOICE_TEXT);
+            await deps.audit('task_import_photo_asked', cand.phone, {});
+            return HANDLED;
+        }
         if (await TaskImportService.busy(cand.phone, deps)) return HANDLED;
         if (!isSafeMediaUrl(url)) { await deps.reply(cand.phone, DOWNLOAD_FAILED_TEXT); return HANDLED; }
         return TaskImportService.begin(cand.phone, { label: 'image', load: () => loadMedia(url, io) }, deps);
@@ -306,6 +346,10 @@ export async function defaultInboundIO(): Promise<InboundIO> {
         getEmployee: phone => TaskDatabaseService.getEmployeeByPhone(phone),
         checkAccess: employee => TaskAccessService.check({ userId: employee.id, departmentId: employee.department_id }),
         fetchMedia: url => fetchMediaSafely(url),
+        async facilityActive(phone) {
+            const { getConversationRoutingState } = await import('@/backend/lib/whatsapp/interpreter/context');
+            return (await getConversationRoutingState(phone)).facilityActive;
+        },
         seenBefore: id => { const t = seen.get(id); return !!t && Date.now() - t < SEEN_TTL_MS; },
         markSeen: id => {
             const now = Date.now();

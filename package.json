@@ -9,9 +9,9 @@
     "lint": "eslint",
     "lint:sql": "node scripts/lint_sql_migrations.js",
     "test:whatsapp": "node --test --test-isolation=none tests/aisensy-greetings.test.mjs tests/whatsapp-assistant.test.mjs tests/whatsapp-assistant-worker.test.mjs tests/whatsapp-assistant-route.test.mjs tests/whatsapp-assistant-db.test.mjs tests/whatsapp-assistant-access.test.mjs tests/whatsapp-message-booking.test.mjs tests/whatsapp-interpreter-*.test.mjs",
-    "test:petty-cash": "node --test --test-isolation=none tests/petty-cash/workflow.test.mjs tests/petty-cash/plan-gaps.test.mjs tests/petty-cash/role-storage.test.mjs tests/petty-cash/api.test.mjs tests/petty-cash/sidebar.test.mjs tests/petty-cash/notifications.test.mjs tests/petty-cash/finance-separation.test.mjs tests/petty-cash/approver-compat.test.mjs",
+    "test:petty-cash": "node --test --test-isolation=none tests/petty-cash/workflow.test.mjs tests/petty-cash/plan-gaps.test.mjs tests/petty-cash/role-storage.test.mjs tests/petty-cash/api.test.mjs tests/petty-cash/sidebar.test.mjs tests/petty-cash/notifications.test.mjs tests/petty-cash/finance-separation.test.mjs tests/petty-cash/approver-compat.test.mjs tests/petty-cash/overview-groups.test.mjs tests/petty-cash/overview-analysis.test.mjs tests/petty-cash/tracker-names.test.mjs tests/petty-cash/pending-counts.test.mjs",
     "test:petty-cash:browser": "npm exec --yes --package=esbuild -- node --test tests/petty-cash/browser.test.mjs",
-    "test:users": "node --test --test-isolation=none tests/users/list.test.mjs tests/users/action-roles.test.mjs tests/users/membership-state.test.mjs",
+    "test:users": "node --test --test-isolation=none tests/users/list.test.mjs tests/users/action-roles.test.mjs tests/users/membership-state.test.mjs tests/users/audit-columns.test.mjs",
     "test:users:browser": "node --test --test-isolation=none tests/users/directory-loading.test.mjs",
     "test:dashboard": "node --test --test-isolation=none tests/dashboard/org-tab-sync.test.mjs tests/dashboard/scope.test.mjs",
     "test:dashboard:browser": "npm exec --yes --package=esbuild -- node --test --test-isolation=none tests/dashboard/org-tab-browser.test.mjs",
@@ -89,7 +89,7 @@
     "zod": "^4.3.4"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "^0.5.8",
+    "@electric-sql/pglite": "^0.5.9",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/qrcode.react": "^1.0.5",

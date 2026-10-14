@@ -96,7 +96,8 @@ export async function saveImportedTasks(
         try {
             const row = await io.create({
                 employeeId, title: t.title, description: buildDescription(t), assignedDate: draft.date,
-                status: t.status, assignedBy: employeeId,
+                // New work always lands in To do; finished rows stay finished
+                status: t.status === 'in_progress' ? 'pending' : t.status, assignedBy: employeeId,
             });
             seen.add(key);
             outcome.saved++;
