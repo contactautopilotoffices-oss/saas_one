@@ -1,3 +1,34 @@
+## 2026-10-14 — Saas.one: Grievance module explainer videos, AOP decision-layer video, and a reusable video-making skill
+
+**Five short videos now exist: four explaining the HR grievance module, one for each lens (Employee, Manager, HR, Director), and one motion-graphics video of the AOP costing review. The method behind them is saved as a reusable skill called `motion-reel`.**
+
+- **Why:** The founder wants to show staff and clients how the grievance module works from each person's point of view. Each video opens with the everyday problem and then shows the fix on the real screens. A separate written review of the AOP costing workflow needed to become a video the team can follow.
+- **Structural decisions:**
+  - **Real screens with made-up content.** The founder chose this. We filmed the live app, but every person, ticket and message on screen is fictional. The fictional data was fed to the browser only. All saves were blocked and the live-update connection was cut, so nothing was written to the live system and no WhatsApp or email went out. The other option was to rebuild the screens as drawings, which would no longer have been real frames.
+  - **One login for all four lenses.** The founder signed in once, as themselves. The capture tool showed each lens by changing the role inside the browser copy only, never on the server. It also replaced the founder's real name and email with fictional ones. The saved login was deleted at the end.
+  - **Videos built in code.** Each video is a web page rendered frame by frame, with the timing tied to the voiceover words. The voice is ElevenLabs "Alka S", about 1,500 characters used. Music and sound effects were generated in code, so nothing is licensed. The other option was a hosted video tool, which would not let us reuse the method.
+  - **Video method saved as a skill.** It came from a YouTube walkthrough on making motion graphics with Claude and is saved at `~/.claude/skills/motion-reel/`. It covers real brand assets, a beat-by-beat shot list, sound locked to the beat, and a self-review loop that scores still frames.
+  - **Exact turnaround times.** The videos use the times configured in the app. Grievances go to the Manager (3 days), then HR (7), then the HR Head (10), then the Director (12). Confidential feedback goes to the Director within 48 hours. Anonymous feedback goes to the Director through the ethics channel within 72 hours. HR queries start with HR within 0–2 days.
+  - **Branch updated.** At the founder's request, this branch was brought up to date with main (49 commits). There were no conflicts, and the type check passes.
+- **What works now:**
+  - The four grievance videos are in `~/Downloads/grievance-videos/final/`, about 25 seconds each, 1080p.
+  - The AOP video is in `~/Downloads/aop-intelligence-video/final/`, 72 seconds, motion graphics only with no voiceover.
+  - Any future product video can be started with `/motion-reel`.
+- **Left undone:**
+  - Vertical (9:16) versions. They come from the same timeline but were not rendered.
+  - A voiceover on the AOP video, which the founder asked to be motion only.
+  - Some small text in the screen close-ups is hard to read on a phone. The videos are made for desktop and LinkedIn viewing.
+- **Open questions for the founder:**
+  - **Anonymity claim.** The module's plan promises that anonymous means the name is not stored at all. In the built module the name is stored and only hidden on screen. The fictional-data work found three related gaps:
+    - The submitter's account is still attached to the ticket.
+    - The ticket number shows the submitter's site.
+    - The ticket can fall back to the submitter's own manager unless Admin Config sets an owner.
+
+    The videos therefore say "identity masked", not "never stored". Should this be fixed before the module is marketed as anonymous?
+  - **Unprotected HR data.** The HR ticket data can be read without logging in. Grievance attachments sit in a public storage folder. This was raised on 26 September and is still open.
+  - **Working days.** The screens promise "3 working days", but the system counts calendar days.
+  - **Automatic escalation.** It only runs when someone opens the HR ticket list, because its two scheduled jobs are not switched on. Should they be scheduled?
+
 ## 2026-10-13 — Saas.one: Total Environment Workcations landing page, first draft
 
 **A one-page website for the Whitefield building: a hand-drawn sketchbook you turn page by page, a guide who says one true thing per page, a balcony you can touch, a folding map that opens the ATLAS study of the building's surroundings, and a slide-to-book visit form.**
