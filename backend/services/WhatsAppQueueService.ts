@@ -210,7 +210,7 @@ export class WhatsAppQueueService {
                                     if (campaignName === 'material_delivered_v1' && templateParams.length > 7) templateParams = templateParams.slice(0, 7);
                                     if (campaignName === 'procurement_vendor_tag_v1' && templateParams.length > 8) templateParams = templateParams.slice(0, 8);
                                     if (campaignName === 'procurement_vendor_aligned_v1' && templateParams.length > 7) templateParams = templateParams.slice(0, 7);
-                                    if (campaignName === 'ticket_assigned_v1' && templateParams.length > 7) templateParams = templateParams.slice(0, 7);
+                                    if ((campaignName === 'ticket_assigned_v2' || campaignName === 'ticket_assigned_v1') && templateParams.length > 7) templateParams = templateParams.slice(0, 7);
                                     if (campaignName === 'ticket_completed_v1' && templateParams.length > 5) templateParams = templateParams.slice(0, 5);
                                     if (campaignName === 'ticket_completed_v1_media' && templateParams.length > 5) templateParams = templateParams.slice(0, 5);
                                     if (campaignName === 'ticket_created_v3' && templateParams.length > 10) templateParams = templateParams.slice(0, 10);

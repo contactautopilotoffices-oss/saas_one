@@ -108,8 +108,8 @@ Our team has been notified to attend to this request.
 
 ---
 
-### Template 2: `ticket_assigned_v1` (Dedicated to Assignee / Technician)
-- **Template Name:** `ticket_assigned_v1`
+### Template 2: `ticket_assigned_v2` (Dedicated to Assignee / Technician)
+- **Template Name:** `ticket_assigned_v2`
 - **Category:** `UTILITY`
 - **Language:** `English (en)`
 - **Header:** `Text` &rarr; `Ticket Assigned to You 👷`

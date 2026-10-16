@@ -224,7 +224,7 @@ export const WhatsAppRecipientResolver = {
                 roles: propOverride?.roles || matrixRule.roles || [],
                 user_ids: propOverride?.user_ids || matrixRule.user_ids || [],
                 notify_assignee: propOverride?.notify_assignee !== undefined ? propOverride.notify_assignee !== false : matrixRule.notify_assignee !== false,
-                notify_requester: propOverride?.notify_requester !== undefined ? propOverride.notify_requester !== false : matrixRule.notify_requester !== false,
+                notify_requester: propOverride?.notify_requester !== undefined ? propOverride.notify_requester !== false : (featureKey === 'ticket_assigned' ? false : matrixRule.notify_requester !== false),
                 notify_approver: propOverride?.notify_approver !== undefined ? propOverride.notify_approver !== false : matrixRule.notify_approver !== false,
                 reminder_minutes: propOverride?.reminder_minutes ?? matrixRule.reminder_minutes ?? null,
                 property_overrides: matrixRule.property_overrides || {}
