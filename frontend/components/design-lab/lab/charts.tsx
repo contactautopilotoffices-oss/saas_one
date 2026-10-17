@@ -167,7 +167,9 @@ export function Columns({
                     {data.map((d, i) => {
                         const cx = padL + slot * i + slot / 2;
                         const x0 = cx - groupW / 2;
-                        const top = Math.min(...d.values.map(val => padT + plotH - (val / max) * plotH));
+                        const topOf = (k: number) => (data[k] ? Math.min(...data[k].values.map(val => padT + plotH - (val / max) * plotH)) : Infinity);
+                        // Lift the key label above taller neighbours so it never sits on another bar.
+                        const top = Math.min(topOf(i), topOf(i - 1), topOf(i + 1));
                         return (
                             <g key={d.label + i}>
                                 {d.values.map((val, s) => {
