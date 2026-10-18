@@ -443,6 +443,13 @@ export async function buildElectricityMonthlyReportPdf(data: MonthlyReportData):
 
     const browser = await puppeteer.launch({
         headless: true,
+        // On Vercel, PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true skips the 170 MB bundled
+        // Chromium download. We then point to the system Chrome that Vercel provides.
+        // In local dev the env var is absent and executablePath is undefined, so
+        // Puppeteer falls back to its own bundled binary as normal.
+        executablePath: process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD === 'true'
+            ? (process.env.PUPPETEER_EXECUTABLE_PATH ?? '/usr/bin/google-chrome-stable')
+            : undefined,
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
     });
     try {

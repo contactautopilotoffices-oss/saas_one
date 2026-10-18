@@ -1,7 +1,4 @@
 {
-  "git": {
-    "deploymentEnabled": false
-  },
   "crons": [
     {
       "path": "/api/cron/check-sop-reminders",
