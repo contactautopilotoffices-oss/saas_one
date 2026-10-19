@@ -205,7 +205,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                 };
             case 'in_progress':
                 return {
-                    label: 'In Progress',
+                    label: 'Acknowledged',
                     dotClass: 'bg-blue-500',
                     badgeClass: 'bg-blue-50 text-blue-700 border-blue-200/80 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800/60',
                 };
@@ -2427,7 +2427,11 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                                                         );
                                                     })()}
                                                     <td className="px-3.5 py-3.5">
-                                                        <SLALiveTimer slaDueAt={t.sla_due_at} status={t.status} />
+                                                        {(t.has_next_level === false && !['resolved', 'closed', 'pending_acknowledgement'].includes(t.status)) ? (
+                                                            <span className="text-[10px] text-slate-400 italic">Final level</span>
+                                                        ) : (
+                                                            <SLALiveTimer slaDueAt={t.sla_due_at} status={t.status} />
+                                                        )}
                                                     </td>
                                                     <td className="px-3.5 py-3.5">
                                                         <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider inline-flex items-center gap-1.5 shadow-2xs whitespace-nowrap border ${
@@ -2568,15 +2572,21 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                                                 </div>
 
                                                 {/* Footer: SLA Countdown + Action Button */}
-                                                <div className="flex items-center justify-between pt-1">
-                                                    <SLALiveTimer slaDueAt={t.sla_due_at} status={t.status} />
+                                                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                                                    <div className="min-w-0">
+                                                        {(t.has_next_level === false && !['resolved', 'closed', 'pending_acknowledgement'].includes(t.status)) ? (
+                                                            <span className="text-[10px] text-slate-400 italic">Final level — no escalation</span>
+                                                        ) : (
+                                                            <SLALiveTimer slaDueAt={t.sla_due_at} status={t.status} />
+                                                        )}
+                                                    </div>
                                                     <button
                                                         type="button"
                                                         onClick={(e) => {
                                                             e.stopPropagation();
                                                             setSelectedTicketId(t.id);
                                                         }}
-                                                        className="inline-flex items-center gap-1 px-3 py-1 bg-[#587e85] hover:bg-[#48676d] text-white rounded-lg text-xs font-bold shadow-xs active:scale-95 transition-all"
+                                                        className="shrink-0 ml-auto inline-flex items-center gap-1 px-3 py-1 bg-[#587e85] hover:bg-[#48676d] text-white rounded-lg text-xs font-bold shadow-xs active:scale-95 transition-all"
                                                     >
                                                         <span>View</span>
                                                         <ArrowUpRight className="w-3.5 h-3.5" />

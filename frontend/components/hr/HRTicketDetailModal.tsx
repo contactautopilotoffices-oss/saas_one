@@ -598,13 +598,19 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
     const canActorEscalate = isAssignedToMe && !isRaisedByMe;
     const canManuallyEscalate = Boolean(ticket?.manual_escalation_enabled) && canActorEscalate && !isTicketResolvedOrClosed && currentLvl < (ticket?.max_level || 4);
 
+    // A TAT exists only to trigger the next escalation. Flows with a single configured level
+    // (confidential / anonymous feedback, by default) never escalate, so no TAT is shown for them.
+    const hasNextEscalationLevel = ticket?.has_next_level !== undefined
+        ? Boolean(ticket.has_next_level)
+        : currentLvl < (ticket?.max_level || (ticket?.escalation_flow?.length || 4));
+
     const getClosingDetails = () => {
         if (!ticket) return { levelNum: 1, levelLabel: 'Level 1', resolverName: 'HR Head' };
         const levelNum = ticket.current_level || 1;
         const isForceClosed = Boolean(ticket.employee_snapshot?.force_closed);
-        const levelLabel = isForceClosed
-            ? 'HR Authority Intervention'
-            : `Level ${levelNum} (${ticket.level_owners?.[`l${levelNum}`] || 'HR Head'})`;
+        // Deliberately NOT level_owners[lN]: that is the joined roster of every user configured at the
+        // level ("A & B"), which made a ticket closed by one person read as if all of them closed it.
+        const levelLabel = isForceClosed ? 'HR Authority Intervention' : `Level ${levelNum}`;
 
         // 1. Identify the EXACT individual who closed / resolved the ticket
         let resolverName = '';
@@ -633,26 +639,30 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
             }
         }
 
-        // 3. Match resolved_by_user_id with assigned_to
+        // 3. Match resolved_by_user_id against the level roster, so the one acting user is named
         if (!resolverName && ticket.resolved_by_user_id) {
-            if (ticket.assigned_to_user_id === ticket.resolved_by_user_id && ticket.assigned_to?.full_name) {
+            const match = (ticket.assigned_level_users || []).find((u: any) => u.id === ticket.resolved_by_user_id);
+            if (match?.full_name) {
+                resolverName = match.full_name;
+            } else if (ticket.assigned_to_user_id === ticket.resolved_by_user_id && ticket.assigned_to?.full_name) {
                 resolverName = ticket.assigned_to.full_name;
             }
         }
 
-        // 4. Fallbacks
+        // 4. Fallbacks — a roster of several level owners is never shown as the resolver,
+        //    because only the individual who actually closed the ticket belongs here.
         if (!resolverName) {
             if (isForceClosed) {
                 resolverName = 'HR Authority';
             } else {
-                const owner = ticket.level_owners?.[`l${levelNum}`];
-                // Only use level_owners if it's a single person without '&'
-                if (owner && !owner.includes('&')) {
-                    resolverName = owner;
-                } else if (ticket.assigned_to?.full_name && !ticket.assigned_to.full_name.includes('&')) {
-                    resolverName = ticket.assigned_to.full_name;
+                const levelUsers = Array.isArray(ticket.assigned_level_users) ? ticket.assigned_level_users : [];
+                const handlerName = ticket.assigned_to_details?.full_name || ticket.assigned_to?.full_name;
+                if (levelUsers.length === 1 && levelUsers[0]?.full_name) {
+                    resolverName = levelUsers[0].full_name;
+                } else if (handlerName && !handlerName.includes('&')) {
+                    resolverName = handlerName;
                 } else {
-                    resolverName = owner || 'HR Authority';
+                    resolverName = 'Level Handler';
                 }
             }
         }
@@ -892,7 +902,7 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
                                          : 'bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 border border-indigo-200'
                                  }`}>
                                      {ticket.status === 'escalated' && <span className="w-1.5 h-1.5 rounded-full bg-purple-600 dark:bg-purple-400 animate-pulse" />}
-                                     Status: {ticket.status === 'pending_acknowledgement' ? 'PENDING ACKNOWLEDGEMENT' : ticket.status === 'escalated' ? `ESCALATED (L${ticket.current_level})` : ticket.status?.replace(/_/g, ' ')}
+                                     Status: {ticket.status === 'pending_acknowledgement' ? 'PENDING ACKNOWLEDGEMENT' : ticket.status === 'in_progress' ? 'ACKNOWLEDGED' : ticket.status === 'escalated' ? `ESCALATED (L${ticket.current_level})` : ticket.status?.replace(/_/g, ' ')}
                                  </span>
                                 <span className="px-2.5 py-1 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border border-indigo-500/20 text-[11px] font-extrabold rounded-lg uppercase tracking-wider flex items-center gap-1">
                                     <ShieldCheck className="w-3.5 h-3.5 text-indigo-600" />
@@ -1402,50 +1412,81 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
                         {/* Right Sidebar Section: SLA Timer, Assigned Handler Circle Profile, Employee Snapshot & Lifecycle Actions */}
                         <div className="w-full md:w-[350px] p-3.5 sm:p-5 bg-slate-50/50 dark:bg-slate-800/30 flex flex-col gap-4 md:overflow-y-auto shrink-0">
                             <div className="space-y-4">
-                                {/* SLA / TAT Timer */}
-                                <div className="p-3.5 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-2 shadow-xs">
-                                    <div className="flex items-center justify-between">
-                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                                            TAT
-                                        </span>
-                                        {ticket.sla_due_at && (
-                                            <span className="text-[10px] text-slate-400 font-mono">
-                                                Due: {formatDateIN(ticket.sla_due_at)}
+                                {/* SLA / TAT Timer — a TAT only drives the next escalation, so it is hidden
+                                    on flows whose current level is the last one (e.g. a single-level
+                                    confidential / anonymous flow has nothing to escalate into) */}
+                                {(hasNextEscalationLevel || isTicketResolvedOrClosed) ? (
+                                    <div className="p-3.5 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-2 shadow-xs">
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                                                TAT
                                             </span>
-                                        )}
+                                            {ticket.sla_due_at && (
+                                                <span className="text-[10px] text-slate-400 font-mono">
+                                                    Due: {formatDateIN(ticket.sla_due_at)}
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div>
+                                            <SLALiveTimer slaDueAt={ticket.sla_due_at} status={ticket.status} />
+                                        </div>
+                                        <div className="text-[10px] text-slate-400">
+                                            Real-time Turnaround Time (TAT) countdown active
+                                        </div>
                                     </div>
-                                    <div>
-                                        <SLALiveTimer slaDueAt={ticket.sla_due_at} status={ticket.status} />
+                                ) : (
+                                    <div className="p-3.5 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-1 shadow-xs">
+                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                                            Escalation
+                                        </span>
+                                        <div className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                                            Final level — no further escalation
+                                        </div>
+                                        <div className="text-[10px] text-slate-400">
+                                            Level {currentLvl} is the last configured level for this request type, so no TAT countdown applies. Add another level in HR Admin Config to enable one.
+                                        </div>
                                     </div>
-                                    <div className="text-[10px] text-slate-400">
-                                        Real-time Turnaround Time (TAT) countdown active
-                                    </div>
-                                </div>
+                                )}
 
-                                {/* Assigned Handler Circle Profile Card (Instagram/WhatsApp style) */}
+                                {/* Assigned Handler Circle Profile Cards (one per user configured at this level) */}
+                                {(() => {
+                                    const levelHandlers: any[] = (Array.isArray(ticket.assigned_level_users) && ticket.assigned_level_users.length > 0)
+                                        ? ticket.assigned_level_users
+                                        : (ticket.assigned_to_details
+                                            ? [ticket.assigned_to_details]
+                                            : [{ full_name: ticket.assigned_to?.full_name || ticket.current_level_owner || 'Assigned Authority' }]);
+
+                                    return (
                                 <div className="space-y-3">
-                                    <div className="flex items-center justify-between">
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
                                         <h4 className="text-xs font-black text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
                                             <UserCheck className="w-3.5 h-3.5 text-[#587e85]" />
-                                            Assigned Handler Profile
+                                            {levelHandlers.length > 1 ? `Assigned Handlers (${levelHandlers.length})` : 'Assigned Handler Profile'}
                                         </h4>
-                                        <span className="px-2 py-0.5 text-[9px] font-black uppercase tracking-wider bg-teal-500/10 text-teal-600 dark:text-teal-400 border border-teal-500/20 rounded-md">
+                                        <span className="px-2 py-0.5 text-[9px] font-black uppercase tracking-wider bg-teal-500/10 text-teal-600 dark:text-teal-400 border border-teal-500/20 rounded-md shrink-0">
                                             Level {ticket.current_level || 1}
                                         </span>
                                     </div>
 
-                                    <div className="p-3.5 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-3">
+                                    {levelHandlers.length > 1 && (
+                                        <p className="text-[10px] font-medium text-slate-500 dark:text-slate-400 leading-relaxed">
+                                            All {levelHandlers.length} users configured at Level {ticket.current_level || 1} own this ticket and are notified. Whoever acts on it is recorded individually.
+                                        </p>
+                                    )}
+
+                                    {levelHandlers.map((handler: any, handlerIdx: number) => (
+                                    <div key={handler?.id || handler?.employee_code || handlerIdx} className="p-3.5 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-3">
                                         {/* Instagram/WhatsApp Circle Profile UI */}
                                         <div className="flex items-center gap-3">
                                             <div className="relative shrink-0">
                                                 {/* Story Gradient Ring */}
                                                 <div className="p-[2.5px] bg-gradient-to-tr from-amber-500 via-[#587e85] to-teal-500 rounded-full shadow-md transition-transform duration-300 hover:scale-105">
                                                     <div className="w-12 h-12 rounded-full overflow-hidden bg-slate-100 dark:bg-slate-900 border-2 border-white dark:border-slate-800 flex items-center justify-center">
-                                                        {ticket.assigned_to_details?.photo_url || ticket.assigned_to?.user_photo_url || ticket.assigned_to?.avatar_url ? (
+                                                        {handler?.photo_url ? (
                                                             <>
                                                                 <img
-                                                                    src={ticket.assigned_to_details?.photo_url || ticket.assigned_to?.user_photo_url || ticket.assigned_to?.avatar_url}
-                                                                    alt={ticket.assigned_to_details?.full_name || ticket.assigned_to?.full_name}
+                                                                    src={handler.photo_url}
+                                                                    alt={handler?.full_name || 'Assigned handler'}
                                                                     referrerPolicy="no-referrer"
                                                                     onError={(e) => {
                                                                         e.currentTarget.classList.add('!hidden');
@@ -1455,12 +1496,12 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
                                                                     className="w-full h-full object-cover"
                                                                 />
                                                                 <div className="!hidden w-full h-full bg-gradient-to-br from-[#587e85] to-[#3a5459] text-white font-black text-sm flex items-center justify-center">
-                                                                    {((ticket.assigned_to_details?.full_name || ticket.assigned_to?.full_name || ticket.current_level_owner || 'HR').split(' ').map((n: string) => n[0]).join('')).substring(0, 2).toUpperCase()}
+                                                                    {((handler?.full_name || 'HR').split(' ').map((n: string) => n[0]).join('')).substring(0, 2).toUpperCase()}
                                                                 </div>
                                                             </>
                                                         ) : (
                                                             <div className="w-full h-full bg-gradient-to-br from-[#587e85] to-[#3a5459] text-white font-black text-sm flex items-center justify-center">
-                                                                {((ticket.assigned_to_details?.full_name || ticket.assigned_to?.full_name || ticket.current_level_owner || 'HR').split(' ').map((n: string) => n[0]).join('')).substring(0, 2).toUpperCase()}
+                                                                {((handler?.full_name || 'HR').split(' ').map((n: string) => n[0]).join('')).substring(0, 2).toUpperCase()}
                                                             </div>
                                                         )}
                                                     </div>
@@ -1468,12 +1509,12 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
                                             </div>
 
                                             <div className="min-w-0 flex-1">
-                                                <div className="font-extrabold text-xs text-slate-900 dark:text-white leading-snug break-words" title={ticket.assigned_to_details?.full_name || ticket.assigned_to?.full_name || ticket.current_level_owner || 'Assigned Authority'}>
-                                                    {ticket.assigned_to_details?.full_name || ticket.assigned_to?.full_name || ticket.current_level_owner || 'Assigned Authority'}
+                                                <div className="font-extrabold text-xs text-slate-900 dark:text-white leading-snug break-words" title={handler?.full_name || 'Assigned Authority'}>
+                                                    {handler?.full_name || 'Assigned Authority'}
                                                 </div>
-                                                {(ticket.assigned_to_details?.designation || ticket.assigned_to_details?.employee_role) && (
+                                                {(handler?.designation || handler?.employee_role) && (
                                                     <div className="text-[10px] font-bold text-[#587e85] dark:text-[#6c9a9e] leading-tight break-words">
-                                                        {ticket.assigned_to_details.designation || ticket.assigned_to_details.employee_role}
+                                                        {handler.designation || handler.employee_role}
                                                     </div>
                                                 )}
                                             </div>
@@ -1484,33 +1525,35 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
                                             <div className="grid grid-cols-2 gap-1.5">
                                                 <div className="p-2 bg-slate-50 dark:bg-slate-900/50 rounded-xl min-w-0">
                                                     <span className="text-[9px] font-bold text-slate-400 block uppercase tracking-wider mb-0.5">Location</span>
-                                                    <span className="font-semibold text-slate-800 dark:text-slate-200 block break-words leading-tight" title={ticket.assigned_to_details?.location || 'Head Office'}>
-                                                        📍 {ticket.assigned_to_details?.location && ticket.assigned_to_details.location.toLowerCase() !== 'hidden' ? ticket.assigned_to_details.location : 'Head Office'}
+                                                    <span className="font-semibold text-slate-800 dark:text-slate-200 block break-words leading-tight" title={handler?.location || 'Head Office'}>
+                                                        📍 {handler?.location && handler.location.toLowerCase() !== 'hidden' ? handler.location : 'Head Office'}
                                                     </span>
                                                 </div>
                                                 <div className="p-2 bg-slate-50 dark:bg-slate-900/50 rounded-xl min-w-0">
                                                     <span className="text-[9px] font-bold text-slate-400 block uppercase tracking-wider mb-0.5">Emp Code</span>
                                                     <span className="font-mono font-bold text-slate-800 dark:text-slate-200 block leading-tight">
-                                                        {ticket.assigned_to_details?.employee_code || 'N/A'}
+                                                        {handler?.employee_code || 'N/A'}
                                                     </span>
                                                 </div>
                                             </div>
                                             <div className="p-2 bg-slate-50 dark:bg-slate-900/50 rounded-xl min-w-0">
                                                 <span className="text-[9px] font-bold text-slate-400 block uppercase tracking-wider mb-0.5">Department</span>
-                                                <span className="font-semibold text-slate-800 dark:text-slate-200 block break-words leading-snug" title={ticket.assigned_to_details?.department || 'Operations'}>
-                                                    🏢 {ticket.assigned_to_details?.department || 'Operations'}
+                                                <span className="font-semibold text-slate-800 dark:text-slate-200 block break-words leading-snug" title={handler?.department || 'Operations'}>
+                                                    🏢 {handler?.department || 'Operations'}
                                                 </span>
                                             </div>
                                             <div className="p-2 bg-slate-50 dark:bg-slate-900/50 rounded-xl min-w-0">
                                                 <span className="text-[9px] font-bold text-slate-400 block uppercase tracking-wider mb-0.5">Designation</span>
-                                                <span className="font-semibold text-indigo-600 dark:text-indigo-400 block break-words leading-snug" title={ticket.assigned_to_details?.designation || ticket.assigned_to_details?.employee_role || 'N/A'}>
-                                                    {ticket.assigned_to_details?.designation || ticket.assigned_to_details?.employee_role || 'N/A'}
+                                                <span className="font-semibold text-indigo-600 dark:text-indigo-400 block break-words leading-snug" title={handler?.designation || handler?.employee_role || 'N/A'}>
+                                                    {handler?.designation || handler?.employee_role || 'N/A'}
                                                 </span>
                                             </div>
                                         </div>
                                     </div>
+                                    ))}
                                 </div>
-
+                                    );
+                                })()}
                                 {/* Submitter Profile Card (matching Assigned Handler UI) */}
                                 <div className="space-y-3">
                                     <div className="flex items-center justify-between">
@@ -1708,7 +1751,7 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
                                         </div>
                                     ) : canChangeStatus ? (
                                         <div className="space-y-2.5">
-                                            {/* 1. Mark In Progress */}
+                                            {/* 1. Acknowledge (handler picks the ticket up) */}
                                             {ticket.status !== 'in_progress' && (
                                                 <button
                                                     type="button"
@@ -1716,7 +1759,7 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
                                                     className="w-full py-2.5 px-3 bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800 rounded-2xl text-xs font-bold hover:bg-sky-100 transition-colors flex items-center justify-center gap-1.5"
                                                 >
                                                     <Clock className="w-3.5 h-3.5" />
-                                                    Mark as In Progress
+                                                    Acknowledge
                                                 </button>
                                             )}
 
@@ -1769,7 +1812,7 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
                                                             <span>{resolutionError}</span>
                                                         </div>
                                                     )}
-                                                    <div className="flex gap-2">
+                                                    <div className="flex flex-col sm:flex-row gap-2">
                                                         <button
                                                             type="button"
                                                             disabled={updatingStatus === 'pending_acknowledgement'}
@@ -1788,7 +1831,7 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
                                                         <button
                                                             type="button"
                                                             onClick={() => { setShowResolutionForm(false); setResolutionError(''); }}
-                                                            className="px-3 py-2.5 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors cursor-pointer"
+                                                            className="w-full sm:w-auto px-3 py-2.5 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors cursor-pointer shrink-0"
                                                         >
                                                             Cancel
                                                         </button>
@@ -1829,7 +1872,7 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
                                                                     {escalateError}
                                                                 </p>
                                                             )}
-                                                            <div className="flex gap-2">
+                                                            <div className="flex flex-col sm:flex-row gap-2">
                                                                 <button
                                                                     type="button"
                                                                     onClick={handleEscalate}
@@ -1841,7 +1884,7 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => setShowEscalateForm(false)}
-                                                                    className="px-3 py-2 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold cursor-pointer"
+                                                                    className="w-full sm:w-auto px-3 py-2 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold cursor-pointer shrink-0"
                                                                 >
                                                                     Cancel
                                                                 </button>
@@ -1931,7 +1974,7 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
                                 </div>
                             )}
 
-                            <div className="flex gap-2 pt-1">
+                            <div className="flex flex-col sm:flex-row gap-2 pt-1">
                                 <button
                                     type="button"
                                     disabled={forceClosing}
@@ -1954,7 +1997,7 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
                                     type="button"
                                     disabled={forceClosing}
                                     onClick={() => { setShowForceCloseModal(false); setResolutionError(''); }}
-                                    className="py-2.5 px-3 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 rounded-xl text-xs font-bold cursor-pointer"
+                                    className="w-full sm:w-auto py-2.5 px-3 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 rounded-xl text-xs font-bold cursor-pointer shrink-0"
                                 >
                                     Cancel
                                 </button>
