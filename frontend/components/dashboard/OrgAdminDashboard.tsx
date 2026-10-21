@@ -1143,16 +1143,7 @@ const OrgAdminDashboard = () => {
                                 <ShoppingCart className="w-4 h-4" />
                                 Procurement
                             </button>
-                            <button
-                                onClick={() => handleTabChange('procurement', 'all', undefined, undefined, 'urgency-tracker')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'procurement' && searchParams.get('procurement_tab') === 'urgency-tracker'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
-                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
-                                    }`}
-                            >
-                                <Layers className="w-4 h-4" />
-                                Payment Urgency Tracker
-                            </button>
+
                             <button
                                 onClick={() => handleTabChange('procurement', 'all', undefined, undefined, 'payment-tracker')}
                                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'procurement' && searchParams.get('procurement_tab') === 'payment-tracker'

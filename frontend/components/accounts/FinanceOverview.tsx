@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/frontend/context/AuthContext';
 import { createClient } from '@/frontend/utils/supabase/client';
-import { accountsCaps, PAY_STATUS_META, CRITICAL_META, statusPillStyle, inr } from '@/frontend/lib/accounts/roles';
+import { accountsCaps, getRolePaymentTrackerConfig, PAY_STATUS_META, CRITICAL_META, statusPillStyle, inr } from '@/frontend/lib/accounts/roles';
 
 // Same period vocabulary the ticket dashboards use (today | month | all — see
 // frontend/components/dashboard/PropertyAdminDashboard.tsx:1090), plus 'custom'.
@@ -76,23 +76,26 @@ const todayIso = () => new Intl.DateTimeFormat('en-CA', {
  * would have delivered requested_amount, paid_amount, utr_no and remarks to a
  * property_admin's browser.
  */
-export default function FinanceOverview() {
-    const { membership } = useAuth();
-    const params = useParams();
-    const orgId = params?.orgId as string | undefined;
-    const caps = useMemo(() => accountsCaps(membership, orgId), [membership, orgId]);
-    if (!caps.canSee) return null;
-    // What the caller may action comes from the API's own `can` block, which is derived
-    // server-side by resolveAccountsAccess — the client caps only gate mounting.
-    return <FinanceOverviewInner />;
+interface FinanceOverviewProps {
+    organizationId?: string;
 }
 
-function FinanceOverviewInner() {
+export default function FinanceOverview({ organizationId: propOrgId }: FinanceOverviewProps = {}) {
+    const { membership, user } = useAuth();
     const params = useParams();
+    const orgId = propOrgId || (params?.orgId as string | undefined) || membership?.organization_id || membership?.org_id || (user?.user_metadata?.organization_id as string | undefined);
+    const caps = useMemo(() => accountsCaps(membership, orgId, user), [membership, orgId, user]);
+    const roleConfig = useMemo(() => getRolePaymentTrackerConfig(membership, user, orgId), [membership, user, orgId]);
+    if (!caps.canSee || !roleConfig.showFinanceOverview) return null;
+    // What the caller may action comes from the API's own `can` block, which is derived
+    // server-side by resolveAccountsAccess — the client caps only gate mounting.
+    return <FinanceOverviewInner orgId={orgId} />;
+}
+
+function FinanceOverviewInner({ orgId }: { orgId?: string }) {
     const router = useRouter();
     const pathname = usePathname();
     const searchParams = useSearchParams();
-    const orgId = params?.orgId as string | undefined;
     const [supabase] = useState(() => createClient());
 
     const [period, setPeriod] = useState<Period>('month');

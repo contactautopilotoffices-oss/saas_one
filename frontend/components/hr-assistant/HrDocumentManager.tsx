@@ -11,6 +11,7 @@ import {
     FileText,
     History,
     Loader2,
+    ArrowUpDown,
     RefreshCw,
     RotateCcw,
     Trash2,
@@ -18,7 +19,10 @@ import {
     UploadCloud,
 } from 'lucide-react';
 import Link from 'next/link';
-import { useCallback, useEffect, useRef, useState, type ChangeEvent, type DragEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from 'react';
+
+import { FRIENDLY_ERRORS, friendlyError } from '@/backend/lib/hr-assistant/friendly-errors';
+import { BOT_NAME } from '@/backend/lib/hr-assistant/identity';
 
 import { Button } from '@/frontend/components/ui/button';
 import ConfirmModal from '@/frontend/components/ui/ConfirmModal';
@@ -71,9 +75,36 @@ function formatSize(bytes: number | null): string {
 const dateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 const formatDate = (iso: string) => dateFormatter.format(new Date(iso));
 
+/** The server's error, in plain words (technical details stay in the server log). */
 async function readError(res: Response, fallback: string): Promise<string> {
     const data = await res.json().catch(() => ({}));
-    return data.error ?? fallback;
+    return friendlyError(data.error ?? fallback);
+}
+
+type SortKey = 'date' | 'az' | 'za';
+const SORT_OPTIONS: { value: SortKey; label: string }[] = [
+    { value: 'date', label: 'Date' },
+    { value: 'az', label: 'Name A–Z' },
+    { value: 'za', label: 'Name Z–A' },
+];
+const SORT_STORAGE_KEY = 'hr-documents-sort';
+// numeric: "Policy_2" sorts before "Policy_10".
+const byName = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+function readSavedSort(): SortKey {
+    if (typeof window === 'undefined') return 'date';
+    try {
+        const saved = window.localStorage.getItem(SORT_STORAGE_KEY);
+        return SORT_OPTIONS.some(option => option.value === saved) ? (saved as SortKey) : 'date';
+    } catch {
+        return 'date';
+    }
+}
+
+/** "A.pdf, B.pdf and 3 more" */
+function listNames(names: string[]): string {
+    if (names.length <= 3) return names.join(', ');
+    return `${names.slice(0, 3).join(', ')} and ${names.length - 3} more`;
 }
 
 const BADGE = 'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold';
@@ -128,6 +159,10 @@ export function HrDocumentManager({ orgId }: { orgId: string }) {
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState<string | null>(null);
     const [confirm, setConfirm] = useState<PendingConfirm | null>(null);
+    const [refreshing, setRefreshing] = useState(false);
+    // Saved choice; the sort control only renders once policies have loaded (client-side), so
+    // reading localStorage here can't cause a server/client mismatch.
+    const [sort, setSortState] = useState<SortKey>(readSavedSort);
     const dropInputRef = useRef<HTMLInputElement>(null);
     const replaceInputRef = useRef<HTMLInputElement>(null);
     const replaceTarget = useRef<Policy | null>(null);
@@ -153,13 +188,13 @@ export function HrDocumentManager({ orgId }: { orgId: string }) {
                     if (lastStatus.current.get(version.id) !== 'processing') continue;
                     const label = `${policy.title} v${version.version}`;
                     if (version.status === 'ready') {
-                        notify('success', `${label} is now live. The assistant uses it from now on.`);
+                        notify('success', `${label} is now live. ${BOT_NAME} uses it from now on.`);
                     } else if (version.status === 'archived') {
                         notify('success', `${label} finished indexing, but a newer version is already live.`);
                     } else if (version.status === 'failed') {
                         notify(
                             'error',
-                            `${label} couldn't be indexed: ${version.error}. The previous live version is still in use.`,
+                            `${label} couldn't be added. ${friendlyError(version.error)} The previous version is still in use.`,
                         );
                     }
                 }
@@ -168,7 +203,7 @@ export function HrDocumentManager({ orgId }: { orgId: string }) {
             setPolicies(next);
         } catch (err) {
             setPolicies(prev => prev ?? []);
-            notify('error', err instanceof Error ? err.message : "Couldn't load policies");
+            notify('error', friendlyError(err instanceof Error ? err.message : "Couldn't load policies"));
         }
     }, [notify]);
 
@@ -184,14 +219,39 @@ export function HrDocumentManager({ orgId }: { orgId: string }) {
         return () => clearInterval(timer);
     }, [anyProcessing, load]);
 
+    function setSort(next: SortKey) {
+        setSortState(next);
+        try {
+            window.localStorage.setItem(SORT_STORAGE_KEY, next);
+        } catch {
+            // Private mode or blocked storage: the choice just isn't remembered.
+        }
+    }
+
+    const sortedPolicies = useMemo(() => {
+        if (!policies) return null;
+        if (sort === 'date') return policies; // the API returns most recently updated first
+        const sorted = [...policies].sort((a, b) => byName.compare(a.title, b.title));
+        return sort === 'za' ? sorted.reverse() : sorted;
+    }, [policies, sort]);
+
+    async function refresh() {
+        if (refreshing) return;
+        setRefreshing(true);
+        setError(null);
+        // Spin at least briefly so the click is visibly acknowledged, even on a fast reload.
+        await Promise.all([load(), new Promise(resolve => setTimeout(resolve, 600))]);
+        setRefreshing(false);
+    }
+
     /** Upload files, either as new/matching policies or as new versions of `target`. */
     async function upload(files: File[], target: Policy | null) {
         if (uploading || files.length === 0) return;
         setError(null);
-        const errors: string[] = [];
+        const errors: { name: string; message: string }[] = [];
         for (const file of files) {
             if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
-                errors.push(`${file.name} is larger than ${MAX_UPLOAD_MB} MB.`);
+                errors.push({ name: file.name, message: `This file is larger than ${MAX_UPLOAD_MB} MB.` });
                 continue;
             }
             setUploading(file.name);
@@ -201,13 +261,13 @@ export function HrDocumentManager({ orgId }: { orgId: string }) {
                 const url = target ? `${API}/policies/${target.id}/versions` : `${API}/policies`;
                 const res = await fetch(url, { method: 'POST', body });
                 if (!res.ok) {
-                    errors.push(`${file.name}: ${await readError(res, 'Upload failed')}`);
+                    errors.push({ name: file.name, message: await readError(res, 'Upload failed') });
                     continue;
                 }
                 const { version } = (await res.json()) as { version: PolicyVersion };
                 lastStatus.current.set(version.id, version.status);
             } catch {
-                errors.push(`${file.name}: network error, please try again.`);
+                errors.push({ name: file.name, message: FRIENDLY_ERRORS.network });
             }
         }
         setUploading(null);
@@ -218,7 +278,17 @@ export function HrDocumentManager({ orgId }: { orgId: string }) {
             uploaded > 0
                 ? `${uploaded === 1 ? 'File uploaded' : `${uploaded} files uploaded`}. Indexing happens in the background. You can leave this page; the current version stays live until the new one is ready.`
                 : '';
-        if (errors.length) notify('error', [...errors, uploadedText].filter(Boolean).join(' '));
+        // One line per distinct problem ("3 files weren't uploaded (A, B and C): ..."), not one per file.
+        const byMessage = new Map<string, string[]>();
+        for (const { name, message } of errors) byMessage.set(message, [...(byMessage.get(message) ?? []), name]);
+        const errorText = [...byMessage]
+            .map(([message, names]) =>
+                names.length === 1
+                    ? `${names[0]} wasn't uploaded. ${message}`
+                    : `${names.length} files weren't uploaded (${listNames(names)}). ${message}`,
+            )
+            .join(' ');
+        if (errors.length) notify('error', [errorText, uploadedText].filter(Boolean).join(' '));
         else notify('success', uploadedText);
     }
 
@@ -230,7 +300,7 @@ export function HrDocumentManager({ orgId }: { orgId: string }) {
             if (!res.ok) throw new Error(await readError(res, fallback));
             notify('success', successText);
         } catch (err) {
-            notify('error', err instanceof Error ? err.message : fallback);
+            notify('error', friendlyError(err instanceof Error ? err.message : fallback));
         } finally {
             setBusy(null);
             await load();
@@ -342,15 +412,42 @@ export function HrDocumentManager({ orgId }: { orgId: string }) {
                         </Link>
                         <h1 className="font-display text-xl font-bold text-text-primary">HR policy documents</h1>
                         <p className="text-sm text-text-secondary">
-                            The HR assistant answers only from the live version of each policy. Use &ldquo;New
+                            {BOT_NAME}, the HR assistant, answers only from the live version of each policy. Use &ldquo;New
                             version&rdquo; to update a policy. Older versions are kept and can be restored.
                         </p>
                     </div>
                 </div>
-                <Button type="button" variant="solid" size="sm" onClick={() => void load()} className="gap-1.5">
-                    <RefreshCw className="size-4" aria-hidden />
-                    Refresh
-                </Button>
+                <div className="flex items-center gap-2">
+                    {policies && policies.length > 1 && (
+                        <label className="relative inline-flex items-center">
+                            <span className="sr-only">Sort policies</span>
+                            <ArrowUpDown className="pointer-events-none absolute left-2.5 size-4 text-text-secondary" aria-hidden />
+                            <select
+                                value={sort}
+                                onChange={event => setSort(event.target.value as SortKey)}
+                                className="h-8 cursor-pointer appearance-none rounded-[var(--radius-sm)] border border-border bg-surface pl-8 pr-3 text-sm font-medium text-text-primary transition-smooth hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                            >
+                                {SORT_OPTIONS.map(option => (
+                                    <option key={option.value} value={option.value}>
+                                        {option.label}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                    )}
+                    <Button
+                        type="button"
+                        variant="solid"
+                        size="sm"
+                        onClick={() => void refresh()}
+                        disabled={refreshing}
+                        aria-busy={refreshing}
+                        className="gap-1.5"
+                    >
+                        <RefreshCw className={`size-4 ${refreshing ? 'animate-spin' : ''}`} aria-hidden />
+                        {refreshing ? 'Refreshing…' : 'Refresh'}
+                    </Button>
+                </div>
             </header>
 
             <div
@@ -421,7 +518,7 @@ export function HrDocumentManager({ orgId }: { orgId: string }) {
             ) : (
                 <ul className="space-y-3">
                     <AnimatePresence initial={false}>
-                        {policies.map(policy => {
+                        {(sortedPolicies ?? []).map(policy => {
                             const live = policy.versions.find(v => v.status === 'ready');
                             const indexing = policy.versions.find(v => v.status === 'processing');
                             const isOpen = expanded.has(policy.id);
@@ -535,7 +632,7 @@ export function HrDocumentManager({ orgId }: { orgId: string }) {
                                                                     .join(' · ')}
                                                             </p>
                                                             {version.status === 'failed' && version.error && (
-                                                                <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{version.error}</p>
+                                                                <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{friendlyError(version.error)}</p>
                                                             )}
                                                         </div>
                                                         <div className="flex items-center gap-1">

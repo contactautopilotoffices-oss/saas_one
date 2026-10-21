@@ -17,6 +17,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { STALE_PROCESSING_MINUTES } from "./config";
 import { embedDocuments } from "./embeddings";
 import { DocumentError, fileExtension } from "./extract-text";
+import { friendlyError } from "./friendly-errors";
 import { splitIntoChunks } from "./splitter";
 
 const INSERT_BATCH_SIZE = 200;
@@ -125,7 +126,8 @@ export async function processVersion(
     return data as HrPolicyVersion;
   } catch (error) {
     console.error(`[hr-assistant] indexing failed for "${version.name}" v${version.version}`, error);
-    const message = error instanceof Error ? error.message : "Indexing failed";
+    // HR sees a plain message; the technical one is in the log line above.
+    const message = friendlyError(error instanceof Error ? error.message : null);
     try {
       await admin.from("hr_policy_chunks").delete().eq("document_id", version.id);
       await admin

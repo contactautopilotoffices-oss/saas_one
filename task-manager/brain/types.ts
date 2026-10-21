@@ -42,7 +42,7 @@ export interface Which {
 }
 
 export type Slots =
-    | { intent: 'view_tasks'; scope: ViewScope; person: string | null; department: string | null; /** only tasks carried over from earlier days (own list) */ carriedOnly?: boolean }
+    | { intent: 'view_tasks'; scope: ViewScope; person: string | null; department: string | null; /** only tasks carried over from earlier days (own list) */ carriedOnly?: boolean; /** team: every task of each person, not only counts */ teamList?: boolean }
     | { intent: 'complete_tasks'; which: Which }
     | { intent: 'progress_update'; state: ProgressState; which: Which; note: string | null }
     | { intent: 'create_tasks'; assignee: string; tasks: Array<{ title: string; details: string | null;
@@ -132,10 +132,12 @@ export interface BrainContext {
     conversation?: string[];
     /** Owner 2026-10-20: open tasks the sender gave other people (for "add note to …"). Absent → only their own tasks. */
     noteTargets?: NoteTarget[];
+    /** Owner 2026-10-21: the person's own message, so code can check a word in it (e.g. "assign" with nobody named). */
+    message?: string;
 }
 
 export type Action =
-    | { type: 'view_tasks'; scope: ViewScope; personId: string | null; department: string | null; /** own list: only tasks carried over from earlier days */ carriedOnly?: boolean }
+    | { type: 'view_tasks'; scope: ViewScope; personId: string | null; department: string | null; /** own list: only tasks carried over from earlier days */ carriedOnly?: boolean; /** Owner 2026-10-21: team = every task of each person (not the progress counts) */ list?: boolean }
     | { type: 'complete_tasks'; taskIds: string[] }
     | { type: 'progress_update'; state: ProgressState; taskIds: string[]; note: string | null }
     | { type: 'create_tasks'; assigneeId: string; tasks: Array<{ title: string; details: string | null }>; date: string }
@@ -193,6 +195,9 @@ export interface ConfirmPolicy {
     /** Owner 2026-10-14: false = marking one's OWN tasks done goes straight through, with "Reply undo within 10 minutes".
      *  The live bot sets it false only while "One front door" (which provides undo) is ON. Absent / true = asked first. */
     confirmCompletions?: boolean;
+    /** Owner 2026-10-21: false = a clear "add task …" / "assign Neeti …" is saved straight away with "Reply undo within
+     *  10 minutes" (no yes/no). Set false only while "One front door" (which provides undo) is ON. Absent / true = asked first. */
+    confirmCreates?: boolean;
 }
 export const DEFAULT_CONFIRM_POLICY: ConfirmPolicy = { confirmProgressUpdates: false, confirmCompletions: true };
 

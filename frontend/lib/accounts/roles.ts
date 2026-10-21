@@ -1,7 +1,7 @@
 // Client-side Payment Tracker capabilities + shared types.
 // Mirrors backend/lib/accounts/access.ts (API still enforces server-side).
 
-const ORG_ADMIN = new Set(['org_super_admin', 'org_admin', 'master_admin', 'ops_super_admin']);
+const ORG_ADMIN = new Set(['org_super_admin', 'org_admin', 'master_admin', 'ops_super_admin', 'director']);
 // property_admin is intentionally excluded — see backend/lib/accounts/access.ts.
 const PROCUREMENT = new Set(['purchase_manager', 'purchase_executive', 'procurement']);
 const VIEW = new Set([...ORG_ADMIN, ...PROCUREMENT, 'accounts', 'ops_super_admin']);
@@ -18,13 +18,14 @@ interface MembershipLike {
     properties?: { role?: string; organization_id?: string | null }[];
 }
 
-export function accountsCaps(m: MembershipLike | null | undefined, organizationId?: string): AccountsCaps {
+export function accountsCaps(m: MembershipLike | null | undefined, organizationId?: string, user?: any): AccountsCaps {
     const orgRoles = organizationId
         ? [...(m?.all_org_memberships?.filter(item => item.org_id === organizationId).map(item => item.role) || []), ...(m?.org_id === organizationId ? [m.org_role] : [])]
         : [m?.org_role];
     const properties = (m?.properties || []).filter(property => !organizationId || property.organization_id === organizationId);
-    const roles = [...orgRoles, ...properties.map(p => p.role)].filter(Boolean) as string[];
-    const isMaster = !!m?.is_master_admin;
+    const userRole = user?.user_metadata?.role || user?.role || user?.app_role;
+    const isMaster = !!m?.is_master_admin || !!user?.is_master_admin || !!user?.user_metadata?.is_master_admin || userRole === 'master_admin';
+    const roles = [...orgRoles, ...properties.map(p => p.role), userRole].filter(Boolean) as string[];
     return {
         canSee: isMaster || roles.some(r => VIEW.has(r)),
         isAdmin: isMaster || roles.some(r => ORG_ADMIN.has(r)),
@@ -76,6 +77,7 @@ export interface StatusMeta { label: string; color: string; }
 
 export const PAY_STATUS_META: Record<string, StatusMeta> = {
     to_align: { label: 'To Align', color: '#F97316' },
+    pre_aligned: { label: 'Pre-Aligned', color: '#F59E0B' },
     aligned: { label: 'Aligned', color: '#EAB308' },
     completed: { label: 'Completed', color: '#22C55E' },
     cancelled: { label: 'Cancelled', color: '#94A3B8' },
@@ -106,6 +108,7 @@ export interface LiveStatusMeta { label: string; text: string; dot: string; bg: 
 
 const LIVE_STATUS: Record<string, LiveStatusMeta> = {
     to_align: { label: 'To Align', text: 'text-warning', dot: 'bg-warning', bg: 'bg-warning/10' },
+    pre_aligned: { label: 'Pre-Aligned', text: 'text-amber-500', dot: 'bg-amber-500', bg: 'bg-amber-500/10' },
     aligned: { label: 'Aligned', text: 'text-secondary', dot: 'bg-secondary', bg: 'bg-secondary/10' },
     completed: { label: 'Completed', text: 'text-success', dot: 'bg-success', bg: 'bg-success/10' },
     cancelled: { label: 'Cancelled', text: 'text-text-tertiary', dot: 'bg-text-tertiary', bg: 'bg-muted' },
@@ -186,4 +189,97 @@ export interface PoPayment {
     po?: { po_number?: string; vendor_name?: string; department?: string; project_name?: string; category?: string; po_amount?: number } | null;
     aligner?: { full_name?: string } | null;
     completer?: { full_name?: string } | null;
+}
+
+export type PaymentTrackerTab = 'to_align' | 'aligned' | 'completed' | 'batches' | 'approvals' | 'electricity-payments' | 'live_sheet';
+
+export interface RolePaymentTrackerConfig {
+    visibleTabs: PaymentTrackerTab[];
+    defaultTab: PaymentTrackerTab;
+    canCreateSheet: boolean;
+    canManageApprovers: boolean;
+    showFinanceOverview: boolean;
+    roleName: string;
+}
+
+export function getRolePaymentTrackerConfig(
+    m: MembershipLike | null | undefined,
+    user?: any,
+    organizationId?: string,
+    isDesignatedApprover: boolean = false
+): RolePaymentTrackerConfig {
+    const orgRoles = organizationId
+        ? [...(m?.all_org_memberships?.filter(item => item.org_id === organizationId).map(item => item.role) || []), ...(m?.org_id === organizationId ? [m.org_role] : [])]
+        : [m?.org_role];
+    const properties = (m?.properties || []).filter(property => !organizationId || property.organization_id === organizationId);
+    const userRole = user?.user_metadata?.role || user?.role || user?.app_role;
+    const isMaster = !!m?.is_master_admin || !!user?.is_master_admin || !!user?.user_metadata?.is_master_admin || userRole === 'master_admin';
+    const roles = [...orgRoles, ...properties.map(p => p.role), userRole].filter(Boolean).map(r => String(r).toLowerCase());
+
+    const isOrgAdmin = isMaster || roles.some(r => r === 'org_super_admin' || r === 'org_admin' || r === 'master_admin' || r === 'director');
+    const isOpsAdmin = roles.some(r => r === 'ops_super_admin' || r === 'ops_admin' || r === 'operations_super_admin');
+    const isProcurement = roles.some(r => PROCUREMENT.has(r) || r.includes('procure') || r.includes('purchase'));
+    const isAccounts = roles.some(r => r === 'accounts' || r === 'finance' || r === 'accountant');
+
+    // 1. Procurement:
+    // Focused work desk — no executive finance overview, unaligned backlog first, create payment sheet button
+    if (isProcurement && !isOrgAdmin && !isOpsAdmin) {
+        return {
+            visibleTabs: ['to_align', 'batches', 'live_sheet'],
+            defaultTab: 'to_align',
+            canCreateSheet: true,
+            canManageApprovers: false,
+            showFinanceOverview: false,
+            roleName: 'Procurement',
+        };
+    }
+
+    // 2. Accounts:
+    // Finance overview visible, aligned (ready to pay) tab FIRST, completed payments, CMS batches, electricity
+    if (isAccounts && !isOrgAdmin && !isOpsAdmin) {
+        return {
+            visibleTabs: ['aligned', 'completed', 'batches', 'electricity-payments', 'live_sheet'],
+            defaultTab: 'aligned',
+            canCreateSheet: false,
+            canManageApprovers: false,
+            showFinanceOverview: true,
+            roleName: 'Accounts',
+        };
+    }
+
+    // 3. Ops Super Admin:
+    // Executive overview + Approval Workspace, Aligned & Ready to Pay, Payment Sheets
+    if (isOpsAdmin && !isMaster) {
+        return {
+            visibleTabs: ['approvals', 'aligned', 'batches'],
+            defaultTab: 'approvals',
+            canCreateSheet: false,
+            canManageApprovers: isDesignatedApprover || isOrgAdmin,
+            showFinanceOverview: true,
+            roleName: 'Ops Super Admin',
+        };
+    }
+
+    // 4. Org Super Admin / Master Admin:
+    // Executive overview + Approval Workspace, Aligned & Ready to Pay, Payment Sheets + Approver Designation
+    if (isOrgAdmin) {
+        return {
+            visibleTabs: ['approvals', 'aligned', 'batches'],
+            defaultTab: 'approvals',
+            canCreateSheet: false,
+            canManageApprovers: true,
+            showFinanceOverview: true,
+            roleName: 'Org Super Admin',
+        };
+    }
+
+    // Default fallback
+    return {
+        visibleTabs: ['aligned', 'completed', 'batches', 'live_sheet'],
+        defaultTab: 'aligned',
+        canCreateSheet: false,
+        canManageApprovers: false,
+        showFinanceOverview: true,
+        roleName: 'Staff',
+    };
 }

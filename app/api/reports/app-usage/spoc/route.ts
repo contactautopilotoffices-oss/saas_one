@@ -75,28 +75,54 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'The SPOC must be on this property\'s team' }, { status: 400 });
     }
 
-    const { error } = await supabaseAdmin
+    const values = {
+        organization_id: access.organizationId,
+        property_id: propertyId,
+        module_key: moduleKey,
+        user_id: userId,
+        assigned_by: access.user.id,
+        updated_at: new Date().toISOString(),
+    };
+    let { error } = await supabaseAdmin
         .from('module_spocs')
-        .upsert({
-            organization_id: access.organizationId,
-            property_id: propertyId,
-            module_key: moduleKey,
-            user_id: userId,
-            assigned_by: access.user.id,
-            updated_at: new Date().toISOString(),
-        }, { onConflict: 'property_id,module_key' });
+        .upsert(values, { onConflict: 'property_id,module_key' });
+    // 42P10: the live table lacks the (property_id, module_key) unique constraint the
+    // upsert needs. Fall back to update-else-insert so the SPOC still saves.
+    if (error?.code === '42P10') {
+        console.warn('[app-usage spoc] module_spocs has no (property_id, module_key) unique constraint; re-apply 20261016000002_module_spocs.sql');
+        const { data: existing, error: findError } = await supabaseAdmin
+            .from('module_spocs')
+            .select('id')
+            .eq('organization_id', access.organizationId)
+            .eq('property_id', propertyId)
+            .eq('module_key', moduleKey)
+            .limit(1)
+            .maybeSingle();
+        if (findError) return storageError(findError);
+        ({ error } = existing
+            ? await supabaseAdmin.from('module_spocs').update(values)
+                .eq('organization_id', access.organizationId).eq('id', existing.id)
+            : await supabaseAdmin.from('module_spocs').insert(values));
+    }
     if (error) return storageError(error);
 
     const { data: user } = await supabaseAdmin.from('users').select('full_name, email').eq('id', userId).maybeSingle();
     return NextResponse.json({ ok: true, spoc: { userId, name: user?.full_name || user?.email || 'Unknown user', active: true } });
 }
 
-function storageError(error: { code?: string; message?: string }) {
+function storageError(error: { code?: string; message?: string; details?: string }) {
     if (isMissingRelation(error)) {
         return NextResponse.json(
             { error: 'SPOCs are not set up yet. Apply migration 20261016000002_module_spocs.sql first.' },
             { status: 503 });
     }
-    console.error('[app-usage spoc] save:', error.message);
-    return NextResponse.json({ error: 'Could not save the SPOC' }, { status: 500 });
+    console.error('[app-usage spoc] save:', error.code, error.message, error.details);
+    if (error.code === '23503') {
+        return NextResponse.json({ error: 'Could not save the SPOC: that person or your account is missing from the users table' }, { status: 500 });
+    }
+    if (error.code === '42501') {
+        return NextResponse.json({ error: 'Could not save the SPOC: the database does not allow writes to module_spocs' }, { status: 500 });
+    }
+    // Show the database error code so the cause can be traced from a screenshot.
+    return NextResponse.json({ error: `Could not save the SPOC${error.code ? ` (database error ${error.code})` : ''}` }, { status: 500 });
 }

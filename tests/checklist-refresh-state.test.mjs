@@ -77,16 +77,20 @@ test('SOPTemplateFormModal and SOPTemplateManager verify session storage cleanup
     const modalCode = await readFile(new URL('../frontend/components/sop/SOPTemplateFormModal.tsx', import.meta.url), 'utf8');
     const managerCode = await readFile(new URL('../frontend/components/sop/SOPTemplateManager.tsx', import.meta.url), 'utf8');
 
-    // Must remove lingering localStorage sop_template_modal_open_ on save/close
+    // Must remove lingering localStorage & sessionStorage sop_template_modal_open_ on save/close
     assert.match(modalCode, /sessionStorage\.removeItem\(`sop_template_modal_open_\$\{propertyId\}`\)/);
     assert.match(modalCode, /sessionStorage\.removeItem\(`sop_editing_template_id_\$\{propertyId\}`\)/);
 
     // In PUT update existing template, must also clear draft and modal open flags
     assert.match(modalCode, /PUT'[\s\S]*?localStorage\.removeItem\(`sop_template_draft_\$\{propertyId\}`\)/);
 
-    // SOPTemplateManager must use sessionStorage for wasOpen check and clean legacy localStorage
-    assert.match(managerCode, /sessionStorage\.getItem\(`sop_template_modal_open_\$\{propertyId\}`\)/);
+    // SOPTemplateManager must clean up modal-open flags so navigation never hijacks the screen
+    assert.match(managerCode, /sessionStorage\.removeItem\(`sop_template_modal_open_\$\{propertyId\}`\)/);
     assert.match(managerCode, /localStorage\.removeItem\(`sop_template_modal_open_\$\{propertyId\}`\)/);
+
+    // SOPTemplateManager must provide checklist items and steps viewing on card expand
+    assert.match(managerCode, /Checklist Steps/);
+    assert.match(managerCode, /order_index/);
 });
 
 test('SOPChecklistRunner does not execute redundant auth refreshSession on checkbox toggle or interval', async () => {

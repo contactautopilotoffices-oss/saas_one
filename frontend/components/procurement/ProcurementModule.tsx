@@ -15,14 +15,14 @@ import ProcurementCatalogModal from './ProcurementCatalogModal';
 import MonthlyRequisitionsTab from './MonthlyRequisitionsTab';
 import SitePricingAdminTab from './SitePricingAdminTab';
 import PropertyBudgetsTab from './PropertyBudgetsTab';
-import PaymentUrgencyTrackerTab from './payment-urgency/PaymentUrgencyTrackerTab';
 import ProcurementFeedbackTab from './ProcurementFeedbackTab';
 import ProcurementTasksTab from './ProcurementTasksTab';
 import { SHOW_LEGACY_PER_PROPERTY_CONTROLS } from './procurementFeatureFlags';
 import FinanceOverview from '../accounts/FinanceOverview';
+import AccountsDashboard from '../accounts/AccountsDashboard';
 import { useAuth } from '@/frontend/context/AuthContext';
 
-type TabType = 'orders' | 'tasks' | 'urgency-tracker' | 'payment-tracker' | 'requisitions' | 'monthly-feedback' | 'site-budgets' | 'site-pricing' | 'catalog' | 'po-generator' | 'settings';
+type TabType = 'orders' | 'tasks' | 'payment-tracker' | 'requisitions' | 'monthly-feedback' | 'site-budgets' | 'site-pricing' | 'catalog' | 'po-generator' | 'settings';
 
 function ProcurementModuleSkeleton() {
     return (
@@ -91,7 +91,6 @@ export default function ProcurementModule({
     const isSuperAdmin = isMasterAdmin || userRole === 'org_super_admin' || userRole === 'owner' || propIsAdmin === true;
     const isProcurementUser = isSuperAdmin || userRole.includes('procurement') || userRole === 'org_admin';
     const canManageCatalogAndPricing = isSuperAdmin || isProcurementUser;
-    const canViewUrgencyTracker = isSuperAdmin || isProcurementUser;
     // The unified Payment Tracker (POs, alignment, payment status) — accounts + procurement
     // already see it via isProcurementUser; ops_super_admin is added here view-only, mirroring
     // the same allowance in backend/lib/accounts/access.ts and frontend/lib/accounts/roles.ts.
@@ -166,7 +165,8 @@ export default function ProcurementModule({
             const urlParams = new URLSearchParams(window.location.search);
             let tabParam = urlParams.get('procurement_tab') || urlParams.get('subtab') || urlParams.get('tab');
             if (tabParam === 'monthly-requisitions') tabParam = 'requisitions';
-            const linkableTabs = ['orders', 'tasks', 'urgency-tracker', 'payment-tracker', 'requisitions', 'monthly-feedback', 'catalog', 'po-generator', 'settings'];
+            if (tabParam === 'urgency-tracker') tabParam = 'payment-tracker';
+            const linkableTabs = ['orders', 'tasks', 'payment-tracker', 'requisitions', 'monthly-feedback', 'catalog', 'po-generator', 'settings'];
             if (SHOW_LEGACY_PER_PROPERTY_CONTROLS) linkableTabs.push('site-budgets', 'site-pricing');
             if (tabParam && linkableTabs.includes(tabParam)) {
                 setActiveTab(tabParam as TabType);
@@ -177,7 +177,6 @@ export default function ProcurementModule({
     const TABS = useMemo(() => [
         { id: 'orders', label: 'All Orders', icon: List, show: true, count: counts.orders },
         { id: 'tasks', label: 'Tasks', icon: ClipboardList, show: true, count: 0 },
-        { id: 'urgency-tracker', label: 'Urgency Tracker (P1-P3)', icon: Layers, show: canViewUrgencyTracker, count: 0 },
         { id: 'payment-tracker', label: 'Payment Tracker', icon: IndianRupee, show: canViewPaymentTracker, count: 0 },
         { id: 'requisitions', label: 'Monthly Requisitions', icon: FileSpreadsheet, show: true, count: 0 },
         { id: 'monthly-feedback', label: 'Monthly Feedback', icon: FileText, show: true, count: 0 },
@@ -187,7 +186,7 @@ export default function ProcurementModule({
         { id: 'catalog', label: 'Manage Items Master', icon: ShoppingCart, show: canManageCatalogAndPricing, count: 0 },
         { id: 'po-generator', label: 'PO Generator', icon: FileText, show: canManageCatalogAndPricing || userRole === 'org_admin', count: 0 },
         { id: 'settings', label: 'Settings', icon: Settings, show: isSuperAdmin, count: 0 },
-    ], [counts.orders, canViewUrgencyTracker, canViewPaymentTracker, canManageCatalogAndPricing, userRole, isSuperAdmin]);
+    ], [counts.orders, canViewPaymentTracker, canManageCatalogAndPricing, userRole, isSuperAdmin]);
 
     if (isInitialLoading) {
         return <ProcurementModuleSkeleton />;
@@ -247,17 +246,14 @@ export default function ProcurementModule({
                     <ProcurementRequestList organizationId={orgId} propertyId={propertyId} onAction={fetchCounts} />
                 )}
 
-                {activeTab === 'urgency-tracker' && canViewUrgencyTracker && (
-                    <PaymentUrgencyTrackerTab
-                        user={user}
-                        organizationId={orgId}
-                        propertyId={propertyId}
-                        isSuperAdmin={isSuperAdmin}
-                    />
-                )}
 
                 {activeTab === 'payment-tracker' && canViewPaymentTracker && (
-                    <FinanceOverview />
+                    <div className="space-y-8">
+                        <FinanceOverview organizationId={orgId} />
+                        <div id="payment-tracker" className="scroll-mt-24">
+                            <AccountsDashboard organizationId={orgId} />
+                        </div>
+                    </div>
                 )}
 
                 {activeTab === 'requisitions' && (

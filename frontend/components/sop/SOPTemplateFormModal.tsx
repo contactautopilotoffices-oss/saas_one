@@ -1,12 +1,13 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Plus, Trash2, Check, Info, Edit3, Camera, Paperclip, MapPin, Image as ImageIcon, Loader2, Eye } from 'lucide-react';
+import { X, Plus, Trash2, Check, Info, Edit3, Camera, Paperclip, MapPin, Image as ImageIcon, Loader2, Eye, Clock, Tag } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
 import { Toast } from '@/frontend/components/ui/Toast';
 import SOPCADConfigModal from '@/frontend/components/sop/SOPCADConfigModal';
+import ImagePreviewModal from '@/frontend/components/shared/ImagePreviewModal';
 
 export interface ChecklistStepParameter {
     id: string;
@@ -43,16 +44,35 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
     });
 
     const [items, setItems] = useState<any[]>([]);
-    const [newItem, setNewItem] = useState({
+    const [newItem, setNewItem] = useState<{
+        id?: string;
+        title: string;
+        description: string;
+        requires_photo: boolean;
+        requires_comment: boolean;
+        type: 'checkbox' | 'text' | 'number' | 'yes_no';
+        is_optional: boolean;
+        start_time: string;
+        end_time: string;
+        parameters: ChecklistStepParameter[];
+        reference_photos?: any[];
+        reference_photo_url?: string | null;
+        reference_photo_source?: string | null;
+        cad_area_id?: string | null;
+    }>({
         title: '',
         description: '',
         requires_photo: false,
         requires_comment: false,
-        type: 'checkbox' as 'checkbox' | 'text' | 'number' | 'yes_no',
+        type: 'checkbox',
         is_optional: false,
         start_time: '',
         end_time: '',
-        parameters: [] as ChecklistStepParameter[],
+        parameters: [],
+        reference_photos: [],
+        reference_photo_url: null,
+        reference_photo_source: null,
+        cad_area_id: null,
     });
     const [showStepTimeSlot, setShowStepTimeSlot] = useState(false);
     const [showParametersSection, setShowParametersSection] = useState(false);
@@ -74,6 +94,22 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
     const [isDraftLoaded, setIsDraftLoaded] = useState(false);
     const [propertyChecklistMode, setPropertyChecklistMode] = useState<'basic' | 'advanced'>('basic');
     const isAIEnabled = propertyChecklistMode === 'advanced';
+    const initializedTemplateIdRef = useRef<string | null>(null);
+
+    // Multi-benchmark photo labeling state
+    const [stagingModal, setStagingModal] = useState<{
+        isOpen: boolean;
+        stepIndex: number;
+        photos: { id: string; file: File; previewUrl: string; label: string }[];
+    } | null>(null);
+    const [isUploadingStaging, setIsUploadingStaging] = useState(false);
+    const [editingBenchmarkLabel, setEditingBenchmarkLabel] = useState<{
+        stepIndex: number;
+        photoId: string;
+        currentLabel: string;
+    } | null>(null);
+    const [isSavingLabel, setIsSavingLabel] = useState(false);
+    const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
 
     const supabase = React.useMemo(() => createClient(), []);
 
@@ -94,6 +130,19 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
 
         fetchSettings();
     }, [isOpen, propertyId]);
+
+    // Ensure session flags are cleaned up whenever the modal unmounts
+    useEffect(() => {
+        return () => {
+            if (typeof window !== 'undefined' && propertyId) {
+                try {
+                    localStorage.removeItem(`sop_template_modal_open_${propertyId}`);
+                    sessionStorage.removeItem(`sop_template_modal_open_${propertyId}`);
+                    sessionStorage.removeItem(`sop_editing_template_id_${propertyId}`);
+                } catch {}
+            }
+        };
+    }, [propertyId]);
 
     useEffect(() => {
         const fetchMembers = async () => {
@@ -143,7 +192,17 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
     }, []);
 
     useEffect(() => {
-        if (!isOpen) return;
+        if (!isOpen) {
+            initializedTemplateIdRef.current = null;
+            return;
+        }
+
+        const currentId = template?.id || (initialData ? 'initial-ai' : 'new');
+        if (initializedTemplateIdRef.current === currentId) {
+            // Already initialized for this modal session, do not overwrite user edits during background re-renders
+            return;
+        }
+        initializedTemplateIdRef.current = currentId;
 
         if (template) {
             setCreatedTemplateId(null);
@@ -157,7 +216,22 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
                 end_time: template.end_time ? template.end_time.slice(0, 5) : '',
             });
 
-            setItems(template.items || []);
+            // Sort items strictly by order_index and sanitize sub-parameters with guaranteed IDs
+            const sortedItems = [...(template.items || [])].sort((a: any, b: any) => (a.order_index ?? 0) - (b.order_index ?? 0));
+            const sanitizedItems = sortedItems.map((item: any, idx: number) => ({
+                ...item,
+                order_index: idx,
+                parameters: Array.isArray(item.parameters)
+                    ? item.parameters.map((p: any, pIdx: number) => ({
+                        id: p.id || `param_${idx}_${pIdx}_${Date.now()}`,
+                        name: typeof p === 'string' ? p : (p.name || p.title || `Checkpoint ${pIdx + 1}`),
+                        type: p.type || 'yes_no',
+                        is_required: p.is_required !== false,
+                    }))
+                    : [],
+            }));
+
+            setItems(sanitizedItems);
             setIsDraftLoaded(false);
         } else if (initialData) {
             setCreatedTemplateId(null);
@@ -180,6 +254,14 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
                     requires_comment: false,
                     is_optional: false,
                     order_index: idx,
+                    parameters: Array.isArray(item.parameters)
+                        ? item.parameters.map((p: any, pIdx: number) => ({
+                            id: p.id || `param_${idx}_${pIdx}_${Date.now()}`,
+                            name: typeof p === 'string' ? p : (p.name || p.title || `Checkpoint ${pIdx + 1}`),
+                            type: p.type || 'yes_no',
+                            is_required: p.is_required !== false,
+                        }))
+                        : [],
                 }))
             );
             setIsDraftLoaded(false);
@@ -251,9 +333,9 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
         }
     }, [template, initialData, isOpen, propertyId]);
 
-    // Autosave draft to localStorage on any change while creating a template
+    // Autosave draft to localStorage on any change while creating a template (not editing existing)
     useEffect(() => {
-        if (!isOpen || template || !propertyId || typeof window !== 'undefined' ? false : true) return;
+        if (!isOpen || !!template || !propertyId || typeof window === 'undefined') return;
         if (typeof window === 'undefined') return;
 
         const hasContent = !!(
@@ -276,8 +358,10 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
                     savedAt: now,
                 };
                 localStorage.setItem(`sop_template_draft_${propertyId}`, JSON.stringify(draft));
-                sessionStorage.setItem(`sop_template_modal_open_${propertyId}`, 'true');
-                try { localStorage.removeItem(`sop_template_modal_open_${propertyId}`); } catch {}
+                try {
+                    localStorage.removeItem(`sop_template_modal_open_${propertyId}`);
+                    sessionStorage.removeItem(`sop_template_modal_open_${propertyId}`);
+                } catch {}
                 setLastSavedAt(now);
                 setIsDraftLoaded(true);
                 window.dispatchEvent(new Event('sop_draft_updated'));
@@ -343,16 +427,45 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
             return;
         }
 
+        // Auto-commit any parameter draft in progress
+        let currentParams = Array.isArray(newItem.parameters) ? [...newItem.parameters] : [];
+        if (paramDraftName.trim()) {
+            currentParams.push({
+                id: `param_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+                name: paramDraftName.trim(),
+                type: paramDraftType,
+                is_required: true,
+            });
+            setParamDraftName('');
+        }
+
         const itemToSave = {
             ...newItem,
-            parameters: Array.isArray(newItem.parameters) ? newItem.parameters : [],
+            parameters: currentParams,
             is_optional: false,
         };
 
         if (editingIndex !== null) {
+            const existingItem = items[editingIndex];
             const updatedItems = [...items];
+
+            const mergedRefPhotos = (Array.isArray(itemToSave.reference_photos) && itemToSave.reference_photos.length > 0)
+                ? itemToSave.reference_photos
+                : (Array.isArray(existingItem?.reference_photos) && existingItem.reference_photos.length > 0)
+                    ? existingItem.reference_photos
+                    : (itemToSave.reference_photo_url ? [{ id: 'ref_1', label: 'Clean Photo', url: itemToSave.reference_photo_url }] : (existingItem?.reference_photo_url ? [{ id: 'ref_1', label: 'Clean Photo', url: existingItem.reference_photo_url }] : []));
+
+            const mergedRefPhotoUrl = itemToSave.reference_photo_url || existingItem?.reference_photo_url || (mergedRefPhotos.length > 0 ? mergedRefPhotos[0].url : null);
+            const mergedRefPhotoSource = itemToSave.reference_photo_source || existingItem?.reference_photo_source || (mergedRefPhotoUrl ? 'uploaded' : null);
+
             updatedItems[editingIndex] = {
+                ...existingItem,
                 ...itemToSave,
+                id: existingItem?.id || itemToSave.id,
+                reference_photos: mergedRefPhotos,
+                reference_photo_url: mergedRefPhotoUrl,
+                reference_photo_source: mergedRefPhotoSource,
+                cad_area_id: existingItem?.cad_area_id || itemToSave.cad_area_id,
                 order_index: editingIndex,
             };
             setItems(updatedItems);
@@ -374,6 +487,10 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
             start_time: '',
             end_time: '',
             parameters: [],
+            reference_photos: [],
+            reference_photo_url: null,
+            reference_photo_source: null,
+            cad_area_id: null,
         });
         setShowStepTimeSlot(false);
         setShowParametersSection(false);
@@ -398,10 +515,13 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
         setParamDraftName('');
     };
 
-    const handleRemoveParam = (paramId: string) => {
+    const handleRemoveParam = (paramId?: string, index?: number) => {
         setNewItem(prev => ({
             ...prev,
-            parameters: (prev.parameters || []).filter(p => p.id !== paramId),
+            parameters: (prev.parameters || []).filter((p, i) => {
+                if (paramId && p.id) return p.id !== paramId;
+                return i !== index;
+            }),
         }));
     };
 
@@ -432,45 +552,212 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
         fetchCADStatus();
     }, [isOpen, template?.id, propertyId]);
 
-    const handleReferencePhotoUpload = async (index: number, file: File) => {
+    const COMMON_BENCHMARK_TAGS = [
+        'Washbasin',
+        'Commode / Toilet',
+        'Floor & Drain',
+        'Mirror & Counter',
+        'Soap Dispenser',
+        'Urinal',
+        'Dustbin / Trash',
+        'Overall View',
+    ];
+
+    const handleInitiatePhotoUpload = (index: number, incomingFiles: FileList | File[] | File) => {
         const item = items[index];
         if (!item?.id || item.id.startsWith('ai-')) {
             setToast({ message: 'Please save the template first before uploading reference photos', type: 'error' });
             return;
         }
 
-        setReferencePhotoUploads(prev => ({ ...prev, [index]: { uploading: true } }));
-        try {
-            const formData = new FormData();
-            formData.append('file', file);
-            const res = await fetch(`/api/properties/${propertyId}/sop/checklist-items/${item.id}/reference-photo`, {
-                method: 'POST',
-                body: formData,
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Upload failed');
+        const fileList: File[] = incomingFiles instanceof FileList
+            ? Array.from(incomingFiles)
+            : Array.isArray(incomingFiles)
+            ? incomingFiles
+            : [incomingFiles];
 
-            setItems(prev => prev.map((it, i) => i === index ? { ...it, reference_photo_url: data.referencePhotoUrl, reference_photo_source: 'uploaded' } : it));
-            setReferencePhotoUploads(prev => ({ ...prev, [index]: { uploading: false, url: data.referencePhotoUrl } }));
-            setToast({ message: 'Reference photo uploaded', type: 'success' });
+        if (fileList.length === 0) return;
+
+        const existingCount = Array.isArray(item.reference_photos) ? item.reference_photos.length : (item.reference_photo_url ? 1 : 0);
+
+        const stagingPhotos = fileList.map((file, fIdx) => {
+            const rawName = file.name ? file.name.replace(/\.[^/.]+$/, "").replace(/[-_]/g, ' ') : '';
+            const isGenericCameraName = !rawName || /^(img|image|photo|p_|\d)/i.test(rawName.trim());
+            const initialLabel = isGenericCameraName
+                ? (fIdx === 0 && existingCount === 0 ? 'Washbasin' : fIdx === 1 ? 'Commode / Toilet' : fIdx === 2 ? 'Floor & Drain' : `Clean Benchmark ${existingCount + fIdx + 1}`)
+                : rawName.trim();
+
+            return {
+                id: `stg_${Date.now()}_${fIdx}`,
+                file,
+                previewUrl: URL.createObjectURL(file),
+                label: initialLabel,
+            };
+        });
+
+        setStagingModal({
+            isOpen: true,
+            stepIndex: index,
+            photos: stagingPhotos,
+        });
+    };
+
+    const handleConfirmStagingUpload = async () => {
+        if (!stagingModal || stagingModal.photos.length === 0) return;
+        const { stepIndex, photos } = stagingModal;
+        const item = items[stepIndex];
+        if (!item?.id) return;
+
+        setIsUploadingStaging(true);
+        setReferencePhotoUploads(prev => ({ ...prev, [stepIndex]: { uploading: true } }));
+
+        try {
+            let latestItem = item;
+            for (let fIdx = 0; fIdx < photos.length; fIdx++) {
+                const p = photos[fIdx];
+                const formData = new FormData();
+                formData.append('file', p.file);
+                formData.append('label', p.label.trim() || `Clean Benchmark ${fIdx + 1}`);
+
+                const res = await fetch(`/api/properties/${propertyId}/sop/checklist-items/${item.id}/reference-photo`, {
+                    method: 'POST',
+                    body: formData,
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Upload failed');
+
+                latestItem = {
+                    ...latestItem,
+                    reference_photo_url: data.referencePhotoUrl,
+                    reference_photos: data.referencePhotos || (data.referencePhotoUrl ? [{ id: 'ref_1', label: p.label.trim(), url: data.referencePhotoUrl }] : []),
+                    reference_photo_source: 'uploaded',
+                };
+            }
+
+            // Revoke blob URLs
+            photos.forEach(p => {
+                try { URL.revokeObjectURL(p.previewUrl); } catch {}
+            });
+
+            setItems(prev => prev.map((it, i) => i === stepIndex ? latestItem : it));
+            if (editingIndex === stepIndex) {
+                setNewItem(prev => ({
+                    ...prev,
+                    reference_photos: latestItem.reference_photos,
+                    reference_photo_url: latestItem.reference_photo_url,
+                    reference_photo_source: latestItem.reference_photo_source,
+                }));
+            }
+            setReferencePhotoUploads(prev => ({ ...prev, [stepIndex]: { uploading: false, url: latestItem.reference_photo_url } }));
+            setStagingModal(null);
+            setToast({
+                message: photos.length > 1
+                    ? `${photos.length} clean benchmarks labeled and uploaded`
+                    : `Clean benchmark "${photos[0].label}" added`,
+                type: 'success'
+            });
         } catch (err: any) {
-            setReferencePhotoUploads(prev => ({ ...prev, [index]: { uploading: false } }));
+            setReferencePhotoUploads(prev => ({ ...prev, [stepIndex]: { uploading: false } }));
             setToast({ message: err.message || 'Failed to upload reference photo', type: 'error' });
+        } finally {
+            setIsUploadingStaging(false);
         }
     };
 
-    const handleRemoveReferencePhoto = async (index: number) => {
-        const item = items[index];
-        if (!item?.id || item.id.startsWith('ai-')) return;
+    const handleSaveBenchmarkLabel = async (stepIndex: number, photoId: string, newLabel: string) => {
+        const item = items[stepIndex];
+        if (!item?.id || !newLabel.trim()) return;
 
+        setIsSavingLabel(true);
         try {
             const res = await fetch(`/api/properties/${propertyId}/sop/checklist-items/${item.id}/reference-photo`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ photoId, label: newLabel.trim() }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to update label');
+
+            setItems(prev => prev.map((it, i) => i === stepIndex ? {
+                ...it,
+                reference_photos: data.referencePhotos || it.reference_photos,
+            } : it));
+            if (editingIndex === stepIndex) {
+                setNewItem(prev => ({
+                    ...prev,
+                    reference_photos: data.referencePhotos || prev.reference_photos,
+                }));
+            }
+            setEditingBenchmarkLabel(null);
+            setToast({ message: `Benchmark renamed to "${newLabel.trim()}"`, type: 'success' });
+        } catch (err: any) {
+            setToast({ message: err.message || 'Failed to rename benchmark', type: 'error' });
+        } finally {
+            setIsSavingLabel(false);
+        }
+    };
+
+    const handleRemoveReferencePhoto = async (index: number, photoId?: string) => {
+        const item = items[index];
+        if (!item) return;
+
+        // If item is unpersisted or draft, remove locally
+        const isPersisted = item.id && !item.id.startsWith('ai-') && !item.id.startsWith('temp-') && !item.id.startsWith('draft-');
+
+        if (!isPersisted) {
+            const currentPhotos: any[] = Array.isArray(item.reference_photos) && item.reference_photos.length > 0
+                ? item.reference_photos
+                : (item.reference_photo_url ? [{ id: 'ref_1', label: 'Clean Photo', url: item.reference_photo_url }] : []);
+            
+            const remaining = photoId
+                ? currentPhotos.filter((p: any) => p.id !== photoId && p.url !== photoId)
+                : [];
+            const nextUrl = remaining.length > 0 ? remaining[0].url : null;
+
+            setItems(prev => prev.map((it, i) => i === index ? {
+                ...it,
+                reference_photo_url: nextUrl,
+                reference_photos: remaining,
+                reference_photo_source: nextUrl ? 'uploaded' : undefined,
+            } : it));
+
+            if (editingIndex === index) {
+                setNewItem(prev => ({
+                    ...prev,
+                    reference_photos: remaining,
+                    reference_photo_url: nextUrl,
+                    reference_photo_source: nextUrl ? 'uploaded' : undefined,
+                }));
+            }
+            setReferencePhotoUploads(prev => ({ ...prev, [index]: { uploading: false } }));
+            setToast({ message: 'Reference photo removed', type: 'success' });
+            return;
+        }
+
+        try {
+            const url = photoId
+                ? `/api/properties/${propertyId}/sop/checklist-items/${item.id}/reference-photo?photoId=${encodeURIComponent(photoId)}`
+                : `/api/properties/${propertyId}/sop/checklist-items/${item.id}/reference-photo`;
+            const res = await fetch(url, {
                 method: 'DELETE',
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Delete failed');
 
-            setItems(prev => prev.map((it, i) => i === index ? { ...it, reference_photo_url: undefined, reference_photo_source: undefined } : it));
+            setItems(prev => prev.map((it, i) => i === index ? {
+                ...it,
+                reference_photo_url: data.referencePhotoUrl || null,
+                reference_photos: data.referencePhotos || [],
+                reference_photo_source: data.referencePhotoUrl ? 'uploaded' : undefined,
+            } : it));
+            if (editingIndex === index) {
+                setNewItem(prev => ({
+                    ...prev,
+                    reference_photos: data.referencePhotos || [],
+                    reference_photo_url: data.referencePhotoUrl || null,
+                    reference_photo_source: data.referencePhotoUrl ? 'uploaded' : undefined,
+                }));
+            }
             setReferencePhotoUploads(prev => ({ ...prev, [index]: { uploading: false } }));
             setToast({ message: 'Reference photo removed', type: 'success' });
         } catch (err: any) {
@@ -491,9 +778,28 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
 
         setIsLoading(true);
         try {
+            // Auto-commit any step currently drafted
+            let finalItems = [...items];
+            let currentParams = Array.isArray(newItem.parameters) ? [...newItem.parameters] : [];
+            if (paramDraftName.trim()) {
+                currentParams.push({
+                    id: `param_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+                    name: paramDraftName.trim(),
+                    type: paramDraftType,
+                    is_required: true,
+                });
+            }
+            if (editingIndex !== null && editingIndex >= 0 && editingIndex < finalItems.length) {
+                if (newItem.title.trim()) {
+                    finalItems[editingIndex] = { ...newItem, parameters: currentParams, order_index: editingIndex };
+                }
+            } else if (newItem.title.trim()) {
+                finalItems.push({ ...newItem, parameters: currentParams, order_index: finalItems.length });
+            }
+
             const payload = {
                 ...formData,
-                items: items.map((it, idx) => ({
+                items: finalItems.map((it, idx) => ({
                     title: it.title,
                     description: it.description || '',
                     type: it.type || 'checkbox',
@@ -505,6 +811,7 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
                     end_time: it.end_time || null,
                     parameters: Array.isArray(it.parameters) ? it.parameters : [],
                     reference_photo_url: it.reference_photo_url || null,
+                    reference_photos: Array.isArray(it.reference_photos) ? it.reference_photos : [],
                     reference_photo_source: it.reference_photo_source || null,
                     cad_area_id: it.cad_area_id || null,
                 })),
@@ -555,9 +862,49 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
         setIsLoading(true);
 
         try {
+            // Auto-commit any step currently in-progress in newItem before saving!
+            let finalItems = [...items];
+            let currentParams = Array.isArray(newItem.parameters) ? [...newItem.parameters] : [];
+            if (paramDraftName.trim()) {
+                currentParams.push({
+                    id: `param_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+                    name: paramDraftName.trim(),
+                    type: paramDraftType,
+                    is_required: true,
+                });
+            }
+
+            if (editingIndex !== null && editingIndex >= 0 && editingIndex < finalItems.length) {
+                if (newItem.title.trim()) {
+                    const existing = finalItems[editingIndex];
+                    const mergedRefPhotos = (Array.isArray(newItem.reference_photos) && newItem.reference_photos.length > 0)
+                        ? newItem.reference_photos
+                        : (Array.isArray(existing?.reference_photos) && existing.reference_photos.length > 0)
+                            ? existing.reference_photos
+                            : (newItem.reference_photo_url ? [{ id: 'ref_1', label: 'Clean Photo', url: newItem.reference_photo_url }] : (existing?.reference_photo_url ? [{ id: 'ref_1', label: 'Clean Photo', url: existing.reference_photo_url }] : []));
+
+                    finalItems[editingIndex] = {
+                        ...existing,
+                        ...newItem,
+                        id: existing?.id || newItem.id,
+                        reference_photos: mergedRefPhotos,
+                        reference_photo_url: newItem.reference_photo_url || existing?.reference_photo_url || (mergedRefPhotos[0]?.url ?? null),
+                        reference_photo_source: newItem.reference_photo_source || existing?.reference_photo_source || (mergedRefPhotos.length > 0 ? 'uploaded' : null),
+                        parameters: currentParams,
+                        order_index: editingIndex,
+                    };
+                }
+            } else if (newItem.title.trim()) {
+                finalItems.push({
+                    ...newItem,
+                    parameters: currentParams,
+                    order_index: finalItems.length,
+                });
+            }
+
             const payload = {
                 ...formData,
-                items: items.map((it, idx) => ({
+                items: finalItems.map((it, idx) => ({
                     id: it.id && !it.id.startsWith('ai-') ? it.id : undefined,
                     title: it.title,
                     description: it.description || '',
@@ -570,6 +917,7 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
                     end_time: it.end_time || null,
                     parameters: Array.isArray(it.parameters) ? it.parameters : [],
                     reference_photo_url: it.reference_photo_url || null,
+                    reference_photos: Array.isArray(it.reference_photos) ? it.reference_photos : [],
                     reference_photo_source: it.reference_photo_source || null,
                     cad_area_id: it.cad_area_id || null,
                 })),
@@ -747,7 +1095,7 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: 60 }}
                         transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-                        className="relative bg-white w-full sm:max-w-lg sm:mx-4 rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col max-h-[93vh] sm:max-h-[90vh] overflow-hidden"
+                        className="relative bg-white w-full sm:max-w-xl md:max-w-2xl sm:mx-4 rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col max-h-[94vh] sm:max-h-[90vh] overflow-hidden"
                     >
                         {/* Drag handle (mobile) */}
                         <div className="sm:hidden flex justify-center pt-3 pb-1 flex-shrink-0">
@@ -755,11 +1103,10 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
                         </div>
 
                         {/* Header */}
-                        <div className="flex justify-between items-start px-5 pt-3 pb-4 sm:pt-5 flex-shrink-0">
+                        <div className="flex justify-between items-start px-5 pt-3 pb-3 sm:pt-5 sm:px-6 flex-shrink-0">
                             <div>
-                                <h2 className="text-xl font-black text-slate-900 tracking-tight leading-tight">
-                                    {template ? 'Edit Checklist' : 'Create Checklist'}<br className="sm:hidden" />
-                                    <span className="sm:inline"> Template</span>
+                                <h2 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight leading-tight">
+                                    {template ? 'Edit Checklist Template' : 'Create Checklist Template'}
                                 </h2>
                                 <div className="flex items-center gap-2 mt-1 flex-wrap">
                                     <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest">
@@ -900,48 +1247,61 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
                                         </div>
                                     </div>
 
-                                    {/* Time Window — only relevant for hourly frequency */}
-                                    <div>
-                                        <label className={labelCls}>Active Time Window <span className="normal-case text-[9px] text-slate-400 font-medium">(optional)</span></label>
-                                        <div className="grid grid-cols-2 gap-3">
-                                            <div>
-                                                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 px-1">Start Time</p>
-                                                <TimeSelect
-                                                    value={formData.start_time || '09:00'}
-                                                    onChange={(v) => setFormData({ ...formData, start_time: v })}
-                                                />
-                                            </div>
-                                            <div>
-                                                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 px-1">End Time</p>
-                                                <TimeSelect
-                                                    value={formData.end_time || '17:00'}
-                                                    onChange={(v) => setFormData({ ...formData, end_time: v })}
-                                                />
-                                            </div>
+                                    {/* Time Window Card */}
+                                    <div className="p-3.5 bg-slate-50/80 border border-slate-200 rounded-2xl space-y-2.5">
+                                        <div className="flex items-center justify-between">
+                                            <label className="text-[10px] font-black text-slate-600 uppercase tracking-widest px-0.5">
+                                                Active Time Window <span className="normal-case text-[9px] text-slate-400 font-medium">(Optional)</span>
+                                            </label>
+                                            {formData.start_time || formData.end_time ? (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setFormData({ ...formData, start_time: '', end_time: '' })}
+                                                    className="text-[9px] font-black text-rose-500 uppercase tracking-widest hover:underline flex items-center gap-1"
+                                                >
+                                                    <X size={10} /> Clear Window
+                                                </button>
+                                            ) : (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setFormData({ ...formData, start_time: '09:00', end_time: '17:00' })}
+                                                    className="text-[9px] font-black text-primary uppercase tracking-widest hover:underline flex items-center gap-1"
+                                                >
+                                                    <Plus size={10} /> Set Window
+                                                </button>
+                                            )}
                                         </div>
-                                        {/* Enable / clear toggle */}
-                                        {!formData.start_time && !formData.end_time ? (
-                                            <button type="button"
-                                                onClick={() => setFormData({ ...formData, start_time: '09:00', end_time: '17:00' })}
-                                                className="mt-2 text-[9px] font-black text-primary uppercase tracking-widest hover:underline px-1">
-                                                + Set time window
-                                            </button>
-                                        ) : (
-                                            <button type="button"
-                                                onClick={() => setFormData({ ...formData, start_time: '', end_time: '' })}
-                                                className="mt-2 text-[9px] font-black text-slate-400 uppercase tracking-widest hover:text-rose-500 px-1">
-                                                × Clear (run anytime)
-                                            </button>
-                                        )}
-                                        {scheduledTimes.length > 0 && (
-                                            <div className="mt-2 px-3 py-2 bg-primary/5 border border-primary/10 rounded-xl">
-                                                <p className="text-[9px] font-black text-primary uppercase tracking-widest mb-1.5">Scheduled runs</p>
-                                                <div className="flex flex-wrap gap-1.5">
-                                                    {scheduledTimes.map(t => (
-                                                        <span key={t} className="px-2 py-0.5 bg-primary text-white rounded-full text-[9px] font-black">{fmt12(t)}</span>
-                                                    ))}
+
+                                        {(formData.start_time || formData.end_time) && (
+                                            <>
+                                                <div className="grid grid-cols-2 gap-2.5">
+                                                    <div>
+                                                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 px-1">Start Time</p>
+                                                        <TimeSelect
+                                                            value={formData.start_time || '09:00'}
+                                                            onChange={(v) => setFormData({ ...formData, start_time: v })}
+                                                        />
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 px-1">End Time</p>
+                                                        <TimeSelect
+                                                            value={formData.end_time || '17:00'}
+                                                            onChange={(v) => setFormData({ ...formData, end_time: v })}
+                                                        />
+                                                    </div>
                                                 </div>
-                                            </div>
+
+                                                {scheduledTimes.length > 0 && (
+                                                    <div className="px-3 py-2 bg-primary/5 border border-primary/10 rounded-xl">
+                                                        <p className="text-[9px] font-black text-primary uppercase tracking-widest mb-1.5">Scheduled runs</p>
+                                                        <div className="flex flex-wrap gap-1.5">
+                                                            {scheduledTimes.map(t => (
+                                                                <span key={t} className="px-2 py-0.5 bg-primary text-white rounded-full text-[9px] font-black">{fmt12(t)}</span>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </>
                                         )}
                                     </div>
 
@@ -1035,128 +1395,285 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
 
                                 {/* Existing items */}
                                 {items.length > 0 && (
-                                    <div className="space-y-2 mb-3">
+                                    <div className="space-y-2.5 mb-3">
                                         {items.map((item, idx) => (
-                                            <motion.div key={idx} layout initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }}
-                                                className="bg-slate-50 border border-slate-200 px-3.5 py-3 rounded-2xl hover:border-slate-300 transition-colors">
-                                                <div className="flex items-center gap-3">
-                                                    <div className="w-6 h-6 bg-white border border-slate-200 rounded-full flex items-center justify-center text-[10px] font-black text-slate-500 flex-shrink-0">{idx + 1}</div>
-                                                    
-                                                    {/* Reference photo thumbnail */}
-                                                    {item.reference_photo_url && (
-                                                        <a
-                                                            href={item.reference_photo_url}
-                                                            target="_blank"
-                                                            rel="noopener noreferrer"
-                                                            className="relative group flex-shrink-0 cursor-pointer"
-                                                            title="Click to view clean standard reference photo"
-                                                        >
-                                                            <img
-                                                                src={item.reference_photo_url}
-                                                                alt="Clean Ref"
-                                                                className="w-10 h-10 rounded-xl object-cover border border-emerald-200 shadow-xs group-hover:scale-105 transition-transform"
-                                                            />
-                                                            <div className="absolute inset-0 bg-black/40 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                                                <Eye size={12} className="text-white" />
-                                                            </div>
-                                                        </a>
-                                                    )}
+                                            <motion.div
+                                                key={idx}
+                                                layout
+                                                initial={{ opacity: 0, x: -10 }}
+                                                animate={{ opacity: 1, x: 0 }}
+                                                className="bg-white border border-slate-200 rounded-2xl p-3 sm:p-3.5 shadow-2xs hover:border-slate-300 transition-all space-y-2.5"
+                                            >
+                                                {/* Top Row: Index + Thumbnail + Title + Badges + Actions Toolbar */}
+                                                <div className="flex items-start justify-between gap-2.5">
+                                                    <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                                                        <div className="w-6 h-6 bg-slate-100 border border-slate-200 rounded-lg flex items-center justify-center text-[10px] font-black text-slate-600 flex-shrink-0 mt-0.5">
+                                                            {idx + 1}
+                                                        </div>
 
-                                                    <div className="flex-1 min-w-0">
-                                                        <div className="flex items-center gap-2 flex-wrap">
-                                                            <p className="font-black text-sm text-slate-900 truncate">{item.title}</p>
-                                                            {/* Reference photo badge */}
-                                                            {item.reference_photo_url && (
-                                                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded text-[9px] font-black uppercase tracking-wider">
-                                                                    <ImageIcon size={9} />
-                                                                    Clean Photo Set
-                                                                </span>
+                                                        <div className="min-w-0 flex-1">
+                                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                                                <p className="font-black text-sm text-slate-900 leading-tight break-words">{item.title}</p>
+                                                                {(() => {
+                                                                    const refCount = Array.isArray(item.reference_photos) && item.reference_photos.length > 0
+                                                                        ? item.reference_photos.length
+                                                                        : (item.reference_photo_url ? 1 : 0);
+                                                                    if (refCount === 0) return null;
+                                                                    return (
+                                                                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200/70 rounded-md text-[8px] font-black uppercase tracking-wider">
+                                                                            <ImageIcon size={9} />
+                                                                            {refCount > 1 ? `${refCount} Clean Benchmarks` : 'Clean Photo'}
+                                                                        </span>
+                                                                    );
+                                                                })()}
+                                                                {item.cad_area_id && (
+                                                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-blue-50 text-blue-700 border border-blue-200/70 rounded-md text-[8px] font-black uppercase tracking-wider">
+                                                                        <MapPin size={9} />
+                                                                        CAD Area
+                                                                    </span>
+                                                                )}
+                                                                {Array.isArray(item.parameters) && item.parameters.length > 0 && (
+                                                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-purple-50 text-purple-700 border border-purple-200/70 rounded-md text-[8px] font-black uppercase tracking-wider">
+                                                                        {item.parameters.length} Parameter{item.parameters.length > 1 ? 's' : ''}
+                                                                    </span>
+                                                                )}
+                                                            </div>
+
+                                                            {item.description && (
+                                                                <p className="text-[11px] text-slate-500 font-medium line-clamp-2 mt-0.5 leading-snug">
+                                                                    {item.description}
+                                                                </p>
                                                             )}
-                                                            {item.cad_area_id && (
-                                                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded text-[9px] font-black uppercase tracking-wider">
-                                                                    <MapPin size={9} />
-                                                                    CAD Area
-                                                                </span>
-                                                            )}
-                                                            {/* Parameters badge */}
-                                                            {Array.isArray(item.parameters) && item.parameters.length > 0 && (
-                                                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-purple-50 text-purple-700 border border-purple-200 rounded text-[9px] font-black uppercase tracking-wider">
-                                                                    {item.parameters.length} Parameter{item.parameters.length > 1 ? 's' : ''}
-                                                                </span>
+
+                                                            {(item.start_time || item.end_time) && (
+                                                                <div className="flex items-center gap-1 mt-1">
+                                                                    <Clock size={10} className="text-primary/70" />
+                                                                    <span className="text-[9px] font-black text-primary/80 uppercase tracking-wider">
+                                                                        {item.start_time ? fmt12(item.start_time) : '—'} – {item.end_time ? fmt12(item.end_time) : '—'}
+                                                                    </span>
+                                                                </div>
                                                             )}
                                                         </div>
-                                                        {item.description && <p className="text-[10px] text-slate-400 font-medium truncate mt-0.5">{item.description}</p>}
-                                                        {(item.start_time || item.end_time) && (
-                                                            <div className="flex items-center gap-1.5 mt-0.5">
-                                                                <p className="text-[9px] font-black text-primary/70">
-                                                                    {item.start_time ? fmt12(item.start_time) : '—'} – {item.end_time ? fmt12(item.end_time) : '—'}
-                                                                </p>
-                                                            </div>
-                                                        )}
                                                     </div>
-                                                    <div className="flex items-center gap-1 flex-shrink-0">
-                                                        {/* Reference photo upload & view button (AI mode only) */}
-                                                        {isAIEnabled && (
-                                                            <>
-                                                                <input
-                                                                    type="file"
-                                                                    accept="image/*"
-                                                                    className="hidden"
-                                                                    id={`ref-photo-${idx}`}
-                                                                    onChange={(e) => {
-                                                                        const file = e.target.files?.[0];
-                                                                        if (file) handleReferencePhotoUpload(idx, file);
-                                                                    }}
-                                                                />
-                                                                <label
-                                                                    htmlFor={`ref-photo-${idx}`}
-                                                                    className={`p-2 rounded-xl transition-all cursor-pointer ${referencePhotoUploads[idx]?.uploading ? 'text-primary bg-primary/10' : item.reference_photo_url ? 'text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 bg-emerald-50/50' : 'text-slate-400 hover:text-primary hover:bg-primary/5 bg-white border border-slate-200'}`}
-                                                                    title={item.reference_photo_url ? 'Change clean reference photo' : 'Upload clean reference photo'}
-                                                                >
-                                                                    {referencePhotoUploads[idx]?.uploading ? (
-                                                                        <Loader2 size={14} className="animate-spin" />
-                                                                    ) : (
-                                                                        <Camera size={14} />
-                                                                    )}
-                                                                </label>
-                                                                {item.reference_photo_url && (
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={() => handleRemoveReferencePhoto(idx)}
-                                                                        className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
-                                                                        title="Remove clean reference photo"
-                                                                    >
-                                                                        <Trash2 size={14} />
-                                                                    </button>
-                                                                )}
-                                                            </>
-                                                        )}
+
+                                                    {/* Compact Actions Toolbar: Camera + Edit + Delete */}
+                                                    <div className="flex items-center gap-1 flex-shrink-0 bg-slate-50 p-1 rounded-xl border border-slate-100">
+                                                        <input
+                                                            type="file"
+                                                            accept="image/*"
+                                                            multiple
+                                                            className="hidden"
+                                                            id={`ref-photo-${idx}`}
+                                                            onChange={(e) => {
+                                                                const files = e.target.files;
+                                                                if (files && files.length > 0) handleInitiatePhotoUpload(idx, files);
+                                                                e.target.value = '';
+                                                            }}
+                                                        />
+                                                        <label
+                                                            htmlFor={`ref-photo-${idx}`}
+                                                            className={`w-7 h-7 flex items-center justify-center rounded-lg transition-all cursor-pointer ${
+                                                                referencePhotoUploads[idx]?.uploading
+                                                                    ? 'text-primary bg-primary/10'
+                                                                    : item.reference_photo_url
+                                                                    ? 'text-emerald-700 hover:bg-emerald-100/70 bg-emerald-50'
+                                                                    : 'text-slate-500 hover:text-primary hover:bg-white'
+                                                            }`}
+                                                            title={item.reference_photo_url ? 'Add / manage clean benchmark photos' : 'Upload clean reference photo(s)'}
+                                                        >
+                                                            {referencePhotoUploads[idx]?.uploading ? (
+                                                                <Loader2 size={13} className="animate-spin" />
+                                                            ) : (
+                                                                <Camera size={13} />
+                                                            )}
+                                                        </label>
+
                                                         <button
                                                             type="button"
                                                             onClick={() => {
+                                                                const safeParams = Array.isArray(item.parameters)
+                                                                    ? item.parameters.map((p: any, pIdx: number) => ({
+                                                                        id: p.id || `param_${idx}_${pIdx}_${Date.now()}`,
+                                                                        name: typeof p === 'string' ? p : (p.name || p.title || `Param ${pIdx + 1}`),
+                                                                        type: p.type || 'yes_no',
+                                                                        is_required: p.is_required !== false,
+                                                                    }))
+                                                                    : [];
                                                                 setNewItem({
                                                                     ...item,
-                                                                    parameters: Array.isArray(item.parameters) ? [...item.parameters] : [],
+                                                                    parameters: safeParams,
                                                                 });
                                                                 setEditingIndex(idx);
                                                                 setShowStepTimeSlot(!!(item.start_time || item.end_time));
-                                                                setShowParametersSection(Array.isArray(item.parameters) && item.parameters.length > 0);
+                                                                setShowParametersSection(safeParams.length > 0);
                                                             }}
-                                                            className="p-2 text-slate-400 hover:text-primary hover:bg-primary/5 rounded-xl transition-all"
+                                                            className="w-7 h-7 flex items-center justify-center text-slate-500 hover:text-primary hover:bg-white rounded-lg transition-all"
                                                             title="Edit Step"
                                                         >
-                                                            <Edit3 size={14} />
+                                                            <Edit3 size={13} />
                                                         </button>
-                                                        <button type="button" onClick={() => handleRemoveItem(idx)} className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all" title="Delete Step"><Trash2 size={14} /></button>
+
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleRemoveItem(idx)}
+                                                            className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                                                            title="Delete Step"
+                                                        >
+                                                            <Trash2 size={13} />
+                                                        </button>
                                                     </div>
                                                 </div>
+
+                                                {/* Dedicated Clean Standard Benchmark Photos Gallery Strip */}
+                                                {(() => {
+                                                    const refPhotos: any[] = Array.isArray(item.reference_photos) && item.reference_photos.length > 0
+                                                        ? item.reference_photos
+                                                        : (item.reference_photo_url ? [{ id: 'ref_1', label: 'Clean Photo', url: item.reference_photo_url }] : []);
+
+                                                    if (refPhotos.length === 0) return null;
+
+                                                    return (
+                                                        <div className="pt-2 border-t border-slate-100 bg-slate-50/70 rounded-xl p-2.5 space-y-2">
+                                                            <div className="flex items-center justify-between">
+                                                                <div className="flex items-center gap-1.5">
+                                                                    <Camera size={12} className="text-emerald-600" />
+                                                                    <span className="text-[10px] font-black text-slate-800 uppercase tracking-wider">
+                                                                        {refPhotos.length > 1 ? `${refPhotos.length} Clean Benchmark Photos Added` : 'Clean Standard Photo Added'}
+                                                                    </span>
+                                                                    <span className="text-[9px] text-slate-400 font-medium">
+                                                                        • Click photo to view
+                                                                    </span>
+                                                                </div>
+                                                                {item.id && !item.id.startsWith('ai-') && (
+                                                                    <label
+                                                                        htmlFor={`ref-photo-${idx}`}
+                                                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[9px] font-black uppercase tracking-wider cursor-pointer shadow-2xs transition-colors"
+                                                                        title="Add another clean benchmark photo"
+                                                                    >
+                                                                        {referencePhotoUploads[idx]?.uploading ? (
+                                                                            <Loader2 size={10} className="animate-spin" />
+                                                                        ) : (
+                                                                            <Plus size={10} />
+                                                                        )}
+                                                                        <span>Add Photo</span>
+                                                                    </label>
+                                                                )}
+                                                            </div>
+
+                                                            <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-thin">
+                                                                {refPhotos.map((ref, rIdx) => (
+                                                                    <div key={ref.id || rIdx} className="relative group flex-shrink-0">
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={(e) => {
+                                                                                e.preventDefault();
+                                                                                e.stopPropagation();
+                                                                                setPreviewImageUrl(ref.url);
+                                                                            }}
+                                                                            className="block relative rounded-xl overflow-hidden border-2 border-emerald-300 hover:border-emerald-500 shadow-2xs group-hover:scale-102 transition-all cursor-zoom-in text-left"
+                                                                            title={`Click to view benchmark: ${ref.label || `Photo ${rIdx + 1}`}`}
+                                                                        >
+                                                                            <img
+                                                                                src={ref.url}
+                                                                                alt={ref.label || "Clean Ref"}
+                                                                                className="w-18 h-18 sm:w-20 sm:h-20 object-cover"
+                                                                            />
+                                                                            <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                                                                <Eye size={16} className="text-white drop-shadow" />
+                                                                            </div>
+                                                                            <div className="absolute bottom-0 inset-x-0 bg-black/80 backdrop-blur-xs px-1.5 py-0.5 text-center">
+                                                                                <p className="text-[8px] font-black text-white truncate max-w-[72px]">
+                                                                                    {ref.label || (refPhotos.length > 1 ? `Benchmark #${rIdx + 1}` : 'Clean Photo')}
+                                                                                </p>
+                                                                            </div>
+                                                                        </button>
+                                                                        <div className="absolute top-1 right-1 flex items-center gap-1 z-10">
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={(e) => {
+                                                                                    e.preventDefault();
+                                                                                    e.stopPropagation();
+                                                                                    setEditingBenchmarkLabel({
+                                                                                        stepIndex: idx,
+                                                                                        photoId: ref.id,
+                                                                                        currentLabel: ref.label || '',
+                                                                                    });
+                                                                                }}
+                                                                                className="w-5 h-5 rounded-full bg-slate-900/90 hover:bg-slate-900 text-white flex items-center justify-center shadow-md transition-transform hover:scale-110"
+                                                                                title="Rename / label benchmark"
+                                                                            >
+                                                                                <Edit3 size={10} />
+                                                                            </button>
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={(e) => {
+                                                                                    e.preventDefault();
+                                                                                    e.stopPropagation();
+                                                                                    handleRemoveReferencePhoto(idx, ref.id);
+                                                                                }}
+                                                                                className="w-5 h-5 rounded-full bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center shadow-md transition-transform hover:scale-110"
+                                                                                title={`Cancel / delete ${ref.label || 'benchmark photo'}`}
+                                                                            >
+                                                                                <X size={11} strokeWidth={2.5} />
+                                                                            </button>
+                                                                        </div>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })()}
+
+                                                {/* Parameter Chips Preview (Full Width across bottom of step card) */}
+                                                {Array.isArray(item.parameters) && item.parameters.length > 0 && (
+                                                    <div className="pt-2 border-t border-slate-100 flex flex-wrap gap-1.5 items-center">
+                                                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mr-0.5">Parameters:</span>
+                                                        {item.parameters.map((p: any, pIdx: number) => (
+                                                            <span
+                                                                key={p.id || pIdx}
+                                                                className="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-50 border border-slate-200/80 rounded-md text-[9px] font-bold text-slate-700"
+                                                            >
+                                                                <span className="w-1.5 h-1.5 rounded-full bg-violet-500" />
+                                                                <span>{p.name}</span>
+                                                                <span className="text-[8px] text-slate-400 uppercase font-bold">
+                                                                    ({p.type === 'yes_no' ? 'Y/N' : p.type})
+                                                                </span>
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                )}
                                             </motion.div>
                                         ))}
                                     </div>
                                 )}
 
                                 {/* Add step form */}
-                                <div className="bg-slate-50 border border-dashed border-slate-300 rounded-2xl p-4 space-y-3">
+                                <div className={`rounded-2xl p-4 space-y-3 transition-all ${
+                                    editingIndex !== null 
+                                        ? 'bg-amber-50/50 border-2 border-amber-300 shadow-xs' 
+                                        : 'bg-slate-50 border border-dashed border-slate-300'
+                                }`}>
+                                    {editingIndex !== null && (
+                                        <div className="flex items-center justify-between pb-2 border-b border-amber-200/80">
+                                            <div className="flex items-center gap-1.5 text-amber-900 font-black text-xs uppercase tracking-wider">
+                                                <Edit3 size={13} className="text-amber-600" />
+                                                <span>Editing Step #{editingIndex + 1}</span>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setEditingIndex(null);
+                                                    setShowStepTimeSlot(false);
+                                                    setShowParametersSection(false);
+                                                    setParamDraftName('');
+                                                    setNewItem({ title: '', description: '', requires_photo: false, requires_comment: false, type: 'checkbox', is_optional: false, start_time: '', end_time: '', parameters: [] });
+                                                }}
+                                                className="text-[10px] font-bold text-amber-700 hover:text-rose-600 uppercase tracking-wider transition-colors"
+                                            >
+                                                Cancel Edit
+                                            </button>
+                                        </div>
+                                    )}
                                     <input
                                         type="text"
                                         placeholder="Step Title"
@@ -1171,6 +1688,133 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
                                         rows={2}
                                         className={`${inputCls} resize-none`}
                                     />
+                                    {/* Clean Standard Reference Photos (shown when editing a step) */}
+                                    {editingIndex !== null && (
+                                        <div className="bg-emerald-50/50 border border-emerald-200/90 rounded-2xl p-3.5 space-y-3">
+                                            {(!items[editingIndex]?.id || items[editingIndex]?.id?.startsWith('ai-')) ? (
+                                                <div className="flex items-center gap-2 text-emerald-800 text-xs font-medium">
+                                                    <Info size={14} className="text-emerald-600 flex-shrink-0" />
+                                                    <span>Click <strong>Update Step</strong> and <strong>Save Changes</strong> first to enable clean benchmark photo uploads for this newly added step.</span>
+                                                </div>
+                                            ) : (
+                                                <>
+                                                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                                        <div>
+                                                            <p className="text-[10px] font-black text-emerald-950 uppercase tracking-widest flex items-center gap-1.5">
+                                                                <Camera size={13} className="text-emerald-600" />
+                                                                Clean Standard Benchmark Photos
+                                                            </p>
+                                                            <p className="text-[9px] text-emerald-700 font-medium mt-0.5">
+                                                                Upload & label benchmarks (e.g. Washbasin, Commode, Floor). You can select multiple photos at once.
+                                                            </p>
+                                                        </div>
+                                                        <div>
+                                                            <input
+                                                                type="file"
+                                                                accept="image/*"
+                                                                multiple
+                                                                className="hidden"
+                                                                id={`ref-photo-edit-${editingIndex}`}
+                                                                onChange={(e) => {
+                                                                    const files = e.target.files;
+                                                                    if (files && files.length > 0) handleInitiatePhotoUpload(editingIndex, files);
+                                                                    e.target.value = '';
+                                                                }}
+                                                            />
+                                                            <label
+                                                                htmlFor={`ref-photo-edit-${editingIndex}`}
+                                                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[10px] font-black uppercase tracking-wider cursor-pointer shadow-2xs transition-colors"
+                                                            >
+                                                                {referencePhotoUploads[editingIndex]?.uploading ? (
+                                                                    <>
+                                                                        <Loader2 size={12} className="animate-spin" />
+                                                                        <span>Uploading...</span>
+                                                                    </>
+                                                                ) : (
+                                                                    <>
+                                                                        <Plus size={12} />
+                                                                        <span>Upload & Label Clean Photos</span>
+                                                                    </>
+                                                                )}
+                                                            </label>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Existing benchmark thumbnails */}
+                                                    {(() => {
+                                                        const currentItem = items[editingIndex];
+                                                        const refPhotos: any[] = Array.isArray(currentItem?.reference_photos) && currentItem.reference_photos.length > 0
+                                                            ? currentItem.reference_photos
+                                                            : (currentItem?.reference_photo_url ? [{ id: 'ref_1', label: 'Clean Benchmark', url: currentItem.reference_photo_url }] : []);
+
+                                                        if (refPhotos.length === 0) return null;
+
+                                                        return (
+                                                            <div className="flex items-center gap-2 pt-2 border-t border-emerald-200/60 overflow-x-auto pb-1 scrollbar-thin">
+                                                                {refPhotos.map((ref: any, rIdx: number) => (
+                                                                    <div key={ref.id || rIdx} className="relative group flex-shrink-0">
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={(e) => {
+                                                                                e.preventDefault();
+                                                                                e.stopPropagation();
+                                                                                setPreviewImageUrl(ref.url);
+                                                                            }}
+                                                                            className="block relative rounded-xl overflow-hidden cursor-zoom-in text-left border border-emerald-300 shadow-2xs group-hover:scale-102 transition-transform"
+                                                                            title={`Click to view benchmark: ${ref.label || `Photo ${rIdx + 1}`}`}
+                                                                        >
+                                                                            <img
+                                                                                src={ref.url}
+                                                                                alt={ref.label || "Clean"}
+                                                                                className="w-16 h-16 rounded-xl object-cover"
+                                                                            />
+                                                                            <div className="absolute inset-0 bg-black/40 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                                                                <Eye size={14} className="text-white drop-shadow" />
+                                                                            </div>
+                                                                            <span className="absolute bottom-1 left-1 right-1 px-1 py-0.5 bg-black/80 backdrop-blur-xs text-[7px] font-black text-white rounded text-center truncate pointer-events-none">
+                                                                                {ref.label || (refPhotos.length > 1 ? `#${rIdx + 1}` : 'Clean')}
+                                                                            </span>
+                                                                        </button>
+                                                                        <div className="absolute top-1 right-1 flex items-center gap-1 z-10">
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={(e) => {
+                                                                                    e.preventDefault();
+                                                                                    e.stopPropagation();
+                                                                                    setEditingBenchmarkLabel({
+                                                                                        stepIndex: editingIndex,
+                                                                                        photoId: ref.id,
+                                                                                        currentLabel: ref.label || '',
+                                                                                    });
+                                                                                }}
+                                                                                className="w-5 h-5 rounded-full bg-slate-900/90 text-white flex items-center justify-center hover:bg-primary shadow-xs"
+                                                                                title="Rename / label benchmark"
+                                                                            >
+                                                                                <Edit3 size={9} />
+                                                                            </button>
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={(e) => {
+                                                                                    e.preventDefault();
+                                                                                    e.stopPropagation();
+                                                                                    handleRemoveReferencePhoto(editingIndex, ref.id);
+                                                                                }}
+                                                                                className="w-5 h-5 rounded-full bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center shadow-md transition-transform hover:scale-110"
+                                                                                title="Cancel / delete benchmark photo"
+                                                                            >
+                                                                                <X size={11} strokeWidth={2.5} />
+                                                                            </button>
+                                                                        </div>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        );
+                                                    })()}
+                                                </>
+                                            )}
+                                        </div>
+                                    )}
+
                                     <div>
                                         <label className={labelCls}>Response Type</label>
                                         <select value={newItem.type} onChange={(e) => setNewItem({ ...newItem, type: e.target.value as any })} className={`${inputCls} appearance-none`}>
@@ -1219,21 +1863,35 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
                                                                         {param.type === 'yes_no' ? 'Yes / No' : param.type}
                                                                     </span>
                                                                 </div>
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => handleRemoveParam(param.id)}
-                                                                    className="text-slate-400 hover:text-rose-500 p-1 rounded-lg"
-                                                                    title="Remove parameter"
-                                                                >
-                                                                    <Trash2 size={12} />
-                                                                </button>
+                                                                <div className="flex items-center gap-1">
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => {
+                                                                            setParamDraftName(param.name);
+                                                                            setParamDraftType(param.type || 'yes_no');
+                                                                            handleRemoveParam(param.id, pIdx);
+                                                                        }}
+                                                                        className="text-slate-400 hover:text-primary p-1 rounded-lg transition-colors"
+                                                                        title="Edit parameter"
+                                                                    >
+                                                                        <Edit3 size={12} />
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => handleRemoveParam(param.id, pIdx)}
+                                                                        className="text-slate-400 hover:text-rose-500 p-1 rounded-lg transition-colors"
+                                                                        title="Remove parameter"
+                                                                    >
+                                                                        <Trash2 size={12} />
+                                                                    </button>
+                                                                </div>
                                                             </div>
                                                         ))}
                                                     </div>
                                                 )}
 
                                                 {/* Input row for adding a parameter */}
-                                                <div className="flex gap-2 items-center">
+                                                <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
                                                     <input
                                                         type="text"
                                                         placeholder="e.g. Carpet, Lights, Dusting"
@@ -1247,23 +1905,25 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
                                                         }}
                                                         className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:border-primary"
                                                     />
-                                                    <select
-                                                        value={paramDraftType}
-                                                        onChange={(e) => setParamDraftType(e.target.value as any)}
-                                                        className="w-28 px-2 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-black appearance-none focus:outline-none focus:border-primary"
-                                                    >
-                                                        <option value="yes_no">Yes / No</option>
-                                                        <option value="checkbox">Checkbox</option>
-                                                        <option value="text">Text</option>
-                                                        <option value="number">Number</option>
-                                                    </select>
-                                                    <button
-                                                        type="button"
-                                                        onClick={handleAddParam}
-                                                        className="px-3 py-2 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-slate-800 transition-all flex items-center gap-1 flex-shrink-0"
-                                                    >
-                                                        <Plus size={11} /> Add
-                                                    </button>
+                                                    <div className="flex gap-2 items-center">
+                                                        <select
+                                                            value={paramDraftType}
+                                                            onChange={(e) => setParamDraftType(e.target.value as any)}
+                                                            className="flex-1 sm:w-28 px-2.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-black appearance-none focus:outline-none focus:border-primary"
+                                                        >
+                                                            <option value="yes_no">Yes / No</option>
+                                                            <option value="checkbox">Checkbox</option>
+                                                            <option value="text">Text</option>
+                                                            <option value="number">Number</option>
+                                                        </select>
+                                                        <button
+                                                            type="button"
+                                                            onClick={handleAddParam}
+                                                            className="px-3.5 py-2 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-slate-800 transition-all flex items-center justify-center gap-1 flex-shrink-0"
+                                                        >
+                                                            <Plus size={11} /> Add Checkpoint
+                                                        </button>
+                                                    </div>
                                                 </div>
                                             </div>
                                         )}
@@ -1337,6 +1997,232 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
                         </div>
                     </motion.div>
 
+                    {/* ── MULTI-BENCHMARK PHOTO LABELING MODAL ── */}
+                    {stagingModal && stagingModal.isOpen && (
+                        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
+                            <div className="bg-white rounded-3xl max-w-xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden border border-slate-200">
+                                {/* Header */}
+                                <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-emerald-50/60 to-slate-50">
+                                    <div className="flex items-center gap-2.5">
+                                        <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-xs">
+                                            <Tag size={18} />
+                                        </div>
+                                        <div>
+                                            <h3 className="text-sm font-black text-slate-900 uppercase tracking-wider">
+                                                Label Benchmark Photos
+                                            </h3>
+                                            <p className="text-[11px] text-slate-500 font-medium">
+                                                Step: <strong className="text-slate-800">{items[stagingModal.stepIndex]?.title || 'Checklist Step'}</strong>
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            stagingModal.photos.forEach(p => { try { URL.revokeObjectURL(p.previewUrl); } catch {} });
+                                            setStagingModal(null);
+                                        }}
+                                        className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center transition-colors"
+                                    >
+                                        <X size={16} />
+                                    </button>
+                                </div>
+
+                                {/* Instruction Tip */}
+                                <div className="px-5 py-2.5 bg-emerald-50/50 border-b border-emerald-100/70 text-[11px] text-emerald-800 flex items-center gap-2">
+                                    <Info size={14} className="text-emerald-600 flex-shrink-0" />
+                                    <span>Assign a specific name (e.g. Washbasin, Commode, Floor) to each clean benchmark so AI Vision can accurately classify cleaner submissions and detect missing areas.</span>
+                                </div>
+
+                                {/* Scrollable Photos List */}
+                                <div className="p-4 sm:p-5 overflow-y-auto space-y-4 flex-1 scrollbar-thin">
+                                    {stagingModal.photos.map((photo, pIdx) => (
+                                        <div key={photo.id || pIdx} className="bg-slate-50/80 border border-slate-200 rounded-2xl p-3 flex flex-col sm:flex-row items-start sm:items-center gap-3">
+                                            <div className="relative w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden border border-slate-200 bg-black flex-shrink-0">
+                                                <img src={photo.previewUrl} alt={`Benchmark ${pIdx + 1}`} className="w-full h-full object-cover" />
+                                                <span className="absolute bottom-1 left-1 px-1.5 py-0.5 bg-black/70 text-[8px] font-black text-white rounded">
+                                                    #{pIdx + 1}
+                                                </span>
+                                            </div>
+
+                                            <div className="flex-1 w-full space-y-2">
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <label className="text-[10px] font-black text-slate-700 uppercase tracking-wider">
+                                                        Benchmark Area Name
+                                                    </label>
+                                                    {stagingModal.photos.length > 1 && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                try { URL.revokeObjectURL(photo.previewUrl); } catch {}
+                                                                setStagingModal(prev => prev ? {
+                                                                    ...prev,
+                                                                    photos: prev.photos.filter((_, i) => i !== pIdx),
+                                                                } : null);
+                                                            }}
+                                                            className="text-[10px] font-bold text-rose-500 hover:text-rose-700 uppercase"
+                                                        >
+                                                            Remove Photo
+                                                        </button>
+                                                    )}
+                                                </div>
+
+                                                <input
+                                                    type="text"
+                                                    value={photo.label}
+                                                    onChange={(e) => {
+                                                        const val = e.target.value;
+                                                        setStagingModal(prev => prev ? {
+                                                            ...prev,
+                                                            photos: prev.photos.map((p, i) => i === pIdx ? { ...p, label: val } : p),
+                                                        } : null);
+                                                    }}
+                                                    placeholder="e.g. Washbasin, Toilet Commode, Floor..."
+                                                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                                                />
+
+                                                {/* Suggestion Chips */}
+                                                <div className="flex flex-wrap gap-1 items-center">
+                                                    <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest mr-1">Quick:</span>
+                                                    {COMMON_BENCHMARK_TAGS.map(tag => (
+                                                        <button
+                                                            key={tag}
+                                                            type="button"
+                                                            onClick={() => {
+                                                                setStagingModal(prev => prev ? {
+                                                                    ...prev,
+                                                                    photos: prev.photos.map((p, i) => i === pIdx ? { ...p, label: tag } : p),
+                                                                } : null);
+                                                            }}
+                                                            className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all border ${
+                                                                photo.label.toLowerCase() === tag.toLowerCase()
+                                                                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                                                                    : 'bg-white hover:bg-emerald-50 text-slate-600 border-slate-200 hover:border-emerald-300'
+                                                            }`}
+                                                        >
+                                                            {tag}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {/* Modal Footer */}
+                                <div className="p-4 sm:p-5 border-t border-slate-100 bg-white flex items-center justify-between gap-3">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            stagingModal.photos.forEach(p => { try { URL.revokeObjectURL(p.previewUrl); } catch {} });
+                                            setStagingModal(null);
+                                        }}
+                                        disabled={isUploadingStaging}
+                                        className="px-4 py-2.5 text-xs font-black uppercase tracking-wider text-slate-500 hover:text-slate-800"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={handleConfirmStagingUpload}
+                                        disabled={isUploadingStaging || stagingModal.photos.length === 0}
+                                        className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-sm flex items-center gap-2 disabled:opacity-50 transition-colors"
+                                    >
+                                        {isUploadingStaging ? (
+                                            <>
+                                                <Loader2 size={14} className="animate-spin" />
+                                                <span>Uploading & Saving...</span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Check size={14} />
+                                                <span>Upload & Save {stagingModal.photos.length} Benchmark{stagingModal.photos.length > 1 ? 's' : ''}</span>
+                                            </>
+                                        )}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* ── RENAME BENCHMARK LABEL MODAL ── */}
+                    {editingBenchmarkLabel && (
+                        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
+                            <div className="bg-white rounded-3xl max-w-sm w-full p-5 shadow-2xl border border-slate-200 space-y-4">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-8 h-8 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center">
+                                            <Tag size={15} />
+                                        </div>
+                                        <div>
+                                            <h4 className="text-xs font-black uppercase tracking-wider text-slate-900">Rename Benchmark</h4>
+                                            <p className="text-[10px] text-slate-500 font-medium">Update the area name for this photo</p>
+                                        </div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setEditingBenchmarkLabel(null)}
+                                        className="w-7 h-7 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center"
+                                    >
+                                        <X size={14} />
+                                    </button>
+                                </div>
+
+                                <div>
+                                    <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest block mb-1">
+                                        Benchmark Area Label
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={editingBenchmarkLabel.currentLabel}
+                                        onChange={(e) => setEditingBenchmarkLabel(prev => prev ? { ...prev, currentLabel: e.target.value } : null)}
+                                        placeholder="e.g. Washbasin, Commode, Floor..."
+                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                                        autoFocus
+                                    />
+                                </div>
+
+                                <div className="flex flex-wrap gap-1 items-center">
+                                    <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest mr-1">Quick:</span>
+                                    {COMMON_BENCHMARK_TAGS.slice(0, 5).map(tag => (
+                                        <button
+                                            key={tag}
+                                            type="button"
+                                            onClick={() => setEditingBenchmarkLabel(prev => prev ? { ...prev, currentLabel: tag } : null)}
+                                            className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all border ${
+                                                editingBenchmarkLabel.currentLabel.toLowerCase() === tag.toLowerCase()
+                                                    ? 'bg-emerald-600 text-white border-emerald-600'
+                                                    : 'bg-slate-50 hover:bg-emerald-50 text-slate-600 border-slate-200'
+                                            }`}
+                                        >
+                                            {tag}
+                                        </button>
+                                    ))}
+                                </div>
+
+                                <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                                    <button
+                                        type="button"
+                                        onClick={() => setEditingBenchmarkLabel(null)}
+                                        disabled={isSavingLabel}
+                                        className="px-3 py-2 text-[10px] font-black uppercase tracking-wider text-slate-500 hover:text-slate-800"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleSaveBenchmarkLabel(editingBenchmarkLabel.stepIndex, editingBenchmarkLabel.photoId, editingBenchmarkLabel.currentLabel)}
+                                        disabled={isSavingLabel || !editingBenchmarkLabel.currentLabel.trim()}
+                                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[10px] font-black uppercase tracking-wider shadow-2xs flex items-center gap-1.5 disabled:opacity-50"
+                                    >
+                                        {isSavingLabel ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                                        <span>Save Label</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     {toast && (
                         <Toast message={toast.message} type={toast.type} visible={true} onClose={() => setToast(null)} duration={3000} />
                     )}
@@ -1359,6 +2245,14 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
                                 setToast({ message: 'CAD areas updated', type: 'success' });
                                 onSuccess?.();
                             }}
+                        />
+                    )}
+
+                    {previewImageUrl && (
+                        <ImagePreviewModal
+                            isOpen={Boolean(previewImageUrl)}
+                            imageUrl={previewImageUrl}
+                            onClose={() => setPreviewImageUrl(null)}
                         />
                     )}
                 </div>

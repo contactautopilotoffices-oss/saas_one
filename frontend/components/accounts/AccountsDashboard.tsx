@@ -2,11 +2,11 @@
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
-import { Search, RefreshCw, Plus, RefreshCcwDot, FileText, IndianRupee, Settings2, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, RefreshCw, Plus, RefreshCcwDot, FileText, IndianRupee, Settings2, AlertTriangle, ChevronLeft, ChevronRight, Download } from 'lucide-react';
 import { useAuth } from '@/frontend/context/AuthContext';
 import { createClient } from '@/frontend/utils/supabase/client';
 import {
-    accountsCaps, payStatusMeta, statusPillStyle, CRITICAL_META, inr,
+    accountsCaps, getRolePaymentTrackerConfig, PaymentTrackerTab, payStatusMeta, statusPillStyle, CRITICAL_META, inr,
     PurchaseOrder, PoPayment, PoWorkflowState,
 } from '@/frontend/lib/accounts/roles';
 import AlignPaymentModal from './AlignPaymentModal';
@@ -15,19 +15,51 @@ import AddPoModal from './AddPoModal';
 import ZohoConfigModal from './ZohoConfigModal';
 import ElectricityPaymentQueue from './ElectricityPaymentQueue';
 import PaymentTrackerTable from './PaymentTrackerTable';
+import PaymentTrackerSettingsModal from './PaymentTrackerSettingsModal';
+import PaymentSheetBuilderModal from './PaymentSheetBuilderModal';
+import ApprovalWorkspace from './ApprovalWorkspace';
 
-type Tab = 'to_align' | 'aligned' | 'completed' | 'electricity-payments' | 'live_sheet';
+type Tab = PaymentTrackerTab;
 
 const PAGE_SIZE = 50;
 
-export default function AccountsDashboard() {
-    const { membership } = useAuth();
+interface AccountsDashboardProps {
+    organizationId?: string;
+}
+
+export default function AccountsDashboard({ organizationId: propOrgId }: AccountsDashboardProps = {}) {
+    const { membership, user } = useAuth();
     const params = useParams();
-    const orgId = params?.orgId as string | undefined;
-    const caps = useMemo(() => accountsCaps(membership, orgId), [membership, orgId]);
+    const orgId = propOrgId || (params?.orgId as string | undefined) || membership?.organization_id || membership?.org_id || (user?.user_metadata?.organization_id as string | undefined);
+    const caps = useMemo(() => accountsCaps(membership, orgId, user), [membership, orgId, user]);
     const [supabase] = useState(() => createClient());
 
-    const [tab, setTab] = useState<Tab>('to_align');
+    const [isDesignatedApprover, setIsDesignatedApprover] = useState(false);
+
+    useEffect(() => {
+        if (!orgId || !user?.id) return;
+        fetch(`/api/accounts/settings?org_id=${orgId}`)
+            .then(res => res.json())
+            .then(data => {
+                const approverIds = data?.settings?.approver_user_ids || [];
+                setIsDesignatedApprover(approverIds.includes(user.id));
+            })
+            .catch(() => {});
+    }, [orgId, user?.id]);
+
+    const roleConfig = useMemo(() => {
+        return getRolePaymentTrackerConfig(membership, user, orgId, isDesignatedApprover);
+    }, [membership, user, orgId, isDesignatedApprover]);
+
+    const [tab, setTab] = useState<Tab>(() => roleConfig.defaultTab);
+
+    // Keep active tab valid if role config resolves after mount
+    useEffect(() => {
+        if (!roleConfig.visibleTabs.includes(tab)) {
+            setTab(roleConfig.defaultTab);
+        }
+    }, [roleConfig, tab]);
+
     const [pos, setPos] = useState<PurchaseOrder[]>([]);
     const [payments, setPayments] = useState<PoPayment[]>([]);
     const [loading, setLoading] = useState(true);
@@ -49,15 +81,17 @@ export default function AccountsDashboard() {
     const [payPayment, setPayPayment] = useState<PoPayment | null>(null);
     const [showAdd, setShowAdd] = useState(false);
     const [showZoho, setShowZoho] = useState(false);
+    const [showSettings, setShowSettings] = useState(false);
+    const [showCreateSheet, setShowCreateSheet] = useState(false);
 
     const fetchData = useCallback(async () => {
-        // The electricity queue and the live sheet each own their own fetch cycle; the
-        // PO/payment endpoints below know nothing about either.
-        if (tab === 'electricity-payments' || tab === 'live_sheet') { setLoading(false); return; }
+        // The electricity queue, live sheet, batches, and approvals each own their own fetch cycle
+        if (tab === 'electricity-payments' || tab === 'live_sheet' || tab === 'batches' || tab === 'approvals') { setLoading(false); return; }
         setLoading(true);
         try {
             if (tab === 'to_align') {
                 const p = new URLSearchParams({ tab: 'to_align', page: String(page), page_size: String(PAGE_SIZE) });
+                if (orgId) p.set('org_id', orgId);
                 if (search) p.set('search', search);
                 if (dept) p.set('department', dept);
                 // Criticality is filtered and ranked in SQL. Doing it client-side only ever
@@ -69,6 +103,7 @@ export default function AccountsDashboard() {
                 setPos(d.pos || []); setTotal(d.pagination?.total || 0);
             } else {
                 const p = new URLSearchParams({ status: tab, page: String(page), page_size: String(PAGE_SIZE) });
+                if (orgId) p.set('org_id', orgId);
                 if (search) p.set('search', search);
                 const res = await fetch(`/api/accounts/payments?${p}`);
                 const d = res.ok ? await res.json() : { payments: [], pagination: {} };
@@ -109,22 +144,22 @@ export default function AccountsDashboard() {
     // ?tab=&focus= URL (which survives a reload) and as an event (which is instant).
     const searchParams = useSearchParams();
     useEffect(() => {
-        const t = searchParams.get('tab');
-        if (t === 'to_align' || t === 'aligned' || t === 'completed' || t === 'electricity-payments' || t === 'live_sheet') setTab(t);
+        const t = searchParams.get('tab') as Tab | null;
+        if (t && roleConfig.visibleTabs.includes(t)) setTab(t);
         const f = searchParams.get('focus');
         if (f) setSearch(f);
-    }, [searchParams]);
+    }, [searchParams, roleConfig.visibleTabs]);
 
     useEffect(() => {
         const onSetTab = (e: Event) => {
             const detail = (e as CustomEvent).detail || {};
-            const next = detail.tab;
-            if (next === 'to_align' || next === 'aligned' || next === 'completed') setTab(next);
+            const next = detail.tab as Tab | undefined;
+            if (next && roleConfig.visibleTabs.includes(next)) setTab(next);
             if (detail.focus) setSearch(String(detail.focus));
         };
         window.addEventListener('accounts:set-tab', onSetTab);
         return () => window.removeEventListener('accounts:set-tab', onSetTab);
-    }, []);
+    }, [roleConfig.visibleTabs]);
 
     // Realtime — refetch on any PO / payment change in this org; workflow rows are small
     // enough to merge straight from the payload so a critical flip lands instantly.
@@ -212,15 +247,72 @@ export default function AccountsDashboard() {
 
     const fmtDate = (d?: string | null) => d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
 
+    const handleExportTableCsv = () => {
+        const escapeVal = (v: any) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+        const downloadCsv = (content: string, filename: string) => {
+            const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        };
+
+        if (tab === 'to_align') {
+            if (pos.length === 0) return;
+            const headers = ['PO Number', 'Vendor Name', 'Site', 'Department', 'PO Amount', 'Pending Amount', 'Status'];
+            const lines = [
+                headers.join(','),
+                ...pos.map(p => [
+                    escapeVal(p.po_number),
+                    escapeVal(p.vendor_name),
+                    escapeVal(p.project_name),
+                    escapeVal(p.department),
+                    p.po_amount || 0,
+                    p.pending_amount || 0,
+                    'To Align'
+                ].join(','))
+            ];
+            downloadCsv(lines.join('\n'), `To_Align_POs_${new Date().toISOString().split('T')[0]}.csv`);
+        } else if (tab === 'aligned' || tab === 'completed') {
+            if (payments.length === 0) return;
+            const headers = ['PO Number', 'Vendor Name', 'Tranche', 'Requested Amount', 'Paid Amount', 'GST Hold', 'Payment Date', 'UTR Number', 'Status'];
+            const lines = [
+                headers.join(','),
+                ...payments.map(p => [
+                    escapeVal(p.po_number),
+                    escapeVal(p.vendor_name),
+                    p.tranche_no || 1,
+                    p.requested_amount || 0,
+                    p.paid_amount || 0,
+                    p.gst_hold || 0,
+                    escapeVal(p.payment_date || ''),
+                    escapeVal(p.utr_no || ''),
+                    escapeVal(p.status)
+                ].join(','))
+            ];
+            downloadCsv(lines.join('\n'), `${tab === 'aligned' ? 'Aligned_Payments' : 'Completed_Payments'}_${new Date().toISOString().split('T')[0]}.csv`);
+        }
+    };
+
     if (!caps.canSee) return <div className="text-center py-20 text-text-secondary">The Payment Tracker isn’t available for your role.</div>;
 
-    const tabs: { key: Tab; label: string }[] = [
-        { key: 'live_sheet', label: 'Live Sheet · All POs' },
-        { key: 'to_align', label: 'To Align · Procurement' },
-        { key: 'aligned', label: 'Aligned · With Accounts' },
-        { key: 'completed', label: 'Completed' },
-        { key: 'electricity-payments', label: 'Electricity' },
-    ];
+    const ALL_TAB_DEFS: Record<Tab, { key: Tab; label: string }> = {
+        approvals: { key: 'approvals', label: 'Approval Workspace' },
+        aligned: { key: 'aligned', label: 'Aligned & Ready to Pay' },
+        to_align: { key: 'to_align', label: 'To Align · Procurement' },
+        batches: { key: 'batches', label: 'Payment Sheets' },
+        completed: { key: 'completed', label: 'Completed' },
+        'electricity-payments': { key: 'electricity-payments', label: 'Electricity' },
+        live_sheet: { key: 'live_sheet', label: 'Live Sheet · All POs' },
+    };
+
+    const tabs = useMemo(() => {
+        return roleConfig.visibleTabs.map(key => ALL_TAB_DEFS[key]).filter(Boolean);
+    }, [roleConfig.visibleTabs]);
 
     return (
         <div className="space-y-5">
@@ -229,25 +321,48 @@ export default function AccountsDashboard() {
                 <div>
                     <h1 className="text-2xl font-bold text-text-primary flex items-center gap-2">
                         <IndianRupee className="w-6 h-6 text-primary" /> Payment Tracker
+                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                            {roleConfig.roleName}
+                        </span>
                     </h1>
                     <p className="text-sm text-text-secondary mt-0.5">Align PO payments, disburse, and track UTRs — live.</p>
                 </div>
-                {caps.canAlign && (
-                    <div className="flex items-center gap-2">
-                        <button onClick={() => setShowZoho(true)} title="Zoho Books connection"
-                            className="flex items-center gap-2 px-3 py-2.5 border border-border rounded-xl text-sm font-bold text-text-secondary hover:bg-surface-elevated">
-                            <Settings2 className="w-4 h-4" /> Zoho
+                <div className="flex items-center gap-2 flex-wrap">
+                    {roleConfig.canManageApprovers && (
+                        <button onClick={() => setShowSettings(true)} title="Payment Approver Settings"
+                            className="flex items-center gap-1.5 px-3 py-2.5 border border-border rounded-xl text-sm font-bold text-text-secondary hover:bg-surface-elevated transition">
+                            <Settings2 className="w-4 h-4" /> Approvers
                         </button>
-                        <button onClick={runSync} disabled={syncing}
-                            className="flex items-center gap-2 px-3.5 py-2.5 border border-border rounded-xl text-sm font-bold text-text-secondary hover:bg-surface-elevated disabled:opacity-50">
-                            <RefreshCcwDot className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} /> Sync Zoho
+                    )}
+                    {(tab === 'to_align' || tab === 'aligned' || tab === 'completed') && (
+                        <button onClick={handleExportTableCsv} title="Export current view as CSV"
+                            className="flex items-center gap-1.5 px-3 py-2.5 border border-border rounded-xl text-sm font-bold text-text-secondary hover:bg-surface-elevated transition">
+                            <Download className="w-4 h-4 text-[#587e85]" /> Export CSV
                         </button>
-                        <button onClick={() => setShowAdd(true)}
-                            className="flex items-center gap-2 px-4 py-2.5 bg-primary text-white rounded-xl text-sm font-bold hover:bg-primary/90">
-                            <Plus className="w-4 h-4" /> Add / Import PO
+                    )}
+                    {roleConfig.canCreateSheet && (
+                        <button onClick={() => setShowCreateSheet(true)}
+                            className="flex items-center gap-1.5 px-3.5 py-2.5 bg-[#587e85] text-white rounded-xl text-sm font-bold hover:bg-[#48686e] shadow-xs transition active:scale-95">
+                            <Plus className="w-4 h-4" /> Create Payment Sheet
                         </button>
-                    </div>
-                )}
+                    )}
+                    {caps.canAlign && roleConfig.roleName !== 'Accounts' && (
+                        <>
+                            <button onClick={() => setShowZoho(true)} title="Zoho Books connection"
+                                className="flex items-center gap-2 px-3 py-2.5 border border-border rounded-xl text-sm font-bold text-text-secondary hover:bg-surface-elevated">
+                                <Settings2 className="w-4 h-4" /> Zoho
+                            </button>
+                            <button onClick={runSync} disabled={syncing}
+                                className="flex items-center gap-2 px-3.5 py-2.5 border border-border rounded-xl text-sm font-bold text-text-secondary hover:bg-surface-elevated disabled:opacity-50">
+                                <RefreshCcwDot className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} /> Sync Zoho
+                            </button>
+                            <button onClick={() => setShowAdd(true)}
+                                className="flex items-center gap-2 px-4 py-2.5 bg-primary text-white rounded-xl text-sm font-bold hover:bg-primary/90">
+                                <Plus className="w-4 h-4" /> Add / Import PO
+                            </button>
+                        </>
+                    )}
+                </div>
             </div>
             {syncMsg && <p className="text-xs text-text-tertiary -mt-3">{syncMsg}</p>}
             {flagMsg && <p className="text-xs -mt-3" style={{ color: CRITICAL_META.color }}>{flagMsg}</p>}
@@ -267,8 +382,8 @@ export default function AccountsDashboard() {
                 </button>
             </div>
 
-            {/* Filters — the live sheet has its own filter row (status/vendor/date range). */}
-            {tab !== 'electricity-payments' && tab !== 'live_sheet' && (
+            {/* Filters — the live sheet, batches, and approvals have their own interfaces. */}
+            {tab !== 'electricity-payments' && tab !== 'live_sheet' && tab !== 'batches' && tab !== 'approvals' && (
             <div className="flex items-center gap-2 flex-wrap">
                 <div className="relative flex-1 min-w-[220px] max-w-sm">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-tertiary" />
@@ -299,6 +414,11 @@ export default function AccountsDashboard() {
             </div>
             )}
 
+            {/* Payment Sheets & Approval Workspace */}
+            {(tab === 'batches' || tab === 'approvals') && (
+                <ApprovalWorkspace orgId={orgId} onBatchUpdated={fetchData} />
+            )}
+
             {/* The live shared sheet — every PO's payment status, identical for procurement,
                 accounts and super admin, updating in place as anyone touches a row. */}
             {tab === 'live_sheet' && <PaymentTrackerTable orgId={orgId} />}
@@ -309,7 +429,7 @@ export default function AccountsDashboard() {
             )}
 
             {/* Table */}
-            {tab !== 'electricity-payments' && tab !== 'live_sheet' && (
+            {tab !== 'electricity-payments' && tab !== 'live_sheet' && tab !== 'batches' && tab !== 'approvals' && (
             <div className="bg-surface rounded-xl border border-border overflow-hidden">
                 <div className="overflow-x-auto">
                     <table className="w-full">
@@ -422,6 +542,8 @@ export default function AccountsDashboard() {
             {payPayment && <MarkPaidModal payment={payPayment} onClose={() => setPayPayment(null)} onDone={() => { setPayPayment(null); fetchData(); }} />}
             {showAdd && <AddPoModal onClose={() => setShowAdd(false)} onDone={() => { setShowAdd(false); fetchData(); }} />}
             {showZoho && <ZohoConfigModal orgId={orgId} onClose={() => setShowZoho(false)} onSynced={fetchData} />}
+            <PaymentTrackerSettingsModal isOpen={showSettings} onClose={() => setShowSettings(false)} orgId={orgId} />
+            <PaymentSheetBuilderModal isOpen={showCreateSheet} onClose={() => setShowCreateSheet(false)} orgId={orgId} onCreated={() => { setTab('batches'); fetchData(); }} />
         </div>
     );
 }

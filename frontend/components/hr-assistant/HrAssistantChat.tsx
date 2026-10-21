@@ -5,7 +5,10 @@ import { FolderCog, Loader2, SendHorizontal, ShieldAlert, User, X } from 'lucide
 import Link from 'next/link';
 import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type KeyboardEvent } from 'react';
 
+import { BOT_NAME, BOT_TITLE, COMPANY_NAME } from '@/backend/lib/hr-assistant/identity';
+
 import { BotFace } from './BotFace';
+import { FormattedAnswer } from './FormattedAnswer';
 
 const MAX_QUESTION_LENGTH = 1000;
 
@@ -65,9 +68,18 @@ export function claimHrChat(userId: string) {
     setChatState(() => ({ messages: [], pending: false }));
 }
 
+// How many earlier messages go with each question, so Otto can follow the conversation.
+const HISTORY_TURNS = 6;
+
 async function send(question: string) {
     const trimmed = question.trim();
     if (!trimmed || chatState.pending) return;
+
+    // Error and refusal bubbles are not part of the conversation.
+    const history = chatState.messages
+        .filter(message => !message.error && !message.blocked)
+        .slice(-HISTORY_TURNS)
+        .map(({ role, content }) => ({ role, content }));
 
     setChatState(prev => ({
         pending: true,
@@ -79,7 +91,7 @@ async function send(question: string) {
         const res = await fetch('/api/hr-assistant', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ question: trimmed }),
+            body: JSON.stringify({ question: trimmed, history }),
         });
         const data = (await res.json()) as AskResponse;
         reply = res.ok
@@ -134,9 +146,9 @@ export function HrAssistantChat({ documentsHref, onClose }: HrAssistantChatProps
             <header className="flex shrink-0 items-center gap-2.5 bg-primary px-3.5 py-2.5 text-white">
                 <BotFace className="size-8 shrink-0" mood={pending ? 'thinking' : 'idle'} />
                 <div className="min-w-0 flex-1">
-                    <h2 className="truncate font-display text-sm font-bold leading-tight">HR Policy Assistant</h2>
+                    <h2 className="truncate font-display text-sm font-bold leading-tight">{BOT_TITLE}</h2>
                     {/* One-line header: the subtitle only shows when the window is wide enough. */}
-                    <p className="hidden truncate text-[11px] text-white/80 @min-[360px]:block">Ask anything about the company HR policy.</p>
+                    <p className="hidden truncate text-[11px] text-white/80 @min-[360px]:block">Your guide to {COMPANY_NAME} HR policies</p>
                 </div>
                 {documentsHref && (
                     <Link
@@ -153,7 +165,7 @@ export function HrAssistantChat({ documentsHref, onClose }: HrAssistantChatProps
                 <button
                     type="button"
                     onClick={onClose}
-                    aria-label="Close HR assistant"
+                    aria-label={`Close ${BOT_NAME}`}
                     className="shrink-0 rounded-lg p-1.5 transition hover:bg-white/15"
                 >
                     <X className="size-4" aria-hidden />
@@ -164,7 +176,7 @@ export function HrAssistantChat({ documentsHref, onClose }: HrAssistantChatProps
                 {messages.length === 0 && !pending && (
                     <div className="flex flex-col items-center gap-2 pt-1 text-center">
                         <BotFace className="size-12" />
-                        <p className="font-display text-sm font-semibold text-text-primary">Hi! How can I help?</p>
+                        <p className="font-display text-sm font-semibold text-text-primary">Hi, I&apos;m {BOT_NAME}! How can I help?</p>
                         <p className="text-xs text-text-secondary">Try one of these:</p>
                         <div className="flex flex-col items-stretch gap-2">
                             {SUGGESTIONS.map(suggestion => (
@@ -198,7 +210,9 @@ export function HrAssistantChat({ documentsHref, onClose }: HrAssistantChatProps
                                 <BotFace className="size-7 shrink-0" />
                             )}
                             <div
-                                className={`max-w-[80%] whitespace-pre-wrap rounded-2xl px-3 py-1.5 text-[13px] leading-relaxed ${
+                                className={`max-w-[80%] rounded-2xl px-3 py-1.5 text-[13px] leading-relaxed ${
+                                    message.role === 'assistant' && !message.blocked && !message.error ? '' : 'whitespace-pre-wrap'
+                                } ${
                                     message.role === 'user'
                                         ? 'rounded-tr-sm bg-primary text-white'
                                         : message.blocked || message.error
@@ -209,7 +223,11 @@ export function HrAssistantChat({ documentsHref, onClose }: HrAssistantChatProps
                                 {(message.blocked || message.error) && (
                                     <ShieldAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
                                 )}
-                                <span>{message.content}</span>
+                                {message.role === 'assistant' && !message.blocked && !message.error ? (
+                                    <FormattedAnswer text={message.content} />
+                                ) : (
+                                    <span>{message.content}</span>
+                                )}
                             </div>
                         </motion.div>
                     ))}
@@ -218,7 +236,7 @@ export function HrAssistantChat({ documentsHref, onClose }: HrAssistantChatProps
                 {pending && (
                     <div className="flex items-center gap-2 text-xs text-text-secondary">
                         <Loader2 className="size-4 animate-spin text-primary" aria-hidden />
-                        Checking the policy...
+                        {BOT_NAME} is thinking…
                     </div>
                 )}
                 <div ref={bottomRef} />

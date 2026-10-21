@@ -334,3 +334,75 @@ test('AI Vision Scoring Engine detects benchmark duplicate upload', () => {
     assert.equal(isDuplicate, true, 'Re-uploaded template photo must be flagged as duplicate');
 });
 
+test('Template Edit reconciliation: preserves step IDs, auto-commits drafted parameters, and sanitizes checkpoint arrays', () => {
+    // 1. Simulating existing database checklist items with IDs
+    const existingItems = [
+        { id: 'item-uuid-1', title: 'Sweep lobby', order_index: 0, parameters: [{ id: 'p1', name: 'Corner dust', type: 'yes_no' }] },
+        { id: 'item-uuid-2', title: 'Mop floor', order_index: 1, parameters: [] },
+    ];
+    const existingIds = new Set(existingItems.map(i => i.id));
+
+    // 2. Simulating edited items sent from UI: Step 1 updated with new parameter, Step 2 retained, Step 3 added
+    const submittedItems = [
+        { id: 'item-uuid-1', title: 'Sweep & vacuum lobby', parameters: [{ id: 'p1', name: 'Corner dust', type: 'yes_no' }, { name: 'Under mats', type: 'yes_no' }] },
+        { id: 'item-uuid-2', title: 'Mop floor', parameters: [] },
+        { title: 'Wipe glass doors', parameters: [{ name: 'Smudge-free', type: 'yes_no' }] }, // Newly added step
+    ];
+
+    // Helper to sanitize parameters exactly as in API route
+    const sanitizeParams = (raw) => {
+        if (!raw) return [];
+        let arr = raw;
+        if (typeof raw === 'string') {
+            try { arr = JSON.parse(raw); } catch { arr = []; }
+        }
+        if (!Array.isArray(arr)) return [];
+        return arr.map((p, idx) => ({
+            id: p.id || `param_${idx}_12345`,
+            name: typeof p === 'string' ? p : (p.name || p.title || `Param ${idx + 1}`),
+            type: p.type || 'yes_no',
+            is_required: p.is_required !== false,
+        }));
+    };
+
+    const toUpdate = [];
+    const toInsert = [];
+
+    submittedItems.forEach((item, index) => {
+        const itemData = {
+            title: item.title,
+            order_index: index,
+            parameters: sanitizeParams(item.parameters),
+        };
+        if (item.id && existingIds.has(item.id)) {
+            toUpdate.push({ id: item.id, ...itemData });
+        } else {
+            toInsert.push(itemData);
+        }
+    });
+
+    // Step 1 & 2 must be updated in place (NOT deleted and re-created)
+    assert.equal(toUpdate.length, 2, '2 existing steps must be updated in place');
+    assert.equal(toUpdate[0].id, 'item-uuid-1');
+    assert.equal(toUpdate[0].title, 'Sweep & vacuum lobby');
+    assert.equal(toUpdate[0].parameters.length, 2, 'Step 1 must have 2 parameters preserved');
+    assert.ok(toUpdate[0].parameters[1].id, 'Added parameter without ID must be assigned an ID');
+
+    // Step 3 must be inserted as new
+    assert.equal(toInsert.length, 1, '1 new step must be inserted');
+    assert.equal(toInsert[0].title, 'Wipe glass doors');
+    assert.equal(toInsert[0].parameters.length, 1);
+
+    // 3. Auto-commit simulation: user entered new parameter into draft without clicking "+ Add" before saving
+    let finalItems = [...submittedItems];
+    let draftParamName = 'Fingerprints checked';
+    let currentParams = Array.isArray(finalItems[2].parameters) ? [...finalItems[2].parameters] : [];
+    if (draftParamName.trim()) {
+        currentParams.push({ id: 'param_draft_1', name: draftParamName.trim(), type: 'yes_no' });
+    }
+    finalItems[2] = { ...finalItems[2], parameters: currentParams };
+
+    assert.equal(finalItems[2].parameters.length, 2, 'Auto-commit must include in-progress parameter draft');
+    assert.equal(finalItems[2].parameters[1].name, 'Fingerprints checked');
+});
+

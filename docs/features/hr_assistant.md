@@ -24,7 +24,7 @@ Screenshots from the standalone build (before restyling) are in [hr-assistant/sc
 | Bot mount point | `app/layout.tsx` (root), once. It hides itself on public pages (`HIDDEN_PATH_PREFIXES` in `HrAssistantBot.tsx`), because staff land on `/procurement`, `/property/...`, `/org/...` and `/{orgId}/...` |
 | API routes | `app/api/hr-assistant/**` |
 | Pipeline, ingest, versioning, access | `backend/lib/hr-assistant/` (`config.ts` holds every setting) |
-| Migration | `supabase/migrations/20261019000001_hr_assistant.sql` |
+| Migrations | `supabase/migrations/20261019000001_hr_assistant.sql` (tables, versioning) and `20261020000001_hr_assistant_hybrid_search.sql` (keyword index and hybrid search) |
 | Offline tests | `tests/hr-assistant/` (`npm run test:hr-assistant`) |
 | Seed and eval scripts | `scripts/hr-assistant/` (`npm run hr:ingest`, `npm run hr:eval`) |
 | Demo policy for seeding | `data/hr-assistant/hr_policy.txt` |
@@ -53,8 +53,12 @@ Any database read error fails closed, meaning no access.
 **Ask** (`POST /api/hr-assistant`, rate-limited to 20 per user per minute):
 
 1. Check the session and the `canUse` access.
-2. Run the input guard and the pgvector search over live versions in parallel.
-3. Groq answers from the top 3 chunks.
+1. **Plan** (`planner.ts`). Obvious small talk ("hi", "thanks", "who are u") gets an instant reply with no AI call, using one of a few wordings and never the same one twice in a row. Otherwise **one** Groq call returns the intent, a short natural reply for small talk or off-topic, and, for HR questions, a standalone search query built from the last few chat turns ("and sick leave?" becomes "how many sick leave days do employees get"). Small talk skips the search **and** the safety model, which keeps token use low. When unsure, or if the call fails, the label is HR question. The bot is named **Otto** (`identity.ts`).
+1. **Conversation:** the browser sends the last 6 turns. The route caps and validates them, and the answer prompt gets them only to understand follow-ups. Facts still come only from the policy text.
+1. **Fail fast:** Groq calls have a 10-second timeout and no silent retries. A rate limit returns "Otto is a bit busy right now…" (HTTP 429) instead of a 20–40 second wait.
+1. **Backups** (`llm.ts`, chains in `config.ts`): each step tries its models in order, and the first that answers wins. Safety check: Groq `gpt-oss-safeguard-20b`, then Groq `gpt-oss-20b` with the **same rules**, then Engy `qwen3.8-27b`. Planner and answer: Groq `gpt-oss-20b`, then Engy `qwen3.8-27b`, then `glm-5.3-flash`. Groq's free tier gives the safeguard model only 2,000 tokens/min (one or two questions), so this is what keeps Otto answering. If every model fails, the safety check fails closed and the route says "busy". The server log records which backup answered.
+2. Run the input guard and the **hybrid search** over live versions in parallel. `hybrid_match_hr_policy_chunks` runs a vector (meaning) search and a Postgres full-text (exact words, `ts_rank_cd`) search, and merges them with Reciprocal Rank Fusion. If that function isn't installed, `retrieve.ts` falls back to the vector-only `match_hr_policy_chunks`.
+3. Groq answers from the top 5 chunks (`TOP_K_RESULTS`).
 4. The output guard checks the answer.
 5. Log the Q&A to `hr_assistant_logs`.
 
@@ -96,6 +100,7 @@ No new key names. All of these are already used elsewhere in the app:
 | Variable | Used for |
 | :--- | :--- |
 | `GROQ_API_KEY` | Answers (`openai/gpt-oss-20b`) and guardrails (`openai/gpt-oss-safeguard-20b`) |
+| `COUNCIL_API_KEY` + `COUNCIL_BASE_URL` (Engy, already used by the WhatsApp task brain) | Backup models when Groq is busy or fails: `qwen3.8-27b`, then `glm-5.3-flash` |
 | `GEMINI_API_KEY`, falling back to `GOOGLE_AI_API_KEY` | Embeddings (`gemini-embedding-001`, 768 dims) |
 | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Session client |
 | `SUPABASE_SERVICE_ROLE_KEY` | Uploads, deletes, role lookup and scripts (server only) |
@@ -121,12 +126,12 @@ No new key names. All of these are already used elsewhere in the app:
 
 ## Agent Spec — HR Policy Assistant
 
-**1. Workflow or agent?** Workflow (fixed retrieve → answer → guard pipeline; the model makes no tool choices) `[BAA p.104]`.
+**1. Workflow or agent?** Workflow: a planner step routes each message to a fixed reply or to the fixed retrieve → answer → guard pipeline. The model makes no tool choices `[BAA p.104]`. LangGraph was not used: there are only two branches, so the router is plain code `[BAA p.104]`.
    Justification `[BAA p.115]`: N/A. It is a workflow, the doctrine default. The pathway is known ahead of time with few edge cases `[BAA p.104]`.
    Head-to-head vs. the deterministic path `[BAA pp.94–95, 99]`: no prior path exists.
 
 **2. Context** `[BAA p.112]`
-   What it knows that its neighbours don't: only the top-3 chunks of the *live* HR policy versions, plus a system prompt limiting it to those excerpts.
+   What it knows that its neighbours don't: only the top-5 chunks (hybrid vector + keyword search) of the *live* HR policy versions, plus a system prompt limiting it to those excerpts.
 
 **3. Cost of a false positive** `[BAA p.112]`
    High: a wrong or promised answer about leave or notice could be acted on. Model tier: `openai/gpt-oss-20b` (small) for the answer, *because* its blast radius is boxed in by two `gpt-oss-safeguard-20b` guards (fail closed), an excerpts-only prompt and a "contact HR" fallback.

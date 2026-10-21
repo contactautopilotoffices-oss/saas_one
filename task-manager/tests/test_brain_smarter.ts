@@ -167,7 +167,7 @@ async function run() {
     {
         const { tasksDomain: TD } = await import('../brain/tasksDomain');
         const spec = TD.intents.find(i => i.name === 'create_tasks')!.slots;
-        check('add-task rule: no person named -> the sender\'s own list, no question (Sher)', /NO PERSON NAMED/.test(spec) && /"assignee":"me", no ambiguity, never a question/.test(spec));
+        check('add-task rule: no person named -> the sender\'s own list, no question (Sher)', /"add task follow up regarding checklist"/.test(spec) && /"assignee":"me" \(it goes on their own list\)/.test(spec));
         check('add-task rule: a word not in the people list stays in the title (Sanil)', /Sailee rest FNF/.test(spec) && /never a person and never an ambiguity/.test(spec));
     }
 

@@ -8,6 +8,7 @@ import { SOPVisionTestingModal } from './SOPVisionTestingModal';
 interface SOPChecklistSettingsSectionProps {
     propertyId: string;
     isAdmin?: boolean;
+    isOrgSuperAdmin?: boolean;
 }
 
 interface Member {
@@ -20,6 +21,7 @@ interface Member {
 export const SOPChecklistSettingsSection: React.FC<SOPChecklistSettingsSectionProps> = ({
     propertyId,
     isAdmin = false,
+    isOrgSuperAdmin = false,
 }) => {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -308,31 +310,33 @@ export const SOPChecklistSettingsSection: React.FC<SOPChecklistSettingsSectionPr
                         />
                     </div>
                 )}
-                {/* AI Vision Testing Sandbox Launcher */}
-                <div className="p-4 bg-gradient-to-r from-violet-50 to-indigo-50/70 rounded-2xl border border-violet-200/90 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
-                    <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-violet-600 text-white flex items-center justify-center flex-shrink-0 shadow-xs">
-                            <FlaskConical size={18} />
-                        </div>
-                        <div>
-                            <div className="flex items-center gap-2">
-                                <p className="text-xs font-black text-violet-950">AI Vision Testing Lab & Sandbox</p>
-                                <span className="px-1.5 py-0.5 rounded text-[8px] font-black uppercase bg-violet-200 text-violet-800">Interactive</span>
+                {/* AI Vision Testing Sandbox Launcher - Org Super Admin Only */}
+                {isOrgSuperAdmin && (
+                    <div className="p-4 bg-gradient-to-r from-violet-50 to-indigo-50/70 rounded-2xl border border-violet-200/90 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+                        <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl bg-violet-600 text-white flex items-center justify-center flex-shrink-0 shadow-xs">
+                                <FlaskConical size={18} />
                             </div>
-                            <p className="text-[11px] text-violet-700/80 font-medium">
-                                Upload clean reference photos against test photos, configure parameters, and test our vision scoring live.
-                            </p>
+                            <div>
+                                <div className="flex items-center gap-2">
+                                    <p className="text-xs font-black text-violet-950">AI Vision Testing Lab & Sandbox</p>
+                                    <span className="px-1.5 py-0.5 rounded text-[8px] font-black uppercase bg-violet-200 text-violet-800">Org Super Admin</span>
+                                </div>
+                                <p className="text-[11px] text-violet-700/80 font-medium">
+                                    Upload clean reference photos against test photos, configure parameters, and test our vision scoring live.
+                                </p>
+                            </div>
                         </div>
+                        <button
+                            type="button"
+                            onClick={() => setShowVisionModal(true)}
+                            className="px-4 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-sm transition-all flex-shrink-0"
+                        >
+                            <Sparkles size={13} />
+                            <span>Open Vision Lab</span>
+                        </button>
                     </div>
-                    <button
-                        type="button"
-                        onClick={() => setShowVisionModal(true)}
-                        className="px-4 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-sm transition-all flex-shrink-0"
-                    >
-                        <Sparkles size={13} />
-                        <span>Open Vision Lab</span>
-                    </button>
-                </div>
+                )}
             </div>
 
             {/* Section 2: Checker / Approver Configuration */}
@@ -621,12 +625,14 @@ export const SOPChecklistSettingsSection: React.FC<SOPChecklistSettingsSectionPr
                 </button>
             </div>
 
-            {/* AI Vision Testing Modal */}
-            <SOPVisionTestingModal
-                isOpen={showVisionModal}
-                onClose={() => setShowVisionModal(false)}
-                propertyId={propertyId}
-            />
+            {/* AI Vision Testing Modal - Org Super Admin Only */}
+            {isOrgSuperAdmin && (
+                <SOPVisionTestingModal
+                    isOpen={showVisionModal}
+                    onClose={() => setShowVisionModal(false)}
+                    propertyId={propertyId}
+                />
+            )}
 
             {toast && (
                 <Toast

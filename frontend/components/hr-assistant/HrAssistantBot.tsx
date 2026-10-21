@@ -5,6 +5,7 @@ import { X } from 'lucide-react';
 import { useParams, usePathname } from 'next/navigation';
 import { useEffect, useState, type CSSProperties } from 'react';
 
+import { BOT_NAME, BOT_TITLE } from '@/backend/lib/hr-assistant/identity';
 import { useAuth } from '@/frontend/context/AuthContext';
 import { isBdSuperAdmin } from '@/frontend/constants/bdSuperAdmins';
 
@@ -214,7 +215,7 @@ export default function HrAssistantBot() {
                     <motion.div
                         id="hr-assistant-window"
                         role="dialog"
-                        aria-label="HR Policy Assistant"
+                        aria-label={BOT_TITLE}
                         initial={{ opacity: 0, y: 24, scale: 0.95 }}
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: 24, scale: 0.95 }}
@@ -238,7 +239,7 @@ export default function HrAssistantBot() {
                     {showGreeting && (
                         <motion.aside
                             key="greeting"
-                            aria-label="HR assistant greeting"
+                            aria-label={`${BOT_NAME} greeting`}
                             initial={{ opacity: 0, scale: 0.85, x: 12 }}
                             animate={{ opacity: 1, scale: 1, x: 0 }}
                             exit={{ opacity: 0, scale: 0.9, x: 8 }}
@@ -253,12 +254,12 @@ export default function HrAssistantBot() {
                             <button
                                 type="button"
                                 onClick={() => setGreeting(false)}
-                                aria-label="Dismiss HR assistant greeting"
+                                aria-label={`Dismiss ${BOT_NAME} greeting`}
                                 className="absolute right-2 top-2 rounded-md p-1 text-text-tertiary transition hover:bg-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                             >
                                 <X className="size-3.5" aria-hidden />
                             </button>
-                            <p className="font-display text-sm font-semibold text-text-primary">Hi! Got an HR question?</p>
+                            <p className="font-display text-sm font-semibold text-text-primary">Hi, I&apos;m {BOT_NAME}! Got an HR question?</p>
                             <p className="mt-0.5 text-xs leading-snug text-text-secondary">
                                 Ask me about leave, WFH or notice period.
                             </p>
@@ -279,7 +280,7 @@ export default function HrAssistantBot() {
                             exit={{ opacity: 0, x: 8 }}
                             className="mb-4 hidden whitespace-nowrap rounded-2xl rounded-br-sm border border-border bg-surface px-3 py-2 text-xs font-semibold text-text-primary shadow-lg sm:block"
                         >
-                            Hi! Ask me about HR policy
+                            Hi, I&apos;m {BOT_NAME}! Ask me about HR policy
                         </motion.span>
                     )}
                 </AnimatePresence>
@@ -300,7 +301,7 @@ export default function HrAssistantBot() {
                         onMouseLeave={() => setHovered(false)}
                         onFocus={() => setHovered(true)}
                         onBlur={() => setHovered(false)}
-                        aria-label={open ? 'Close HR assistant' : 'Open HR assistant'}
+                        aria-label={open ? `Close ${BOT_NAME}, the HR assistant` : `Open ${BOT_NAME}, the HR assistant`}
                         aria-expanded={open}
                         aria-controls="hr-assistant-window"
                         initial={{ y: 0 }}

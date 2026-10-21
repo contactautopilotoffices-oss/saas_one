@@ -6,8 +6,8 @@
  * against a short policy. It replies with JSON saying whether the text violates
  * the policy. If the reply can't be parsed we fail closed (treat as a violation).
  */
-import { getGroq } from "./clients";
-import { GUARD_MODEL } from "./config";
+import { GUARD_MODELS } from "./config";
+import { chatWithFallback } from "./llm";
 
 export interface GuardResult {
   safe: boolean;
@@ -87,17 +87,16 @@ export function parseGuardResponse(raw: string | null | undefined): GuardResult 
   }
 }
 
+/** Same rules on every model in GUARD_MODELS. If none can check, this throws: the request fails, nothing unchecked passes. */
 async function checkSafety(text: string, policy: string): Promise<GuardResult> {
-  const response = await getGroq().chat.completions.create({
-    model: GUARD_MODEL,
-    temperature: 0,
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: policy },
-      { role: "user", content: text },
-    ],
+  const raw = await chatWithFallback("safety check", GUARD_MODELS, {
+    system: policy,
+    user: text,
+    json: true,
+    // The safeguard model reasons before its verdict; leave room so the JSON is never cut off.
+    maxTokens: 800,
   });
-  return parseGuardResponse(response.choices[0]?.message?.content);
+  return parseGuardResponse(raw);
 }
 
 /** Check the user's question before the model sees it. */

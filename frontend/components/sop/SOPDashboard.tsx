@@ -152,6 +152,11 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
     }, [propertyId, propertyIds, membership, isMultiProperty]);
 
     const isAdmin = ['property_admin', 'org_admin', 'org_super_admin', 'master_admin'].includes(userRole.toLowerCase());
+    const isOrgSuperAdmin = Boolean(
+        membership?.is_master_admin ||
+        (membership?.org_role && ['org_super_admin', 'master_admin', 'ops_super_admin'].includes(membership.org_role.toLowerCase())) ||
+        ['org_super_admin', 'master_admin', 'ops_super_admin'].includes((userRole || '').toLowerCase())
+    );
 
     // Non-admin users should only be defaulted to history if currently on admin-only 'list' view
     useEffect(() => {
@@ -281,14 +286,16 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
                                     <Settings size={12} />
                                     Settings
                                 </button>
-                                <button
-                                    onClick={() => setShowVisionLab(true)}
-                                    className="flex items-center gap-1.5 px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest text-violet-700 bg-violet-50/80 hover:bg-violet-100/80 border border-violet-200/80 transition-all shadow-2xs"
-                                    title="Test AI Cleanliness & Timestamp Scoring on uploaded photos"
-                                >
-                                    <FlaskConical size={12} className="text-violet-600" />
-                                    Vision Lab
-                                </button>
+                                {isOrgSuperAdmin && (
+                                    <button
+                                        onClick={() => setShowVisionLab(true)}
+                                        className="flex items-center gap-1.5 px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest text-violet-700 bg-violet-50/80 hover:bg-violet-100/80 border border-violet-200/80 transition-all shadow-2xs"
+                                        title="Test AI Cleanliness & Timestamp Scoring on uploaded photos (Org Super Admin Only)"
+                                    >
+                                        <FlaskConical size={12} className="text-violet-600" />
+                                        Vision Lab
+                                    </button>
+                                )}
                             </div>
                         )}
                         {headerRight && <div className="flex-shrink-0">{headerRight}</div>}
@@ -327,13 +334,15 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
                                 <Settings size={12} />
                                 Settings
                             </button>
-                            <button
-                                onClick={() => setShowVisionLab(true)}
-                                className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest text-violet-700 bg-violet-50 transition-all border border-violet-200"
-                            >
-                                <FlaskConical size={12} />
-                                Vision Lab
-                            </button>
+                            {isOrgSuperAdmin && (
+                                <button
+                                    onClick={() => setShowVisionLab(true)}
+                                    className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest text-violet-700 bg-violet-50 transition-all border border-violet-200"
+                                >
+                                    <FlaskConical size={12} />
+                                    Vision Lab
+                                </button>
+                            )}
                         </div>
                     </div>
                 )}
@@ -389,6 +398,7 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
                                     <SOPChecklistSettingsSection 
                                         propertyId={propertyId}
                                         isAdmin={isAdmin}
+                                        isOrgSuperAdmin={isOrgSuperAdmin}
                                     />
                                 )}
 
@@ -445,11 +455,13 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
 
 
             {/* AI Vision Testing Lab Modal */}
-            <SOPVisionTestingModal
-                isOpen={showVisionLab}
-                onClose={() => setShowVisionLab(false)}
-                propertyId={propertyId || 'all'}
-            />
+            {isOrgSuperAdmin && (
+                <SOPVisionTestingModal
+                    isOpen={showVisionLab}
+                    onClose={() => setShowVisionLab(false)}
+                    propertyId={propertyId || 'all'}
+                />
+            )}
 
             {/* Toast Notification */}
             {toast && (

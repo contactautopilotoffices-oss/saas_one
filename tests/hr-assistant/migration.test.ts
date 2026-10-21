@@ -24,6 +24,10 @@ const MIGRATION = readFileSync(
   path.join("supabase", "migrations", "20261019000001_hr_assistant.sql"),
   "utf8",
 );
+const HYBRID_MIGRATION = readFileSync(
+  path.join("supabase", "migrations", "20261020000001_hr_assistant_hybrid_search.sql"),
+  "utf8",
+);
 
 // Minimal stand-ins for what Supabase provides out of the box.
 const SUPABASE_STUBS = `
@@ -59,6 +63,7 @@ describe("hr_assistant migration", { skip: HAS_PGVECTOR ? false : `${PGVECTOR_PA
     db = new PGlite({ extensions: { vector } });
     await db.exec(SUPABASE_STUBS);
     await db.exec(MIGRATION);
+    await db.exec(HYBRID_MIGRATION);
   });
 
   after(async () => {
@@ -236,6 +241,23 @@ describe("hr_assistant migration", { skip: HAS_PGVECTOR ? false : `${PGVECTOR_PA
     await assert.rejects(
       db.query("update public.hr_documents set status = 'deleted' where id = $1", [v1.id]),
     );
+  });
+
+  it("hybrid search ranks an exact keyword match first, even when its vector is far", async () => {
+    const v1 = await createVersion("Lop_rules.pdf");
+    await db.query(
+      `insert into public.hr_policy_chunks (document_id, chunk_index, content, embedding)
+       values ($1, 0, 'Loss of pay (LOP) applies when leave is taken without balance.', $2),
+              ($1, 1, 'Employees get twenty days of paid annual leave.', $3)`,
+      [v1.id, vectorLiteral(7), vectorLiteral(8)],
+    );
+    await db.query("select public.hr_set_live_version($1, 2)", [v1.id]);
+    // The question's vector points at chunk 1, but it names LOP explicitly.
+    const { rows } = await db.query<{ content: string }>(
+      "select content from public.hybrid_match_hr_policy_chunks($1, $2, 1)",
+      ["What is LOP?", vectorLiteral(8)],
+    );
+    assert.match(rows[0].content, /LOP/);
   });
 
   it("doesn't let signed-in users call the version functions", async () => {

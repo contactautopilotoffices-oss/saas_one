@@ -28,10 +28,10 @@ import TabLoading from './TabLoading';
 import { SHOW_LEGACY_PER_PROPERTY_CONTROLS } from '../procurement/procurementFeatureFlags';
 import ProcurementVendorTicketsTab from '../procurement/ProcurementVendorTicketsTab';
 import { ProcurementSettingsTab } from '../procurement/ProcurementSettingsTab';
-import PaymentUrgencyTrackerTab from '../procurement/payment-urgency/PaymentUrgencyTrackerTab';
-import { INITIAL_TEST_TASKS } from '../procurement/payment-urgency/mockData';
-import { Layers, DollarSign, ClipboardList } from 'lucide-react';
+import { Layers, DollarSign, ClipboardList, IndianRupee } from 'lucide-react';
 import ProcurementTasksTab from '../procurement/ProcurementTasksTab';
+import FinanceOverview from '../accounts/FinanceOverview';
+import AccountsDashboard from '../accounts/AccountsDashboard';
 
 // Only drawn on its own (legacy) tab and pulls in the Excel library: load it when that tab opens (performance plan Phase 8).
 const SitePricingAdminTab = dynamic(() => import('../procurement/SitePricingAdminTab'), { loading: TabLoading });
@@ -69,7 +69,7 @@ interface MaterialRequest {
     };
 }
 
-type Tab = 'overview' | 'tasks' | 'urgency-tracker' | 'task-sheet' | 'requests' | 'vendor_tickets' | 'monthly-requisitions' | 'monthly-feedback' | 'site-pricing' | 'history' | 'manage-items' | 'po-generator' | 'settings' | 'profile' | 'grievance';
+type Tab = 'overview' | 'tasks' | 'payment-tracker' | 'requests' | 'vendor_tickets' | 'monthly-requisitions' | 'monthly-feedback' | 'site-pricing' | 'history' | 'manage-items' | 'po-generator' | 'settings' | 'profile' | 'grievance';
 
 export default function ProcurementDashboard() {
     const { dashboardContent, navigateDashboard } = useDashboardContent();
@@ -86,11 +86,13 @@ export default function ProcurementDashboard() {
     const [userOrgId, setUserOrgId] = useState<string>('');
 
     useEffect(() => {
-        const tabParam = searchParams?.get('tab') as Tab | null;
-        const linkableTabs = ['overview', 'tasks', 'urgency-tracker', 'task-sheet', 'requests', 'vendor_tickets', 'monthly-requisitions', 'monthly-feedback', 'history', 'manage-items', 'po-generator', 'settings', 'profile', 'grievance'];
+        const tabParam = searchParams?.get('tab') as string | null;
+        const linkableTabs = ['overview', 'tasks', 'payment-tracker', 'requests', 'vendor_tickets', 'monthly-requisitions', 'monthly-feedback', 'history', 'manage-items', 'po-generator', 'settings', 'profile', 'grievance'];
         if (SHOW_LEGACY_PER_PROPERTY_CONTROLS) linkableTabs.push('site-pricing');
-        if (tabParam && linkableTabs.includes(tabParam)) {
-            setActiveTab(tabParam);
+        if (tabParam === 'urgency-tracker' || tabParam === 'task-sheet') {
+            setActiveTab('payment-tracker');
+        } else if (tabParam && linkableTabs.includes(tabParam)) {
+            setActiveTab(tabParam as Tab);
         }
     }, [searchParams]);
     const [sidebarCounts, setSidebarCounts] = useState<{
@@ -112,10 +114,6 @@ export default function ProcurementDashboard() {
     const orderHistoryCount = useMemo(() => {
         return requests.filter(r => ['completed', 'delivered'].includes(r.status)).length;
     }, [requests]);
-
-    const urgentPaymentsCount = useMemo(() => {
-        return INITIAL_TEST_TASKS.filter(t => t.payment_status !== 'paid' && (t.urgency_tier === 'P1' || t.urgency_tier === 'P2')).length;
-    }, []);
 
     const [statusFilter, setStatusFilter] = useState('all');
     const [propertyFilter, setPropertyFilter] = useState('all');
@@ -593,10 +591,9 @@ export default function ProcurementDashboard() {
                                     },
                                     { id: 'tasks', icon: ClipboardList, label: 'Tasks' },
                                     { 
-                                        id: 'urgency-tracker', 
-                                        icon: Layers, 
-                                        label: 'Payment Urgency Tracker',
-                                        count: urgentPaymentsCount
+                                        id: 'payment-tracker', 
+                                        icon: IndianRupee, 
+                                        label: 'Payment Tracker',
                                     },
                                     { 
                                         id: 'requests', 
@@ -747,6 +744,7 @@ export default function ProcurementDashboard() {
                             <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">
                                 {activeTab === 'overview' ? 'Operational Overview' :
                                  activeTab === 'tasks' ? 'Your team task board' : 
+                                 activeTab === 'payment-tracker' ? 'PO Compilation, Alignments & Status' :
                                  activeTab === 'manage-items' ? `Catalog · ${stats.total} Items` :
                                  activeTab === 'po-generator' ? 'AI Purchase Order Processor' :
                                  `Awaiting Fulfillment · ${stats.pending} Items`}
@@ -850,19 +848,13 @@ export default function ProcurementDashboard() {
                             />
                         )}
                         {activeTab === 'tasks' && <ProcurementTasksTab departmentName="Procurement" />}
-                        {activeTab === 'urgency-tracker' && (
-                            <PaymentUrgencyTrackerTab
-                                user={user}
-                                organizationId={userOrgId || user?.user_metadata?.organization_id}
-                                isSuperAdmin={isAdmin}
-                            />
-                        )}
-                        {activeTab === 'task-sheet' && (
-                            <PaymentUrgencyTrackerTab
-                                user={user}
-                                organizationId={userOrgId || user?.user_metadata?.organization_id}
-                                isSuperAdmin={isAdmin}
-                            />
+                        {activeTab === 'payment-tracker' && (
+                            <div className="space-y-8">
+                                <FinanceOverview organizationId={userOrgId || user?.user_metadata?.organization_id} />
+                                <div id="payment-tracker" className="scroll-mt-24">
+                                    <AccountsDashboard organizationId={userOrgId || user?.user_metadata?.organization_id} />
+                                </div>
+                            </div>
                         )}
                         {activeTab === 'history' && <HistoryTab requests={requests} user={user} />}
                         {activeTab === 'vendor_tickets' && <ProcurementVendorTicketsTab />}
