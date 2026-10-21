@@ -97,7 +97,7 @@ export async function runBrain(message: string, ctx: BrainContext, deps: BrainDe
     // 4. decide — plain code, owned by whichever domain the intent belongs to
     const owner = domains.find(d => d.intents.some(i => i.name === interpretation!.intent));
     if (!owner) return unavailable();
-    const decision = owner.decide(interpretation, ctx, policy);
+    const decision = owner.decide(interpretation, { ...ctx, message: text }, policy);
 
     // 5. reply (the caller may ask to do this later: e.g. only after a confirmed change has really been made)
     if (deps.skipReply) return { status: 'ok', interpretation, decision, reply: null, trace };

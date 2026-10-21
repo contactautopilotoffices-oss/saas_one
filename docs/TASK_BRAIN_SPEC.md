@@ -294,3 +294,21 @@ Neeti wanted to say why when she gives a task ("share the final headcount by Fri
 - **Evaluation**: `test_brain_notes.ts` sections 8 and 9; `test_handover_phase1.ts` checks the moved "Give to" rule.
   Related brain tests pass. **L2** knowingly open: scripted model only; the window is type checked and linted, not
   covered by an automated browser test.
+
+### Changes 2026-10-21 (c): add a task in one step; "what is my team doing?" lists every task
+
+Sher wrote "add task follow up regarding Checklist" and got two questions ("your list or someone?", then "is that right?").
+
+- **Nobody named → their own list** `[BAA p.112]`: the AI is told to use "me" when no one is named. Code also treats an
+  unknown person as "me", unless the message says to assign it ("assign", "delegate", "someone else", "ko de", ...): then it
+  asks who (`CLARIFY no_recipient`), never guessing.
+- **Clear creates are saved straight away with undo** `[BAA p.115]` (owner decision, also for other people:
+  "assign Vidya ..."): `ConfirmPolicy.confirmCreates = false` only while "One front door" is ON (it provides "Reply undo
+  within 10 minutes"). Still asked first: anyone named who may not get the work (the preview says so), and everything while
+  the switch is OFF. Permission is re-checked by `WorkspaceService.assign` either way.
+- **Team list vs team progress**: `view_tasks` scope "team" gets `team_list`. "What is my team doing?" → every task of each
+  person (today and carried forward, status, "from 19 Oct") via `buildTeamTaskList`; "how is my team doing?" → counts
+  (`buildTeamReport`, unchanged). Both now read each person's numbered list, so carried-forward work is included.
+- **Long replies**: split between lines into messages of at most 3,800 characters (`splitLongReply`), in order.
+- **Evaluation**: `task-manager/tests/test_brain_direct_add.ts` (Sher's exact message, 27 checks); `test_brain_hr_requests.ts`
+  section 5 updated to the new rule; all brain tests pass. **L2** knowingly open: scripted model only.

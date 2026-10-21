@@ -145,3 +145,22 @@ export function isBlockValue(value: string): boolean {
     const v = String(value ?? '').trim();
     return v.includes('\n') || /^(?:[•\-]\s|\d+\.\s|✅|⚠️|🔄|📋|Reply\b|\*Reply)/u.test(v);
 }
+
+/** Owner 2026-10-21: WhatsApp's limit is 4,096 characters a message; anything longer is split between lines (or, for one very
+ *  long line, between words) into parts of at most `max` characters, in order. Short text comes back as one part. */
+export function splitLongReply(text: string, max = 3800): string[] {
+    const t = String(text ?? '');
+    if (t.length <= max) return [t];
+    const parts: string[] = [];
+    let cur = '';
+    const push = () => { if (cur.trim()) parts.push(cur.replace(/\s+$/, '')); cur = ''; };
+    for (const line of t.split('\n')) {
+        const pieces = line.length <= max ? [line] : (line.match(new RegExp(`.{1,${max}}(?:\\s|$)|.{1,${max}}`, 'g')) ?? [line]);
+        for (const piece of pieces) {
+            if (cur && cur.length + 1 + piece.length > max) push();
+            cur = cur ? `${cur}\n${piece}` : piece;
+        }
+    }
+    push();
+    return parts;
+}

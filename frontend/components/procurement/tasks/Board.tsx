@@ -7,8 +7,8 @@ import {
     type CollisionDetection, type DragEndEvent, type DragStartEvent,
 } from '@dnd-kit/core';
 import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from 'framer-motion';
-import { ArrowRightLeft, Check, Clock, Eye, GripVertical, Loader2, Lock, MoveRight, Plus, Trash2, Unlock, UserCheck } from 'lucide-react';
-import { COLUMNS, ColumnDef, EASE, Status, WAssignable, WTask, avatarGradient, initials, shortDate, shortDateTime } from './types';
+import { Check, Eye, Loader2, Lock, MoveRight, Plus, StickyNote, Trash2, Unlock } from 'lucide-react';
+import { COLUMNS, ColumnDef, EASE, Status, WAssignable, WTask, avatarGradient, initials, shortDate } from './types';
 import TaskView from './TaskView';
 import PendingOn from './PendingOn';
 
@@ -26,14 +26,17 @@ interface GiveProps {
 export interface PendingProps { people: Array<{ userId: string; name: string }>; onFlag: (taskId: string, userId: string, name: string) => Promise<boolean> }
 
 /**
- * How a card looks (owner 2026-10-19): carried forward = amber, handed over = sky, given by someone = violet.
- * Carried forward wins, because old work must never be missed; the other badges still show on it.
+ * How a card looks (owner 2026-10-19, simplified 2026-10-21): white card, a thin coloured strip on the left
+ * (carried forward = amber, handed over = sky, given by someone = violet). Carried forward wins.
  */
 function cardTone(task: WTask): { box: string; bar: string | null } {
-    if (task.isCarriedForward) return { box: 'border-amber-300/70 bg-amber-50/70 dark:border-amber-700/40 dark:bg-amber-950/20', bar: 'bg-amber-400' };
-    if (task.handedOverByName) return { box: 'border-sky-300/70 bg-sky-50/70 dark:border-sky-700/40 dark:bg-sky-950/20', bar: 'bg-sky-400' };
-    if (task.assignedByName) return { box: 'border-violet-300/70 bg-violet-50/70 dark:border-violet-700/40 dark:bg-violet-950/20', bar: 'bg-violet-400' };
-    return { box: 'border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900', bar: null };
+    const box = task.status === 'completed'
+        ? 'border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/60'
+        : 'border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900';
+    if (task.isCarriedForward) return { box, bar: 'bg-amber-400' };
+    if (task.handedOverByName) return { box, bar: 'bg-sky-400' };
+    if (task.assignedByName) return { box, bar: 'bg-violet-400' };
+    return { box, bar: null };
 }
 
 /** The pointer decides the target column; if it is between columns, fall back to overlap. */
@@ -42,117 +45,125 @@ const collision: CollisionDetection = args => {
     return hits.length > 0 ? hits : rectIntersection(args);
 };
 
+/** The notes on a card: "Remark: ..." lines without the prefix; the hand-over trail ("Given by ...") stays in the window. */
+function cardNotes(description: string | null): string {
+    return String(description || '').split('\n').map(l => l.trim())
+        .filter(l => l && !l.startsWith('Given by '))
+        .map(l => l.replace(/^Remark:\s*/i, '')).join(' · ');
+}
+
+const firstName = (name: string) => name.split(' ')[0];
+
+/** Stops a press on a small button from starting a drag of the card. */
+const noDrag = {
+    onMouseDown: (e: React.SyntheticEvent) => e.stopPropagation(),
+    onTouchStart: (e: React.SyntheticEvent) => e.stopPropagation(),
+    onPointerDown: (e: React.SyntheticEvent) => e.stopPropagation(),
+    onKeyDown: (e: React.SyntheticEvent) => e.stopPropagation(),
+};
+
 /* ── The card's look. Used for the real card AND the ghost that follows the cursor. ─────────────── */
 function CardBody({ task, meId, floating = false, pending, onDelete, onLock, onView }: { task: WTask; meId: string; floating?: boolean; pending?: PendingProps; onDelete?: (id: string) => void; onLock?: (id: string, locked: boolean) => void; onView?: (id: string) => void }) {
     const done = task.status === 'completed';
-    const carried = task.isCarriedForward;
     const mine = task.ownerId === meId;
     const tone = cardTone(task);
     const canDelete = task.canDelete !== false;
+    const notes = cardNotes(task.description);
+    const from = task.handedOverByName || task.assignedByName;
+    const showLock = !floating && !!onLock && task.canLock;
+    const showDelete = !floating && !!onDelete && canDelete;
     const showView = !floating && !!onView;
     const showPending = !floating && !!pending && mine && !done && pending.people.length > 0;
+    const hasChips = !mine || task.locked || !!task.meta || task.isCarriedForward || !!from;
 
     return (
         <div
             className={[
-                'relative overflow-hidden rounded-2xl border p-3.5 transition-shadow duration-200',
+                'relative overflow-hidden rounded-xl border py-3 pl-3.5 pr-3 transition-shadow duration-200',
                 tone.box,
                 floating ? 'shadow-2xl shadow-indigo-500/20 ring-1 ring-indigo-400/40' : 'shadow-xs hover:shadow-md',
                 task.canChange ? 'cursor-grab active:cursor-grabbing' : 'cursor-default',
             ].join(' ')}
         >
-            {tone.bar && <span className={`absolute inset-y-0 left-0 w-1 ${tone.bar}`} aria-hidden="true" />}
+            {tone.bar && <span className={`absolute inset-y-0 left-0 w-[3px] ${tone.bar}`} aria-hidden="true" />}
 
-            <div className="flex items-start gap-2">
-                <p className={`min-w-0 flex-1 text-[13px] font-bold leading-snug break-words ${done ? 'text-zinc-400 line-through decoration-zinc-300 dark:decoration-zinc-600' : 'text-zinc-900 dark:text-zinc-100'}`}>
-                    {task.title}
-                </p>
-                {done ? (
-                    <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white"><Check className="h-3 w-3" strokeWidth={3} /></span>
-                ) : task.canChange ? (
-                    <GripVertical className="mt-0.5 h-4 w-4 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
-                ) : null}
-                {!floating && onLock && task.canLock && (
-                    <button
-                        type="button" aria-pressed={!!task.locked} aria-label={task.locked ? `Unlock ${task.title}` : `Lock ${task.title}`}
-                        title={task.locked ? 'Locked: comes back every working day (Mon to Sat). Click to unlock.' : 'Lock: bring this task back every working day (Mon to Sat)'}
-                        onClick={e => { e.stopPropagation(); onLock(task.id, !task.locked); }}
-                        onMouseDown={e => e.stopPropagation()} onTouchStart={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}
-                        className={`-mt-0.5 shrink-0 cursor-pointer rounded-lg p-1 transition-colors ${task.locked ? 'bg-indigo-50 text-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-300' : 'text-zinc-300 hover:bg-indigo-50 hover:text-indigo-600 dark:text-zinc-600 dark:hover:bg-indigo-950/30'}`}
-                    >{task.locked ? <Lock className="h-3.5 w-3.5" /> : <Unlock className="h-3.5 w-3.5" />}</button>
-                )}
-                {!floating && onDelete && canDelete && (
-                    <button
-                        type="button" aria-label={`Delete ${task.title}`} disabled={!!task.locked}
-                        title={task.locked ? 'Unlock this task to delete it' : 'Delete task'}
-                        onClick={e => { e.stopPropagation(); if (!task.locked) onDelete(task.id); }}
-                        onMouseDown={e => e.stopPropagation()} onTouchStart={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}
-                        className="-mr-1 -mt-0.5 shrink-0 cursor-pointer rounded-lg p-1 text-zinc-300 transition-colors hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-zinc-300 dark:text-zinc-600 dark:hover:bg-rose-950/30"
-                    ><Trash2 className="h-3.5 w-3.5" /></button>
-                )}
-            </div>
+            {/* Title: the full width, breaks only between words (a long link may still wrap so it never spills out) */}
+            <p className={`text-[15px] font-bold leading-snug [overflow-wrap:break-word] ${done ? 'text-zinc-500 dark:text-zinc-400' : 'text-zinc-900 dark:text-zinc-50'}`}>
+                {done && <Check className="-mt-0.5 mr-1.5 inline h-4 w-4 text-emerald-600" strokeWidth={3} aria-label="Done" />}
+                {task.title}
+            </p>
 
-            {task.description && (
-                <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400 break-words">{task.description}</p>
-            )}
-
-            <div className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
-                <span className="flex items-center gap-1.5 text-[11px] font-bold text-zinc-600 dark:text-zinc-300">
-                    <span className={`flex h-5 w-5 items-center justify-center rounded-full bg-gradient-to-br ${avatarGradient(task.ownerName)} text-[8px] font-black text-white`}>
-                        {initials(task.ownerName)}
-                    </span>
-                    {mine ? 'You' : task.ownerName.split(' ')[0]}
-                </span>
-                {task.locked && (
-                    <span className="rounded-md bg-indigo-50 px-1.5 py-0.5 text-[10px] font-black text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">Daily</span>
-                )}
-                {task.meta && (
-                    <>
-                        <span className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">from {task.meta.from}</span>
-                        <span className="rounded-md bg-indigo-50 px-1.5 py-0.5 text-[10px] font-black text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">{task.meta.department}</span>
-                    </>
-                )}
-                {carried && (
-                    <span className="flex items-center gap-1 rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-black text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
-                        <Clock className="h-3 w-3" /> Carried from {shortDate(task.assignedDate)}
-                    </span>
-                )}
-                {task.handedOverByName ? (
-                    <span className="flex items-center gap-1 rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-black text-sky-800 dark:bg-sky-900/40 dark:text-sky-300">
-                        <ArrowRightLeft className="h-3 w-3" /> Handed over by {task.handedOverByName}
-                    </span>
-                ) : task.assignedByName ? (
-                    <span className="flex items-center gap-1 rounded-md bg-violet-100 px-1.5 py-0.5 text-[10px] font-black text-violet-800 dark:bg-violet-900/40 dark:text-violet-300">
-                        <UserCheck className="h-3 w-3" /> Assigned by {task.assignedByName}
-                    </span>
-                ) : null}
-            </div>
-
-            {(task.createdAt || task.completedAt) && (
-                <p className="mt-2 text-[10px] font-semibold text-zinc-400 dark:text-zinc-500">
-                    {task.createdAt && <>Assigned {shortDateTime(task.createdAt)}</>}
-                    {done && task.completedAt && <>{task.createdAt ? ' · ' : ''}Done {shortDateTime(task.completedAt)}</>}
+            {notes && (
+                <p className="mt-1 flex gap-1.5 text-[13px] leading-snug text-zinc-600 dark:text-zinc-300">
+                    <StickyNote className="mt-[2px] h-3.5 w-3.5 shrink-0 text-zinc-400" aria-hidden="true" />
+                    <span className="line-clamp-2 min-w-0 [overflow-wrap:break-word]">{notes}</span>
                 </p>
             )}
 
-            {(showView || showPending) && (
-                <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-zinc-100 pt-2.5 dark:border-zinc-800">
+            {hasChips && (
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    {!mine && (
+                        <span className="flex items-center gap-1.5 text-xs font-bold text-zinc-700 dark:text-zinc-200">
+                            <span className={`flex h-5 w-5 items-center justify-center rounded-full bg-gradient-to-br ${avatarGradient(task.ownerName)} text-[8px] font-black text-white`}>
+                                {initials(task.ownerName)}
+                            </span>
+                            {firstName(task.ownerName)}
+                        </span>
+                    )}
+                    {task.isCarriedForward && (
+                        <span title={`Carried forward from ${shortDate(task.assignedDate)}`} className="whitespace-nowrap rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-900 dark:bg-amber-900/40 dark:text-amber-200">From {shortDate(task.assignedDate)}</span>
+                    )}
+                    {from && (
+                        <span title={task.handedOverByName ? `Handed over by ${from}` : `Assigned by ${from}`} className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-bold ${task.handedOverByName ? 'bg-sky-100 text-sky-900 dark:bg-sky-900/40 dark:text-sky-200' : 'bg-violet-100 text-violet-900 dark:bg-violet-900/40 dark:text-violet-200'}`}>From {firstName(from)}</span>
+                    )}
+                    {task.locked && (
+                        <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-bold text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-200">Daily</span>
+                    )}
+                    {task.meta && (
+                        <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">{task.meta.department} · {task.meta.from}</span>
+                    )}
+                </div>
+            )}
+
+            {/* Bottom row: View / Assign, Pending on..., then the small lock and delete buttons. Wraps on narrow cards. */}
+            {(showView || showPending || showLock || showDelete) && (
+                <div className="mt-2.5 flex flex-wrap items-center gap-x-1 gap-y-1 border-t border-zinc-100 pt-2 dark:border-zinc-800">
                     {/* Owner 2026-10-21: only this button opens the task window; the card itself still drags. */}
                     {showView && (
                         <button
                             type="button" aria-label={`View or assign ${task.title}`}
                             onClick={e => { e.stopPropagation(); onView!(task.id); }}
-                            onMouseDown={e => e.stopPropagation()} onTouchStart={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}
-                            className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-[11px] font-black text-indigo-700 transition-colors hover:bg-indigo-100 dark:border-indigo-900/60 dark:bg-indigo-950/40 dark:text-indigo-300 dark:hover:bg-indigo-950/70"
-                        ><Eye className="h-3.5 w-3.5" aria-hidden="true" /> View / Assign</button>
+                            {...noDrag}
+                            className="-ml-1.5 flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-lg px-1.5 py-1 text-[13px] font-bold text-indigo-700 transition-colors hover:bg-indigo-50 dark:text-indigo-300 dark:hover:bg-indigo-950/40"
+                        ><Eye className="h-4 w-4" aria-hidden="true" />{done ? 'View' : 'View / Assign'}</button>
                     )}
                     {showPending && (
-                    <PendingOn
-                        taskTitle={task.title}
-                        people={pending!.people}
-                        onFlag={(userId, name) => pending!.onFlag(task.id, userId, name)}
-                    />
+                        <PendingOn
+                            taskTitle={task.title}
+                            people={pending!.people}
+                            onFlag={(userId, name) => pending!.onFlag(task.id, userId, name)}
+                        />
                     )}
+                    <span className="ml-auto flex items-center">
+                        {showLock && (
+                            <button
+                                type="button" aria-pressed={!!task.locked} aria-label={task.locked ? `Unlock ${task.title}` : `Lock ${task.title}`}
+                                title={task.locked ? 'Locked: comes back every working day (Mon to Sat). Click to unlock.' : 'Lock: bring this task back every working day (Mon to Sat)'}
+                                onClick={e => { e.stopPropagation(); onLock!(task.id, !task.locked); }}
+                                {...noDrag}
+                                className={`cursor-pointer rounded-lg p-1.5 transition-colors ${task.locked ? 'bg-indigo-50 text-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-300' : 'text-zinc-400 hover:bg-indigo-50 hover:text-indigo-600 dark:text-zinc-500 dark:hover:bg-indigo-950/30'}`}
+                            >{task.locked ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}</button>
+                        )}
+                        {showDelete && (
+                            <button
+                                type="button" aria-label={`Delete ${task.title}`} disabled={!!task.locked}
+                                title={task.locked ? 'Unlock this task to delete it' : 'Delete task'}
+                                onClick={e => { e.stopPropagation(); if (!task.locked) onDelete!(task.id); }}
+                                {...noDrag}
+                                className="cursor-pointer rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-zinc-400 dark:text-zinc-500 dark:hover:bg-rose-950/30"
+                            ><Trash2 className="h-4 w-4" /></button>
+                        )}
+                    </span>
                 </div>
             )}
         </div>
@@ -235,11 +246,11 @@ function Column({ def, tasks, meId, onMove, onQuickAdd, onDelete, onLock, reduce
     return (
         <section
             aria-label={def.label}
-            className="flex min-h-[240px] max-h-[70vh] flex-col rounded-3xl border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-800 dark:bg-zinc-900/40"
+            className="flex min-h-[240px] max-h-[75dvh] flex-col rounded-2xl border border-zinc-200 bg-zinc-50/80 p-2.5 sm:p-3 @[600px]:max-h-[calc(100dvh-180px)] dark:border-zinc-800 dark:bg-zinc-900/40"
         >
             <header className="mb-3 flex items-center gap-2 px-1">
                 <span className={`h-2.5 w-2.5 rounded-full ${def.dot}`} />
-                <h3 className="text-xs font-black tracking-wide text-zinc-800 dark:text-zinc-100">{def.label}</h3>
+                <h3 className="text-sm font-black text-zinc-800 dark:text-zinc-100">{def.label}</h3>
                 <span className={`ml-auto rounded-full px-2 py-0.5 text-[11px] font-black tabular-nums ${def.pill}`}>{tasks.length}</span>
             </header>
 
@@ -309,9 +320,12 @@ export default function Board({ tasks, meId, onMove, onQuickAdd, onDelete, onLoc
             onDragEnd={onDragEnd}
             onDragCancel={() => setActiveId(null)}
         >
+            {/* Owner 2026-10-21: the layout follows the space the board really has (not the window), so cards never get too
+                narrow: 1 column below 600px, 2 below 940px, 3 above. */}
+            <div className="@container">
             <LayoutGroup id="procurement-board">
                 <motion.div
-                    className="grid grid-cols-1 gap-4 md:grid-cols-3"
+                    className="grid grid-cols-1 gap-3 @[600px]:grid-cols-2 @[600px]:gap-4 @[940px]:grid-cols-3"
                     initial={reduce ? false : 'hidden'}
                     animate="show"
                     variants={{ show: { transition: { staggerChildren: 0.09, delayChildren: 0.1 } } }}
@@ -326,6 +340,7 @@ export default function Board({ tasks, meId, onMove, onQuickAdd, onDelete, onLoc
                     ))}
                 </motion.div>
             </LayoutGroup>
+            </div>
 
             <DragOverlay dropAnimation={{ duration: 240, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' }}>
                 {active ? <div className="rotate-[1.5deg] scale-[1.03]"><CardBody task={active} meId={meId} floating /></div> : null}

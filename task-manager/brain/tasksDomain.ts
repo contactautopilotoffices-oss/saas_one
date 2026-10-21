@@ -27,7 +27,7 @@ const INTENT_SPECS: IntentSpec[] = [
     { name: 'progress_update', description: 'reports PROGRESS short of finishing, or a status on tasks they were sent: "working on it", "half done", "stuck waiting for the vendor", or "done"/"done all" in reply to someone\'s request.',
         slots: '{"state":"working"|"partly_done"|"blocked"|"done_all"|"done_some"|"other","which":{"all":boolean,"numbers":[int],"hints":[string]},"note":string|null}' },
     { name: 'create_tasks', description: 'wants to ADD one or more tasks, for themself ("remind me to…") or for someone else ("assign Lohit a task about…"). Split distinct jobs into separate tasks.',
-        slots: '{"assignee":"me"|<person name>|"?","assignees":[<person name>],"tasks":[{"title":string,"details":string|null,"assignees":[<person name>]}],"date":"YYYY-MM-DD"|null,"group":{"whose":"team"|"department"|"everyone","department":string|null,"except":[<person name>]}|null}  — titles are short (max 12 words) and use the person\'s own words; never invent work; date only if the message gives one. When the work is for a GROUP ("everyone", "my team", "all of Tech", "sabko", "everyone except Harsh"), fill "group" and set "assignee" to "group"; NEVER list the names yourself. SEVERAL NAMED PEOPLE for the same work ("assign Parab and Neeti to conduct induction", "Sanil aur Neeti dono ko"): put every name in "assignees" (each gets the task); this is clear, never an ambiguity. A LIST where each line names its own person ("1. meeting with vendors - neeti" then "2. review quotation - sanil"): one task per line, with that line\'s person in the task\'s own "assignees". A message that only NAMES a piece of work, does not say who it is for, and is not a question ("event feedback for navratri event"): intent create_tasks with "assignee":"?" (the system then asks whether to add it to their own list or assign it). "details" ONLY when the message marks a note with the word "note" or "remark", with or without ":" ("vendor meeting, note: call before 3pm" or "onboarding note Satish" → details "call before 3pm" / "Satish"), OR in a NUMBERED list a detail is written on its own line under a task ("2. Diwali poll" then "Pending · from Team" → title "Diwali poll", details "from Team"; leave out status words like "Pending"); otherwise details is null and every word stays in the task title(s). A LIST of tasks (several lines, or items separated by commas) is ONE TASK PER LINE OR ITEM: "Add tasks / New lineups Ops, / Bangalore Drive. / Technical exe, Ops manager, AFM" → five tasks "New lineups Ops", "Bangalore Drive", "Technical exe", "Ops manager", "AFM". One sentence with a comma inside it ("call the vendor, ask for the quote") stays one task. "wants_note": true when they ask to add a note ("add note", "with a note") but give no note text ("assign Sanil the vendor follow-up, add note").' },
+        slots: '{"assignee":"me"|<person name>|"?","assignees":[<person name>],"tasks":[{"title":string,"details":string|null,"assignees":[<person name>]}],"date":"YYYY-MM-DD"|null,"group":{"whose":"team"|"department"|"everyone","department":string|null,"except":[<person name>]}|null}  — titles are short (max 12 words) and use the person\'s own words; never invent work; date only if the message gives one. When the work is for a GROUP ("everyone", "my team", "all of Tech", "sabko", "everyone except Harsh"), fill "group" and set "assignee" to "group"; NEVER list the names yourself. SEVERAL NAMED PEOPLE for the same work ("assign Parab and Neeti to conduct induction", "Sanil aur Neeti dono ko"): put every name in "assignees" (each gets the task); this is clear, never an ambiguity. A LIST where each line names its own person ("1. meeting with vendors - neeti" then "2. review quotation - sanil"): one task per line, with that line\'s person in the task\'s own "assignees". A message that asks to add a task or only NAMES a piece of work, without naming anyone, and is not a question ("add task follow up regarding checklist", "event feedback for navratri event"): intent create_tasks with "assignee":"me" (it goes on their own list). Use "assignee":"?" ONLY when they say to assign it to someone but do not say who ("assign a task about the audit"). "details" ONLY when the message marks a note with the word "note" or "remark", with or without ":" ("vendor meeting, note: call before 3pm" or "onboarding note Satish" → details "call before 3pm" / "Satish"), OR in a NUMBERED list a detail is written on its own line under a task ("2. Diwali poll" then "Pending · from Team" → title "Diwali poll", details "from Team"; leave out status words like "Pending"); otherwise details is null and every word stays in the task title(s). A LIST of tasks (several lines, or items separated by commas) is ONE TASK PER LINE OR ITEM: "Add tasks / New lineups Ops, / Bangalore Drive. / Technical exe, Ops manager, AFM" → five tasks "New lineups Ops", "Bangalore Drive", "Technical exe", "Ops manager", "AFM". One sentence with a comma inside it ("call the vendor, ask for the quote") stays one task. "wants_note": true when they ask to add a note ("add note", "with a note") but give no note text ("assign Sanil the vendor follow-up, add note").' },
     { name: 'hand_over_task', description: 'wants to GIVE one of their own existing tasks to a teammate ("give task 2 to Vidya", "pass the carpet one to Harsh", "give task 2 to Vidya, note: call the vendor first").',
         slots: '{"which":{"all":false,"numbers":[int],"hints":[string]},"to":<person name>|null,"note":string|null,"wants_note":boolean}  — "note" is a note to send with it, in their words, without the person\'s name; "wants_note" is true when they ask to add a note ("add note", "with a note") but give no note text.' },
     { name: 'answer_pending', description: 'is ANSWERING a question the bot just asked (only possible when a question is pending): "yes", "no", "the second one", "make it tomorrow instead".',
@@ -53,6 +53,8 @@ const CHANGE_INTENTS: ReadonlySet<Intent> = new Set(['complete_tasks', 'progress
 const SCOPES: readonly ViewScope[] = ['self', 'person', 'department', 'org', 'pending_overview'];
 const STATES: readonly ProgressState[] = ['working', 'partly_done', 'blocked', 'done_all', 'done_some', 'other'];
 const SELF_WORDS = new Set(['me', 'myself', 'self', 'i', 'my self', 'my own']);
+/** Owner 2026-10-21: words that mean "give this to someone else" (then a missing name is asked for, never guessed as "me"). */
+const ASKS_TO_ASSIGN = /\b(?:assign|assigned|delegate|for someone|someone else|ko de|ko do|de do|dedo)\b/i;
 const EVERYONE_WORDS = new Set(['everyone', 'everybody', 'all', 'all of them', 'the team', 'team', 'someone', 'somebody', 'anyone', 'anybody', 'whoever']);
 
 // ── strict shape checks ─────────────────────────────────────────────────────────────────────────
@@ -433,9 +435,10 @@ function decideOne(interp: Interpretation, ctx: BrainContext, policy: ConfirmPol
                 if (!g.ok) return g.decision;
                 const date = slots.date || ctx.today;
                 const actions: Action[] = g.people.map(p => ({ type: 'create_tasks', assigneeId: p.id, tasks: slots.tasks, date }));
-                return actions.length === 1 ? { outcome: 'CONFIRM', action: actions[0] } : { outcome: 'CONFIRM', action: { type: 'batch', actions, unclear: [] } };
+                const outcome = policy.confirmCreates === false ? 'ACT' : 'CONFIRM';    // owner 2026-10-21: direct, with undo
+                return actions.length === 1 ? { outcome, action: actions[0] } : { outcome, action: { type: 'batch', actions, unclear: [] } };
             }
-            return decideCreate(slots, ctx);
+            return decideCreate(slots, ctx, policy);
         }
 
         case 'hand_over_task': {
@@ -496,12 +499,16 @@ function decideOne(interp: Interpretation, ctx: BrainContext, policy: ConfirmPol
  * Every name is checked like any name; a person the sender may not give work to is left out and said so in the preview
  * (never silently). Same person + same day → one "add these tasks" (one list, one alert).
  */
-function decideCreate(slots: Extract<Slots, { intent: 'create_tasks' }>, ctx: BrainContext): Decision {
+function decideCreate(slots: Extract<Slots, { intent: 'create_tasks' }>, ctx: BrainContext, policy: ConfirmPolicy): Decision {
     const date = slots.date || ctx.today;
-    const top = slots.assignees?.length ? slots.assignees : [slots.assignee];
-    // Nobody named for some task, and no one for the whole message → ask: their own list, or someone else?
+    let top = slots.assignees?.length ? slots.assignees : [slots.assignee];
+    // Owner 2026-10-21 (Sher: "add task follow up regarding Checklist" got two questions): nobody named → their OWN list.
+    // Only when they say to assign it to someone without saying who ("assign a task about the audit") → ask who.
     const unknownWho = (names: string[]) => !names.length || names.every(n => { const w = norm(n); return w === '?' || w === '' || w === 'unknown'; });
-    if (slots.tasks.some(t => !(t.assignees?.length) && unknownWho(top))) return clarify('add_or_assign', [], slots.tasks.map(t => t.title).join(', '));
+    if (slots.tasks.some(t => !(t.assignees?.length) && unknownWho(top))) {
+        if (ASKS_TO_ASSIGN.test(ctx.message ?? '')) return clarify('no_recipient');
+        if (unknownWho(top)) top = ['me'];
+    }
 
     const people = new Map<string, BrainPerson>();      // resolved once per name
     const refused: string[] = [];
@@ -529,8 +536,11 @@ function decideCreate(slots: Extract<Slots, { intent: 'create_tasks' }>, ctx: Br
     }
     if (!actions.length) return { outcome: 'REFUSE', reason: 'not_allowed_to_assign', detail: refused.join(', ') };
     const unclear = refused.map(n => `you can't assign tasks to ${n}`);
-    if (actions.length === 1 && !unclear.length) return { outcome: 'CONFIRM', action: actions[0] };
-    return { outcome: 'CONFIRM', action: { type: 'batch', actions, unclear } };
+    // Owner 2026-10-21: a clear request is saved straight away with undo (only while "One front door" is ON). When someone
+    // named could not be given the work, the preview still asks first, so nobody is silently left out.
+    const outcome = policy.confirmCreates === false && !unclear.length ? 'ACT' : 'CONFIRM';
+    if (actions.length === 1 && !unclear.length) return { outcome, action: actions[0] };
+    return { outcome, action: { type: 'batch', actions, unclear } };
 }
 
 /**
@@ -1075,15 +1085,15 @@ export const tasksDomain: DomainHandler = {
  */
 const TEAM_VIEW_SPEC: IntentSpec = {
     name: 'view_tasks',
-    description: 'wants to SEE tasks or progress: their own ("what do I have today", "anything pending?", "what are my carry forward tasks?"), another person\'s, their TEAM\'s ("how is my team doing", "what\'s pending in my team", "anything overdue in my team?"), a department\'s or the whole company\'s — for TODAY only. Any other day or range ("tomorrow", "yesterday", "this week", "last month") is "find_tasks".',
-    slots: '{"scope":"self"|"person"|"team"|"department"|"org"|"pending_overview","person":string|null,"department":string|null,"carried_forward_only":boolean}  — carried_forward_only = true only when they ask for their OWN tasks carried over / left from earlier days.',
+    description: 'wants to SEE tasks or progress: their own ("what do I have today", "anything pending?", "what are my carry forward tasks?"), another person\'s, their TEAM\'s ("how is my team doing", "what\'s pending in my team", "anything overdue in my team?", "what is my team doing?", "show my team\'s tasks"), a department\'s or the whole company\'s — for TODAY only. Any other day or range ("tomorrow", "yesterday", "this week", "last month") is "find_tasks".',
+    slots: '{"scope":"self"|"person"|"team"|"department"|"org"|"pending_overview","person":string|null,"department":string|null,"carried_forward_only":boolean,"team_list":boolean}  — carried_forward_only = true only when they ask for their OWN tasks carried over / left from earlier days. team_list (scope "team" only) = true when they want to SEE THE TASKS themselves ("what is my team doing", "what are my team working on", "show my team\'s tasks", "list everyone\'s tasks"); false when they ask about PROGRESS or numbers ("how is my team doing", "team progress", "how many are pending in my team").',
 };
 
 export const tasksDomainWithTeam: DomainHandler = {
     ...tasksDomain,
     intents: INTENT_SPECS.map(s => (s.name === 'view_tasks' ? TEAM_VIEW_SPEC : s.name === 'find_tasks' ? { ...s, slots: s.slots.replace(findQuerySchema(false), findQuerySchema(true)) } : s)),
     validateSlots(intent, raw, ctx) {
-        if (intent === 'view_tasks' && raw.scope === 'team') return { intent, scope: 'team', person: null, department: null };
+        if (intent === 'view_tasks' && raw.scope === 'team') return { intent, scope: 'team', person: null, department: null, ...(raw.team_list === true ? { teamList: true } : {}) };
         if (intent === 'find_tasks') { const query = validateQuery(raw); return query ? { intent, query } : null; }
         return validateSlots(intent, raw, ctx);
     },
@@ -1091,7 +1101,7 @@ export const tasksDomainWithTeam: DomainHandler = {
         const s = interp.slots;
         if (s.intent === 'view_tasks' && s.scope === 'team') {
             if (!ctx.assignableIds.length) return { outcome: 'REFUSE', reason: 'not_allowed_to_view', detail: null };
-            return { outcome: 'ACT', action: { type: 'view_tasks', scope: 'team', personId: null, department: null } };
+            return { outcome: 'ACT', action: { type: 'view_tasks', scope: 'team', personId: null, department: null, ...(s.teamList ? { list: true } : {}) } };
         }
         return decide(interp, ctx, policy);
     },

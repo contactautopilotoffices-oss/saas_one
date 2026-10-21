@@ -189,7 +189,7 @@ async function run() {
     const view = read('frontend/components/procurement/tasks/TaskView.tsx');
     check('"Give to" shows only for tasks the server marked canHandOver, and the View button never on the floating drag copy',
         /actions\?\.onGive && task\.canHandOver/.test(view) && /const showView = !floating && !!onView/.test(board) && /<TaskView[\s\S]{0,300}actions=\{give \?/.test(board));
-    check('clicks on "View / Assign" cannot start a drag', /onPointerDown=\{e => e\.stopPropagation\(\)\}/.test(board));
+    check('clicks on "View / Assign" cannot start a drag', /onPointerDown: \(e: React\.SyntheticEvent\) => e\.stopPropagation\(\)/.test(board) && /onView!\(task\.id\); \}\}\s*\{\.\.\.noDrag\}/.test(board));
     const giveTo = read('frontend/components/procurement/tasks/GiveTo.tsx');
     check('clicks inside "Give to…" cannot start a drag, and it asks for confirmation before moving', /onPointerDown=\{stop\}/.test(giveTo) && /onKeyDown=\{stop\}/.test(giveTo) && /Give this task to/.test(giveTo));
 
