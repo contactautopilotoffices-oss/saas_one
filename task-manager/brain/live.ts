@@ -5,14 +5,14 @@ import type { ExecutionResult } from './domain';
 import { ExecIO, executeAction, needsExecution } from './execute';
 import { BrainDeps, BrainResult, composeBrainReply, runBrain } from './index';
 import { shadowDetails } from './shadow';
-import { addDays, clip, isGrounded } from './text';
+import { addDays, clip, isGrounded, splitLongReply } from './text';
 import { FIND_MAX_ROWS, type FoundTask } from './findTasks';
 import { DEFAULT_CONFIRM_POLICY, DRAFT_TTL_MIN, type Action, type BrainContext, type ClarifyReason, type PendingState } from './types';
 import { AI_DOWN_HELP, ExactPlan, LastChange, UNDO_HINT, UndoIO, changeFromAction, normalizeChange, parseExactCommand, planExact, runUndo } from './frontDoor';
 import { isExplicitTaskCommand } from '@/backend/lib/whatsapp/interpreter/coordinator.mjs';
 import { tasksDomainWithTeam } from './tasksDomain';
 import { facilityDomain } from './facilityDomain';
-import { buildTeamReport } from './teamReport';
+import { buildTeamReport, buildTeamTaskList } from './teamReport';
 
 /**
  * The language brain — Phase 4: SMART CHAT, live.
@@ -316,7 +316,7 @@ export async function claimSmartChat(body: unknown, io?: LiveIO, opts: LiveOptio
         const teamReports = teamReportsSwitch;
         const brainIO = teamReports ? { ...real, brain: { ...real.brain, domains: [tasksDomainWithTeam, facilityDomain] } } : real;
         // Owner 2026-10-14: with "One front door" ON (it provides undo), marking one's own tasks done needs no "Reply YES".
-        const policy = { ...DEFAULT_CONFIRM_POLICY, ...(brainIO.brain.policy || {}), confirmCompletions: !frontDoor };
+        const policy = { ...DEFAULT_CONFIRM_POLICY, ...(brainIO.brain.policy || {}), confirmCompletions: !frontDoor, confirmCreates: !frontDoor };
         const result = await runBrain(cand.text, ctx, { ...brainIO.brain, policy, skipReply: true });
         if (result.status !== 'ok' || !result.decision || !result.interpretation) {
             await real.audit({ phoneMasked: cand.phone.replace(/\d(?=\d{4})/g, '•'), messageId: cand.messageId ?? null, live: true, status: 'ai_unavailable', fallback: !frontDoor || isExplicitTaskCommand(cand.text), ms: Date.now() - started }, employee).catch(() => undefined);
@@ -607,7 +607,7 @@ async function handle(t: Turn): Promise<void> {
                 const message = a.answer === 'pick' ? `${t.state.originalSummary}. Specifically: ${label}` : `${t.state.originalSummary}. Change of mind: ${a.instruction}`;
                 const waiting = t.state.relay ? await io.openPingPending(employee) : null;
                 const ctx2: BrainContext = { ...ctx, pending: waiting?.pending ?? null };
-                const again = await runBrain(message, ctx2, { ...io.brain, policy: { ...DEFAULT_CONFIRM_POLICY, ...(io.brain.policy || {}), confirmCompletions: !t.frontDoor }, skipReply: true });
+                const again = await runBrain(message, ctx2, { ...io.brain, policy: { ...DEFAULT_CONFIRM_POLICY, ...(io.brain.policy || {}), confirmCompletions: !t.frontDoor, confirmCreates: !t.frontDoor }, skipReply: true });
                 if (again.status === 'ok' && again.decision && again.interpretation && again.decision.outcome !== 'HANDOFF') {
                     return handle({ ...t, text: message, ctx: ctx2, result: again, state: { ...t.state, pending: null, action: null, pickOptions: [] }, depth: 1, relay: !!waiting, titles: waiting?.titles ?? {} });
                 }
@@ -709,7 +709,7 @@ export async function defaultLiveIO(): Promise<LiveIO> {
             const rows = await TaskDatabaseService.getDailyAssignments({ employeeId: personId, date: todayIST() });
             return rows.length ? rows.map((r, i) => `${i + 1}. ${r.title} (${STATUS[r.status] ?? r.status})`).join('\n') : 'No tasks today.';
         },
-        async readTeam(actorId) {
+        async readTeam(actorId, list) {
             // "My team" = the people this person may give work to — the same rule assigning uses, re-checked here.
             const actor = await TaskDatabaseService.getEmployeeById(actorId);
             if (!actor) return null;
@@ -719,8 +719,13 @@ export async function defaultLiveIO(): Promise<LiveIO> {
                 .filter(e => e.id !== actor.id && e.active !== false && !!e.department_id && active.has(e.department_id)).slice(0, 40);
             if (!team.length) return null;
             const date = todayIST();
-            const members = await Promise.all(team.map(async e => ({ name: e.name, tasks: await TaskDatabaseService.getDailyAssignments({ employeeId: e.id, date }) })));
-            return buildTeamReport(members);
+            // Owner 2026-10-21: each person's numbered list (today + carried forward, the same list they see), not today's only.
+            const members = await Promise.all(team.map(async e => ({
+                name: e.name,
+                tasks: (await TaskDatabaseService.getNumberedList({ employeeId: e.id, date, departmentId: e.department_id ?? null }))
+                    .map(r => ({ status: r.status, isCarriedForward: !!r.isCarriedForward, title: r.title, assignedDate: r.assigned_date })),
+            })));
+            return list ? buildTeamTaskList(members) : buildTeamReport(members);
         },
         async findTasks(actorId, q) {
             // Flexible "look up tasks": the permission rule is applied AGAIN here, at the moment of reading — your own tasks,
@@ -793,7 +798,9 @@ export async function defaultLiveIO(): Promise<LiveIO> {
         beginLearning: beginObservation,
         observeLearning: observeTurn,
         exec,
-        async reply(phone, text) { await TaskMessagingService.sendFreeformReply(phone, text); },
+        // Owner 2026-10-21: WhatsApp takes about 4,000 characters per message; a longer reply (a big team's task list) goes as
+        // a few messages, split between lines, in order.
+        async reply(phone, text) { for (const part of splitLongReply(text)) await TaskMessagingService.sendFreeformReply(phone, part); },
         async audit(details, employee) { await TaskDatabaseService.logAudit({ eventType: 'brain_live', actorId: employee.id, details }); },
         seenBefore: id => { const t = seen.get(id); return !!t && Date.now() - t < SEEN_TTL_MS; },
         markSeen: id => {

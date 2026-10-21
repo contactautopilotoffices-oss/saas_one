@@ -144,10 +144,14 @@ async function run() {
     await turn(w, 'haan kar do');
     check('→ saved for both', JSON.stringify(assigned(w)) === JSON.stringify(['Conduct induction→u2', 'Conduct induction→u6']), assigned(w));
 
-    console.log('\n5. Plain work with no "add task" → your list, or assign it?');
+    console.log('\n5. Plain work with nobody named → straight to their OWN list (owner 2026-10-21: no "your list or assign?")');
     w = mk();
     await turn(w, 'event feedback for navratri event');
-    check('the bot asks own list or assign, nothing saved, request kept', w.exec.length === 0 && w.state?.data.pending?.kind === 'draft' && /\?/.test(last(w)), { sent: w.sent, state: w.state?.data });
+    check('no question about whose list: it is for the sender', w.state?.data.action?.assigneeId === 'u1' && w.state?.data.pending?.kind !== 'draft', { sent: w.sent, state: w.state?.data });
+    console.log('   "assign" with nobody named → asks WHO, and keeps the request');
+    w = mk();
+    await turn(w, 'assign a task: event feedback for navratri event');
+    check('the bot asks who, nothing saved, request kept', w.exec.length === 0 && w.state?.data.pending?.kind === 'draft' && /\?/.test(last(w)), { sent: w.sent, state: w.state?.data });
     await turn(w, 'show my tasks');
     check('a side question is answered and the unfinished request is KEPT', w.state?.data.pending?.kind === 'draft' && /navratri/.test(w.state.data.pending.request), w.state?.data);
     await turn(w, 'assign it to suraj');
@@ -155,13 +159,13 @@ async function run() {
     await turn(w, 'haan kar do');
     check('→ saved for Suraj', JSON.stringify(assigned(w)) === JSON.stringify(['Event feedback for navratri event→u5']), assigned(w));
     w = mk();
-    await turn(w, 'event feedback for navratri event');
+    await turn(w, 'assign a task: event feedback for navratri event');
     await turn(w, 'for me');
     check('"for me" → on their own list', w.state?.data.action?.assigneeId === 'u1', w.state?.data.action);
 
     console.log('\n6. Dropping an unfinished request');
     w = mk();
-    await turn(w, 'event feedback for navratri event');
+    await turn(w, 'assign a task: event feedback for navratri event');
     await turn(w, 'rehne do');
     check('"rehne do" → nothing waiting, nothing saved', !w.state?.data?.pending && w.exec.length === 0, w.state);
 
