@@ -67,7 +67,7 @@ export class TaskGatewayExecutor {
         }
 
         if (decision.kind === 'task_complete_all' || decision.kind === 'task_complete') {
-            const tasks = await TaskDatabaseService.getNumberedList({ employeeId: employee.id, date });
+            const tasks = await TaskDatabaseService.getNumberedList({ employeeId: employee.id, date, departmentId: employee.department_id ?? null });
             if (tasks.length === 0) return run('tasks');
 
             let numbers: number[];
@@ -131,7 +131,7 @@ export class TaskGatewayExecutor {
     private static async assign(phone: string, employee: { id: string; name: string; department_name?: string | null }, targetName: string, title: string, shouldSend: boolean): Promise<CommandExecutionResult> {
         const isSelf = targetName === 'me';
         const everyone = await TaskDatabaseService.getAllEmployees();
-        const allowed = await PermissionService.visibleAndAssignable(employee as never, everyone);
+        const allowed = await PermissionService.assignableTo(employee as never, everyone);
 
         const matches = isSelf ? allowed.filter(e => e.id === employee.id) : matchByName(targetName, allowed);
 
@@ -269,7 +269,7 @@ export class TaskGatewayExecutor {
         const employee = await TaskDatabaseService.getEmployeeByPhone(params.phone);
         const doneNumbers = commands.map(c => /^done\s+(\d+)$/i.exec(c)?.[1]).filter(Boolean).map(Number);
         if (employee && doneNumbers.length > 0 && taskIds.length === doneNumbers.length) {
-            const tasks = await TaskDatabaseService.getNumberedList({ employeeId: employee.id, date });
+            const tasks = await TaskDatabaseService.getNumberedList({ employeeId: employee.id, date, departmentId: employee.department_id ?? null });
             const stale = doneNumbers.some((n, i) => tasks[n - 1]?.id !== taskIds[i]);
             if (stale) {
                 const reply = `Your task list has changed since I asked. Reply "tasks" to see it, then tell me again.`;

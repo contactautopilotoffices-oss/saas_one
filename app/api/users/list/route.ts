@@ -84,13 +84,20 @@ export async function GET(request: NextRequest) {
             return { is_approved: status === 'approved', approval_status: status };
         }
 
-        // Helper function to attach employee profiles to user records
-        async function attachEmployeeProfiles(usersList: any[]) {
-            if (!usersList || usersList.length === 0) return;
-            const { data: empProfiles } = await adminClient
+        // Starts the employee-profile read now (.then(r => r) runs the query; a query builder alone only runs when awaited).
+        function fetchEmployeeProfiles() {
+            return adminClient
                 .from('employee_profiles')
                 .select('user_id, email, designation, employee_code, department, phone')
-                .eq('organization_id', resolvedOrgId!);
+                .eq('organization_id', resolvedOrgId!)
+                .then(result => result);
+        }
+
+        // Helper function to attach employee profiles to user records. profilesRequest: the same read, already started
+        // alongside the other lookups (performance plan Phase 4).
+        async function attachEmployeeProfiles(usersList: any[], profilesRequest?: ReturnType<typeof fetchEmployeeProfiles> | null) {
+            if (!usersList || usersList.length === 0) return;
+            const { data: empProfiles } = await (profilesRequest ?? fetchEmployeeProfiles());
 
             if (empProfiles && empProfiles.length > 0) {
                 const empByUserId = new Map(empProfiles.filter((ep: any) => ep.user_id).map((ep: any) => [ep.user_id, ep]));
@@ -159,15 +166,27 @@ export async function GET(request: NextRequest) {
                     approverName: null as string | null
                 })).sort((a: any, b: any) => a.full_name.localeCompare(b.full_name));
 
-            // Attach org roles if available
+            // Org roles, employee profiles and approver names are independent lookups: start all three now and apply
+            // them below in the original order (performance plan Phase 4).
             const userIds = users.map((u: any) => u.id).filter(Boolean);
-            if (userIds.length > 0) {
-                const { data: orgM } = await adminClient
+            const approverIds = Array.from(new Set(users.map((u: any) => u.approved_by).filter(Boolean)));
+            const orgRolesRequest = userIds.length > 0
+                ? adminClient
                     .from('organization_memberships')
                     .select('user_id, role')
                     .in('user_id', userIds)
                     .eq('organization_id', resolvedOrgId!)
-                    .eq('is_active', true);
+                    .eq('is_active', true)
+                    .then(result => result)
+                : null;
+            const profilesRequest = users.length > 0 ? fetchEmployeeProfiles() : null;
+            const approversRequest = approverIds.length > 0
+                ? adminClient.from('users').select('id, full_name').in('id', approverIds).then(result => result)
+                : null;
+
+            // Attach org roles if available
+            if (orgRolesRequest) {
+                const { data: orgM } = await orgRolesRequest;
                 if (orgM && orgM.length > 0) {
                     const orgMap = new Map(orgM.map((m: any) => [m.user_id, m.role]));
                     users.forEach((u: any) => {
@@ -179,15 +198,11 @@ export async function GET(request: NextRequest) {
             }
 
             // Attach employee profile details (designation, employee_code, department, phone)
-            await attachEmployeeProfiles(users);
+            await attachEmployeeProfiles(users, profilesRequest);
 
             // Resolve approver names if any approved_by IDs exist
-            const approverIds = Array.from(new Set(users.map((u: any) => u.approved_by).filter(Boolean)));
-            if (approverIds.length > 0) {
-                const { data: approvers } = await adminClient
-                    .from('users')
-                    .select('id, full_name')
-                    .in('id', approverIds);
+            if (approversRequest) {
+                const { data: approvers } = await approversRequest;
                 const approverMap = new Map((approvers || []).map((a: any) => [a.id, a.full_name]));
                 users.forEach((u: any) => {
                     if (u.approved_by) {
@@ -199,8 +214,9 @@ export async function GET(request: NextRequest) {
             return NextResponse.json({ users, organizationId: resolvedOrgId });
         }
 
-        // Org-level: fetch both org memberships and property memberships
-        const { data: orgUsers, error: orgError } = await adminClient
+        // Org-level: fetch both org memberships and property memberships. The two reads are independent: start both
+        // now, check their errors below in the original order (performance plan Phase 4).
+        const orgUsersRequest = adminClient
             .from('organization_memberships')
             .select(`
                 role,
@@ -209,11 +225,9 @@ export async function GET(request: NextRequest) {
                 created_at,
                 user:users!user_id (*)
             `)
-            .eq('organization_id', orgId!);
-
-        if (orgError) throw orgError;
-
-        const { data: propUsers, error: propError } = await adminClient
+            .eq('organization_id', orgId!)
+            .then(result => result);
+        const propUsersRequest = adminClient
             .from('property_memberships')
             .select(`
                 role,
@@ -224,7 +238,14 @@ export async function GET(request: NextRequest) {
                 property:properties!inner (id, name, organization_id),
                 user:users!user_id (*)
             `)
-            .eq('property.organization_id', orgId!);
+            .eq('property.organization_id', orgId!)
+            .then(result => result);
+
+        const { data: orgUsers, error: orgError } = await orgUsersRequest;
+
+        if (orgError) throw orgError;
+
+        const { data: propUsers, error: propError } = await propUsersRequest;
 
         if (propError) throw propError;
 
@@ -295,16 +316,19 @@ export async function GET(request: NextRequest) {
 
         const users = Array.from(userMap.values()).sort((a, b) => a.full_name.localeCompare(b.full_name));
 
+        // Employee profiles and approver names are independent: start both now, apply in the original order.
+        const approverIds = Array.from(new Set(users.map((u: any) => u.approved_by).filter(Boolean)));
+        const profilesRequest = users.length > 0 ? fetchEmployeeProfiles() : null;
+        const approversRequest = approverIds.length > 0
+            ? adminClient.from('users').select('id, full_name').in('id', approverIds).then(result => result)
+            : null;
+
         // Attach designation, employee_code, department, and phone from employee_profiles
-        await attachEmployeeProfiles(users);
+        await attachEmployeeProfiles(users, profilesRequest);
 
         // Resolve approver names
-        const approverIds = Array.from(new Set(users.map((u: any) => u.approved_by).filter(Boolean)));
-        if (approverIds.length > 0) {
-            const { data: approvers } = await adminClient
-                .from('users')
-                .select('id, full_name')
-                .in('id', approverIds);
+        if (approversRequest) {
+            const { data: approvers } = await approversRequest;
             const approverMap = new Map((approvers || []).map((a: any) => [a.id, a.full_name]));
             users.forEach((u: any) => {
                 if (u.approved_by) {

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Plus, Play, Trash2, Edit3, ClipboardList, Square, Sparkles, QrCode, LayoutGrid, History, FileText, ChevronDown, CheckCircle2, Clock, MapPin } from 'lucide-react';
+import { Plus, Play, Trash2, Edit3, ClipboardList, Square, Sparkles, QrCode, LayoutGrid, History, FileText, ChevronDown, CheckCircle2, Clock, MapPin, Eye, Camera, MessageSquare, Layers, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
 import Skeleton from '@/frontend/components/ui/Skeleton';
@@ -36,11 +36,57 @@ const SOPTemplateManager: React.FC<SOPTemplateManagerProps> = ({ propertyId, pro
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
     const [qrTemplateId, setQrTemplateId] = useState<string | null>(null);
     const [expandedTemplateId, setExpandedTemplateId] = useState<string | null>(null);
+    const [expandedTab, setExpandedTab] = useState<Record<string, 'steps' | 'history'>>({});
+    const [previewPhotoUrl, setPreviewPhotoUrl] = useState<string | null>(null);
     const [expandedCompletions, setExpandedCompletions] = useState<Record<string, any[]>>({});
     const [expandedLoading, setExpandedLoading] = useState<string | null>(null);
+    const [hasDraft, setHasDraft] = useState(false);
+    const [draftInfo, setDraftInfo] = useState<{ title: string; stepCount: number; savedAt: number } | null>(null);
     const supabase = React.useMemo(() => createClient(), []);
     const { getCachedData, setCachedData, invalidateCache } = useDataCache();
     const [liveNow, setLiveNow] = useState(() => new Date());
+
+    const checkDraft = useCallback(() => {
+        if (!propertyId || typeof window === 'undefined') return;
+        try {
+            const raw = localStorage.getItem(`sop_template_draft_${propertyId}`);
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                const title = parsed.formData?.title?.trim() || '';
+                const stepCount = (parsed.items?.length || 0) + (parsed.newItem?.title?.trim() ? 1 : 0);
+                if (title || stepCount > 0) {
+                    setHasDraft(true);
+                    setDraftInfo({
+                        title: title || 'Untitled Checklist',
+                        stepCount,
+                        savedAt: parsed.savedAt || Date.now(),
+                    });
+                    return;
+                }
+            }
+            setHasDraft(false);
+            setDraftInfo(null);
+        } catch {
+            setHasDraft(false);
+            setDraftInfo(null);
+        }
+    }, [propertyId]);
+
+    useEffect(() => {
+        checkDraft();
+        window.addEventListener('sop_draft_updated', checkDraft);
+        return () => window.removeEventListener('sop_draft_updated', checkDraft);
+    }, [checkDraft]);
+
+    // Cleanup any stale modal-open flags so navigation (back, template, history) never auto-pops the modal
+    useEffect(() => {
+        if (!propertyId || typeof window === 'undefined') return;
+        try {
+            localStorage.removeItem(`sop_template_modal_open_${propertyId}`);
+            sessionStorage.removeItem(`sop_template_modal_open_${propertyId}`);
+            sessionStorage.removeItem(`sop_editing_template_id_${propertyId}`);
+        } catch {}
+    }, [propertyId]);
 
     useEffect(() => {
         const id = setInterval(() => setLiveNow(new Date()), 1000);
@@ -203,6 +249,9 @@ const SOPTemplateManager: React.FC<SOPTemplateManagerProps> = ({ propertyId, pro
             return;
         }
         setExpandedTemplateId(templateId);
+        // Default to 'steps' tab so user immediately sees what is in that checklist
+        setExpandedTab(prev => ({ ...prev, [templateId]: prev[templateId] || 'steps' }));
+
         if (expandedCompletions[templateId]) return; // already fetched
         const pid = targetPropertyId || propertyId;
         if (!pid) return;
@@ -258,11 +307,68 @@ const SOPTemplateManager: React.FC<SOPTemplateManagerProps> = ({ propertyId, pro
                             className="flex items-center gap-1 px-2.5 md:px-3 py-1.5 bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-all shadow-sm font-black uppercase tracking-widest text-[8px] md:text-[9px] flex-shrink-0"
                         >
                             <Plus size={11} />
-                            New
+                            {hasDraft ? 'Resume / New' : 'New'}
+                            {hasDraft && (
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse ml-0.5" />
+                            )}
                         </button>
                     </div>
                 )}
             </div>
+
+            {/* Unsaved Draft Recovery Banner */}
+            {canCreate && hasDraft && !showFormModal && (
+                <div className="flex items-center justify-between p-3 bg-amber-500/10 border border-amber-500/25 rounded-xl text-amber-900 shadow-sm">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="relative flex h-2 w-2 flex-shrink-0">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                        </span>
+                        <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-[10px] font-black uppercase tracking-wider text-amber-700">Unsaved Checklist Draft</span>
+                                {draftInfo?.savedAt && (
+                                    <span className="text-[10px] text-amber-600/80 font-medium">
+                                        Saved {new Date(draftInfo.savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                    </span>
+                                )}
+                            </div>
+                            <p className="text-xs font-bold text-slate-900 truncate mt-0.5">
+                                {draftInfo?.title || 'Untitled Checklist'} · <span className="text-slate-500 font-normal">{draftInfo?.stepCount || 0} step{draftInfo?.stepCount === 1 ? '' : 's'}</span>
+                            </p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0 ml-3">
+                        <button
+                            onClick={() => {
+                                setEditingTemplate(null);
+                                setAiPrefill(null);
+                                setShowFormModal(true);
+                            }}
+                            className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1"
+                        >
+                            Resume Draft
+                        </button>
+                        <button
+                            onClick={() => {
+                                if (confirm('Are you sure you want to discard this unsaved checklist draft?')) {
+                                    try {
+                                        localStorage.removeItem(`sop_template_draft_${propertyId}`);
+                                        localStorage.removeItem(`sop_template_modal_open_${propertyId}`);
+                                        sessionStorage.removeItem(`sop_template_modal_open_${propertyId}`);
+                                        sessionStorage.removeItem(`sop_editing_template_id_${propertyId}`);
+                                    } catch {}
+                                    checkDraft();
+                                }
+                            }}
+                            className="px-2 py-1.5 text-xs text-slate-400 hover:text-rose-600 font-bold transition-colors"
+                            title="Discard Draft"
+                        >
+                            Discard
+                        </button>
+                    </div>
+                </div>
+            )}
 
             {/* Templates List */}
             <AnimatePresence mode='wait'>
@@ -391,29 +497,53 @@ const SOPTemplateManager: React.FC<SOPTemplateManagerProps> = ({ propertyId, pro
                                                     )}
                                                 </div>
 
-                                                {/* Icon buttons - Hidden on mobile, visible on tablet+ */}
-                                                {isAdmin && (
-                                                    <div className="hidden sm:flex items-center gap-0.5 pt-1.5 border-t border-slate-100">
-                                                        <button
-                                                            onClick={(e) => { e.stopPropagation(); setEditingTemplate(template); setShowFormModal(true); }}
-                                                            className="p-1.5 text-slate-400 hover:text-primary hover:bg-primary/5 rounded-lg transition-all"
-                                                        >
-                                                            <Edit3 size={14} />
-                                                        </button>
-                                                        <button
-                                                            onClick={(e) => { e.stopPropagation(); setQrTemplateId(template.id); }}
-                                                            className="p-1.5 text-slate-400 hover:text-primary hover:bg-primary/5 rounded-lg transition-all"
-                                                        >
-                                                            <QrCode size={14} />
-                                                        </button>
-                                                        <button
-                                                            onClick={(e) => { e.stopPropagation(); handleDelete(template.id); }}
-                                                            className="p-1.5 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
-                                                        >
-                                                            <Trash2 size={14} />
-                                                        </button>
-                                                    </div>
-                                                )}
+                                                {/* Icon buttons & View Steps on mobile */}
+                                                <div className="flex items-center justify-between pt-2 mt-1 border-t border-slate-100">
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setExpandedTab(prev => ({ ...prev, [template.id]: 'steps' }));
+                                                            if (expandedTemplateId === template.id) {
+                                                                setExpandedTemplateId(null);
+                                                            } else {
+                                                                handleToggleExpand(template.id, template.property_id);
+                                                            }
+                                                        }}
+                                                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
+                                                            isExpanded && (expandedTab[template.id] || 'steps') === 'steps'
+                                                                ? 'bg-primary/10 text-primary border border-primary/20'
+                                                                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                                                        }`}
+                                                    >
+                                                        <Eye size={12} className="text-primary" />
+                                                        View Steps ({template.items?.length || 0})
+                                                    </button>
+                                                    {isAdmin && (
+                                                        <div className="flex items-center gap-0.5">
+                                                            <button
+                                                                onClick={(e) => { e.stopPropagation(); setEditingTemplate(template); setShowFormModal(true); }}
+                                                                className="p-1.5 text-slate-400 hover:text-primary hover:bg-primary/5 rounded-lg transition-all"
+                                                                title="Edit Checklist"
+                                                            >
+                                                                <Edit3 size={14} />
+                                                            </button>
+                                                            <button
+                                                                onClick={(e) => { e.stopPropagation(); setQrTemplateId(template.id); }}
+                                                                className="p-1.5 text-slate-400 hover:text-primary hover:bg-primary/5 rounded-lg transition-all"
+                                                                title="QR Code"
+                                                            >
+                                                                <QrCode size={14} />
+                                                            </button>
+                                                            <button
+                                                                onClick={(e) => { e.stopPropagation(); handleDelete(template.id); }}
+                                                                className="p-1.5 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
+                                                                title="Delete Checklist"
+                                                            >
+                                                                <Trash2 size={14} />
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
@@ -522,22 +652,47 @@ const SOPTemplateManager: React.FC<SOPTemplateManagerProps> = ({ propertyId, pro
                                                         </button>
                                                     )}
                                                     <button
-                                                        onClick={(e) => { e.stopPropagation(); setEditingTemplate(template); setShowFormModal(true); }}
-                                                        className="p-1.5 text-slate-300 hover:text-primary hover:bg-primary/5 rounded-lg transition-all"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setExpandedTab(prev => ({ ...prev, [template.id]: 'steps' }));
+                                                            if (expandedTemplateId === template.id) {
+                                                                setExpandedTemplateId(null);
+                                                            } else {
+                                                                handleToggleExpand(template.id, template.property_id);
+                                                            }
+                                                        }}
+                                                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all border ${
+                                                            isExpanded && (expandedTab[template.id] || 'steps') === 'steps'
+                                                                ? 'bg-primary/10 text-primary border-primary/30 shadow-sm'
+                                                                : 'bg-slate-50 text-slate-600 border-slate-200 hover:border-primary/40 hover:text-primary'
+                                                        }`}
+                                                        title="View Checklist Items & Steps"
+                                                    >
+                                                        <Eye size={12} className="text-primary" />
+                                                        Steps ({template.items?.length || 0})
+                                                    </button>
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setEditingTemplate(template);
+                                                            setShowFormModal(true);
+                                                        }}
+                                                        className="p-1.5 text-slate-400 hover:text-primary hover:bg-primary/5 rounded-lg transition-all"
                                                         title="Edit Template"
                                                     >
                                                         <Edit3 size={14} />
                                                     </button>
                                                     <button
                                                         onClick={(e) => { e.stopPropagation(); setQrTemplateId(template.id); }}
-                                                        className="p-1.5 text-slate-300 hover:text-primary hover:bg-primary/5 rounded-lg transition-all"
+                                                        className="p-1.5 text-slate-400 hover:text-primary hover:bg-primary/5 rounded-lg transition-all"
                                                         title="QR Code"
                                                     >
                                                         <QrCode size={14} />
                                                     </button>
                                                     <button
                                                         onClick={(e) => { e.stopPropagation(); handleDelete(template.id); }}
-                                                        className="p-1.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
+                                                        className="p-1.5 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
+                                                        title="Delete Template"
                                                     >
                                                         <Trash2 size={12} />
                                                     </button>
@@ -552,7 +707,7 @@ const SOPTemplateManager: React.FC<SOPTemplateManagerProps> = ({ propertyId, pro
                                     </div>
                                 </motion.div>
 
-                                {/* ── Per-template completion history panel ── */}
+                                {/* ── Per-template expanded drawer: Checklist Steps & Completion History ── */}
                                 <AnimatePresence>
                                     {isExpanded && (
                                         <motion.div
@@ -563,65 +718,264 @@ const SOPTemplateManager: React.FC<SOPTemplateManagerProps> = ({ propertyId, pro
                                             transition={{ duration: 0.2, ease: 'easeInOut' }}
                                             className="overflow-hidden"
                                         >
-                                            <div className="bg-slate-50 border border-t-0 border-primary/30 rounded-b-xl px-3 md:px-4 py-3 space-y-2">
-                                                {/* Header */}
-                                                <div className="flex items-center justify-between mb-1">
-                                                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Recent Completions</span>
-                                                    {onViewChange && (
+                                            <div className="bg-slate-50/80 border border-t-0 border-primary/30 rounded-b-xl px-3 md:px-5 py-3.5 space-y-3">
+                                                {/* Header Tabs: Checklist Steps vs Recent Completions */}
+                                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-200/80">
+                                                    <div className="flex items-center gap-1.5 bg-slate-200/70 p-1 rounded-xl w-fit">
                                                         <button
-                                                            onClick={() => onViewChange('history')}
-                                                            className="text-[9px] font-black uppercase tracking-widest text-primary hover:opacity-70 transition-opacity"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setExpandedTab(prev => ({ ...prev, [template.id]: 'steps' }));
+                                                            }}
+                                                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
+                                                                (expandedTab[template.id] || 'steps') === 'steps'
+                                                                    ? 'bg-white text-slate-900 shadow-sm'
+                                                                    : 'text-slate-600 hover:text-slate-900'
+                                                            }`}
                                                         >
-                                                            View All →
+                                                            <ClipboardList size={12} className="text-primary" />
+                                                            Checklist Steps
+                                                            <span className="px-1.5 py-0.2 rounded-full bg-slate-100 text-[9px] font-bold text-slate-700 ml-0.5">
+                                                                {template.items?.length || 0}
+                                                            </span>
                                                         </button>
-                                                    )}
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setExpandedTab(prev => ({ ...prev, [template.id]: 'history' }));
+                                                            }}
+                                                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
+                                                                expandedTab[template.id] === 'history'
+                                                                    ? 'bg-white text-slate-900 shadow-sm'
+                                                                    : 'text-slate-600 hover:text-slate-900'
+                                                            }`}
+                                                        >
+                                                            <History size={12} className="text-slate-500" />
+                                                            Recent Runs
+                                                            <span className="px-1.5 py-0.2 rounded-full bg-slate-100 text-[9px] font-bold text-slate-700 ml-0.5">
+                                                                {(expandedCompletions[template.id] || []).length}
+                                                            </span>
+                                                        </button>
+                                                    </div>
+
+                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                        {isAdmin && (
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    setEditingTemplate(template);
+                                                                    setShowFormModal(true);
+                                                                }}
+                                                                className="flex items-center gap-1 px-2.5 py-1 text-[9px] font-black uppercase tracking-wider text-slate-700 bg-white border border-slate-200 rounded-lg hover:border-primary hover:text-primary transition-all shadow-sm"
+                                                            >
+                                                                <Edit3 size={11} />
+                                                                Edit Steps
+                                                            </button>
+                                                        )}
+                                                        {onViewChange && (
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    onViewChange('history');
+                                                                }}
+                                                                className="text-[9px] font-black uppercase tracking-widest text-primary hover:opacity-75 transition-opacity px-1"
+                                                            >
+                                                                Full History →
+                                                            </button>
+                                                        )}
+                                                    </div>
                                                 </div>
 
-                                                {expandedLoading === template.id ? (
+                                                {/* Content: Checklist Steps View */}
+                                                {(expandedTab[template.id] || 'steps') === 'steps' ? (
                                                     <div className="space-y-2">
-                                                        {[1, 2, 3].map(i => <Skeleton key={i} className="h-9 rounded-lg" />)}
-                                                    </div>
-                                                ) : (expandedCompletions[template.id] || []).length === 0 ? (
-                                                    <p className="text-center text-slate-400 text-xs font-medium py-3">No completions yet</p>
-                                                ) : (
-                                                    <div className="space-y-1.5">
-                                                        {(expandedCompletions[template.id] || []).map((c: any) => {
-                                                            const isCompleted = c.status === 'completed';
-                                                            const intervalH = parseInt(template.frequency?.match(/^every_(\d+)_hours?$/)?.[1] || '0');
-                                                            const slotLabel = c.slot_time && intervalH > 0 ? (() => {
-                                                                const [sH, sM] = c.slot_time.slice(0, 5).split(':').map(Number);
-                                                                const eMins = sH * 60 + sM + intervalH * 60;
-                                                                const end = `${String(Math.floor(eMins / 60) % 24).padStart(2, '0')}:${String(eMins % 60).padStart(2, '0')}`;
-                                                                return `${fmt12h(c.slot_time.slice(0, 5))} – ${fmt12h(end)}`;
-                                                            })() : null;
-                                                            const checkedCount = (c.items || []).filter((i: any) => i.is_checked || i.value).length;
-                                                            const totalPoints = template.items?.length || 0;
+                                                        {(!template.items || template.items.length === 0) ? (
+                                                            <div className="text-center py-6 px-4 bg-white rounded-xl border border-dashed border-slate-200">
+                                                                <ClipboardList size={24} className="text-slate-300 mx-auto mb-2" />
+                                                                <p className="text-xs font-bold text-slate-700">No steps defined in this checklist yet</p>
+                                                                <p className="text-[11px] text-slate-400 mt-0.5">Add inspection items, parameters, and photo verification requirements.</p>
+                                                                {isAdmin && (
+                                                                    <button
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            setEditingTemplate(template);
+                                                                            setShowFormModal(true);
+                                                                        }}
+                                                                        className="mt-3 inline-flex items-center gap-1 px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-bold hover:bg-primary transition-all shadow-sm"
+                                                                    >
+                                                                        <Plus size={12} />
+                                                                        Add Steps Now
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                        ) : (
+                                                            <div className="grid grid-cols-1 gap-2">
+                                                                {[...(template.items || [])]
+                                                                    .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
+                                                                    .map((item: any, idx: number) => {
+                                                                        const params: any[] = Array.isArray(item.parameters) ? item.parameters : [];
+                                                                        return (
+                                                                            <div
+                                                                                key={item.id || idx}
+                                                                                className="bg-white rounded-xl p-3 border border-slate-200/90 shadow-sm hover:border-slate-300 transition-all"
+                                                                            >
+                                                                                <div className="flex items-start justify-between gap-2.5">
+                                                                                    <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                                                                                        <span className="flex items-center justify-center w-6 h-6 rounded-lg bg-slate-900 text-white text-[11px] font-black flex-shrink-0 mt-0.5 shadow-sm">
+                                                                                            {idx + 1}
+                                                                                        </span>
+                                                                                        <div className="min-w-0 flex-1">
+                                                                                            <h5 className="font-bold text-slate-900 text-xs md:text-sm leading-snug">
+                                                                                                {item.title}
+                                                                                            </h5>
+                                                                                            {item.description && (
+                                                                                                <p className="text-slate-500 text-[11px] leading-relaxed mt-1 font-medium whitespace-pre-wrap">
+                                                                                                    {item.description}
+                                                                                                </p>
+                                                                                            )}
+                                                                                        </div>
+                                                                                    </div>
 
-                                                            return (
-                                                                <div key={c.id} className="flex items-center gap-2 md:gap-3 bg-white rounded-lg px-3 py-2 border border-slate-100">
-                                                                    {isCompleted
-                                                                        ? <CheckCircle2 size={13} className="text-emerald-500 flex-shrink-0" />
-                                                                        : <Clock size={13} className="text-amber-400 flex-shrink-0" />
-                                                                    }
-                                                                    <div className="flex-1 min-w-0">
-                                                                        <span className="text-[11px] font-bold text-slate-700">
-                                                                            {new Date(c.completion_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' })}
+                                                                                    {/* Badges */}
+                                                                                    <div className="flex flex-wrap items-center gap-1 flex-shrink-0 justify-end">
+                                                                                        <span className="px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider bg-slate-100 text-slate-700 border border-slate-200">
+                                                                                            {item.type === 'yes_no' ? 'Yes / No' : item.type === 'number' ? 'Numeric' : item.type === 'text' ? 'Text' : 'Checkbox'}
+                                                                                        </span>
+                                                                                        {item.requires_photo ? (
+                                                                                            <span className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider bg-violet-50 text-violet-700 border border-violet-200">
+                                                                                                <Camera size={10} /> Photo Req
+                                                                                            </span>
+                                                                                        ) : (
+                                                                                            <span className="px-2 py-0.5 rounded-md text-[9px] font-semibold text-slate-400 bg-slate-50 border border-slate-100">
+                                                                                                No Photo
+                                                                                            </span>
+                                                                                        )}
+                                                                                        {item.requires_comment && (
+                                                                                            <span className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200">
+                                                                                                <MessageSquare size={10} /> Comment
+                                                                                            </span>
+                                                                                        )}
+                                                                                        {item.is_optional && (
+                                                                                            <span className="px-2 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider bg-slate-100 text-slate-500">
+                                                                                                Optional
+                                                                                            </span>
+                                                                                        )}
+                                                                                        {(item.start_time || item.end_time) && (
+                                                                                            <span className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider bg-blue-50 text-blue-700 border border-blue-200">
+                                                                                                <Clock size={10} /> {item.start_time ? fmt12h(item.start_time) : '—'} – {item.end_time ? fmt12h(item.end_time) : '—'}
+                                                                                            </span>
+                                                                                        )}
+                                                                                    </div>
+                                                                                </div>
+
+                                                                                {/* Reference Photo and Step Parameters */}
+                                                                                {(item.reference_photo_url || params.length > 0) && (
+                                                                                    <div className="mt-2.5 pt-2 border-t border-slate-100 flex flex-col sm:flex-row gap-3 items-start">
+                                                                                        {item.reference_photo_url && (
+                                                                                            <div className="flex items-center gap-2 flex-shrink-0">
+                                                                                                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                                                                                                    Benchmark:
+                                                                                                </span>
+                                                                                                <button
+                                                                                                    type="button"
+                                                                                                    onClick={(e) => {
+                                                                                                        e.stopPropagation();
+                                                                                                        setPreviewPhotoUrl(item.reference_photo_url);
+                                                                                                    }}
+                                                                                                    className="group/photo relative w-12 h-12 rounded-lg overflow-hidden border border-slate-200 hover:border-primary transition-all flex-shrink-0 shadow-sm"
+                                                                                                    title="View benchmark photo"
+                                                                                                >
+                                                                                                    <img
+                                                                                                        src={item.reference_photo_url}
+                                                                                                        alt="Reference Benchmark"
+                                                                                                        className="w-full h-full object-cover group-hover/photo:scale-110 transition-transform"
+                                                                                                    />
+                                                                                                    <div className="absolute inset-0 bg-black/25 opacity-0 group-hover/photo:opacity-100 flex items-center justify-center transition-opacity">
+                                                                                                        <Eye size={12} className="text-white" />
+                                                                                                    </div>
+                                                                                                </button>
+                                                                                            </div>
+                                                                                        )}
+
+                                                                                        {params.length > 0 && (
+                                                                                            <div className="flex-1 min-w-0 w-full bg-slate-50/80 rounded-lg p-2 border border-slate-100">
+                                                                                                <div className="flex items-center gap-1 mb-1.5">
+                                                                                                    <Layers size={10} className="text-slate-500" />
+                                                                                                    <span className="text-[9px] font-black uppercase tracking-wider text-slate-500">
+                                                                                                        Sub-check Parameters ({params.length})
+                                                                                                    </span>
+                                                                                                </div>
+                                                                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                                                                                    {params.map((p: any, pIdx: number) => (
+                                                                                                        <div
+                                                                                                            key={p.id || pIdx}
+                                                                                                            className="flex items-center justify-between gap-1.5 bg-white px-2 py-1 rounded border border-slate-200/70 text-[11px]"
+                                                                                                        >
+                                                                                                            <span className="font-semibold text-slate-800 truncate">{p.name}</span>
+                                                                                                            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 flex-shrink-0">
+                                                                                                                {p.type === 'yes_no' ? 'Y/N' : p.type}
+                                                                                                            </span>
+                                                                                                        </div>
+                                                                                                    ))}
+                                                                                                </div>
+                                                                                            </div>
+                                                                                        )}
+                                                                                    </div>
+                                                                                )}
+                                                                            </div>
+                                                                        );
+                                                                    })}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ) : (
+                                                    /* Recent Runs History View */
+                                                    <div className="space-y-1.5">
+                                                        {expandedLoading === template.id ? (
+                                                            <div className="space-y-2">
+                                                                {[1, 2, 3].map(i => <Skeleton key={i} className="h-9 rounded-lg" />)}
+                                                            </div>
+                                                        ) : (expandedCompletions[template.id] || []).length === 0 ? (
+                                                            <p className="text-center text-slate-400 text-xs font-medium py-4">No completions recorded yet</p>
+                                                        ) : (
+                                                            (expandedCompletions[template.id] || []).map((c: any) => {
+                                                                const isCompleted = c.status === 'completed';
+                                                                const intervalH = parseInt(template.frequency?.match(/^every_(\d+)_hours?$/)?.[1] || '0');
+                                                                const slotLabel = c.slot_time && intervalH > 0 ? (() => {
+                                                                    const [sH, sM] = c.slot_time.slice(0, 5).split(':').map(Number);
+                                                                    const eMins = sH * 60 + sM + intervalH * 60;
+                                                                    const end = `${String(Math.floor(eMins / 60) % 24).padStart(2, '0')}:${String(eMins % 60).padStart(2, '0')}`;
+                                                                    return `${fmt12h(c.slot_time.slice(0, 5))} – ${fmt12h(end)}`;
+                                                                })() : null;
+                                                                const checkedCount = (c.items || []).filter((i: any) => i.is_checked || i.value).length;
+                                                                const totalPoints = template.items?.length || 0;
+
+                                                                return (
+                                                                    <div key={c.id} className="flex items-center gap-2 md:gap-3 bg-white rounded-lg px-3 py-2 border border-slate-100">
+                                                                        {isCompleted
+                                                                            ? <CheckCircle2 size={13} className="text-emerald-500 flex-shrink-0" />
+                                                                            : <Clock size={13} className="text-amber-400 flex-shrink-0" />
+                                                                        }
+                                                                        <div className="flex-1 min-w-0">
+                                                                            <span className="text-[11px] font-bold text-slate-700">
+                                                                                {new Date(c.completion_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' })}
+                                                                            </span>
+                                                                            {slotLabel && (
+                                                                                <span className="text-[10px] font-medium text-slate-400 ml-2">{slotLabel}</span>
+                                                                            )}
+                                                                        </div>
+                                                                        <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest flex-shrink-0 ${isCompleted ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
+                                                                            {isCompleted ? 'Done' : 'In Progress'}
                                                                         </span>
-                                                                        {slotLabel && (
-                                                                            <span className="text-[10px] font-medium text-slate-400 ml-2">{slotLabel}</span>
+                                                                        {totalPoints > 0 && (
+                                                                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex-shrink-0">
+                                                                                {checkedCount}/{totalPoints} pts
+                                                                            </span>
                                                                         )}
                                                                     </div>
-                                                                    <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest flex-shrink-0 ${isCompleted ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
-                                                                        {isCompleted ? 'Done' : 'In Progress'}
-                                                                    </span>
-                                                                    {totalPoints > 0 && (
-                                                                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex-shrink-0">
-                                                                            {checkedCount}/{totalPoints} pts
-                                                                        </span>
-                                                                    )}
-                                                                </div>
-                                                            );
-                                                        })}
+                                                                );
+                                                            })
+                                                        )}
                                                     </div>
                                                 )}
                                             </div>
@@ -665,7 +1019,7 @@ const SOPTemplateManager: React.FC<SOPTemplateManagerProps> = ({ propertyId, pro
                                     className="flex items-center gap-2 px-5 md:px-6 py-3 md:py-4 bg-primary text-white rounded-xl md:rounded-2xl hover:opacity-90 transition-all shadow-xl shadow-primary/20 font-black uppercase tracking-widest text-[10px] md:text-xs"
                                 >
                                     <Plus size={14} />
-                                    Create Manually
+                                    {hasDraft ? 'Resume Draft' : 'Create Manually'}
                                 </button>
                             </div>
                         )}
@@ -680,11 +1034,22 @@ const SOPTemplateManager: React.FC<SOPTemplateManagerProps> = ({ propertyId, pro
                     setShowFormModal(false);
                     setEditingTemplate(null);
                     setAiPrefill(null);
+                    if (propertyId && typeof window !== 'undefined') {
+                        try {
+                            localStorage.removeItem(`sop_template_modal_open_${propertyId}`);
+                            sessionStorage.removeItem(`sop_template_modal_open_${propertyId}`);
+                            sessionStorage.removeItem(`sop_editing_template_id_${propertyId}`);
+                        } catch {}
+                    }
+                    checkDraft();
                 }}
                 propertyId={propertyId!}
                 template={editingTemplate}
                 initialData={aiPrefill ?? undefined}
-                onSuccess={handleFormSuccess}
+                onSuccess={() => {
+                    handleFormSuccess();
+                    checkDraft();
+                }}
             />
 
             {cadViewTemplate && (
@@ -708,6 +1073,44 @@ const SOPTemplateManager: React.FC<SOPTemplateManagerProps> = ({ propertyId, pro
                 propertyId={propertyId!}
                 onSelectTemplate={handleAITemplateSelect}
             />
+
+            {/* Benchmark Photo Preview Modal */}
+            <AnimatePresence>
+                {previewPhotoUrl && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-[120] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+                        onClick={() => setPreviewPhotoUrl(null)}
+                    >
+                        <div
+                            className="relative max-w-2xl w-full bg-white rounded-2xl overflow-hidden shadow-2xl p-4"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                                <h4 className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
+                                    <Camera size={14} className="text-primary" />
+                                    Reference Benchmark Photo
+                                </h4>
+                                <button
+                                    onClick={() => setPreviewPhotoUrl(null)}
+                                    className="p-1 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition-colors"
+                                >
+                                    <X size={16} />
+                                </button>
+                            </div>
+                            <div className="mt-3 max-h-[70vh] flex items-center justify-center bg-slate-900 rounded-xl overflow-hidden">
+                                <img
+                                    src={previewPhotoUrl}
+                                    alt="Reference Benchmark Preview"
+                                    className="max-h-[65vh] w-auto object-contain"
+                                />
+                            </div>
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
 
             {/* Toast */}
             {toast && (

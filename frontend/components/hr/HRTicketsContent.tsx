@@ -23,6 +23,7 @@ import EmployeeQuickProfileModal, { EmployeeProfileModalData } from '@/frontend/
 import HRNotesTrackerTab from '@/frontend/components/hr/HRNotesTrackerTab';
 import { hrDataCache } from '@/frontend/components/hr/hrDataCache';
 import { createClient } from '@/frontend/utils/supabase/client';
+import DepartmentTasksTab from '@/frontend/components/task-manager/DepartmentTasksTab';
 
 export function HRTicketsContent({ orgId }: { orgId: string }) {
     const { user, membership } = useAuth();
@@ -41,7 +42,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         );
     }, [orgId, membership, user]);
 
-    const [activeTab, setActiveTab] = useState<'tickets' | 'notes' | 'tree' | 'directory' | 'reconciliation' | 'config' | 'analytics'>('tickets');
+    const [activeTab, setActiveTab] = useState<'tickets' | 'notes' | 'tree' | 'directory' | 'reconciliation' | 'config' | 'analytics' | 'tasks'>('tickets');
     const [visitedTabs, setVisitedTabs] = useState<Set<string>>(new Set(['tickets']));
     const [viewMode, setViewMode] = useState<'kanban' | 'table' | 'properties'>('table');
 
@@ -328,7 +329,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         const filterParam = searchParams.get('filter');
         const ticketIdParam = searchParams.get('ticketId');
 
-        if (tabParam && ['tickets', 'notes', 'tree', 'directory', 'reconciliation', 'config', 'analytics'].includes(tabParam)) {
+        if (tabParam && ['tickets', 'notes', 'tree', 'directory', 'reconciliation', 'config', 'analytics', 'tasks'].includes(tabParam)) {
             setActiveTab(tabParam as any);
         }
         if (actionParam === 'create') {
@@ -351,7 +352,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         setSelectedPropertyId(propertyParam || 'all');
     }, [searchParams, canViewOrgWide, isManager]);
 
-    const handleNavigationTabSwitch = React.useCallback((newTab: 'tickets' | 'notes' | 'tree' | 'directory' | 'reconciliation' | 'config' | 'analytics') => {
+    const handleNavigationTabSwitch = React.useCallback((newTab: 'tickets' | 'notes' | 'tree' | 'directory' | 'reconciliation' | 'config' | 'analytics' | 'tasks') => {
         setActiveTab(newTab);
         if (typeof window !== 'undefined') {
             const currentPath = window.location.pathname;
@@ -1336,7 +1337,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                             <ShieldCheck className="w-5 h-5" />
                         </div>
                         <h1 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white tracking-tight">
-                            {activeTab === 'notes' ? 'HR Notes & Remarks Ledger' : activeTab === 'tree' ? 'Organization Reporting Tree & Workload Inspector' : isHrAdmin ? 'HR Helpdesk & Grievances' : isManager ? 'Team Grievance Requests' : 'My Requests & Grievances'}
+                            {activeTab === 'tasks' ? 'Task Manager' : activeTab === 'notes' ? 'HR Notes & Remarks Ledger' : activeTab === 'tree' ? 'Organization Reporting Tree & Workload Inspector' : isHrAdmin ? 'HR Helpdesk & Grievances' : isManager ? 'Team Grievance Requests' : 'My Requests & Grievances'}
                         </h1>
                     </div>
                 </div>
@@ -2621,6 +2622,12 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
             {visitedTabs.has('analytics') && (
                 <div className={activeTab === 'analytics' ? 'block' : 'hidden'}>
                     <HRAnalyticsDashboard orgId={orgId} tickets={tickets} />
+                </div>
+            )}
+            {/* Task Manager: the same shared team task board Tech and Procurement use. Access is controlled from the Control Centre. */}
+            {visitedTabs.has('tasks') && (
+                <div className={activeTab === 'tasks' ? 'block' : 'hidden'}>
+                    <DepartmentTasksTab />
                 </div>
             )}
 

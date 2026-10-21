@@ -36,7 +36,7 @@ const DEFAULT_WHATSAPP_TEMPLATES: Record<string, WhatsAppTemplate> = {
     // Tickets & SLA
     ticket_created: { campaign_name: 'ticket_created_v3', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'] },
     ticket_created_media: { campaign_name: 'ticket_created_v3_media', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'], is_media: true },
-    ticket_assigned: { campaign_name: 'ticket_assigned_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone'] },
+    ticket_assigned: { campaign_name: 'ticket_assigned_v2', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone'] },
     ticket_completed: { campaign_name: 'ticket_completed_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'resolved_by'] },
     ticket_completed_media: { campaign_name: 'ticket_completed_v1_media', params: ['user_name', 'ticket_number', 'title', 'property', 'resolved_by'], is_media: true },
     ticket_updated: { campaign_name: 'ticket_updated', params: ['ticket_number', 'title', 'status'] },
@@ -44,8 +44,11 @@ const DEFAULT_WHATSAPP_TEMPLATES: Record<string, WhatsAppTemplate> = {
 
     // Meeting Rooms
     meeting_room_booked: { campaign_name: 'meeting_room_booked_v3', params: ['user_name', 'room_name', 'property', 'date', 'start_time', 'end_time', 'booker', 'booker_phone'] },
+    meeting_room_booked_v4: { campaign_name: 'meeting_room_booked_v4', params: ['user_name', 'room_name', 'property', 'date', 'start_time', 'end_time', 'booker', 'booker_phone'] },
     meeting_room_cancelled: { campaign_name: 'meeting_room_cancelled_v2', params: ['user_name', 'room_name', 'property', 'date', 'start_time', 'end_time', 'booker'] },
-    reminder_meeting_room: { campaign_name: 'reminder_meeting_room', params: ['room_name', 'date', 'start_time'] },
+    meeting_room_start_reminder: { campaign_name: 'meeting_room_start_reminder_v1', params: ['user_name', 'room_name', 'property', 'remaining_minutes', 'start_time', 'booker'] },
+    meeting_room_end_reminder: { campaign_name: 'meeting_room_end_reminder_v1', params: ['user_name', 'room_name', 'property', 'remaining_minutes', 'end_time', 'booker'] },
+    reminder_meeting_room: { campaign_name: 'meeting_room_start_reminder_v1', params: ['user_name', 'room_name', 'property', 'remaining_minutes', 'start_time', 'booker'] },
 
     // PPM & Maintenance
     reminder_ppm: { campaign_name: 'reminder_ppm', params: ['schedule_name', 'property', 'due_date'] },
@@ -113,9 +116,11 @@ const TEMPLATE_CATEGORIES = [
         icon: Calendar,
         color: 'text-violet-600 bg-violet-50',
         events: [
-            { key: 'meeting_room_booked', label: 'Meeting Room Reservation' },
+            { key: 'meeting_room_booked', label: 'Meeting Room Reservation (Staff & Admins - v3)' },
+            { key: 'meeting_room_booked_v4', label: 'Meeting Room Reservation (Booker & Guests - v4)' },
             { key: 'meeting_room_cancelled', label: 'Meeting Room Cancellation' },
-            { key: 'reminder_meeting_room', label: 'Meeting Room Starting Reminder' },
+            { key: 'meeting_room_start_reminder', label: 'Meeting Room Starting Reminder' },
+            { key: 'meeting_room_end_reminder', label: 'Meeting Room Ending Soon Reminder' },
             { key: 'lead_created', label: 'New CRM Lead' },
             { key: 'lead_assigned', label: 'Lead Assigned to Agent' },
             { key: 'reminder_lead_followup', label: 'Lead Follow-up Reminder' }

@@ -16,6 +16,10 @@ import { SuperuserReminder, normalizeReminder } from './pingMessage';
 
 export const TECH_DEPARTMENT_ID = '94a74961-2dd8-453d-9728-f6f2b9ade99b';
 
+/** Owner 2026-10-19: per-team switches stored as columns of task_manager_department_settings. */
+export const TEAM_FEATURES = ['pending_on', 'protect_given', 'assigned_tab'] as const;
+export type TeamFeature = typeof TEAM_FEATURES[number];
+
 export type AccessReason = 'ok' | 'no_department' | 'department_off' | 'not_onboarded' | 'settings_unreadable';
 
 export interface AccessDecision {
@@ -284,6 +288,103 @@ export class TaskAccessService {
         await TaskDatabaseService.logAudit({
             event_type: 'task_access_team_sharing_updated',
             details: { departmentId, departmentName: dept.name, peerAssign: enabled, actor: actor || null },
+        });
+    }
+
+    // ── Owner 2026-10-19: "assign to anyone in team" (team_assign) ───────────────
+    // Members may GIVE tasks to anyone in their department; seeing tasks still follows the reporting chain.
+    // Same tolerance as team sharing: a missing column (SQL 20261019000001 not run) simply reads as "off".
+
+    /** Departments whose members can give tasks to anyone in the department. Any read problem means "none". */
+    static async getTeamAssignDepartments(): Promise<{ departments: Set<string>; columnMissing: boolean }> {
+        try {
+            const { data, error } = await supabaseAdmin
+                .from('task_manager_department_settings')
+                .select('department_id, team_assign');
+            if (error) return { departments: new Set(), columnMissing: true };
+            return {
+                departments: new Set((data || []).filter(r => r.team_assign === true).map(r => r.department_id as string)),
+                columnMissing: false,
+            };
+        } catch {
+            return { departments: new Set(), columnMissing: true };
+        }
+    }
+
+    static async isTeamAssignEnabled(departmentId: string | null | undefined): Promise<boolean> {
+        if (!departmentId) return false;
+        return (await this.getTeamAssignDepartments()).departments.has(departmentId);
+    }
+
+    static async setTeamAssign(departmentId: string, enabled: boolean, actor?: string): Promise<void> {
+        const snapshot = await this.getSnapshot();
+        if (!snapshot.provisioned) throw new AccessNotProvisionedError();
+
+        const dept = await TaskDatabaseService.getDepartmentById(departmentId);
+        if (!dept) throw new Error('Department not found');
+
+        const { error } = await supabaseAdmin
+            .from('task_manager_department_settings')
+            .upsert({ department_id: departmentId, team_assign: enabled, updated_by: actor || null, updated_at: new Date().toISOString() },
+                { onConflict: 'department_id' });
+        if (error) {
+            throw new Error('Could not save "Assign to anyone in team". Run supabase/migrations/20261019000001_task_manager_team_controls.sql in the Supabase SQL Editor first.');
+        }
+
+        await TaskDatabaseService.logAudit({
+            event_type: 'task_access_team_assign_updated',
+            details: { departmentId, departmentName: dept.name, teamAssign: enabled, actor: actor || null },
+        });
+    }
+
+    // ── Owner 2026-10-19: three more per-team switches (same SQL file as team_assign; all OFF by default) ────
+    //   pending_on     the "Pending on…" button (tell a colleague one of my tasks waits on them)
+    //   protect_given  a task someone else gave you cannot be deleted / renamed by you
+    //   assigned_tab   the "Assigned by me" tab
+    // FAIL-CLOSED: a missing column or any read problem means OFF for everyone.
+
+    static async getTeamFeatures(): Promise<{ pendingOn: Set<string>; protectGiven: Set<string>; assignedTab: Set<string>; columnMissing: boolean }> {
+        const none = () => ({ pendingOn: new Set<string>(), protectGiven: new Set<string>(), assignedTab: new Set<string>() });
+        try {
+            const { data, error } = await supabaseAdmin
+                .from('task_manager_department_settings')
+                .select('department_id, pending_on, protect_given, assigned_tab');
+            if (error) return { ...none(), columnMissing: true };
+            const rows = data || [];
+            const on = (key: 'pending_on' | 'protect_given' | 'assigned_tab') =>
+                new Set(rows.filter(r => (r as Record<string, unknown>)[key] === true).map(r => r.department_id as string));
+            return { pendingOn: on('pending_on'), protectGiven: on('protect_given'), assignedTab: on('assigned_tab'), columnMissing: false };
+        } catch {
+            return { ...none(), columnMissing: true };
+        }
+    }
+
+    /** One department's switches (all false when the department is unknown or the settings cannot be read). */
+    static async teamFeaturesFor(departmentId: string | null | undefined): Promise<{ pendingOn: boolean; protectGiven: boolean; assignedTab: boolean }> {
+        if (!departmentId) return { pendingOn: false, protectGiven: false, assignedTab: false };
+        const f = await this.getTeamFeatures();
+        return { pendingOn: f.pendingOn.has(departmentId), protectGiven: f.protectGiven.has(departmentId), assignedTab: f.assignedTab.has(departmentId) };
+    }
+
+    static async setTeamFeature(departmentId: string, feature: TeamFeature, enabled: boolean, actor?: string): Promise<void> {
+        if (!TEAM_FEATURES.includes(feature)) throw new Error('Unknown setting');
+        const snapshot = await this.getSnapshot();
+        if (!snapshot.provisioned) throw new AccessNotProvisionedError();
+
+        const dept = await TaskDatabaseService.getDepartmentById(departmentId);
+        if (!dept) throw new Error('Department not found');
+
+        const { error } = await supabaseAdmin
+            .from('task_manager_department_settings')
+            .upsert({ department_id: departmentId, [feature]: enabled, updated_by: actor || null, updated_at: new Date().toISOString() },
+                { onConflict: 'department_id' });
+        if (error) {
+            throw new Error('Could not save that setting. Run supabase/migrations/20261019000001_task_manager_team_controls.sql in the Supabase SQL Editor first.');
+        }
+
+        await TaskDatabaseService.logAudit({
+            event_type: 'task_access_team_feature_updated',
+            details: { departmentId, departmentName: dept.name, feature, enabled, actor: actor || null },
         });
     }
 
@@ -565,6 +666,8 @@ export class TaskAccessService {
         provisioned: boolean;
         readable: boolean;
         teamSharingColumnMissing: boolean;
+        teamAssignColumnMissing: boolean;
+        teamFeaturesColumnMissing: boolean;
         notificationsColumnMissing: boolean;
         taskImportColumnMissing: boolean;
         smartChatColumnMissing: boolean;
@@ -574,6 +677,10 @@ export class TaskAccessService {
             name: string;
             enabled: boolean;
             peerAssign: boolean;
+            teamAssign: boolean;
+            pendingOn: boolean;
+            protectGiven: boolean;
+            assignedTab: boolean;
             notificationsDelegated: boolean;
             taskImportEnabled: boolean;
             smartChatEnabled: boolean;
@@ -593,6 +700,8 @@ export class TaskAccessService {
         const snapshot = await this.getSnapshot();
         const departments = await TaskDatabaseService.getDepartments();
         const peer = await this.getPeerAssignDepartments();
+        const teamAssign = await this.getTeamAssignDepartments();
+        const features = await this.getTeamFeatures();
         const delegated = await this.getDelegatedDepartments();
         const imports = await this.getTaskImportDepartments();
         const smartChat = await this.getSmartChatDepartments();
@@ -616,6 +725,8 @@ export class TaskAccessService {
             provisioned: snapshot.provisioned,
             readable: snapshot.readable,
             teamSharingColumnMissing: peer.columnMissing,
+            teamAssignColumnMissing: teamAssign.columnMissing,
+            teamFeaturesColumnMissing: features.columnMissing,
             notificationsColumnMissing: delegated.columnMissing,
             taskImportColumnMissing: imports.columnMissing,
             smartChatColumnMissing: smartChat.columnMissing,
@@ -646,6 +757,10 @@ export class TaskAccessService {
                     name: d.name,
                     enabled,
                     peerAssign: peer.departments.has(d.id),
+                    teamAssign: teamAssign.departments.has(d.id),
+                    pendingOn: features.pendingOn.has(d.id),
+                    protectGiven: features.protectGiven.has(d.id),
+                    assignedTab: features.assignedTab.has(d.id),
                     notificationsDelegated: delegated.departments.has(d.id),
                     taskImportEnabled: imports.departments.has(d.id),
                     smartChatEnabled: smartChat.departments.has(d.id),

@@ -82,9 +82,9 @@ const APPROVED_META_TEMPLATES_REGISTRY: MetaTemplateSpec[] = [
     {
         campaignName: 'reminder_ticket_sla_v1',
         eventKey: 'reminder_ticket_sla',
-        paramCount: 6,
+        paramCount: 7,
         description: 'Urgent reminder before ticket SLA breach.',
-        suggestedFix: 'Requires approved Meta campaign "reminder_ticket_sla_v1" (6 parameters: user_name, ticket_number, title, property, priority, sla_time).'
+        suggestedFix: 'Requires approved Meta campaign "reminder_ticket_sla_v1" (7 parameters: user_name, ticket_number, title, property, sla_deadline, priority, assignee_name).'
     },
 
     // 2. SOP Checklists & Compliance

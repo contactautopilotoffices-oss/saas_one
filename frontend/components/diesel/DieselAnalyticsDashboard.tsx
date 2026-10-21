@@ -9,6 +9,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useParams } from 'next/navigation';
 import { createClient } from '@/frontend/utils/supabase/client';
 import { useDataCache } from '@/frontend/context/DataCacheContext';
+import { pickActiveTariffs } from '@/frontend/lib/diesel/activeTariffs';
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, Area, AreaChart, YAxis, CartesianGrid } from 'recharts';
 import DGTariffModal from './DGTariffModal';
 import DieselStaffDashboard from './DieselStaffDashboard';
@@ -122,19 +123,58 @@ const DieselAnalyticsDashboard: React.FC<DieselAnalyticsDashboardProps> = ({ pro
         let readingsData = { today: [], month: [], prevMonth: [], trend: [], custom: [] };
 
         try {
+            // Property, generators and readings don't depend on each other: start them all now and read the answers
+            // below in the original order, so state updates and errors behave exactly as before (performance plan
+            // Phase 4). The tariff lookup still waits for the generator list. (.then(r => r) starts a Supabase query
+            // now; a query builder on its own only runs when awaited.)
+            const propertyRequest = isValidId(propertyId)
+                ? supabase.from('properties').select('name').eq('id', propertyId).single().then(result => result)
+                : null;
+            const gensRequest = isValidId(propertyId)
+                ? fetch(`/api/properties/${propertyId}/generators`)
+                : isValidId(orgId)
+                    ? fetch(`/api/organizations/${orgId}/generators`)
+                    : null;
+            gensRequest?.catch(() => { /* handled when awaited below */ });
+
+            const readingsBaseUrl = isValidId(propertyId)
+                ? `/api/properties/${propertyId}/diesel-readings`
+                : isValidId(orgId)
+                    ? `/api/organizations/${orgId}/diesel-readings`
+                    : null;
+            let readingsRequest: Promise<DieselReading[][]> | null = null;
+            if (readingsBaseUrl) {
+                // Today, this month and the last 30 days come from ONE request that starts at the earliest of their start
+                // dates (the same date strings as before), split below with those same dates. It returns exactly the rows
+                // of the larger of the old month / 30-day requests, so no new row-cap risk. Previous month stays separate
+                // (performance plan Phase 5.6).
+                const todayStr = new Date().toISOString().split('T')[0];
+                const monthStartStr = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
+                const trendStartStr = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+                const recentStartStr = [monthStartStr, trendStartStr, todayStr].sort()[0];
+                const asList = (v: unknown): DieselReading[] => (Array.isArray(v) ? v : []);
+                const recentTask = fetch(`${readingsBaseUrl}?startDate=${recentStartStr}`).then(r => r.json()).catch(() => []);
+                const fetchTasks: Promise<DieselReading[]>[] = [
+                    recentTask.then(rows => asList(rows).filter(r => r.reading_date === todayStr)),
+                    recentTask.then(rows => asList(rows).filter(r => r.reading_date >= monthStartStr)),
+                    fetch(`${readingsBaseUrl}?startDate=${new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1).toISOString().split('T')[0]}&endDate=${new Date(new Date().getFullYear(), new Date().getMonth(), 0).toISOString().split('T')[0]}`).then(r => r.json()).catch(() => []),
+                    recentTask.then(rows => asList(rows).filter(r => r.reading_date >= trendStartStr)),
+                ];
+
+                if (isCustomRange && dateFrom && dateTo) {
+                    fetchTasks.push(fetch(`${readingsBaseUrl}?startDate=${dateFrom}&endDate=${dateTo}`).then(r => r.json()).catch(() => []));
+                }
+                readingsRequest = Promise.all(fetchTasks);
+            }
+
             // 1. Property Name (if propertyId exists)
-            if (isValidId(propertyId)) {
-                const { data } = await supabase.from('properties').select('name').eq('id', propertyId).single();
+            if (propertyRequest) {
+                const { data } = await propertyRequest;
                 setProperty(data);
             }
 
             // 2. Generators
-            let gensRes = null;
-            if (isValidId(propertyId)) {
-                gensRes = await fetch(`/api/properties/${propertyId}/generators`);
-            } else if (isValidId(orgId)) {
-                gensRes = await fetch(`/api/organizations/${orgId}/generators`);
-            }
+            const gensRes = gensRequest ? await gensRequest : null;
 
             let gens = [];
             if (gensRes && gensRes.ok) {
@@ -147,17 +187,18 @@ const DieselAnalyticsDashboard: React.FC<DieselAnalyticsDashboardProps> = ({ pro
             // 3. Current Tariff (Property required for specific tariff, or find first available)
             const today = new Date().toISOString().split('T')[0];
             if (isValidId(propertyId) && Array.isArray(gens) && gens.length > 0) {
+                // ONE request for the property instead of one per generator; the first generator (in list order) with an
+                // active price wins, as before (performance plan Phase 5.1). Same rule as get_active_dg_tariff.
                 let tariffFound = false;
+                const tariffRes = await fetch(`/api/properties/${propertyId}/dg-tariffs`);
+                const active = tariffRes.ok ? pickActiveTariffs(await tariffRes.json(), today) : {};
                 for (const gen of gens) {
-                    const tariffRes = await fetch(`/api/properties/${propertyId}/dg-tariffs?generatorId=${gen.id}&date=${today}`);
-                    if (tariffRes.ok) {
-                        const t = await tariffRes.json();
-                        if (t && t.cost_per_litre) {
-                            activeTariffValue = t.cost_per_litre;
-                            setActiveTariff(activeTariffValue);
-                            tariffFound = true;
-                            break;
-                        }
+                    const t = active[gen.id];
+                    if (t && t.cost_per_litre) {
+                        activeTariffValue = t.cost_per_litre;
+                        setActiveTariff(activeTariffValue);
+                        tariffFound = true;
+                        break;
                     }
                 }
                 if (!tariffFound) {
@@ -166,31 +207,13 @@ const DieselAnalyticsDashboard: React.FC<DieselAnalyticsDashboardProps> = ({ pro
                 }
             }
 
-            // 4. Readings (Batch or separate)
-            // Fetch based on Property or Organization
-            const readingsBaseUrl = isValidId(propertyId)
-                ? `/api/properties/${propertyId}/diesel-readings`
-                : isValidId(orgId)
-                    ? `/api/organizations/${orgId}/diesel-readings`
-                    : null;
-
-            if (!readingsBaseUrl) {
+            // 4. Readings (Batch or separate) — already started above, based on Property or Organization
+            if (!readingsRequest) {
                 setRawReadings({ today: [], month: [], prevMonth: [], trend: [], custom: [] });
                 return;
             }
 
-            const fetchTasks: Promise<DieselReading[]>[] = [
-                fetch(`${readingsBaseUrl}?period=today`).then(r => r.json()).catch(() => []),
-                fetch(`${readingsBaseUrl}?startDate=${new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]}`).then(r => r.json()).catch(() => []),
-                fetch(`${readingsBaseUrl}?startDate=${new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1).toISOString().split('T')[0]}&endDate=${new Date(new Date().getFullYear(), new Date().getMonth(), 0).toISOString().split('T')[0]}`).then(r => r.json()).catch(() => []),
-                fetch(`${readingsBaseUrl}?startDate=${new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]}`).then(r => r.json()).catch(() => [])
-            ];
-
-            if (isCustomRange && dateFrom && dateTo) {
-                fetchTasks.push(fetch(`${readingsBaseUrl}?startDate=${dateFrom}&endDate=${dateTo}`).then(r => r.json()).catch(() => []));
-            }
-
-            const [todayR, monthR, prevMonthR, trendR, customR] = await Promise.all(fetchTasks);
+            const [todayR, monthR, prevMonthR, trendR, customR] = await readingsRequest;
 
             const newRawReadings = {
                 today: Array.isArray(todayR) ? todayR : [],

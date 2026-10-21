@@ -1,6 +1,7 @@
 import type { ReplyFacts } from './domain';
 import { BrainLlm, HEDGE_REPLY_MS, extractJson, withModelFallback } from './llm';
 import { replySystemPrompt, replyUserPrompt } from './prompt';
+import { isBlockValue } from './text';
 
 /**
  * The language brain — step 5: REPLY.
@@ -50,6 +51,19 @@ export function checkReply(text: unknown, facts: ReplyFacts, known: ReadonlySet<
     // Part B: a "should I…?" with nothing waiting for the yes is exactly what left Harsh's "Yes add this task" unanswered.
     if (facts.noYesNoQuestion && YES_NO_QUESTION.test(bare)) problems.push('asks a yes/no question nothing is waiting for');
 
+    // Owner 2026-10-14: every list / bullet / hint sits on its own line(s). One glued INTO a sentence ("Should I mark • DG log
+    // as done?") cannot be fixed by code, so it is rejected → the next model, or the laid-out fallback text, is used. A block
+    // written inline right after an intro ("…today: [[tasks]]") is fine: renderReply moves it to its own lines.
+    for (const m of text.matchAll(PLACEHOLDER)) {
+        const value = facts.values[m[1]];
+        if (value === undefined || !isBlockValue(value)) continue;
+        const before = (text.slice(0, m.index).split('\n').pop() ?? '').trim();
+        const after = (text.slice((m.index ?? 0) + m[0].length).split('\n')[0] ?? '').trim();
+        const startsOk = before === '' || /[:.!?]$/.test(before) || before.endsWith(']]') || /\p{Extended_Pictographic}$/u.test(before);
+        const endsOk = after === '' || /^(?:\[\[|\p{Lu})/u.test(after);
+        if (!startsOk || !endsOk) { problems.push(`list [[${m[1]}]] must be on its own line`); break; }
+    }
+
     // A capitalised word must be one the AI was given (a name, a task title, a department, the person's own words).
     // An invented one is rejected. The facts that matter (counts, lists) must come through a placeholder.
     const allowed = new Set(facts.names.flatMap(n => n.toLowerCase().split(/\s+/)));
@@ -64,8 +78,28 @@ export function checkReply(text: unknown, facts: ReplyFacts, known: ReadonlySet<
     return problems;
 }
 
+/**
+ * Fill the placeholders. A block (a list, a bullet, a hint — isBlockValue) always gets its own lines, even when the AI wrote
+ * it inline: a blank line before it after a sentence or an intro ("…today: 1. …"), a line break before it after another
+ * block, and a line break after it when a new sentence or another placeholder follows ("…optimization Reply done 1…").
+ * Short values (names, dates, counts) stay inside the sentence. checkReply already rejected a block glued mid-sentence.
+ */
 export function renderReply(text: string, values: Record<string, string>): string {
-    return text.replace(PLACEHOLDER, (_m, name: string) => values[name] ?? '').replace(/[ \t]+\n/g, '\n').trim();
+    let out = '', last = 0;
+    for (const m of text.matchAll(PLACEHOLDER)) {
+        const at = m.index ?? 0, value = values[m[1]] ?? '';
+        out += text.slice(last, at);
+        last = at + m[0].length;
+        if (!isBlockValue(value)) { out += value; continue; }
+        const head = out.replace(/[ \t]+$/, '');
+        out = !head || head.endsWith('\n') ? head : /[:.!?]$/.test(head) || /\p{Extended_Pictographic}$/u.test(head) ? `${head}\n\n` : `${head}\n`;
+        out += value;
+        const tail = text.slice(last).match(/^[ \t]*/)?.[0] ?? '';
+        const after = text.slice(last + tail.length);
+        if (/^(?:\[\[|\p{Lu})/u.test(after)) { out += '\n'; last += tail.length; }
+    }
+    out += text.slice(last);
+    return out.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 export interface ComposedReply { text: string; source: 'ai' | 'fallback'; model: string | null; problems: string[]; tokensIn: number; tokensOut: number; ms: number }

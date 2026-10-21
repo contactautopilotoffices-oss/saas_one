@@ -1484,6 +1484,7 @@
   .text-truncate-2 {
     display: -webkit-box;
     -webkit-line-clamp: 2;
+    line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
@@ -2119,6 +2120,121 @@
   @media (min-width: 1100px) {
     .cc-band-detail { grid-template-columns: 4.5fr 3fr 4.5fr; }
   }
+
+  /* --- Board container: rows respond to the space the BOARD has ------------
+     The bands above key off the viewport, but the Overview board sits beside a
+     288px collapsible sidebar under Windows display scaling (CSS viewport
+     ~1280–1536px), so the viewport says nothing about the room a row gets.
+     .cc-board is the CommandCenter root; it becomes a size container and the
+     same band classes are re-keyed to it here. The `.cc-board .cc-band-*`
+     selectors out-rank the viewport rules above, so those stay untouched for
+     any other caller. Gaps are NOT set here — each row keeps its existing gap.
+
+     Breakpoints are measured from content, not taken from a reference file
+     (the design-reference library has no container-width guidance): a card
+     needs ≥ ~230px for chip + title + tag + footer button on one line.
+       5 cards × 230 + 4 × 24px gutter ≈ 1250 → 5-up from 1280px.
+       3 cards × 230 + 2 × 24px gutter ≈ 740  → 3+2 from 760px.
+     The hero row's Health card needs ~410px (score + breakdown bars side by
+     side), so it shares the 1280 step: 3 × 410 + 2 × 14 ≈ 1260. */
+  .cc-board { container: cc-board / inline-size; }
+
+  /* Each step below is a closed range, so a span set for one step can never
+     leak into the next (an open-ended min-width rule with a longer selector
+     out-ranked the wider step's reset and orphaned a card on its own row). */
+
+  /* Hero: 1 → 2 (third card full width) → 3 */
+  .cc-board .cc-band-hero { grid-template-columns: minmax(0, 1fr); }
+  @container cc-board (min-width: 760px) and (max-width: 1279.98px) {
+    .cc-board .cc-band-hero { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .cc-board .cc-band-hero > :nth-child(3) { grid-column: 1 / -1; }
+  }
+  @container cc-board (min-width: 1280px) {
+    .cc-board .cc-band-hero { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
+
+  /* Five-card rows: 1 → 2 (fifth full width) → 3+2 → 5.
+     The 3+2 step runs on a 6-track grid so the second line's two cards split
+     the width instead of leaving an empty third slot. */
+  .cc-board .cc-band-5 { grid-template-columns: minmax(0, 1fr); }
+  @container cc-board (min-width: 520px) and (max-width: 759.98px) {
+    .cc-board .cc-band-5 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .cc-board .cc-band-5 > :nth-child(5) { grid-column: 1 / -1; }
+  }
+  @container cc-board (min-width: 760px) and (max-width: 1279.98px) {
+    .cc-board .cc-band-5 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+    .cc-board .cc-band-5 > * { grid-column: span 2; }
+    .cc-board .cc-band-5 > :nth-child(n + 4) { grid-column: span 3; }
+  }
+  @container cc-board (min-width: 1280px) {
+    .cc-board .cc-band-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  }
+
+  /* "More at a glance": Org Progress (dial + legend) is the wide first card.
+     1 → 2 (Org and last card full) → 6-track 4+2 / 3+3 → 5-up, Org spanning 2. */
+  .cc-board .cc-band-glance { grid-template-columns: minmax(0, 1fr); }
+  @container cc-board (min-width: 520px) and (max-width: 759.98px) {
+    .cc-board .cc-band-glance { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .cc-board .cc-band-glance > :first-child,
+    .cc-board .cc-band-glance > :last-child:nth-child(even) { grid-column: 1 / -1; }
+  }
+  @container cc-board (min-width: 760px) and (max-width: 1279.98px) {
+    .cc-board .cc-band-glance { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+    .cc-board .cc-band-glance > * { grid-column: span 3; }
+    .cc-board .cc-band-glance > :first-child { grid-column: span 4; }
+    .cc-board .cc-band-glance > :nth-child(2) { grid-column: span 2; }
+  }
+  @container cc-board (min-width: 1280px) {
+    .cc-board .cc-band-glance { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+    .cc-board .cc-band-glance > :first-child { grid-column: span 2; }
+  }
+
+  /* Budget / DG / Mail digest: 1 → 2 (Budget full width) → 5fr 3fr 4fr.
+     DG at 3/12 needs ~270px, i.e. a board of ≥ 1100px. */
+  .cc-board .cc-band-detail { grid-template-columns: minmax(0, 1fr); }
+  @container cc-board (min-width: 640px) and (max-width: 1099.98px) {
+    .cc-board .cc-band-detail { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .cc-board .cc-band-detail > :first-child { grid-column: 1 / -1; }
+  }
+  @container cc-board (min-width: 1100px) {
+    .cc-board .cc-band-detail { grid-template-columns: 5fr 3fr 4fr; }
+  }
+
+  /* Agent Activity count strip: 4-up, 2-up on a narrow board. */
+  .cc-board .cc-band-counts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  @container cc-board (min-width: 560px) {
+    .cc-board .cc-band-counts { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  }
+
+  /* KPI tiles band (KpiBand.tsx): 4 tiles in phase 1, so 4 / 2 / 1 per row. The
+     5/3 steps of .cc-band-5 would strand the 4th tile on its own row (3-up) or
+     leave an empty fifth slot (5-up). Gutter is the board's --cc-gap (vercel
+     24px). Steps are this board's own container widths, not a reference value. */
+  .cc-board .cc-band-kpi { grid-template-columns: minmax(0, 1fr); }
+  @container cc-board (min-width: 520px) {
+    .cc-board .cc-band-kpi { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @container cc-board (min-width: 1000px) {
+    .cc-board .cc-band-kpi { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  }
+
+  /* --- Text fitting ---------------------------------------------------------
+     Small stat labels wrap to at most two lines instead of truncating to a few
+     letters; the full label stays in the element's title attribute. */
+  .cc-clamp-2 {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  /* Card footers (label + button): wrap rather than push the button past the
+     card edge; a wrapped button keeps to the right. */
+  .cc-foot { flex-wrap: wrap; row-gap: 8px; }
+  .cc-foot > * { min-width: 0; }
+  .cc-foot > :last-child { margin-left: auto; }
 
   /* --- Card ----------------------------------------------------------------- */
   .cc-card {
@@ -3108,9 +3224,303 @@
   color: var(--cc-ink-2);
 }
 
+/* --- Alerts card (AlertsCard.tsx) ---------------------------------------------------
+   Layout, copy and behaviour from the owner-approved Alerts mockup; chrome is the
+   board's own .cc-card / .cc-chip / .cc-btn / .cc-btn-ghost, nothing new there.
+   Provenance (as quoted elsewhere in this file — the design-reference library itself
+   is not in this checkout):
+   - binance: severity hue is "text colour or small badge fill only", never a surface
+     fill — rows sit on a neutral ink tint; colour lives in the 4px stripe, the pill
+     and the card border. Type: caption 12/500/1.4 (detail), number-sm 14 (headline).
+   - sentry: badges use rounded.xs 4px, not the pill (level pill).
+   - glass-ambient.md: #F59E0B is not a text colour on light (2.07:1); severity is also
+     encoded by shape/label, not colour alone (stripe + worded pill + border).
+     The text inks below use the same construction as --council-danger-ink /
+     --council-p1-ink (locked hue driven toward --cc-ink until it clears AA).
+   - vercel: tight interior (8px list gap) inside the 16/18px card padding.
+   - Motion: pulse timing (1.1s x 3, then still) is the mockup's; no file in the
+     library specifies an attention pulse. Off under prefers-reduced-motion. */
+.cc-alerts {
+  --cc-alerts-red-ink: color-mix(in srgb, var(--cc-red) 78%, var(--cc-ink));
+  --cc-alerts-amber-ink: color-mix(in srgb, var(--cc-amber) 44%, var(--cc-ink));
+  --cc-alerts-blue-ink: color-mix(in srgb, var(--cc-blue) 70%, var(--cc-ink));
+  --cc-alerts-green-ink: color-mix(in srgb, var(--cc-green) 55%, var(--cc-ink));
+  --cc-alerts-row-bg: color-mix(in srgb, var(--cc-ink) 4%, transparent);
+  border-width: 1.5px;
+}
+.cc-alerts-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+.cc-alerts-scroll::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.4);
+  border-radius: 999px;
+}
+
+/* Count badge: red stays the board's .cc-badge; amber takes dark ink (white on
+   #F59E0B fails), blue takes the AA blue ink as its fill. */
+.cc-alerts-count[data-tone='warning'] { background: var(--cc-amber); color: var(--cc-ink); }
+.cc-alerts-count[data-tone='data']    { background: var(--cc-alerts-blue-ink); }
+
+.cc-alerts-list { display: grid; gap: 8px; }
+
+.cc-alerts-row {
+  --cc-alerts-c: var(--cc-ink-3);
+  --cc-alerts-ink: var(--cc-ink-2);
+  display: grid;
+  grid-template-columns: 4px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px 10px 0;
+  border-radius: 12px;
+  background: var(--cc-alerts-row-bg);
+  border: 1.5px solid transparent;
+  min-width: 0;
+}
+.cc-alerts-row[data-level='critical'] {
+  --cc-alerts-c: var(--cc-red);
+  --cc-alerts-ink: var(--cc-alerts-red-ink);
+  border-color: color-mix(in srgb, var(--cc-red) 55%, transparent);
+}
+.cc-alerts-row[data-level='warning'] { --cc-alerts-c: var(--cc-amber); --cc-alerts-ink: var(--cc-alerts-amber-ink); }
+.cc-alerts-row[data-level='data']    { --cc-alerts-c: var(--cc-blue);  --cc-alerts-ink: var(--cc-alerts-blue-ink); }
+
+.cc-alerts-stripe { align-self: stretch; border-radius: 0 4px 4px 0; background: var(--cc-alerts-c); }
+.cc-alerts-main { min-width: 0; }
+.cc-alerts-top { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.cc-alerts-sev {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  line-height: 1.4;
+  padding: 2px 7px;
+  border-radius: 4px;
+  color: var(--cc-alerts-ink);
+  background: color-mix(in srgb, var(--cc-alerts-c) 12%, transparent);
+  white-space: nowrap;
+}
+.cc-alerts-kind { font-size: 11.5px; font-weight: 600; color: var(--cc-ink-2); }
+.cc-alerts-when {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--cc-ink-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.cc-alerts-newtag { font-size: 10px; font-weight: 800; letter-spacing: 0.08em; color: var(--cc-alerts-red-ink); }
+.cc-alerts-what {
+  margin: 3px 0 0;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--cc-ink);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.cc-alerts-detail {
+  margin: 2px 0 0;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--cc-ink-2);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.cc-alerts-actions { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 112px; }
+.cc-alerts-actions > * { white-space: nowrap; }
+
+/* New alert: a short pulse on top of the steady border, then still. */
+@keyframes cc-alerts-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--cc-red) 0%, transparent); }
+  50%      { box-shadow: 0 0 0 6px color-mix(in srgb, var(--cc-red) 35%, transparent); }
+}
+.cc-alerts-row--new { animation: cc-alerts-pulse 1.1s ease-in-out 3; }
+
+.cc-alerts-clear {
+  display: grid;
+  place-items: center;
+  gap: 4px;
+  text-align: center;
+  padding: 24px 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--cc-green) 10%, transparent);
+}
+.cc-alerts-clear strong { font-size: 18px; font-weight: 700; color: var(--cc-alerts-green-ink); }
+.cc-alerts-clear span { font-size: 12.5px; font-weight: 500; color: var(--cc-ink-2); }
+
+.cc-alerts-foot { margin-top: 12px; display: grid; gap: 8px; }
+.cc-alerts-fine { display: flex; flex-wrap: wrap; gap: 6px; }
+.cc-alerts-fine span {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--cc-ink-2);
+  background: var(--cc-alerts-row-bg);
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+.cc-alerts-fine b { color: var(--cc-alerts-green-ink); }
+.cc-alerts-notchecked { margin: 0; font-size: 11px; font-weight: 500; color: var(--cc-ink-2); }
+
+.cc-alerts-seen { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--cc-hairline); }
+.cc-alerts-seen-toggle {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cc-ink-2);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.cc-alerts-seen-toggle:focus-visible { outline: 2px solid var(--cc-teal); outline-offset: 2px; }
+.cc-alerts-seen-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.cc-alerts-seen-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--cc-ink-2);
+  min-width: 0;
+}
+.cc-alerts-seen-list li > span { min-width: 0; overflow-wrap: anywhere; }
+.cc-alerts-seen-list .cc-btn-ghost { flex: none; padding: 4px 10px; }
+
+/* Wide boards: two columns, so ten alerts do not stretch into one tall list with a
+   wide gap between text and buttons. Order still reads worst-first, left to right. */
+@container cc-board (min-width: 1100px) {
+  .cc-alerts-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cc-alerts-list > .cc-alerts-clear, .cc-alerts-list > [aria-busy] { grid-column: 1 / -1; }
+}
+
+/* Narrow boards: buttons go under the text, side by side. */
+@container cc-board (max-width: 599.98px) {
+  .cc-alerts-row { grid-template-columns: 4px minmax(0, 1fr); row-gap: 8px; }
+  .cc-alerts-stripe { grid-row: 1 / span 2; }
+  .cc-alerts-actions { grid-column: 2; flex-direction: row; flex-wrap: wrap; min-width: 0; }
+}
+
+/* --- KPI tiles (KpiTile.tsx) ---------------------------------------------------------
+   Chrome is the board's own .cc-card (stacked-shadow ladder, 16/18px padding, hover
+   lift) and .cc-chip; nothing new there. The whole tile is one link.
+   Provenance (as quoted elsewhere in this file — the design-reference library itself
+   is not in this checkout):
+   - binance: figures on their own scale, 700 weight, -0.3px tracking (--cc-num-track),
+     tabular; semantic colour on the figure text only, never a card fill. Figure size
+     22px / label 10.5px are the Agent Activity CountCell values this tile replaces.
+   - vercel: tight interior (8px column gap, 12px row gap) inside the card padding.
+   - glass-ambient.md (via the .cc-alerts inks): #10B981 / #EF4444 as text on light
+     are under AA, so tones use the same ink-mixed construction as --cc-alerts-*-ink.
+     Labels use --cc-ink-2 (4.9:1), not --cc-ink-3 (2.5:1, under AA per the ink note).
+   - Focus ring: same 2px --cc-teal outline + 2px offset as .cc-alerts-seen-toggle. */
+.cc-kpi {
+  --cc-kpi-good-ink: color-mix(in srgb, var(--cc-green) 55%, var(--cc-ink));
+  --cc-kpi-bad-ink: color-mix(in srgb, var(--cc-red) 78%, var(--cc-ink));
+  container: cc-kpi / inline-size;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+a.cc-kpi:focus-visible {
+  outline: 2px solid var(--cc-teal);
+  outline-offset: 2px;
+}
+.cc-kpi-body { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; }
+.cc-kpi-stats {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 8px;
+}
+@container cc-kpi (min-width: 300px) {
+  .cc-kpi-stats { grid-template-columns: repeat(var(--cc-kpi-n, 4), minmax(0, 1fr)); }
+}
+/* dt comes first in the DOM (valid <dl>); the figure is shown on top. */
+.cc-kpi-stat { display: flex; flex-direction: column-reverse; justify-content: flex-end; min-width: 0; }
+.cc-kpi-val {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: var(--cc-num-track);
+  font-variant-numeric: tabular-nums;
+  color: var(--cc-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cc-kpi-val[data-tone='good'] { color: var(--cc-kpi-good-ink); }
+.cc-kpi-val[data-tone='bad']  { color: var(--cc-kpi-bad-ink); }
+.cc-kpi-label {
+  margin-top: 2px;
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--cc-ink-2);
+  overflow-wrap: anywhere;
+}
+.cc-kpi-foot {
+  margin: auto 0 0;
+  padding-top: 12px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--cc-ink-2);
+}
+/* "Not set up": the CardEmpty shape (dashed hairline, 72px floor), with its own words. */
+.cc-kpi-off {
+  flex: 1;
+  min-height: 72px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 12px 10px;
+  text-align: center;
+  border: 1px dashed var(--cc-hairline);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--cc-ink) 2%, transparent);
+}
+.cc-kpi-off strong { font-size: 11px; font-weight: 700; color: var(--cc-ink-2); }
+.cc-kpi-off span { font-size: 11px; font-weight: 500; line-height: 1.35; color: var(--cc-ink-2); max-width: 230px; }
+
+/* --- Task Manager progress card (TaskOrgProgressCard.tsx) ---------------------------
+   Hosts TaskProgressGauge unchanged. The gauge brings its own white bordered box and a
+   header that repeats this card's title; inside .cc-card that is a card-in-a-card, so its
+   chrome is flattened and its header hidden — the .cc-card already supplies the
+   stacked-shadow chrome (vercel ladder, as quoted at .cc-card). Unlayered on purpose,
+   like every .cc-* rule here, so it outranks the gauge's Tailwind utilities.
+   Wide card: gauge left (its own 280px cap), legend stacked right — keeps the card
+   near its row neighbours' height. Narrow: gauge over a 3-up / 1-up legend.
+   Foot = .cc-kpi-foot values (11px / ink-2, the AA reading floor). */
+.cc-taskprog-body { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; container: cc-taskprog / inline-size; }
+.cc-taskprog-gauge > div { background: transparent; border: 0; border-radius: 0; box-shadow: none; padding: 0; }
+.cc-taskprog-gauge > div > :first-child { display: none; }
+.cc-taskprog-gauge > div > :last-child { grid-template-columns: minmax(0, 1fr); }
+@container cc-taskprog (min-width: 380px) {
+  .cc-taskprog-gauge > div > :last-child { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@container cc-taskprog (min-width: 540px) {
+  .cc-taskprog-gauge > div { display: grid; grid-template-columns: minmax(0, 280px) minmax(0, 1fr); align-items: center; column-gap: 16px; }
+  .cc-taskprog-gauge > div > :nth-child(2) { margin: 0; }
+  .cc-taskprog-gauge > div > :last-child { grid-template-columns: minmax(0, 1fr); border-top: 0; margin-top: 0; padding-top: 0; }
+}
+.cc-taskprog-foot {
+  margin: auto 0 0;
+  padding-top: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--cc-ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
 /* --- Reduced motion ------------------------------------------------------------------ */
 @media (prefers-reduced-motion: reduce) {
   .cc-card, .cc-card:hover, .cc-btn, .cc-addbtn, .cc-iconbtn { transition: none; transform: none; }
+  .cc-alerts-row--new { animation: none; }
 }
 
 /* --- v2 resets: neutralize legacy v1 property leakage on shared class names ---

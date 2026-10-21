@@ -6,6 +6,7 @@ import { TaskErrorHandler } from './TaskErrorHandler';
 import { TaskAccessService } from './TaskAccessService';
 import { PermissionService } from './PermissionService';
 import { Employee, TaskAssignment } from './types';
+import { sectionedList } from './brain/text';
 
 export interface CommandExecutionResult {
     success: boolean;
@@ -87,7 +88,8 @@ export class TaskCommandHandler {
         // 2. The numbered list: older open tasks first, then today's — the same numbers as the person's messages
         const tasks = await TaskDatabaseService.getNumberedList({
             employeeId: employee.id,
-            date: targetDate
+            date: targetDate,
+            departmentId: employee.department_id ?? null
         });
 
         // ── Command 1: Cancel ─────────────────────────────────────────────────
@@ -226,7 +228,7 @@ export class TaskCommandHandler {
             // themselves, everyone below them in the reporting chain, colleagues when team sharing is ON;
             // superusers may assign to anyone.
             const allEmployees = await TaskDatabaseService.getAllEmployees();
-            const deptEmployees = await PermissionService.visibleAndAssignable(employee, allEmployees);
+            const deptEmployees = await PermissionService.assignableTo(employee, allEmployees);
 
             // Match by self ('me' / 'myself'), or search available assignees
             const isSelf = targetNameQuery.toLowerCase() === 'me' || targetNameQuery.toLowerCase() === 'myself';
@@ -288,6 +290,9 @@ export class TaskCommandHandler {
 
             // Notify assigned employee via WhatsApp if they have a phone number
             // Same approved template as the Tasks tab (task_assigned_v1), so it also reaches people outside the 24-hour window.
+            if (targetEmployee.id !== employee.id) {
+                void import('./taskBell').then(({ taskBell }) => taskBell({ userId: targetEmployee.id, kind: 'TASK_ASSIGNED', title: `New task from ${employee.name}`, message: `${employee.name} gave you: ${taskTitle}`, departmentName: targetEmployee.department_name }));
+            }
             void sendTaskAssigned(targetEmployee.phone_number, {
                 titles: [taskTitle], fromLabel: personLabel(employee.name, employee.department_name), date: targetDate,
                 departmentId: targetEmployee.department_id || undefined,
@@ -331,11 +336,12 @@ export class TaskCommandHandler {
             const completedCount = tasks.filter(t => t.status === 'completed').length;
             const percent = Math.round((completedCount / tasks.length) * 100);
 
-            const taskLines = tasks.map((t, idx) => {
+            // Three sections (owner 2026-10-16): carry forward → pending today → completed; the numbers stay the same.
+            const taskLines = sectionedList(tasks.map((t, idx) => {
                 const icon = t.status === 'completed' ? '✅' : '⏳';
                 const statusStr = t.status === 'completed' ? 'Completed' : 'Pending';
-                return `${idx + 1}. ${t.isCarriedForward ? '🔄 ' : ''}${t.title} [${statusStr} ${icon}]`;
-            }).join('\n');
+                return { carried: !!t.isCarriedForward, done: t.status === 'completed', line: `${idx + 1}. ${t.title} [${statusStr} ${icon}]` };
+            }));
 
             const reply = [
                 `📋 Tasks for today (${targetDate}):`,

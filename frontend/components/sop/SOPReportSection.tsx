@@ -207,7 +207,7 @@ const SOPReportSection: React.FC<SOPReportSectionProps> = ({ propertyId, isAdmin
                     ai_cleanliness_score: it.ai_cleanliness_score,
                     ai_cleanliness_reason: it.ai_cleanliness_reason,
                     photo_url: it.photo_url,
-                    reference_photo_url: it.checklist_item?.reference_photo_url,
+                    reference_photo_url: isAdmin ? it.checklist_item?.reference_photo_url : null,
                 }));
             } else {
                 // If no completion session recorded yet for this date, fetch template checklist items so clean reference photos still display
@@ -222,7 +222,7 @@ const SOPReportSection: React.FC<SOPReportSectionProps> = ({ propertyId, isAdmin
                     ai_cleanliness_score: null,
                     ai_cleanliness_reason: 'Pending completion for this date',
                     photo_url: null,
-                    reference_photo_url: it.reference_photo_url,
+                    reference_photo_url: isAdmin ? it.reference_photo_url : null,
                 }));
             }
 
@@ -345,6 +345,7 @@ const SOPReportSection: React.FC<SOPReportSectionProps> = ({ propertyId, isAdmin
                     areas={cadOverlayData.areas}
                     items={cadOverlayData.items}
                     templateTitle={cadOverlayData.templateTitle}
+                    isAdmin={isAdmin}
                     onScorePhoto={triggerAIScoring}
                     aiScoring={aiScoring}
                 />

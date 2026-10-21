@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Status, Workspace, WorkspaceOk, columnLabel } from './types';
+import { Status, WAssignable, Workspace, WorkspaceOk, columnLabel } from './types';
 
 const messageOf = (err: unknown, fallback: string) => (err instanceof Error && err.message ? err.message : fallback);
 
@@ -17,7 +17,8 @@ export interface Toast {
  *  - moves a card OPTIMISTICALLY: the UI changes at once, and snaps back with a message if the server refuses
  *  - adds / assigns tasks
  */
-export function useWorkspace(date: string, departmentName: string) {
+/** `date` … `to`: the days shown (owner 2026-10-15: a range of up to 31 days; `to` = `date` for one day). */
+export function useWorkspace(date: string, departmentName: string, to: string = date) {
     const [ws, setWs] = useState<Workspace | null>(null);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
@@ -39,7 +40,7 @@ export function useWorkspace(date: string, departmentName: string) {
     const load = useCallback(async () => {
         if (wsRef.current) setRefreshing(true); else setLoading(true);
         try {
-            const res = await fetch(`/api/task-manager/workspace?date=${date}&department=${encodeURIComponent(departmentName)}`);
+            const res = await fetch(`/api/task-manager/workspace?from=${date}&to=${to}&department=${encodeURIComponent(departmentName)}`);
             const data = await res.json();
             if (!res.ok || !data.success) throw new Error(data.error || 'Could not load tasks');
             setWs(data.workspace);
@@ -50,7 +51,7 @@ export function useWorkspace(date: string, departmentName: string) {
             setLoading(false);
             setRefreshing(false);
         }
-    }, [date, departmentName]);
+    }, [date, to, departmentName]);
 
     useEffect(() => { load(); }, [load]);
 
@@ -139,6 +140,72 @@ export function useWorkspace(date: string, departmentName: string) {
         }
     }, [load, post, toast]);
 
+    /** "Pending on…" (owner 2026-10-19): tells a colleague one of my tasks is waiting on them. Nothing on the board changes. */
+    const flagDependency = useCallback(async (taskId: string, targetUserId: string, toName: string) => {
+        try {
+            await post({ action: 'flag_dependency', taskId, targetUserId });
+            toast('success', `${toName} has been told`);
+            return true;
+        } catch (err) {
+            toast('error', messageOf(err, 'Could not send that'));
+            return false;
+        }
+    }, [post, toast]);
+
+    /** Edits a task I gave (name and details). Used by "Assigned by me". */
+    const editTask = useCallback(async (taskId: string, title: string, description: string) => {
+        try {
+            await post({ action: 'edit_task', taskId, title, description });
+            toast('success', 'Task saved');
+            load();
+            return true;
+        } catch (err) {
+            toast('error', messageOf(err, 'Could not save the task'));
+            return false;
+        }
+    }, [load, post, toast]);
+
+    /**
+     * Owner 2026-10-21: "Give to" from the task window, with an optional note.
+     * One person → hand over (the task moves). Several → everyone after the first gets their own copy first,
+     * then the task moves to the first person, so a failed copy leaves the task safely with me.
+     */
+    const giveMany = useCallback(async (taskId: string, people: WAssignable[], note: string) => {
+        const cur = wsRef.current;
+        const task = cur && cur.state === 'ok' ? cur.tasks.find(t => t.id === taskId) : undefined;
+        if (!task || people.length === 0) return false;
+        const [first, ...rest] = people;
+        let copied = 0;
+        try {
+            for (const p of rest) {
+                await post({ action: 'assign', targetUserId: p.userId, title: task.title, description: task.description || undefined, note: note || undefined });
+                copied++;
+            }
+            await post({ action: 'hand_over', taskId, targetUserId: first.userId, note: note || undefined });
+            toast('success', people.length === 1 ? `Given to ${first.name}` : `Given to ${people.length} people`);
+            await load();
+            return true;
+        } catch (err) {
+            const done = copied > 0 ? ` (${copied} cop${copied === 1 ? 'y' : 'ies'} already sent)` : '';
+            toast('error', messageOf(err, 'Could not give that task') + done);
+            load();
+            return false;
+        }
+    }, [load, post, toast]);
+
+    /** Owner 2026-10-21: adds a note to a task (saved as a "Remark:" line; the holder is told). */
+    const addNote = useCallback(async (taskId: string, note: string) => {
+        try {
+            await post({ action: 'add_note', taskId, note });
+            toast('success', 'Note added');
+            await load();
+            return true;
+        } catch (err) {
+            toast('error', messageOf(err, 'Could not add the note'));
+            return false;
+        }
+    }, [load, post, toast]);
+
     const ok: WorkspaceOk | null = ws && ws.state === 'ok' ? ws : null;
-    return { ws, ok, loading, refreshing, error, toasts, dismissToast, reload: load, moveTask, addTask, giveTask, deleteTask, setLocked };
+    return { ws, ok, loading, refreshing, error, toasts, dismissToast, toast, reload: load, moveTask, addTask, giveTask, deleteTask, setLocked, flagDependency, editTask, giveMany, addNote };
 }

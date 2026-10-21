@@ -1,5 +1,6 @@
 import { campaignOptions } from '../lib/whatsapp/assistant/templates.mjs';
 import { providerIds } from '../lib/whatsapp/interpreter/delivery.mjs';
+import { sanitizeWhatsAppParam } from '../lib/whatsapp/sanitize';
 
 const AISENSY_API_URL = 'https://backend.aisensy.com/campaign/t1/api/v2';
 
@@ -65,12 +66,15 @@ export class AiSensyService {
         }
 
         try {
+            const sanitizedParams = (options.templateParams || []).map(p => sanitizeWhatsAppParam(p));
+            const userName = sanitizeWhatsAppParam(options.userName ?? 'User');
+
             const bodyPayload: { apiKey: string; campaignName: string; destination: string; userName: string; templateParams: string[]; source: string; media?: { url: string; filename: string } } = {
                 apiKey,
                 campaignName: options.campaignName,
                 destination,
-                userName: options.userName ?? 'User',
-                templateParams: options.templateParams,
+                userName,
+                templateParams: sanitizedParams,
                 source: 'autopilot-fms',
             };
 

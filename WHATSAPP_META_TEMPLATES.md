@@ -90,9 +90,8 @@ A new ticket has been raised on AutoPilot.
 Our team has been notified to attend to this request.
 ```
 - **Footer:** `AutoPilot Property Management`
-- **Button Type:** `Call to Action (Dynamic URL)`
+- **Button Type:** `Call to Action`
   - **Button Text:** `View Ticket`
-  - **URL Type:** `Dynamic` &rarr; `https://fms-dev-saas-one.vercel.app/tickets/{{10}}`
 - **Sample Values:**
   - `Header Image`: Upload any sample equipment/issue photo
   - `{{1}}`: `Property Team`
@@ -104,12 +103,11 @@ Our team has been notified to attend to this request.
   - `{{7}}`: `+91 98765 43210`
   - `{{8}}`: `Sunil Kumar (MST)`
   - `{{9}}`: `+91 98111 22334`
-  - `{{10}}` *(Button URL Ticket UUID)*: `d35372d1-bee2-403f-8578-00da66f16984`
 
 ---
 
-### Template 2: `ticket_assigned_v1` (Dedicated to Assignee / Technician)
-- **Template Name:** `ticket_assigned_v1`
+### Template 2: `ticket_assigned_v2` (Dedicated to Assignee / Technician)
+- **Template Name:** `ticket_assigned_v2`
 - **Category:** `UTILITY`
 - **Language:** `English (en)`
 - **Header:** `Text` &rarr; `Ticket Assigned to You 👷`
@@ -127,10 +125,9 @@ A ticket has been assigned to you for resolution.
 
 Please inspect the issue on site and update progress.
 ```
-- **Footer:** `AutoPilot Maintenance`
-- **Button Type:** `Call to Action (Dynamic URL)`
-  - **Button Text:** `Open Ticket`
-  - **URL Type:** `Dynamic` &rarr; `https://fms-dev-saas-one.vercel.app/tickets/{{8}}`
+- **Footer:** `AutoPilot Property Management`
+- **Button Type:** `Call to Action`
+  - **Button Text:** `View Ticket`
 - **Sample Values:**
   - `{{1}}`: `Sunil Kumar`
   - `{{2}}`: `TICK-1042`
@@ -139,7 +136,6 @@ Please inspect the issue on site and update progress.
   - `{{5}}`: `High`
   - `{{6}}`: `Amit Patel`
   - `{{7}}`: `+91 98765 43210`
-  - `{{8}}` *(Button URL Ticket UUID)*: `d35372d1-bee2-403f-8578-00da66f16984`
 
 ---
 
@@ -147,30 +143,27 @@ Please inspect the issue on site and update progress.
 - **Template Name:** `ticket_completed_v1`
 - **Category:** `UTILITY`
 - **Language:** `English (en)`
-- **Header:** `Text` &rarr; `Ticket Resolved & Completed ✅` *(or None)*
+- **Header:** `Text` &rarr; `Ticket Resolved & Completed` *(or None)*
 - **Body:**
 ```text
 Hello {{1}},
 
 Ticket #{{2}} has been marked completed.
 
-📋 Title: {{3}}
+📄 Title: {{3}}
 🏢 Property: {{4}}
-👷 Resolved By: {{5}}
+👤 Resolved By: {{5}}
 
-Click below to verify the completion and rate the service.
+verify the completion and rate the service.
 ```
-- **Footer:** `AutoPilot Quality Assurance`
-- **Button Type:** `Call to Action (Dynamic URL)`
-  - **Button Text:** `Verify & Rate`
-  - **URL Type:** `Dynamic` &rarr; `https://fms-dev-saas-one.vercel.app/tickets/{{6}}`
+- **Footer:** `Autopilot Property Management`
+- **Button Type:** `None`
 - **Sample Values:**
   - `{{1}}`: `Amit Patel`
   - `{{2}}`: `TICK-1042`
   - `{{3}}`: `Main AC cooling leakage in cafeteria`
   - `{{4}}`: `WorkSquare Hub 1`
   - `{{5}}`: `Sunil Kumar (MST)`
-  - `{{6}}` *(Button URL Ticket UUID)*: `d35372d1-bee2-403f-8578-00da66f16984`
 
 ---
 
@@ -185,16 +178,14 @@ Hello {{1}},
 
 Ticket #{{2}} has been marked completed.
 
-📋 Title: {{3}}
+📄 Title: {{3}}
 🏢 Property: {{4}}
-👷 Resolved By: {{5}}
+👤 Resolved By: {{5}}
 
-Click below to verify the completion and rate the service.
+verify the completion and rate the service.
 ```
-- **Footer:** `AutoPilot Quality Assurance`
-- **Button Type:** `Call to Action (Dynamic URL)`
-  - **Button Text:** `Verify & Rate`
-  - **URL Type:** `Dynamic` &rarr; `https://fms-dev-saas-one.vercel.app/tickets/{{6}}`
+- **Footer:** `Autopilot Property Management`
+- **Button Type:** `None`
 - **Sample Values:**
   - `Header Image`: Upload sample repaired equipment photo
   - `{{1}}`: `Amit Patel`
@@ -202,7 +193,6 @@ Click below to verify the completion and rate the service.
   - `{{3}}`: `Main AC cooling leakage in cafeteria`
   - `{{4}}`: `WorkSquare Hub 1`
   - `{{5}}`: `Sunil Kumar (MST)`
-  - `{{6}}` *(Button URL Ticket UUID)*: `d35372d1-bee2-403f-8578-00da66f16984`
 
 ---
 
@@ -995,7 +985,43 @@ Keep up the great work in maintaining site standards!
 
 ## 7. Meeting Room Reservations
 
-### Template 17: `meeting_room_booked_v3`
+### Template 17: `meeting_room_booked_v4` (Recommended)
+- **Template Name:** `meeting_room_booked_v4`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Text` &rarr; `Meeting Room Booking Notice 📅`
+- **Body:**
+```text
+Hello {{1}},
+
+A meeting room reservation has been confirmed.
+
+🚪 Room: {{2}}
+🏢 Property: {{3}}
+📅 Date: {{4}}
+⏰ Time: {{5}} to {{6}}
+👥 Booked By: {{7}} (📞 {{8}})
+
+We look forward to hosting your meeting. Please contact the front desk if you require any assistance.
+```
+- **Footer:** `AutoPilot Hospitality`
+- **Button Type:** `Quick Reply` &rarr; `View Bookings`
+- **Parameters (8):**
+  - `{{1}}`: `user_name` (e.g. `Bhavin` or `Front Desk Team`)
+  - `{{2}}`: `room_name` (e.g. `Executive Boardroom (12 Pax)`)
+  - `{{3}}`: `property` (e.g. `Mafatlal Chambers`)
+  - `{{4}}`: `date` (e.g. `15/10/2026`)
+  - `{{5}}`: `start_time` (e.g. `11:30 AM`)
+  - `{{6}}`: `end_time` (e.g. `12:00 PM`)
+  - `{{7}}`: `booker` (e.g. `Bhavin`)
+  - `{{8}}`: `booker_phone` (e.g. `+91 99676 67347`)
+
+- **Audience:** Dispatched automatically to the **Requester / Booker** (client).
+- **Note:** Contains the polite guest greeting: *"We look forward to hosting your meeting. Please contact the front desk if you require any assistance."*
+
+---
+
+### Template 17 (Staff / Ops & Added Users): `meeting_room_booked_v3`
 - **Template Name:** `meeting_room_booked_v3`
 - **Category:** `UTILITY`
 - **Language:** `English (en)`
@@ -1016,15 +1042,8 @@ Please ensure facilities and refreshments are arranged if requested.
 ```
 - **Footer:** `AutoPilot Hospitality`
 - **Button Type:** `Quick Reply` &rarr; `View Bookings`
-- **Sample Values:**
-  - `{{1}}`: `Front Desk Team`
-  - `{{2}}`: `Executive Boardroom (12 Pax)`
-  - `{{3}}`: `WorkSquare Hub 1`
-  - `{{4}}`: `19/08/2026`
-  - `{{5}}`: `03:00 PM`
-  - `{{6}}`: `04:30 PM`
-  - `{{7}}`: `Pooja Verma (Design Co)`
-  - `{{8}}`: `+91 98200 54321`
+- **Audience:** Dispatched automatically to the **Operations Team / Staff / Property Admins (`roles`)** AND **Specific Individual Users (`+ Add user...`)** to prepare facilities and refreshments.
+- **Note:** Contains the operational directive: *"Please ensure facilities and refreshments are arranged if requested."* to instruct on-site staff to prep the room.
 
 ---
 
@@ -1056,7 +1075,49 @@ The room is now released and available for booking.
   - `{{4}}`: `19/08/2026`
   - `{{5}}`: `03:00 PM`
   - `{{6}}`: `04:30 PM`
-  - `{{7}}`: `Pooja Verma`
+---
+
+### Template 18a: `meeting_room_start_reminder_v1`
+- **Template Name:** `meeting_room_start_reminder_v1`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Text` &rarr; `Upcoming Meeting Reminder`
+- **Body:**
+```text
+Hello {{1}},
+
+This is a reminder that your meeting in {{2}} at {{3}} is scheduled to begin in {{4}} minutes (at {{5}}).
+```
+- **Footer:** None
+- **Buttons:** None
+- **Parameters (5):**
+  - `{{1}}`: `user_name` (e.g. `Meenaa Chavan`)
+  - `{{2}}`: `room_name` (e.g. `Boardroom`)
+  - `{{3}}`: `property` (e.g. `Mafatlal Chambers, Lower Parel`)
+  - `{{4}}`: `remaining_minutes` (e.g. `10`)
+  - `{{5}}`: `start_time` (e.g. `11:00 AM`)
+
+---
+
+### Template 18b: `meeting_room_end_reminder_v1`
+- **Template Name:** `meeting_room_end_reminder_v1`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Text` &rarr; `Meeting Ending Soon`
+- **Body:**
+```text
+Hello {{1}},
+
+This is a reminder that your meeting in {{2}} at {{3}} is scheduled to end in {{4}} minutes (at {{5}}).
+```
+- **Footer:** None
+- **Buttons:** None
+- **Parameters (5):**
+  - `{{1}}`: `user_name` (e.g. `Meenaa Chavan`)
+  - `{{2}}`: `room_name` (e.g. `Boardroom`)
+  - `{{3}}`: `property` (e.g. `Mafatlal Chambers, Lower Parel`)
+  - `{{4}}`: `remaining_minutes` (e.g. `10`)
+  - `{{5}}`: `end_time` (e.g. `01:00 PM`)
 
 ---
 

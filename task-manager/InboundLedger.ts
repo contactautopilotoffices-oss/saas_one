@@ -52,6 +52,31 @@ export async function recordInbound(messageId: string | null | undefined, phone:
     } catch (err) { warn('record', err); return 'unknown'; }
 }
 
+/**
+ * WhatsApp accepts a normal (free-text) message only within 24 hours of the person's last message to us; outside it only
+ * an approved template arrives. 23 hours leaves an hour for a long send run.
+ */
+export const CHAT_WINDOW_MS = 23 * 3600_000;
+
+/**
+ * The phone keys (last 10 digits) whose 24-hour window is open, from this ledger. Read-only. Any doubt — an error, no
+ * row, or the "Never silent" switch OFF so nothing new is recorded — counts as closed, and the caller sends the template.
+ */
+export async function openChatWindows(phones: Array<string | null | undefined>, now = new Date()): Promise<Set<string>> {
+    const keys = [...new Set(phones.map(p => phoneKey(p || '')).filter(k => k.length === 10))];
+    const open = new Set<string>();
+    if (!keys.length) return open;
+    try {
+        const since = new Date(now.getTime() - CHAT_WINDOW_MS).toISOString();
+        for (let i = 0; i < keys.length; i += 200) {
+            const { data, error } = await supabaseAdmin.from(LEDGER_TABLE).select('phone_key').in('phone_key', keys.slice(i, i + 200)).gte('received_at', since);
+            if (error) { warn('chat window check', error); return new Set(); }
+            for (const r of (data || []) as Array<{ phone_key: string }>) open.add(r.phone_key);
+        }
+        return open;
+    } catch (err) { warn('chat window check', err); return new Set(); }
+}
+
 /** A Task Manager route took the message: observe eligible Smart-chat turns and let the watchdog expect a reply. */
 export async function markRoute(messageId: string | null | undefined, route: LedgerRoute, phone?: string | null, text?: string | null): Promise<void> {
     if (!messageId) return;

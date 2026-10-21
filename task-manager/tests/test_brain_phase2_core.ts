@@ -89,6 +89,21 @@ async function run() {
     check('a number that does not exist → CLARIFY, with the open tasks as options', d.outcome === 'CLARIFY' && d.reason === 'task_number_out_of_range' && d.options.length === 5, d);
     d = decide(interp('complete_tasks', { which: which({ numbers: [6] }) }));
     check('a task that is already done → REFUSE (told so)', d.outcome === 'REFUSE' && d.reason === 'task_already_done');
+
+    // Owner 2026-10-14: with undo available (One front door ON) the person's own tasks are marked done straight away.
+    const noAsk = { ...types.DEFAULT_CONFIRM_POLICY, confirmCompletions: false };
+    d = decide(interp('complete_tasks', { which: which({ numbers: [1, 4] }) }), mkCtx(), noAsk);
+    check('undo available: "finished 1 and 4" → done straight away (ACT), both tasks', d.outcome === 'ACT' && d.action.type === 'complete_tasks' && d.action.taskIds.join() === 't1,t4', d);
+    d = decide(interp('progress_update', { state: 'done_all', which: which({ all: true }), note: null }), mkCtx(), noAsk);
+    check('undo available: "I finished everything" → done straight away', d.outcome === 'ACT' && d.action.type === 'progress_update', d);
+    d = decide(interp('complete_tasks', { which: which({ numbers: [9] }) }), mkCtx(), noAsk);
+    check('undo available: an unclear task is still asked about, never guessed', d.outcome === 'CLARIFY', d);
+    d = decide(interp('complete_tasks', { which: which({ numbers: [2] }) }), { ...mkCtx(), pending: { kind: 'ping_reply', assigner: 'Vidya Nair', taskIds: ['p1', 'p2'], taskTitles: ['Approve measurement sheet', 'Sign the AMC'] } } as any, noAsk);
+    check('undo available: a reply to someone\'s reminder (other people are told) is still asked first', d.outcome === 'CONFIRM', d);
+    const doneFacts: any = tasksDomain.replyFacts({ outcome: 'ACT', action: { type: 'complete_tasks', taskIds: ['t1'] } } as any, mkCtx(), { summary: 'Marked 1 task as done.', values: { details: '• ✅ x' } } as any);
+    check('the reply says what was done, then "Reply undo within 10 minutes"', doneFacts.required.includes('hint') && doneFacts.values.hint === 'Reply *undo* within 10 minutes to reverse it.' && /Reply \*undo\* within 10 minutes/.test(doneFacts.fallback), doneFacts);
+    const failFacts: any = tasksDomain.replyFacts({ outcome: 'ACT', action: { type: 'complete_tasks', taskIds: ['t1'] } } as any, mkCtx(), { summary: 'I could not mark it. Not allowed', values: { details: '' } } as any);
+    check('nothing was marked → no undo line', !failFacts?.values?.hint, failFacts);
     d = decide(interp('complete_tasks', { which: which({ numbers: [6, 1] }) }));
     check('already-done + open together → only the open one is proposed', d.outcome === 'CONFIRM' && d.action.taskIds.join() === 't1');
     d = decide(interp('complete_tasks', { which: which({ hints: ['carpet'] }) }));
@@ -145,8 +160,9 @@ async function run() {
     }
     check('"everyone", "the team", "all", "someone" are never a recipient → CLARIFY', true);
     check('no task content → CLARIFY', decide(interp('create_tasks', { assignee: 'Lohit', tasks: [], date: null })).outcome === 'CLARIFY');
-    d = decide(interp('create_tasks', { assignee: 'me', tasks: Array.from({ length: 16 }, (_, i) => ({ title: `Task ${i}`, details: null })), date: null }));
-    check('more than 15 tasks in one message → CLARIFY (too many)', d.outcome === 'CLARIFY' && d.reason === 'too_many_tasks');
+    // Owner 2026-10-19: the limit is 30 per message (was 15).
+    d = decide(interp('create_tasks', { assignee: 'me', tasks: Array.from({ length: 31 }, (_, i) => ({ title: `Task ${i}`, details: null })), date: null }));
+    check('more than 30 tasks in one message → CLARIFY (too many)', d.outcome === 'CLARIFY' && d.reason === 'too_many_tasks');
 
     console.log('\n7. Deciding: handing over');
     d = decide(interp('hand_over_task', { which: which({ numbers: [5] }), to: 'Vidhya' }));
@@ -284,35 +300,44 @@ async function run() {
     console.log('\n12. The reply checker');
     const facts: any = { kind: 'x', describe: 'd', values: { tasks: '• A\n• B', assignee: 'Lohit Kumar', count: '2' }, required: ['tasks', 'assignee'], asksQuestion: true, claimsNothingDone: true, names: ['Priyanka Shah', 'Lohit Kumar'], fallback: 'plain' };
     const has = (text: string, f = facts) => checkReply(text, f);
-    check('a good reply passes', has('Just checking: add [[tasks]] to [[assignee]]\'s list?').length === 0);
+    // 2026-10-14: a list ("block") sits on its own line after the sentence that introduces it.
+    check('a good reply passes', has('Just checking: add these to [[assignee]]\'s list?\n[[tasks]]').length === 0);
+    check('a list glued into the middle of a sentence is rejected (the next model or the laid-out fallback is used)', has('Just checking: add [[tasks]] to [[assignee]]\'s list?').some(p => /own line/.test(p)) && has('Should I mark [[tasks]] as done for [[assignee]]?').some(p => /own line/.test(p)));
+    check('a single bullet counts as a list too; a name or a count stays inside the sentence', has('Add these for [[assignee]]?\n[[tasks]]', { ...facts, values: { ...facts.values, tasks: '• Only one' } }).length === 0 && has('Add [[tasks]] for [[assignee]]?', { ...facts, values: { ...facts.values, tasks: '• Only one' } }).some(p => /own line/.test(p)));
     check('a missing required placeholder is caught', has('Shall I add them?').some(p => /missing required/.test(p)));
     check('an unknown placeholder is caught', has('Add [[tasks]] for [[assignee]] on [[date]]?').some(p => /unknown placeholder/.test(p)));
     check('a number written by hand is caught', has('Add these 2 tasks: [[tasks]] for [[assignee]]?').some(p => /number/.test(p)));
     check('he / she / him / her / his are caught', ['Add [[tasks]] for [[assignee]], is he ready?', 'Should I tell her: [[tasks]] [[assignee]]?', 'Add [[tasks]] to [[assignee]] on his list?'].every(t => has(t).some(p => /pronoun/.test(p))));
     check('"I\'ve added…" is caught when nothing has happened yet', has('I\'ve added [[tasks]] for [[assignee]]. Right?').some(p => /already happened/.test(p)) && has('Done! [[tasks]] [[assignee]] ok?').length >= 0);
     check('two questions are caught; no question is caught when one is required', has('Add [[tasks]] for [[assignee]]? Really?').some(p => /exactly one question/.test(p)) && has('Adding [[tasks]] for [[assignee]].').some(p => /exactly one question/.test(p)));
-    check('a name written by hand is caught unless allowed (Lohit is allowed, Rajesh is not)', has('Should I add [[tasks]] for Rajesh [[assignee]]?').some(p => /Rajesh/.test(p)) && has('Priyanka, add [[tasks]] to Lohit [[assignee]]?').length === 0);
-    check('a capitalised word at the start of a sentence is fine', has('Sure thing. Want [[tasks]] on [[assignee]]\'s list?').length === 0);
+    check('a name written by hand is caught unless allowed (Lohit is allowed, Rajesh is not)', has('Should I add these for Rajesh [[assignee]]?\n[[tasks]]').some(p => /Rajesh/.test(p)) && has('Priyanka, add these to Lohit [[assignee]]?\n[[tasks]]').length === 0);
+    check('a capitalised word at the start of a sentence is fine', has('Sure thing. Want these on [[assignee]]\'s list?\n[[tasks]]').length === 0);
     check('more than one emoji, headings and bold markup are caught', has('✅✅ Add [[tasks]] for [[assignee]]?').some(p => /emoji/.test(p)) && has('# Add [[tasks]] for [[assignee]]?').some(p => /formatting/.test(p)) && has('**Add** [[tasks]] for [[assignee]]?').some(p => /formatting/.test(p)));
     check('empty and non-string replies are caught', has('').length > 0 && checkReply(undefined, facts).length > 0 && checkReply(42, facts).length > 0);
     check('a long reply is caught', has('Add [[tasks]] for [[assignee]]? ' + 'word '.repeat(120)).some(p => /too long/.test(p)));
-    check('renderReply fills placeholders with the exact facts', renderReply('Add [[tasks]] for [[assignee]]?', facts.values) === 'Add • A\n• B for Lohit Kumar?');
-    check('"Nothing has been updated yet" is allowed (a negated sentence is not a false claim)', has('Should I add [[tasks]] to [[assignee]]\'s list? Nothing has been updated yet.').length === 0 && has('Should I add [[tasks]]? It has not been saved yet.').every(p => !/already happened/.test(p)));
+    check('renderReply fills placeholders with the exact facts', renderReply('Add these for [[assignee]]?\n[[tasks]]', facts.values) === 'Add these for Lohit Kumar?\n• A\n• B');
+    check('a single bullet written inline after a question is moved to its own line', renderReply('Mark this as done? [[tasks]]', { tasks: '• DG Meter Log' }) === 'Mark this as done?\n\n• DG Meter Log');
+    const lv = { tasks: '1. To-do list reminder\n2. Use React Query', hint: 'Reply *done 1* when you finish task 1.' };
+    check('a list written inline after an intro starts on its own line, and the hint after it on the next line',
+        renderReply('What would you like to do with those tasks? [[tasks]] [[hint]]', lv) === 'What would you like to do with those tasks?\n\n1. To-do list reminder\n2. Use React Query\nReply *done 1* when you finish task 1.' &&
+        renderReply('Here is your task list for today: [[tasks]]', lv) === 'Here is your task list for today:\n\n1. To-do list reminder\n2. Use React Query');
+    check('a list the AI already put on its own lines is left as written', renderReply('Here you go:\n[[tasks]]\n\n[[hint]]', lv) === 'Here you go:\n1. To-do list reminder\n2. Use React Query\n\nReply *done 1* when you finish task 1.');
+    check('"Nothing has been updated yet" is allowed (a negated sentence is not a false claim)', has('Should I add these to [[assignee]]\'s list?\n[[tasks]]\nNothing has been updated yet.').length === 0 && has('Should I add these?\n[[tasks]]\nIt has not been saved yet.').every(p => !/already happened/.test(p)));
     check('…but a real false claim in a different sentence is still caught', has('Done, it has been added. Should I add [[tasks]] for [[assignee]]?').some(p => /already happened/.test(p)));
     const known = new Set(['kone', 'lift', 'renewal', 'vidya']);
-    check('a real task-title or name word the AI was given is allowed; an invented one is still rejected', checkReply('Should I add [[tasks]]? You mentioned Kone Lift Renewal and Vidya.', { ...facts, required: ['tasks'] }, known).length === 0
-        && checkReply('Should I add [[tasks]]? You mentioned Rajesh.', { ...facts, required: ['tasks'] }, known).some(p => /Rajesh/.test(p)));
-    check('weekday and month names are always fine', checkReply('Should I add [[tasks]] for Friday?', { ...facts, required: ['tasks'] }).length === 0);
+    check('a real task-title or name word the AI was given is allowed; an invented one is still rejected', checkReply('Should I add these?\n[[tasks]]\nYou mentioned Kone Lift Renewal and Vidya.', { ...facts, required: ['tasks'] }, known).length === 0
+        && checkReply('Should I add these?\n[[tasks]]\nYou mentioned Rajesh.', { ...facts, required: ['tasks'] }, known).some(p => /Rajesh/.test(p)));
+    check('weekday and month names are always fine', checkReply('Should I add these for Friday?\n[[tasks]]', { ...facts, required: ['tasks'] }).length === 0);
 
     console.log('\n13. Writing the reply (scripted AI)');
     const scripted = (fn: (req: any, n: number) => string | Error) => {
         const calls: any[] = [];
         return { calls, llm: { complete: async (req: any) => { calls.push(req); const r = fn(req, calls.length); if (r instanceof Error) throw r; return { text: r, tokensIn: 10, tokensOut: 5 }; } } };
     };
-    let s = scripted(() => JSON.stringify({ text: 'Quick check: add [[tasks]] to [[assignee]]\'s list?' }));
+    let s = scripted(() => JSON.stringify({ text: 'Quick check: add these to [[assignee]]\'s list?\n[[tasks]]' }));
     let rep = await composeReply({ llm: s.llm, models: ['m1', 'm2'], facts, userMessage: 'assign lohit' });
-    check('a good AI reply is used, with real facts inserted', rep.source === 'ai' && rep.model === 'm1' && rep.text === 'Quick check: add • A\n• B to Lohit Kumar\'s list?' && s.calls.length === 1, rep);
-    s = scripted((_r, n) => (n === 1 ? JSON.stringify({ text: 'I\'ve added [[tasks]] for [[assignee]]. Ok?' }) : JSON.stringify({ text: 'Shall I add [[tasks]] for [[assignee]]?' })));
+    check('a good AI reply is used, with real facts inserted', rep.source === 'ai' && rep.model === 'm1' && rep.text === 'Quick check: add these to Lohit Kumar\'s list?\n• A\n• B' && s.calls.length === 1, rep);
+    s = scripted((_r, n) => (n === 1 ? JSON.stringify({ text: 'I\'ve added [[tasks]] for [[assignee]]. Ok?' }) : JSON.stringify({ text: 'Shall I add these for [[assignee]]?\n[[tasks]]' })));
     rep = await composeReply({ llm: s.llm, models: ['m1', 'm2'], facts, userMessage: 'x' });
     check('first model fails the checks → second model answers', rep.source === 'ai' && rep.model === 'm2' && rep.problems.length > 0, rep);
     s = scripted(() => JSON.stringify({ text: 'Added 2 tasks for him.' }));
@@ -327,12 +352,12 @@ async function run() {
 
     console.log('\n14. The whole brain (scripted AI)');
     const interpJson = (o: any) => JSON.stringify({ confidence: 0.92, language: 'en', ambiguities: [], clarify_question: null, summary: 's', ...o });
-    const brainLlm = (interpretation: any, replyText = 'Want me to go ahead with [[tasks]]?') =>
+    const brainLlm = (interpretation: any, replyText = 'Want me to go ahead with these?\n[[tasks]]') =>
         scripted(req => (/Reply with JSON only: \{"text"/.test(req.system) ? JSON.stringify({ text: replyText }) : interpJson(interpretation)));
 
-    let b = brainLlm({ intent: 'complete_tasks', slots: { which: { all: false, numbers: [2], hints: [] } } }, 'Mark [[tasks]] as done?');
+    let b = brainLlm({ intent: 'complete_tasks', slots: { which: { all: false, numbers: [2], hints: [] } } }, 'Mark this as done?\n[[tasks]]');
     let out = await runBrain('i finished the lift amc', mkCtx(), { llm: b.llm });
-    check('understand → decide → reply: a change is proposed (CONFIRM) and phrased with the real title', out.status === 'ok' && out.decision?.outcome === 'CONFIRM' && out.reply?.source === 'ai' && /• Kone Lift AMC Renewal/.test(out.reply.text) && /\?$/.test(out.reply.text), out);
+    check('understand → decide → reply: a change is proposed (CONFIRM) and phrased with the real title', out.status === 'ok' && out.decision?.outcome === 'CONFIRM' && out.reply?.source === 'ai' && /\?\n• Kone Lift AMC Renewal$/.test(out.reply.text), out);
     check('exactly two AI calls: one to understand, one to reply', b.calls.length === 2 && out.trace.interpretModel === 'glm-5.3-flash');
     check('the trace records models, tokens and timing', out.trace.tokensIn === 20 && out.trace.tokensOut === 10 && out.trace.interpretMs >= 0 && out.trace.fastPath === false);
 

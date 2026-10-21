@@ -4,13 +4,15 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/frontend/context/AuthContext';
 import Skeleton from '@/frontend/components/ui/Skeleton';
 import { Toast } from '@/frontend/components/ui/Toast';
-import { ClipboardCheck, LayoutGrid, History, FileBarChart } from 'lucide-react';
+import { ClipboardCheck, LayoutGrid, History, FileBarChart, Settings, FlaskConical } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import SOPTemplateManager from './SOPTemplateManager';
 import SOPCompletionHistory from './SOPCompletionHistory';
 import SOPChecklistRunner from './SOPChecklistRunner';
 import SOPCompletionDetail from './SOPCompletionDetail';
 import SOPReportSection from './SOPReportSection';
+import { SOPChecklistSettingsSection } from './SOPChecklistSettingsSection';
+import { SOPVisionTestingModal } from './SOPVisionTestingModal';
 import { useDataCache } from '@/frontend/context/DataCacheContext';
 
 interface SOPDashboardProps {
@@ -23,14 +25,86 @@ interface SOPDashboardProps {
 const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, propertySelector, headerRight }) => {
     const isMultiProperty = !!propertyIds && propertyIds.length > 0;
     const { membership } = useAuth();
-    const [activeView, setActiveView] = useState<'list' | 'runner' | 'history' | 'detail' | 'reports'>('list');
+
+    // Parse initial view and parameters from URL or sessionStorage
+    const initialParams = (() => {
+        if (typeof window === 'undefined') return { view: 'list', templateId: null, completionId: null, completionDate: null, propId: null };
+        try {
+            const urlParams = new URLSearchParams(window.location.search);
+            const explicitView = urlParams.get('view') || urlParams.get('sop_view') || (urlParams.get('tab') !== 'checklist' ? urlParams.get('tab') : null);
+            const savedView = sessionStorage.getItem(`sop_active_view_${propertyId || 'global'}`);
+            const validViews = ['list', 'runner', 'history', 'detail', 'reports', 'settings'];
+
+            const active = (explicitView && validViews.includes(explicitView))
+                ? explicitView
+                : (savedView && validViews.includes(savedView))
+                    ? savedView
+                    : 'list';
+
+            // Check if runner state was saved
+            let runnerState: any = null;
+            const savedRunner = sessionStorage.getItem(`sop_runner_state_${propertyId || 'global'}`);
+            if (savedRunner) {
+                try { runnerState = JSON.parse(savedRunner); } catch {}
+            }
+
+            // Check if detail state was saved
+            let detailState: any = null;
+            const savedDetail = sessionStorage.getItem(`sop_detail_state_${propertyId || 'global'}`);
+            if (savedDetail) {
+                try { detailState = JSON.parse(savedDetail); } catch {}
+            }
+
+            const templateId = urlParams.get('templateId') || runnerState?.templateId || detailState?.templateId || null;
+            const completionId = urlParams.get('completionId') || runnerState?.completionId || detailState?.completionId || null;
+            const completionDate = urlParams.get('completionDate') || runnerState?.completionDate || null;
+            const propId = urlParams.get('propId') || runnerState?.propertyId || detailState?.propertyId || propertyId || null;
+
+            return { view: active, templateId, completionId, completionDate, propId };
+        } catch {
+            return { view: 'list', templateId: null, completionId: null, completionDate: null, propId: null };
+        }
+    })();
+
+    const [activeView, setActiveView] = useState<'list' | 'runner' | 'history' | 'detail' | 'reports' | 'settings'>(initialParams.view as any);
     const [returnView, setReturnView] = useState<'list' | 'history' | null>(null);
-    const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
-    const [selectedCompletionId, setSelectedCompletionId] = useState<string | null>(null);
-    const [selectedCompletionDate, setSelectedCompletionDate] = useState<string | null>(null);
-    const [viewingCompletionId, setViewingCompletionId] = useState<string | null>(null);
-    const [viewingCompletionTemplateId, setViewingCompletionTemplateId] = useState<string | null>(null);
-    const [viewingPropertyId, setViewingPropertyId] = useState<string | null>(null);
+    const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(initialParams.templateId);
+    const [selectedCompletionId, setSelectedCompletionId] = useState<string | null>(initialParams.completionId);
+    const [selectedCompletionDate, setSelectedCompletionDate] = useState<string | null>(initialParams.completionDate);
+    const [viewingCompletionId, setViewingCompletionId] = useState<string | null>(initialParams.completionId);
+    const [viewingCompletionTemplateId, setViewingCompletionTemplateId] = useState<string | null>(initialParams.templateId);
+    const [viewingPropertyId, setViewingPropertyId] = useState<string | null>(initialParams.propId);
+    const [showVisionLab, setShowVisionLab] = useState(false);
+
+    // Sync active view and parameters to sessionStorage & URL so refreshing stays on the exact current view
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        try {
+            sessionStorage.setItem(`sop_active_view_${propertyId || 'global'}`, activeView);
+
+            const url = new URL(window.location.href);
+            if (url.searchParams.get('tab') === 'checklist') {
+                url.searchParams.set('view', activeView);
+                if (activeView === 'runner' && selectedTemplateId) {
+                    url.searchParams.set('templateId', selectedTemplateId);
+                    if (selectedCompletionId) url.searchParams.set('completionId', selectedCompletionId);
+                    else url.searchParams.delete('completionId');
+                    if (selectedCompletionDate) url.searchParams.set('completionDate', selectedCompletionDate);
+                    else url.searchParams.delete('completionDate');
+                } else if (activeView === 'detail' && viewingCompletionId) {
+                    url.searchParams.set('completionId', viewingCompletionId);
+                    if (viewingCompletionTemplateId) url.searchParams.set('templateId', viewingCompletionTemplateId);
+                    url.searchParams.delete('completionDate');
+                } else {
+                    url.searchParams.delete('templateId');
+                    url.searchParams.delete('completionId');
+                    url.searchParams.delete('completionDate');
+                }
+                window.history.replaceState(window.history.state, '', url.toString());
+            }
+        } catch {}
+    }, [activeView, propertyId, selectedTemplateId, selectedCompletionId, selectedCompletionDate, viewingCompletionId, viewingCompletionTemplateId]);
+
     const [isLoading, setIsLoading] = useState(true);
     const [userRole, setUserRole] = useState<string>('');
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -78,35 +152,52 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
     }, [propertyId, propertyIds, membership, isMultiProperty]);
 
     const isAdmin = ['property_admin', 'org_admin', 'org_super_admin', 'master_admin'].includes(userRole.toLowerCase());
+    const isOrgSuperAdmin = Boolean(
+        membership?.is_master_admin ||
+        (membership?.org_role && ['org_super_admin', 'master_admin', 'ops_super_admin'].includes(membership.org_role.toLowerCase())) ||
+        ['org_super_admin', 'master_admin', 'ops_super_admin'].includes((userRole || '').toLowerCase())
+    );
 
-    // Non-admin users should always land on history view
+    // Non-admin users should only be defaulted to history if currently on admin-only 'list' view
     useEffect(() => {
-        if (!isLoading && userRole && !isAdmin) {
+        if (!isLoading && userRole && !isAdmin && activeView === 'list') {
             setActiveView('history');
         }
-    }, [isLoading, isAdmin, userRole]);
+    }, [isLoading, isAdmin, userRole, activeView]);
 
-    const handleStartChecklist = (templateId: string, propertyId: string, completionId?: string, completionDate?: string) => {
+    const handleStartChecklist = (templateId: string, propertyIdParam: string, completionId?: string, completionDate?: string) => {
         // Remember where we came from (list or history) to return correctly on cancel
         if (activeView === 'list' || activeView === 'history') {
             setReturnView(activeView);
         }
         setSelectedTemplateId(templateId);
-        setViewingPropertyId(propertyId);
+        setViewingPropertyId(propertyIdParam);
         setSelectedCompletionId(completionId || null);
         setSelectedCompletionDate(completionDate || null);
+
+        try {
+            sessionStorage.setItem(`sop_runner_state_${propertyId || 'global'}`, JSON.stringify({
+                templateId,
+                propertyId: propertyIdParam,
+                completionId: completionId || null,
+                completionDate: completionDate || null
+            }));
+        } catch {}
+
         setActiveView('runner');
     };
 
     const handleChecklistComplete = () => {
         setToast({ message: 'Checklist completed successfully!', type: 'success' });
         // Invalidate all SOP caches for this property
-        const cacheKeyPrefix = `sop-`; 
-        // We'll just clear all SOP keys for simplicity and safety
         Object.keys(localStorage)
             .filter(k => k.includes('sop-'))
             .forEach(k => localStorage.removeItem(k));
         
+        try {
+            sessionStorage.removeItem(`sop_runner_state_${propertyId || 'global'}`);
+        } catch {}
+
         invalidateCache(); // Clear memory cache
 
         setActiveView('history');
@@ -120,8 +211,17 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
         setViewingCompletionTemplateId(templateId);
         setViewingCompletionId(id);
         setViewingPropertyId(propId);
+
+        try {
+            sessionStorage.setItem(`sop_detail_state_${propertyId || 'global'}`, JSON.stringify({
+                completionId: id,
+                templateId,
+                propertyId: propId
+            }));
+        } catch {}
+
         setActiveView('detail');
-    }, []);
+    }, [propertyId]);
 
     if (isLoading) {
         return (
@@ -156,7 +256,7 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
 
                     {/* Right side: headerRight (notification bell etc) */}
                     <div className="flex items-center gap-2">
-                        {isAdmin && (activeView === 'list' || activeView === 'history' || activeView === 'reports') && (
+                        {isAdmin && (activeView === 'list' || activeView === 'history' || activeView === 'reports' || activeView === 'settings') && (
                             <div className="hidden md:flex bg-slate-100 p-0.5 rounded-lg border border-slate-200">
                                 <button
                                     onClick={() => setActiveView('list')}
@@ -179,6 +279,23 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
                                     <FileBarChart size={12} />
                                     Reports
                                 </button>
+                                <button
+                                    onClick={() => setActiveView('settings')}
+                                    className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest transition-all ${activeView === 'settings' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                                >
+                                    <Settings size={12} />
+                                    Settings
+                                </button>
+                                {isOrgSuperAdmin && (
+                                    <button
+                                        onClick={() => setShowVisionLab(true)}
+                                        className="flex items-center gap-1.5 px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest text-violet-700 bg-violet-50/80 hover:bg-violet-100/80 border border-violet-200/80 transition-all shadow-2xs"
+                                        title="Test AI Cleanliness & Timestamp Scoring on uploaded photos (Org Super Admin Only)"
+                                    >
+                                        <FlaskConical size={12} className="text-violet-600" />
+                                        Vision Lab
+                                    </button>
+                                )}
                             </div>
                         )}
                         {headerRight && <div className="flex-shrink-0">{headerRight}</div>}
@@ -186,7 +303,7 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
                 </div>
 
                 {/* Mobile View Toggle - Separate Row for accessibility */}
-                {isAdmin && (activeView === 'list' || activeView === 'history' || activeView === 'reports') && (
+                {isAdmin && (activeView === 'list' || activeView === 'history' || activeView === 'reports' || activeView === 'settings') && (
                     <div className="md:hidden px-3 pb-1">
                         <div className="flex bg-slate-100 p-0.5 rounded-xl border border-slate-200 w-full">
                             <button
@@ -210,6 +327,22 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
                                 <FileBarChart size={12} />
                                 Reports
                             </button>
+                            <button
+                                onClick={() => setActiveView('settings')}
+                                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${activeView === 'settings' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
+                            >
+                                <Settings size={12} />
+                                Settings
+                            </button>
+                            {isOrgSuperAdmin && (
+                                <button
+                                    onClick={() => setShowVisionLab(true)}
+                                    className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest text-violet-700 bg-violet-50 transition-all border border-violet-200"
+                                >
+                                    <FlaskConical size={12} />
+                                    Vision Lab
+                                </button>
+                            )}
                         </div>
                     </div>
                 )}
@@ -261,12 +394,23 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
                                     />
                                 )}
 
+                                {activeView === 'settings' && isAdmin && propertyId && (
+                                    <SOPChecklistSettingsSection 
+                                        propertyId={propertyId}
+                                        isAdmin={isAdmin}
+                                        isOrgSuperAdmin={isOrgSuperAdmin}
+                                    />
+                                )}
+
                                 {activeView === 'detail' && viewingCompletionId && (
                                     <SOPCompletionDetail
                                         completionId={viewingCompletionId}
                                         propertyId={viewingPropertyId!}
                                         isAdmin={isAdmin}
                                         onBack={() => {
+                                            try {
+                                                sessionStorage.removeItem(`sop_detail_state_${propertyId || 'global'}`);
+                                            } catch {}
                                             setActiveView('history');
                                             setViewingCompletionId(null);
                                             setViewingCompletionTemplateId(null);
@@ -290,6 +434,9 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
                                             propertyId={viewingPropertyId!}
                                             onComplete={handleChecklistComplete}
                                             onCancel={() => {
+                                                try {
+                                                    sessionStorage.removeItem(`sop_runner_state_${propertyId || 'global'}`);
+                                                } catch {}
                                                 const targetView = returnView || (isAdmin ? 'list' : 'history');
                                                 setActiveView(targetView as any);
                                                 setReturnView(null);
@@ -306,6 +453,15 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
                 </motion.div>
             </div>
 
+
+            {/* AI Vision Testing Lab Modal */}
+            {isOrgSuperAdmin && (
+                <SOPVisionTestingModal
+                    isOpen={showVisionLab}
+                    onClose={() => setShowVisionLab(false)}
+                    propertyId={propertyId || 'all'}
+                />
+            )}
 
             {/* Toast Notification */}
             {toast && (

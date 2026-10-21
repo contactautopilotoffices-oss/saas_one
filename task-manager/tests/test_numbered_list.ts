@@ -65,7 +65,8 @@ async function run() {
     const [, , ov] = TaskNotificationService.buildOverdueTemplateParams('Asha K', overdue, '2026-10-12');
     check('overdue alert text: "1. Opex payment (Due: 10 Oct) | 2. Vendor call (Due: 11 Oct)"', ov === '1. Opex payment (Due: 10 Oct) | 2. Vendor call (Due: 11 Oct)', ov);
     const [, , mv2] = TaskNotificationService.buildMorningV2Params('Asha K', morning, '2026-10-12');
-    check('morning standup lists 1. Opex payment … 4. Site round', /^You have 5 tasks today: 1\. 🔄 Opex payment 🔄 \| 2\. 🔄 Vendor call ⏳ \| 3\. DG Meter Log ⏳ \| 4\. Site round ⏳ \| 5\. Send report ✅$/.test(mv2), mv2);
+    // 2026-10-14: carry-forward and today's tasks are labelled on the one line; the numbers are unchanged.
+    check('morning standup lists 1. Opex payment … 4. Site round', /^You have 5 tasks today: Carry forward: 1\. Opex payment 🔄 \| 2\. Vendor call ⏳ — Today: 3\. DG Meter Log ⏳ \| 4\. Site round ⏳ \| 5\. Send report ✅$/.test(mv2), mv2);
     const mid = TaskNotificationService.buildTemplateTaskParam('pending_reminder', midday);
     check('midday reminder keeps "4. Site round"', mid.includes('4. Site round') && !mid.includes('Send report'), mid);
     const text = TaskNotificationService.buildMiddayReminder('Asha K', [...midday.slice(0, 2), midday[3]]);

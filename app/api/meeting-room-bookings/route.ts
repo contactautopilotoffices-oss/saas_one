@@ -3,6 +3,8 @@ import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { NotificationService } from '@/backend/services/NotificationService';
 import { getBookingDateTimeIST } from '@/backend/utils/timezone';
+import { isCreditExemptBooker } from '@/backend/lib/meetingRooms/creditExempt';
+import { canViewAllBookings } from '@/backend/lib/meetingRooms/bookingVisibility';
 
 /**
  * GET /api/meeting-room-bookings
@@ -27,8 +29,13 @@ export async function GET(request: NextRequest) {
             .select('*, meeting_room:meeting_rooms(name, photo_url, location)')
             .order('created_at', { ascending: false });
 
+        // Only property admins, ops super admins and org super admins see every booking.
+        // Everyone else gets their own bookings, whatever tenantId they ask for.
+        const canViewAll = await canViewAllBookings(user.id, propertyId);
+
         if (propertyId) query = query.eq('property_id', propertyId);
-        if (tenantId) query = query.eq('user_id', tenantId);
+        if (!canViewAll) query = query.eq('user_id', user.id);
+        else if (tenantId) query = query.eq('user_id', tenantId);
         if (status) query = query.eq('status', status);
 
         const { data: rawBookings, error: fetchError } = await query;
@@ -60,7 +67,7 @@ export async function GET(request: NextRequest) {
             tenant: b.tenant || userMap[b.user_id] || { full_name: 'User', email: '' }
         }));
 
-        return NextResponse.json({ bookings });
+        return NextResponse.json({ bookings, canViewAll });
     } catch (error) {
         console.error('Bookings GET error:', error);
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
@@ -107,25 +114,40 @@ export async function POST(request: NextRequest) {
         const [endH, endM] = endTime.split(':').map(Number);
         const durationHours = (endH * 60 + endM - startH * 60 - startM) / 60;
 
-        // 3. Check credit balance (Check Company first, then User)
+        // 3. Fetch organization_id and property name
+        const { data: property } = await supabaseAdmin
+            .from('properties')
+            .select('organization_id, name')
+            .eq('id', propertyId)
+            .single();
+
+        // 4. Check credit balance (Check Company first, then User).
+        // HR and CRM users book for free, so they never touch a credit record.
+        const creditExempt = await isCreditExemptBooker(user.id, property?.organization_id);
+
         const { data: companyMember } = await supabaseAdmin
             .from('company_members')
             .select('company_id')
             .eq('user_id', user.id)
             .maybeSingle();
 
-        let creditQuery = supabaseAdmin
-            .from('meeting_room_credits')
-            .select('id, remaining_hours, company_id, user_id')
-            .eq('property_id', propertyId);
+        let credit: { id: string; remaining_hours: number | null; company_id: string | null; user_id: string | null } | null = null;
 
-        if (companyMember?.company_id) {
-            creditQuery = creditQuery.eq('company_id', companyMember.company_id);
-        } else {
-            creditQuery = creditQuery.eq('user_id', user.id);
+        if (!creditExempt) {
+            let creditQuery = supabaseAdmin
+                .from('meeting_room_credits')
+                .select('id, remaining_hours, company_id, user_id')
+                .eq('property_id', propertyId);
+
+            if (companyMember?.company_id) {
+                creditQuery = creditQuery.eq('company_id', companyMember.company_id);
+            } else {
+                creditQuery = creditQuery.eq('user_id', user.id);
+            }
+
+            const { data } = await creditQuery.maybeSingle();
+            credit = data;
         }
-
-        const { data: credit } = await creditQuery.maybeSingle();
 
         // Only enforce credits if a record exists (admins without a record can still book)
         if (credit) {
@@ -139,7 +161,7 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        // 4. Check for overlaps (double check)
+        // 5. Check for overlaps (double check)
         const { data: overlaps, error: overlapError } = await supabase
             .from('meeting_room_bookings')
             .select('id')
@@ -157,13 +179,6 @@ export async function POST(request: NextRequest) {
         if (overlaps && overlaps.length > 0) {
             return NextResponse.json({ error: 'Room is already booked for this time slot' }, { status: 409 });
         }
-
-        // 5. Fetch organization_id and property name
-        const { data: property } = await supabaseAdmin
-            .from('properties')
-            .select('organization_id, name')
-            .eq('id', propertyId)
-            .single();
 
         // 6. Create booking with graceful fallback if attendee_email column is not yet present
         const insertPayload: any = {

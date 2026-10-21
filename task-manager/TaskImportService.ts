@@ -83,6 +83,18 @@ export function captionMentionsTasks(text: string): boolean {
 
 const nonEmptyLines = (t: string) => String(t || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
 
+// After "add tasks", ONE typed line is the task: "Complete AOP reconciliation" (2026-10-17). Small talk, menu numbers,
+// questions and bot requests still go to the normal bot. Nothing is saved without the preview's YES.
+const SMALL_TALK = /^(?:\d{1,3}|ok(?:ay)?|k|y|yes|yeah|yep|sure|n|no|nope|thanks?|thank\s*you|thx|ty|hmm+|menu|help|done|hi+|hello|hey)$/i;
+const NOT_A_TASK_START = /^(?:hi|hello|hey|good\s+(?:morning|afternoon|evening|night)|show|view|book|raise|cancel|what|which|how|when|where|why|who|(?:done|complete|mark)\s+\d)\b/i;
+
+/** One line that reads like a task (letters, not small talk, not a question or a bot request). */
+export function looksLikeOneTask(text: string): boolean {
+    const t = String(text || '').trim().replace(/[.!\s]+$/g, '');
+    if (!t || t.length > 300 || nonEmptyLines(t).length !== 1 || !/\p{L}/u.test(t)) return false;
+    return !SMALL_TALK.test(t) && !NOT_A_TASK_START.test(t) && !t.endsWith('?');
+}
+
 export type PreviewCommand =
     | { kind: 'yes' }
     | { kind: 'no' }
@@ -205,14 +217,20 @@ export class TaskImportService {
             }
             const trigger = matchImportTrigger(text);
             const body = trigger ? trigger.rest : text.trim();
+            // Owner 2026-10-19: "add task: Autopilot amplify payment" (ONE line after the words) is one task, not a list.
+            if (trigger && looksLikeOneTask(body)) return this.beginOneTask(phone, body, deps);
             if (nonEmptyLines(body).length >= 1 && (trigger || nonEmptyLines(text).length >= 2)) {
                 return this.begin(phone, { label: 'list', load: async () => ({ kind: 'text', text: body }) }, deps);
             }
+            if (looksLikeOneTask(text)) return this.beginOneTask(phone, body, deps);
             return NOT_HANDLED;
         }
 
         const trigger = matchImportTrigger(text);
         if (!trigger) return NOT_HANDLED;
+        // Owner 2026-10-19: "add task: Autopilot amplify payment" on ONE line is a single task. It used to be read as a list,
+        // found nothing and replied "I could not find any tasks".
+        if (trigger.rest && looksLikeOneTask(trigger.rest)) return this.beginOneTask(phone, trigger.rest, deps);
         if (trigger.rest) {
             return this.begin(phone, { label: 'list', load: async () => ({ kind: 'text', text: trigger.rest }) }, deps);
         }
@@ -220,6 +238,15 @@ export class TaskImportService {
         await deps.reply(phone, 'Sure. Send me your task list now: as an image, an Excel file, or just paste it here.\nReply CANCEL to stop.');
         await deps.audit('task_import_awaiting', phone, {});
         return { handled: true };
+    }
+
+    /**
+     * ONE typed task (owner 2026-10-19). Sent as a one-item list so the rules take the line word for word (no AI rewording),
+     * and told so honestly: no "this can take up to a minute". The preview still asks YES before anything is saved.
+     */
+    static async beginOneTask(phone: string, line: string, deps: ImportDeps): Promise<ImportClaim> {
+        const text = /^(\d{1,3}[.)]|[-*•])\s+/.test(line) ? line : `- ${line}`;
+        return this.begin(phone, { label: 'task', load: async () => ({ kind: 'text', text }) }, deps);
     }
 
     /** A file or image arrived while another one is still being read. */
@@ -245,7 +272,9 @@ export class TaskImportService {
         deps: ImportDeps
     ): Promise<ImportClaim> {
         await deps.setContext(phone, IMPORT_CONTEXT.PROCESSING, { startedAt: new Date().toISOString() }, PROCESSING_TTL_MIN);
-        await deps.reply(phone, `📥 Got your ${p.label}. Reading your tasks now. This can take up to a minute.`);
+        await deps.reply(phone, p.label === 'task'
+            ? '📥 Got your task. One moment.'
+            : `📥 Got your ${p.label}. Reading your tasks now. This can take up to a minute.`);
         await deps.audit('task_import_received', phone, { source: p.label });
         return { handled: true, background: () => this.run(phone, p, deps) };
     }

@@ -80,8 +80,9 @@ export default function NotificationBell({ align = 'right' }: NotificationBellPr
 
     const fetchNotificationsAndActions = useCallback(async () => {
         setIsLoading(true);
-        const { data: { user: authUser } } = await supabase.auth.getUser();
-        const activeUserId = authUser?.id || user?.id;
+        // The signed-in user is already known from useAuth; only ask the auth server when it isn't yet (performance plan
+        // Phase 6). Every read below is still limited to this user by the same filters and access rules as before.
+        const activeUserId = user?.id || (await supabase.auth.getUser()).data.user?.id;
         if (!activeUserId) {
             setIsLoading(false);
             return;
@@ -330,14 +331,42 @@ export default function NotificationBell({ align = 'right' }: NotificationBellPr
         setIsLoading(false);
     }, [supabase, currentOrgId, user?.id, membership?.org_role]);
 
+    // ── Refresh coalescing (performance plan Phase 6) ──────────────────────────────────────────────────────────────
+    // runRefresh: never two refreshes at once; a request that arrives during one runs once more right after it, so the
+    // final data is always the latest. scheduleRefresh: background triggers (realtime events, window focus, app events)
+    // wait 0.5 s so a burst of them becomes one refresh. Clicks (opening the bell, the Pending tab) still refresh at once.
+    const fetchRef = useRef(fetchNotificationsAndActions);
+    fetchRef.current = fetchNotificationsAndActions;
+    const refreshInFlight = useRef(false);
+    const refreshAgain = useRef(false);
+    const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const runRefresh = useCallback(async (): Promise<void> => {
+        if (refreshInFlight.current) { refreshAgain.current = true; return; }
+        refreshInFlight.current = true;
+        try {
+            await fetchRef.current();
+        } finally {
+            refreshInFlight.current = false;
+            if (refreshAgain.current) { refreshAgain.current = false; void runRefresh(); }
+        }
+    }, []);
+    const scheduleRefresh = useCallback(() => {
+        if (refreshTimer.current) clearTimeout(refreshTimer.current);
+        refreshTimer.current = setTimeout(() => { refreshTimer.current = null; void runRefresh(); }, 500);
+    }, [runRefresh]);
+    useEffect(() => () => { if (refreshTimer.current) clearTimeout(refreshTimer.current); }, []);
+
+    // Each mounted bell gets its own realtime channel names: the mobile and desktop headers can both be mounted, and two
+    // bells sharing a channel name made the second one's subscription fail (performance plan Phase 6).
+    const channelSuffix = useRef(Math.random().toString(36).slice(2, 10)).current;
+
     useEffect(() => {
         let isMounted = true;
 
         const init = async () => {
-            await fetchNotificationsAndActions();
+            await runRefresh();
 
-            const { data: { user: authUser } } = await supabase.auth.getUser();
-            const activeUserId = authUser?.id || user?.id;
+            const activeUserId = user?.id || (await supabase.auth.getUser()).data.user?.id;
             if (!isMounted || !activeUserId) return;
 
             // Clear previous channels
@@ -346,7 +375,7 @@ export default function NotificationBell({ align = 'right' }: NotificationBellPr
 
             // 1. Subscribe to real-time notification inserts
             const notifChannel = supabase
-                .channel(`notif-bell-${activeUserId}`)
+                .channel(`notif-bell-${activeUserId}-${channelSuffix}`)
                 .on(
                     'postgres_changes',
                     {
@@ -365,7 +394,7 @@ export default function NotificationBell({ align = 'right' }: NotificationBellPr
 
             // 2. Subscribe to HR tickets changes
             const ticketsChannel = supabase
-                .channel(`notif-tickets-${activeUserId}`)
+                .channel(`notif-tickets-${activeUserId}-${channelSuffix}`)
                 .on(
                     'postgres_changes',
                     {
@@ -374,7 +403,7 @@ export default function NotificationBell({ align = 'right' }: NotificationBellPr
                         table: 'hr_tickets'
                     },
                     () => {
-                        fetchNotificationsAndActions();
+                        scheduleRefresh();
                     }
                 )
                 .subscribe();
@@ -382,7 +411,7 @@ export default function NotificationBell({ align = 'right' }: NotificationBellPr
 
             // 3. Subscribe to pending actions changes
             const pendingChannel = supabase
-                .channel(`notif-pending-${activeUserId}`)
+                .channel(`notif-pending-${activeUserId}-${channelSuffix}`)
                 .on(
                     'postgres_changes',
                     {
@@ -392,7 +421,7 @@ export default function NotificationBell({ align = 'right' }: NotificationBellPr
                         filter: `recipient_id=eq.${activeUserId}`
                     },
                     () => {
-                        fetchNotificationsAndActions();
+                        scheduleRefresh();
                     }
                 )
                 .subscribe();
@@ -400,7 +429,7 @@ export default function NotificationBell({ align = 'right' }: NotificationBellPr
 
             // 4. Subscribe to HR ticket comments (public & internal notes)
             const commentsChannel = supabase
-                .channel(`notif-comments-${activeUserId}`)
+                .channel(`notif-comments-${activeUserId}-${channelSuffix}`)
                 .on(
                     'postgres_changes',
                     {
@@ -409,7 +438,7 @@ export default function NotificationBell({ align = 'right' }: NotificationBellPr
                         table: 'hr_ticket_comments'
                     },
                     () => {
-                        fetchNotificationsAndActions();
+                        scheduleRefresh();
                     }
                 )
                 .subscribe();
@@ -417,7 +446,7 @@ export default function NotificationBell({ align = 'right' }: NotificationBellPr
 
             // 5. Subscribe to Petty Cash requests real-time changes
             const pcChannel = supabase
-                .channel(`notif-pc-${activeUserId}`)
+                .channel(`notif-pc-${activeUserId}-${channelSuffix}`)
                 .on(
                     'postgres_changes',
                     {
@@ -426,7 +455,7 @@ export default function NotificationBell({ align = 'right' }: NotificationBellPr
                         table: 'petty_cash_requests'
                     },
                     () => {
-                        fetchNotificationsAndActions();
+                        scheduleRefresh();
                     }
                 )
                 .subscribe();
@@ -443,7 +472,7 @@ export default function NotificationBell({ align = 'right' }: NotificationBellPr
         document.addEventListener("mousedown", handleClickOutside);
 
         const handleTicketSync = () => {
-            fetchNotificationsAndActions();
+            scheduleRefresh();
         };
         window.addEventListener('hr-ticket-updated', handleTicketSync);
         window.addEventListener('app-pending-actions-refresh', handleTicketSync);
@@ -460,7 +489,7 @@ export default function NotificationBell({ align = 'right' }: NotificationBellPr
             window.removeEventListener('petty-cash-updated', handleTicketSync);
             window.removeEventListener('focus', handleTicketSync);
         };
-    }, [fetchNotificationsAndActions, supabase, user?.id]);
+    }, [fetchNotificationsAndActions, supabase, user?.id, runRefresh, scheduleRefresh, channelSuffix]);
 
     const markAsRead = async (id: string) => {
         if (!id.startsWith('comment-')) {
@@ -659,7 +688,7 @@ export default function NotificationBell({ align = 'right' }: NotificationBellPr
                 onClick={() => {
                     const next = !isOpen;
                     setIsOpen(next);
-                    if (next) fetchNotificationsAndActions();
+                    if (next) void runRefresh();
                 }}
                 className={`relative p-2 rounded-xl transition-all duration-200 flex items-center justify-center cursor-pointer group ${
                     isOpen
@@ -746,7 +775,7 @@ export default function NotificationBell({ align = 'right' }: NotificationBellPr
                                     type="button"
                                     onClick={() => {
                                         setActiveTab('pending_actions');
-                                        fetchNotificationsAndActions();
+                                        void runRefresh();
                                     }}
                                     className={`py-1.5 px-3 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                                         activeTab === 'pending_actions'

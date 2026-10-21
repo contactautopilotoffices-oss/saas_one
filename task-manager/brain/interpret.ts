@@ -3,6 +3,7 @@ import { BrainLlm, FallbackTrace, HEDGE_UNDERSTAND_MS, extractJson, withModelFal
 import { interpretSystemPromptWithSections, interpretUserPrompt, type PromptSections, BUILTIN_PROMPT_SECTIONS } from './prompt';
 import { BrainContext, ExtraRequest, Intent, Interpretation, MAX_EXTRA_REQUESTS } from './types';
 import { clip } from './text';
+import { foldUnmarkedNotes } from './tasksDomain';
 
 /**
  * The language brain — step 2 and 3: UNDERSTAND (one AI call) and VALIDATE.
@@ -23,8 +24,8 @@ export function validateInterpretation(raw: unknown, domains: DomainHandler[], c
     const confidence = Math.min(1, Math.max(0, r.confidence));
 
     const rawSlots = r.slots && typeof r.slots === 'object' && !Array.isArray(r.slots) ? (r.slots as Record<string, unknown>) : {};
-    const slots = owner.validateSlots(intent, rawSlots, ctx);
-    if (!slots) throw new Error(`invalid details for "${intent}"`);
+    const validSlots = owner.validateSlots(intent, rawSlots, ctx);
+    if (!validSlots) throw new Error(`invalid details for "${intent}"`);
 
     const ambiguities = (Array.isArray(r.ambiguities) ? r.ambiguities : [])
         .filter((a): a is string => typeof a === 'string' && a.trim().length > 0)
@@ -32,7 +33,11 @@ export function validateInterpretation(raw: unknown, domains: DomainHandler[], c
 
     // Part B: wording may come from the message OR the person's OWN earlier messages ("yes add this task" agrees to a task they
     // named a minute ago). Never from the assistant's lines. Every change is still shown and confirmed before it happens.
-    const groundText = [message, ...(ctx.conversation ?? []).filter(l => l.startsWith('Person: ')).map(l => l.slice(8))].join('\n');
+    // Owner 2026-10-19: an unfinished request ("draft") is the person's own words too, so "both" can finish it.
+    const groundText = [message, ...(ctx.pending?.kind === 'draft' ? [ctx.pending.request] : []), ...(ctx.conversation ?? []).filter(l => l.startsWith('Person: ')).map(l => l.slice(8))].join('\n');
+    // Owner 2026-10-20: a note on a new task only when the person marked one ("note:"); otherwise it stays in the title.
+    const ownWords = [message, ...(ctx.pending?.kind === 'draft' ? [ctx.pending.request] : [])].join('\n');
+    const slots = foldUnmarkedNotes(validSlots, ownWords);
 
     // Part B: the other requests in the same message. A bad one never fails the whole reading: it is reported as unclear.
     const also: ExtraRequest[] = []; const unclear: string[] = [];
@@ -42,7 +47,8 @@ export function validateInterpretation(raw: unknown, domains: DomainHandler[], c
         const o = it ? domains.find(d => d.intents.some(i => i.name === it.intent)) : undefined;
         const s = it && o ? o.validateSlots(it.intent as Intent, it.slots && typeof it.slots === 'object' && !Array.isArray(it.slots) ? it.slots as Record<string, unknown> : {}, ctx) : null;
         if (!it || !o || !s) { unclear.push(label); continue; }
-        also.push({ intent: it.intent as Intent, slots: s, summary: label, grounded: o.checkGrounding(s, groundText) });
+        const folded = foldUnmarkedNotes(s, ownWords);
+        also.push({ intent: it.intent as Intent, slots: folded, summary: label, grounded: o.checkGrounding(folded, groundText) });
     }
 
     return {

@@ -157,29 +157,39 @@ const ElectricityStaffDashboard: React.FC<ElectricityStaffDashboardProps> = ({ i
         let activeTariffData: GridTariff | null = null;
 
         try {
-            // Fetch property
-            const { data: propData, error: propError } = await supabase
+            // Property, meters and layout don't depend on each other: start all three now, then read the answers in
+            // the same order as before, so errors and state updates behave exactly as they did (performance plan
+            // Phase 4). (.then(r => r) starts a Supabase query now; a query builder on its own only runs when awaited.)
+            const propertyRequest = supabase
                 .from('properties')
                 .select('id, name, code')
                 .eq('id', propertyId)
-                .single();
+                .single()
+                .then(result => result);
+            const metersRequest = supabase
+                .from('electricity_meters')
+                .select('*')
+                .eq('property_id', propertyId)
+                .is('deleted_at', null)
+                .order('name')
+                .then(result => result);
+            const layoutRequest = fetch(`/api/properties/${propertyId}/facility-meters`);
+            layoutRequest.catch(() => { /* handled when awaited below */ });
+
+            // Fetch property
+            const { data: propData, error: propError } = await propertyRequest;
 
             if (propError) throw propError;
             setProperty(propData);
 
             // Fetch meters
-            const { data: metersData, error: metersError } = await supabase
-                .from('electricity_meters')
-                .select('*')
-                .eq('property_id', propertyId)
-                .is('deleted_at', null)
-                .order('name');
+            const { data: metersData, error: metersError } = await metersRequest;
 
             if (metersError) throw metersError;
 
             // Fetch facility layout to get sheets (categories)
             try {
-                const layoutRes = await fetch(`/api/properties/${propertyId}/facility-meters`);
+                const layoutRes = await layoutRequest;
                 if (layoutRes.ok) {
                     const layoutData = await layoutRes.json();
                     if (Array.isArray(layoutData)) {
@@ -201,13 +211,32 @@ const ElectricityStaffDashboard: React.FC<ElectricityStaffDashboardProps> = ({ i
                 // However, fetching strictly yesterday's reading might be intentional for daily logs.
                 // Let's stick to checking the latest reading entry for relevant meters.
 
-                const { data: latestReadings, error: latestError } = await supabase
+                // These five only need the meter list, not each other: start them all now and read the answers below
+                // in the original order (performance plan Phase 4).
+                const monthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+                const today = new Date().toISOString().split('T')[0];
+                const latestRequest = supabase
                     .from('electricity_readings')
                     .select('meter_id, closing_reading, reading_date, created_at')
                     .eq('property_id', propertyId)
                     .order('reading_date', { ascending: false })
                     .order('created_at', { ascending: false })
-                    .limit(fetchedMeters.length * 2); // Get recent history
+                    .limit(fetchedMeters.length * 2) // Get recent history
+                    .then(result => result);
+                const avgRequest = fetch(`/api/properties/${propertyId}/electricity-readings?startDate=${monthAgo}`);
+                avgRequest.catch(() => { /* handled when awaited below */ });
+                const multipliersRequest = fetch(`/api/properties/${propertyId}/meter-multipliers`);
+                multipliersRequest.catch(() => { /* handled when awaited below */ });
+                const tariffRequest = fetch(`/api/properties/${propertyId}/grid-tariffs?date=${today}`);
+                tariffRequest.catch(() => { /* handled when awaited below */ });
+                const retakeRequest = supabase
+                    .from('electricity_readings')
+                    .select('id, meter_id, reading_date, opening_reading, closing_reading, photo_url')
+                    .eq('property_id', propertyId)
+                    .eq('ocr_status', 'retake')
+                    .then(result => result);
+
+                const { data: latestReadings, error: latestError } = await latestRequest;
 
                 if (!latestError && latestReadings) {
                     // Logic: Find the most recent closing reading for each meter
@@ -220,10 +249,7 @@ const ElectricityStaffDashboard: React.FC<ElectricityStaffDashboardProps> = ({ i
                 }
 
                 // Fetch 30-day averages
-                const monthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-                const avgRes = await fetch(
-                    `/api/properties/${propertyId}/electricity-readings?startDate=${monthAgo}`
-                );
+                const avgRes = await avgRequest;
                 if (avgRes.ok) {
                     const avgData = await avgRes.json();
                     const avgByMeter: Record<string, number[]> = {};
@@ -243,7 +269,7 @@ const ElectricityStaffDashboard: React.FC<ElectricityStaffDashboardProps> = ({ i
                 }
 
                 // v2: Fetch multipliers for all meters
-                const multipliersRes = await fetch(`/api/properties/${propertyId}/meter-multipliers`);
+                const multipliersRes = await multipliersRequest;
                 if (multipliersRes.ok) {
                     const multipliersData = await multipliersRes.json();
                     multipliersData.forEach((m: any) => {
@@ -254,8 +280,7 @@ const ElectricityStaffDashboard: React.FC<ElectricityStaffDashboardProps> = ({ i
                 }
 
                 // v2: Fetch active tariff for property
-                const today = new Date().toISOString().split('T')[0];
-                const tariffRes = await fetch(`/api/properties/${propertyId}/grid-tariffs?date=${today}`);
+                const tariffRes = await tariffRequest;
                 if (tariffRes.ok) {
                     activeTariffData = await tariffRes.json();
                     setActiveTariff(activeTariffData);
@@ -263,11 +288,7 @@ const ElectricityStaffDashboard: React.FC<ElectricityStaffDashboardProps> = ({ i
                 }
 
                 // Fetch pending retakes
-                const { data: retakeData } = await supabase
-                    .from('electricity_readings')
-                    .select('id, meter_id, reading_date, opening_reading, closing_reading, photo_url')
-                    .eq('property_id', propertyId)
-                    .eq('ocr_status', 'retake');
+                const { data: retakeData } = await retakeRequest;
 
                 const retakes: Record<string, any> = {};
                 retakeData?.forEach(r => {

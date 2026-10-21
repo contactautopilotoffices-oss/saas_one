@@ -20,6 +20,8 @@ export interface CompletionIO {
     person(id: string): Promise<{ id: string; name: string; phone_number: string; department_name: string | null; department_id: string | null; active: boolean } | null>;
     audit(row: CompletedTaskRow, giverId: string): Promise<void>;
     send(phone: string, input: Parameters<typeof sendTaskCompleted>[1]): Promise<boolean>;
+    /** Owner 2026-10-20: the dashboard bell (+ push) for the giver. Optional (tests can leave it out). */
+    bell?(giverId: string, giverDepartment: string | null, titles: string[], completedByName: string): Promise<void>;
 }
 
 export async function notifyGiversOfCompletion(rows: CompletedTaskRow[], io: CompletionIO = defaultCompletionIO(), at = new Date()): Promise<number> {
@@ -38,6 +40,7 @@ export async function notifyGiversOfCompletion(rows: CompletedTaskRow[], io: Com
             const [giver, holder] = await Promise.all([io.person(list[0].assigned_by!), io.person(list[0].employee_id)]);
             if (!giver || !giver.active || !holder || !giver.phone_number || giver.phone_number.trim().length < 10) continue;
             for (const r of list) await io.audit(r, giver.id);
+            if (io.bell) await io.bell(giver.id, giver.department_name, list.map(r => r.title), holder.name);
             const ok = await io.send(giver.phone_number, {
                 giverName: giver.name, titles: list.map(r => r.title), completedByName: holder.name,
                 department: holder.department_name, at, departmentId: giver.department_id || undefined,
@@ -66,5 +69,9 @@ export function defaultCompletionIO(): CompletionIO {
             await TaskDatabaseService.logAudit({ eventType: 'task_completion_notified', actorId: row.employee_id, targetEmployeeId: giverId, taskId: row.id, details: { title: row.title } });
         },
         send: (phone, input) => sendTaskCompleted(phone, input),
+        async bell(giverId, giverDepartment, titles, completedByName) {
+            const { shortList, taskBell } = await import('./taskBell');
+            void taskBell({ userId: giverId, kind: 'TASK_COMPLETED', title: `${completedByName} finished ${titles.length === 1 ? 'a task' : `${titles.length} tasks`}`, message: `${completedByName} finished: ${shortList(titles)}`, departmentName: giverDepartment });
+        },
     };
 }

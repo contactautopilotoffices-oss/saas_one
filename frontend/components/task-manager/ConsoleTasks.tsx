@@ -6,6 +6,7 @@ import Board from '@/frontend/components/procurement/tasks/Board';
 import NotificationsView from '@/frontend/components/procurement/tasks/NotificationsView';
 import { Status, WTask } from '@/frontend/components/procurement/tasks/types';
 import { registerSessionCache } from '@/frontend/lib/dashboard/sessionCaches';
+import DateRangePicker, { DateRange, localDay, shiftDay } from './DateRangePicker';
 
 /**
  * The superuser's own Task Manager view across ALL departments:
@@ -20,6 +21,8 @@ interface ConsoleTask {
     id: string; title: string; description: string | null; status: Status; assignedDate: string;
     kind: 'mine' | 'given'; personId: string | null; personName: string; department: string;
     locked: boolean; canLock: boolean;
+    /** Owner 2026-10-15: still open from before the chosen dates. */
+    isCarriedForward?: boolean;
 }
 export interface ConsoleData {
     actor: { userId: string; name: string };
@@ -39,6 +42,9 @@ export type ConsoleState = ReturnType<typeof useConsoleTasks>;
 const messageOf = (err: unknown, fallback: string) => (err instanceof Error && err.message ? err.message : fallback);
 
 export function useConsoleTasks() {
+    // Owner 2026-10-15: a date range for "My tasks" (default: the last 7 days, like before). Older open tasks still show,
+    // marked as carried forward.
+    const [range, setRange] = useState<DateRange>(() => ({ from: shiftDay(localDay(), -6), to: localDay() }));
     const [data, setData] = useState<ConsoleData | null>(cache);
     const [status, setStatus] = useState<'loading' | 'ok' | 'not_superuser'>(cache ? 'ok' : cachedNotSuperuser ? 'not_superuser' : 'loading');
     const [refreshing, setRefreshing] = useState(false);
@@ -54,7 +60,7 @@ export function useConsoleTasks() {
     const load = useCallback(async () => {
         if (dataRef.current) setRefreshing(true);
         try {
-            const res = await fetch('/api/task-manager/workspace?scope=console');
+            const res = await fetch(`/api/task-manager/workspace?scope=console&from=${range.from}&to=${range.to}`);
             const json = await res.json().catch(() => ({}));
             if (res.ok && json.success) {
                 cache = json.console; cachedNotSuperuser = false;
@@ -71,7 +77,7 @@ export function useConsoleTasks() {
         } finally {
             setRefreshing(false);
         }
-    }, [say]);
+    }, [say, range.from, range.to]);
 
     useEffect(() => { load(); }, [load]);
 
@@ -142,7 +148,7 @@ export function useConsoleTasks() {
         }
     }, [load, say]);
 
-    return { data, status, refreshing, notice, reload: load, moveTask, deleteTask, setLocked, addTask };
+    return { data, status, refreshing, notice, reload: load, moveTask, deleteTask, setLocked, addTask, range, setRange };
 }
 
 const field = 'rounded-xl border border-zinc-300 bg-white px-3 py-2 text-xs font-bold text-zinc-900 outline-none focus:border-indigo-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100';
@@ -196,7 +202,7 @@ export function ConsoleTasksView({ c }: { c: ConsoleState }) {
 
     const boardTasks: WTask[] = useMemo(() => (data ? mine.map(t => ({
         id: t.id, title: t.title, description: null, ownerId: data.actor.userId, ownerName: data.actor.name, status: t.status,
-        assignedDate: t.assignedDate, isCarriedForward: false, canChange: true, locked: t.locked, canLock: t.canLock,
+        assignedDate: t.assignedDate, isCarriedForward: !!t.isCarriedForward, canChange: true, locked: t.locked, canLock: t.canLock,
         meta: { from: t.personName, department: t.department },
     })) : []), [data, mine]);
 
@@ -226,6 +232,8 @@ export function ConsoleTasksView({ c }: { c: ConsoleState }) {
                     ))}
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
+                    {/* Owner 2026-10-15: date range */}
+                    <DateRangePicker value={c.range} onChange={c.setRange} className="rounded-xl py-2" />
                     <DepartmentSelect id="console-dept" value={dept} departments={data.departments} onChange={setDept} allLabel="All departments" />
                     <button type="button" onClick={c.reload} disabled={c.refreshing} aria-label="Refresh" className="rounded-xl border border-zinc-200 bg-white p-2.5 text-zinc-500 hover:text-zinc-800 disabled:opacity-60 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:text-zinc-200">
                         {c.refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}

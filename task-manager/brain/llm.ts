@@ -35,15 +35,16 @@ const TIMEOUT_MS = 15_000;
  * reply drops from ~80 tokens / 2 s to ~17 tokens / 0.6 s, and with thinking ON a small token budget can be used up before
  * any answer is written. Only sent to the Engy-style provider (COUNCIL_PROVIDER=custom), never to others.
  */
-export function engyBrainLlm(options: { thinking?: 'off' | 'default' } = {}): BrainLlm {
+export function engyBrainLlm(options: { thinking?: 'off' | 'default'; timeoutMs?: number } = {}): BrainLlm {
     const thinking = options.thinking ?? 'off';
+    const timeoutMs = options.timeoutMs ?? TIMEOUT_MS;
     return {
         async complete(req) {
             const { resolveProvider } = await import('@/backend/lib/council/llm');
             const { provider, spec, apiKey } = resolveProvider();
             if (!apiKey) throw new Error('no AI key is configured');
             const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+            const timer = setTimeout(() => controller.abort(), timeoutMs);
             try {
                 const res = await fetch(`${spec.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
                     method: 'POST',

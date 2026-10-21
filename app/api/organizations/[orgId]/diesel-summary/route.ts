@@ -43,21 +43,29 @@ export async function GET(
     // Get diesel readings aggregated by property
     const propertyIds = properties.map(p => p.id);
 
-    const { data: readings, error: readingsError } = await supabase
+    // Readings and generators only need the property ids: start both now and read them in the original order, so the
+    // readings error still answers first and generator errors are still ignored (performance plan Phase 5b).
+    // (.then(r => r) starts a Supabase query now; a query builder on its own only runs when awaited.)
+    const readingsRequest = supabase
         .from('diesel_readings')
         .select('property_id, computed_consumed_litres, reading_date, diesel_added_litres, opening_kwh, closing_kwh')
         .in('property_id', propertyIds)
-        .gte('reading_date', startDate);
+        .gte('reading_date', startDate)
+        .then(result => result);
+    const generatorsRequest = supabase
+        .from('generators')
+        .select('property_id, tank_capacity_litres')
+        .in('property_id', propertyIds)
+        .then(result => result);
+
+    const { data: readings, error: readingsError } = await readingsRequest;
 
     if (readingsError) {
         return NextResponse.json({ error: readingsError.message }, { status: 500 });
     }
 
     // Get generators for tank capacity
-    const { data: generators } = await supabase
-        .from('generators')
-        .select('property_id, tank_capacity_litres')
-        .in('property_id', propertyIds);
+    const { data: generators } = await generatorsRequest;
 
     // Aggregate by property
     const aggregated = properties.map(property => {

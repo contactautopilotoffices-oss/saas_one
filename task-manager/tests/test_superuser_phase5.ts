@@ -51,18 +51,32 @@ async function run() {
     // ── 2. the permission change ─────────────────────────────────────────────
     console.log('\n2. The one permission change: a team with the switch ON may give tasks to a superuser');
     const db: any = TaskDatabaseService; const acc: any = TaskAccessService; const perm: any = PermissionService;
+    // Reporting chain (owner 2026-10-15): Procurement reports to Saniel; Finance reports to a SECOND superuser, Rushabh.
     const people: Record<string, any> = {
-        u1: { id: 'u1', name: 'Priyanka Shah', phone_number: '9000000001', department_id: 'd1', department_name: 'Procurement', role: 'employee', active: true },
-        u2: { id: 'u2', name: 'Vidya Nair', phone_number: '9000000002', department_id: 'd1', department_name: 'Procurement', role: 'employee', active: true },
-        u7: { id: 'u7', name: 'Neha Joshi', phone_number: '9000000007', department_id: 'd2', department_name: 'Finance', role: 'employee', active: true },
-        u9: { id: 'u9', name: 'Saniel Mehta', phone_number: '9000000009', department_id: 'd9', department_name: 'Management', role: 'superuser', active: true },
+        u1: { id: 'u1', name: 'Priyanka Shah', phone_number: '9000000001', department_id: 'd1', department_name: 'Procurement', role: 'employee', active: true, reporting_manager_id: 'u9' },
+        u2: { id: 'u2', name: 'Vidya Nair', phone_number: '9000000002', department_id: 'd1', department_name: 'Procurement', role: 'employee', active: true, reporting_manager_id: 'u9' },
+        u7: { id: 'u7', name: 'Neha Joshi', phone_number: '9000000007', department_id: 'd2', department_name: 'Finance', role: 'employee', active: true, reporting_manager_id: 'u8' },
+        u8: { id: 'u8', name: 'Rushabh Shah', phone_number: '9000000008', department_id: 'd9', department_name: 'Management', role: 'superuser', active: true, reporting_manager_id: null },
+        u9: { id: 'u9', name: 'Saniel Mehta', phone_number: '9000000009', department_id: 'd9', department_name: 'Management', role: 'superuser', active: true, reporting_manager_id: null },
     };
     const audits: any[] = [];
     db.getEmployeeById = async (id: string) => people[id] || null; db.logAudit = async (a: any) => { audits.push(a); };
     perm.visibleAndAssignable = async (_a: any, c: any[]) => c.filter(e => e.department_id === 'd1'); // team sharing ON for Procurement only
+    // The REAL org chart class, built from these people (no database): the superuser rule runs exactly as in production.
+    const { HierarchyService } = await import('../HierarchyService');
+    const { OrgHierarchy } = await import('../OrgHierarchy');
+    const hs: any = HierarchyService;
+    hs.load = async () => ({
+        hierarchy: new OrgHierarchy(Object.values(people).filter((p: any) => p.active).map((p: any) => ({
+            userId: p.id, profileId: p.id, name: p.name, departmentId: p.department_id, departmentName: p.department_name,
+            taskRole: p.role, managerUserId: p.reporting_manager_id ?? null,
+        }))),
+        activeProfiles: Object.keys(people).length, withoutUserAccount: 0,
+    });
     const realCollab = acc.isSuperuserCollabEnabled.bind(TaskAccessService);
     let collabOn = new Set<string>(['d1']);
     acc.isSuperuserCollabEnabled = async (d: string) => collabOn.has(d);
+    acc.isTeamAssignEnabled = async () => false; // owner 2026-10-19 "assign to anyone in team" is not what this test is about
     const canAssign = async (actor: string, target: string) => { try { await PermissionService.assertCanAssignTask(actor, target); return true; } catch (e) { return e instanceof PermissionDeniedError ? false : Promise.reject(e); } };
     check('Procurement → Saniel (a superuser) is allowed when the switch is ON', await canAssign('u1', 'u9'));
     collabOn = new Set();
@@ -73,6 +87,17 @@ async function run() {
     collabOn = new Set(['d2']);
     check('the switch is per department: Finance having it ON does not help Procurement', !(await canAssign('u1', 'u9')));
     collabOn = new Set(['d1']);
+    // Only a superuser ABOVE you in the chain (owner 2026-10-15)
+    check('Procurement → Rushabh (a superuser they do NOT report to) is refused, even with the switch ON', !(await canAssign('u1', 'u8')));
+    check('…while Procurement → Saniel (their manager) is still allowed', await canAssign('u1', 'u9'));
+    collabOn = new Set(['d1', 'd2']);
+    check('Finance → Rushabh (their manager) is allowed when Finance has the switch ON', await canAssign('u7', 'u8'));
+    check('Finance → Saniel (not their manager) is refused', !(await canAssign('u7', 'u9')));
+    collabOn = new Set(['d1']);
+    check('a superuser can still assign to any superuser (unchanged)', await canAssign('u9', 'u8') && await canAssign('u8', 'u9'));
+    check('the chain is followed upwards: a manager\'s manager counts, a loop does not hang',
+        P.isAboveIn([{ id: 'a', active: true, reporting_manager_id: 'b' }, { id: 'b', active: true, reporting_manager_id: 's' }, { id: 's', active: true, reporting_manager_id: null }] as any, 's', 'a')
+        && !P.isAboveIn([{ id: 'a', active: true, reporting_manager_id: 'b' }, { id: 'b', active: true, reporting_manager_id: 'a' }, { id: 's', active: true, reporting_manager_id: null }] as any, 's', 'a'));
 
     // ── 3. the service ───────────────────────────────────────────────────────
     console.log('\n3. Sending now, scheduling, and what is allowed');
@@ -119,6 +144,9 @@ async function run() {
     const panel: any = await P.getPanel('u1', w.io);
     check('the panel shows ONLY the open tasks this team gave him (not Finance\'s, not finished ones)', panel.tasks.map((t: any) => t.id).join() === 't1,t2' && panel.tasks[0].assignerName === 'Priyanka Shah' && panel.recipient.id === 'u9', panel);
     check('…and my own open tasks, to give him one', panel.myOpen.map((t: any) => t.id).join() === 't5');
+    check('with two superusers, Procurement is offered ONLY Saniel (their manager), not Rushabh — and he is picked automatically',
+        panel.superusers.map((s: any) => s.id).join() === 'u9', panel.superusers);
+    await expectErr('Procurement cannot send a reminder to Rushabh (not their manager)', () => P.sendPing('u1', { taskIds: ['t1'], recipientId: 'u8' }, mk().io), 'NO_RECIPIENT', 400);
     w = mk({ collab: new Set() });
     await expectErr('a team whose switch is OFF cannot use any of it', () => P.getPanel('u1', w.io), 'NOT_ENABLED', 403);
     w = mk({ locked: new Set(['u1']) });

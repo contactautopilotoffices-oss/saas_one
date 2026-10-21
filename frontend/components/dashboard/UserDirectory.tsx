@@ -13,6 +13,7 @@ import InviteMemberModal from './InviteMemberModal'; // This is actually our Add
 import ReliabilityBadge from './ReliabilityBadge';
 import { useAuth } from '@/frontend/context/AuthContext';
 import ClientQRGeneratorModal from '../vms/ClientQRGeneratorModal';
+import { registerSessionCache } from '../../lib/dashboard/sessionCaches';
 
 interface UserWithMembership {
     id: string;
@@ -48,8 +49,20 @@ interface UserDirectoryProps {
     onUserUpdated?: () => void;
 }
 
+// Coming back to the tab (performance plan Phase 7.1): the last list for this signed-in user and scope is shown at once,
+// then refreshed quietly. Memory only, at most 5 minutes old, emptied when the signed-in user changes or logs out.
+// A failed refresh replaces it with the error, exactly as today, and drops the saved copy.
+const DIRECTORY_CACHE_TTL_MS = 5 * 60 * 1000;
+const directoryCache = new Map<string, { users: UserWithMembership[]; at: number }>();
+registerSessionCache(() => directoryCache.clear());
+const directoryCacheKey = (userId: string | undefined, orgId?: string, propertyId?: string) =>
+    userId && (orgId || propertyId) ? `${userId}|${orgId ?? ''}|${propertyId ?? ''}` : null;
+
 const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpdated }: UserDirectoryProps) => {
-    const { membership } = useAuth();
+    const { membership, user: authUser } = useAuth();
+    // A ref, so the signed-in user arriving never re-runs the load (no extra request compared with before).
+    const authUserIdRef = useRef<string | undefined>(authUser?.id);
+    authUserIdRef.current = authUser?.id;
     // Reliability panel is visible to org/ops super admins only (RLS agrees).
     const canViewReliability = membership?.org_role === 'org_super_admin' || membership?.org_role === 'ops_super_admin';
     const [users, setUsers] = useState<UserWithMembership[]>([]);
@@ -57,6 +70,9 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
     const [loadError, setLoadError] = useState<string | null>(null);
     const usersRequestId = useRef(0);
     const usersAbortController = useRef<AbortController | null>(null);
+    // Which saved-copy key the list on screen belongs to, and when it was fetched (null: nothing to save).
+    const shownCacheKey = useRef<string | null>(null);
+    const shownFetchedAt = useRef(0);
     const [searchQuery, setSearchQuery] = useState('');
     const [roleFilter, setRoleFilter] = useState('all');
     const [statusFilter, setStatusFilter] = useState('all');
@@ -117,21 +133,24 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
         usersAbortController.current?.abort();
     }, []);
 
-    const fetchUsers = useCallback(async () => {
+    // quiet: a saved copy is already on screen, so refresh it without the "Loading users..." panel.
+    const fetchUsers = useCallback(async (quiet = false) => {
         // The profile table is shared. Never issue an unscoped directory request
         // while the dashboard is still resolving its organization/property.
         invalidateUsersRequest();
         const requestId = usersRequestId.current;
         if (!orgId && !propertyId) {
+            shownCacheKey.current = null;
             setUsers([]);
             setLoadError(null);
             setLoadStatus('waiting');
             return;
         }
 
+        const cacheKey = directoryCacheKey(authUserIdRef.current, orgId, propertyId);
         const controller = new AbortController();
         usersAbortController.current = controller;
-        setLoadStatus('loading');
+        if (!quiet) setLoadStatus('loading');
         setLoadError(null);
 
         try {
@@ -148,12 +167,17 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                 throw new Error('Unable to load users. Please try again.');
             }
             if (requestId !== usersRequestId.current) return;
+            shownCacheKey.current = cacheKey;
+            shownFetchedAt.current = Date.now();
             setUsers(data.users);
             setLoadStatus('success');
         } catch (err) {
             // Aborting saves work, but the request ID also protects against
             // responses that already completed or transports that ignore abort.
             if (requestId !== usersRequestId.current || controller.signal.aborted) return;
+            // Refused or failed: never show (or keep) the saved copy, e.g. after access was removed.
+            if (cacheKey) directoryCache.delete(cacheKey);
+            shownCacheKey.current = null;
             setUsers([]);
             setLoadError(err instanceof Error ? err.message : 'Unable to load users. Please try again.');
             setLoadStatus('error');
@@ -161,13 +185,28 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
     }, [orgId, propertyId, invalidateUsersRequest]);
 
     useEffect(() => {
-        setUsers([]);
+        const cacheKey = directoryCacheKey(authUserIdRef.current, orgId, propertyId);
+        let saved = cacheKey ? directoryCache.get(cacheKey) : undefined;
+        if (saved && Date.now() - saved.at > DIRECTORY_CACHE_TTL_MS) {
+            directoryCache.delete(cacheKey!);
+            saved = undefined;
+        }
+        shownCacheKey.current = saved ? cacheKey : null;
+        shownFetchedAt.current = saved ? saved.at : 0;
+        setUsers(saved ? saved.users : []);
+        if (saved) setLoadStatus('success');
         setSelectedUserForProfile(null);
         setSuperTenantPropsMap({});
         setPropAssignPropsMap({});
-        void fetchUsers();
+        void fetchUsers(!!saved);
         return invalidateUsersRequest;
-    }, [fetchUsers, invalidateUsersRequest]);
+    }, [fetchUsers, invalidateUsersRequest, orgId, propertyId]);
+
+    // Keep the saved copy in step with the list on screen, including approve / reject / role edits made here.
+    useEffect(() => {
+        if (loadStatus !== 'success' || !shownCacheKey.current) return;
+        directoryCache.set(shownCacheKey.current, { users, at: shownFetchedAt.current });
+    }, [users, loadStatus]);
 
     const [approvingUserId, setApprovingUserId] = useState<string | null>(null);
 

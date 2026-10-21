@@ -168,7 +168,8 @@ async function run() {
     check('"One front door" is a Task Access panel switch, OFF by default', /'frontDoor'/.test(sw) && /frontDoor: c\.frontDoorEnabled === true/.test(sw));
     check('the panel and the admin API know it', /key: 'frontDoor'/.test(read('frontend/components/task-manager/TaskAccessPanel.tsx')) && /'frontDoor'[^\]]*\]\.includes\(body\.feature\)/.test(read('app/api/task-manager/access/route.ts')));
     check('the real undo uses the Tasks-tab functions (permissions re-checked)', /WorkspaceService\.setStatus\(actorId, \{ taskId, status \}\)/.test(read('task-manager/brain/live.ts')) && /WorkspaceService\.deleteTask\(actorId, \{ taskId \}\)/.test(read('task-manager/brain/live.ts')));
-    check('the AI\'s instructions are unchanged (no new intent was added)', !/undo/i.test(read('task-manager/brain/prompt.ts')) && !/undo/i.test(read('task-manager/brain/tasksDomain.ts')));
+    // 2026-10-14: tasksDomain may now SAY "Reply undo…" after a completion; what must not change is the AI's intent list.
+    check('the AI\'s instructions are unchanged (no new intent was added)', !/undo/i.test(read('task-manager/brain/prompt.ts')) && !/name: 'undo'/.test(read('task-manager/brain/tasksDomain.ts')) && !/'undo'/.test(read('task-manager/brain/types.ts').split('FACILITY_INTENTS')[0]));
 
     check('no network used', net.length === 0, net);
     console.log(failures === 0 ? '\n🎉 FRONT DOOR TESTS PASSED\n' : `\n❌ ${failures} FAILED\n`);

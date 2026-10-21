@@ -65,7 +65,8 @@ async function run() {
     check('two tasks fit ("AMC") → asks which, never guesses', w.state?.data?.pending?.kind === 'pick' && w.exec.length === 0, w.state?.data);
     w = mk(() => U('delete_tasks', { which: { all: true, numbers: [], hints: [] } }, 'Delete everything.'));
     await turn(w, 'delete all my tasks', 'd6');
-    check('"delete all" → never a mass delete: asks which', w.state?.data?.action?.type !== 'delete_tasks' && w.exec.length === 0, w.state?.data);
+    // Owner 2026-10-15: "delete all" is now allowed, but ONLY after the full list is shown and the person replies YES.
+    check('"delete all" → nothing deleted yet: the whole list is shown and waits for YES', w.state?.data?.pending?.kind === 'confirm' && w.state?.data?.action?.type === 'delete_tasks' && w.state.data.action.taskIds.length > 1 && w.exec.length === 0, w.state?.data);
     w = mk(m => (/delete/i.test(m) ? U('delete_tasks', { which: { all: false, numbers: [9], hints: [] } }, 'Delete task 9.') : YES));
     await turn(w, 'delete task 9', 'd7');
     check('a number not on the list → says so, nothing proposed', w.state?.data?.action == null && /task 9/.test(w.sent[0] + JSON.stringify(w.state)), w.sent[0]);

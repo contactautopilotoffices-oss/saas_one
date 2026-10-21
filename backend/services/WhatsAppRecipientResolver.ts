@@ -48,6 +48,8 @@ export interface ResolveWhatsAppRecipientsResult {
 
 const ALIAS_MAP: Record<string, string> = {
     meeting_rooms: 'meeting_room_booked',
+    reminder_meeting_room: 'meeting_room_start_reminder',
+    meeting_room_reminder: 'meeting_room_start_reminder',
     tickets: 'ticket_created',
     ticket_sla_reminder: 'reminder_ticket_sla',
     material_requests: 'material_request_created',
@@ -129,7 +131,7 @@ export const DEFAULT_WHATSAPP_SERVICE_CONFIG: Record<string, FeatureWhatsAppConf
     reminder_ticket_sla: { enabled: true, roles: ['property_admin', 'org_super_admin'], user_ids: [], notify_assignee: true, reminder_minutes: 30 },
     checklist_slot_reminder: { enabled: true, roles: ['mst', 'staff'], user_ids: [], notify_assignee: true, reminder_minutes: 30 },
     checklist_started: { enabled: true, roles: ['mst', 'staff'], user_ids: [], notify_assignee: true },
-    checklist_completed: { enabled: true, roles: ['property_admin', 'soft_service_manager', 'soft_service_supervisor'], user_ids: [], notify_requester: true },
+    checklist_completed: { enabled: true, roles: ['property_admin', 'soft_service_manager', 'soft_service_supervisor'], user_ids: [], notify_approver: true, notify_requester: true },
     checklist_overdue_alert: { enabled: true, roles: ['property_admin', 'org_super_admin'], user_ids: [], notify_assignee: true },
     checklist_rated: { enabled: true, roles: [], user_ids: [], notify_requester: true },
     checklists: { enabled: true, roles: ['property_admin'], user_ids: [] },
@@ -154,6 +156,8 @@ export const DEFAULT_WHATSAPP_SERVICE_CONFIG: Record<string, FeatureWhatsAppConf
     meeting_rooms: { enabled: true, roles: ['property_admin'], user_ids: [], notify_requester: true },
     meeting_room_booked: { enabled: true, roles: ['property_admin'], user_ids: [], notify_requester: true },
     meeting_room_cancelled: { enabled: true, roles: ['property_admin'], user_ids: [], notify_requester: true },
+    meeting_room_start_reminder: { enabled: true, roles: ['property_admin'], user_ids: [], notify_requester: true, reminder_minutes: 10 },
+    meeting_room_end_reminder: { enabled: true, roles: ['property_admin'], user_ids: [], notify_requester: true, reminder_minutes: 10 },
     reminder_ppm: { enabled: true, roles: ['property_admin', 'org_super_admin'], user_ids: [], reminder_minutes: 1440 },
     lead_created: { enabled: true, roles: ['sales', 'org_super_admin'], user_ids: [] },
     lead_assigned: { enabled: true, roles: [], user_ids: [], notify_assignee: true },
@@ -224,7 +228,7 @@ export const WhatsAppRecipientResolver = {
                 roles: propOverride?.roles || matrixRule.roles || [],
                 user_ids: propOverride?.user_ids || matrixRule.user_ids || [],
                 notify_assignee: propOverride?.notify_assignee !== undefined ? propOverride.notify_assignee !== false : matrixRule.notify_assignee !== false,
-                notify_requester: propOverride?.notify_requester !== undefined ? propOverride.notify_requester !== false : matrixRule.notify_requester !== false,
+                notify_requester: propOverride?.notify_requester !== undefined ? propOverride.notify_requester !== false : (featureKey === 'ticket_assigned' ? false : matrixRule.notify_requester !== false),
                 notify_approver: propOverride?.notify_approver !== undefined ? propOverride.notify_approver !== false : matrixRule.notify_approver !== false,
                 reminder_minutes: propOverride?.reminder_minutes ?? matrixRule.reminder_minutes ?? null,
                 property_overrides: matrixRule.property_overrides || {}
@@ -363,36 +367,68 @@ export const WhatsAppRecipientResolver = {
         });
 
         if (missingPhoneIds.length > 0) {
-            await Promise.all(
-                missingPhoneIds.map(async (uid) => {
-                    try {
-                        const { data: authUser, error: authLookupError } = await supabaseAdmin.auth.admin.getUserById(uid);
-                        if (authLookupError && options.strictReads && authLookupError.status !== 404) throw authLookupError;
-                        if (authUser?.user) {
-                            const rawPhone = authUser.user.phone || authUser.user.user_metadata?.phone;
-                            if (rawPhone) {
-                                const cleanPhone = String(rawPhone).replace(/[^0-9+]/g, '').trim();
-                                if (cleanPhone.length >= 10) {
-                                    userMap.set(uid, {
-                                        id: uid,
-                                        phone: cleanPhone,
-                                        full_name: authUser.user.user_metadata?.full_name || userMap.get(uid)?.full_name || null
-                                    });
-                                    // Auto-sync back to public.users table in the background
-                                    supabaseAdmin
-                                        .from('users')
-                                        .update({ phone: cleanPhone })
-                                        .eq('id', uid)
-                                        .then();
+            // First check employee_profiles table for missing phones
+            try {
+                const { data: empProfiles } = await supabaseAdmin
+                    .from('employee_profiles')
+                    .select('user_id, phone, full_name')
+                    .in('user_id', missingPhoneIds);
+
+                (empProfiles || []).forEach((emp: any) => {
+                    const rawPhone = emp?.phone;
+                    const cleanPhone = rawPhone ? String(rawPhone).replace(/[^0-9+]/g, '').trim() : '';
+                    if (cleanPhone.length >= 10) {
+                        userMap.set(emp.user_id, {
+                            id: emp.user_id,
+                            phone: cleanPhone,
+                            full_name: emp.full_name || userMap.get(emp.user_id)?.full_name || null
+                        });
+                        // Opportunistically sync back to users table
+                        supabaseAdmin.from('users').update({ phone: cleanPhone }).eq('id', emp.user_id).then();
+                    }
+                });
+            } catch {
+                // ignore
+            }
+
+            // For any remaining IDs without phone, check Supabase Auth
+            const remainingMissingIds = missingPhoneIds.filter(id => {
+                const u = userMap.get(id);
+                return !u?.phone || String(u.phone).replace(/[^0-9+]/g, '').trim().length < 10;
+            });
+
+            if (remainingMissingIds.length > 0) {
+                await Promise.all(
+                    remainingMissingIds.map(async (uid) => {
+                        try {
+                            const { data: authUser, error: authLookupError } = await supabaseAdmin.auth.admin.getUserById(uid);
+                            if (authLookupError && options.strictReads && authLookupError.status !== 404) throw authLookupError;
+                            if (authUser?.user) {
+                                const rawPhone = authUser.user.phone || authUser.user.user_metadata?.phone;
+                                if (rawPhone) {
+                                    const cleanPhone = String(rawPhone).replace(/[^0-9+]/g, '').trim();
+                                    if (cleanPhone.length >= 10) {
+                                        userMap.set(uid, {
+                                            id: uid,
+                                            phone: cleanPhone,
+                                            full_name: authUser.user.user_metadata?.full_name || userMap.get(uid)?.full_name || null
+                                        });
+                                        // Auto-sync back to public.users table in the background
+                                        supabaseAdmin
+                                            .from('users')
+                                            .update({ phone: cleanPhone })
+                                            .eq('id', uid)
+                                            .then();
+                                    }
                                 }
                             }
+                        } catch (e) {
+                            if (options.strictReads) throw e;
+                            // ignore background fallback errors
                         }
-                    } catch (e) {
-                        if (options.strictReads) throw e;
-                        // ignore background fallback errors
-                    }
-                })
-            );
+                    })
+                );
+            }
         }
 
         const resolvedUsers: ResolvedWhatsAppUser[] = Array.from(userMap.values())

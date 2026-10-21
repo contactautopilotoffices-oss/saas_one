@@ -24,6 +24,10 @@ export async function GET(
             return NextResponse.json({ error: 'Template not found' }, { status: 404 });
         }
 
+        if (template && Array.isArray(template.items)) {
+            template.items.sort((a: any, b: any) => (a.order_index ?? 0) - (b.order_index ?? 0));
+        }
+
         return NextResponse.json({ success: true, template });
     } catch (err) {
         return NextResponse.json(
@@ -75,19 +79,36 @@ export async function PUT(
 
         // Update items if provided
         if (items && Array.isArray(items)) {
-            // Delete existing items (use supabaseAdmin to bypass RLS)
-            const { error: deleteItemsError } = await supabaseAdmin
+            // Helper to safely parse and sanitize step parameters
+            const sanitizeParams = (raw: any): any[] => {
+                if (!raw) return [];
+                let arr = raw;
+                if (typeof raw === 'string') {
+                    try { arr = JSON.parse(raw); } catch { arr = []; }
+                }
+                if (!Array.isArray(arr)) return [];
+                return arr.map((p: any, idx: number) => ({
+                    id: p.id || `param_${idx}_${Date.now()}`,
+                    name: typeof p === 'string' ? p : (p.name || p.title || `Param ${idx + 1}`),
+                    type: p.type || 'yes_no',
+                    is_required: p.is_required !== false,
+                }));
+            };
+
+            // 1. Fetch current items for this template to know which IDs exist
+            const { data: existingItems } = await supabaseAdmin
                 .from('sop_checklist_items')
-                .delete()
+                .select('id')
                 .eq('template_id', templateId);
 
-            if (deleteItemsError) {
-                return NextResponse.json({ error: 'Failed to update items: ' + deleteItemsError.message }, { status: 500 });
-            }
+            const existingIds = new Set((existingItems || []).map(i => i.id));
+            const submittedIds = new Set(items.map(i => i.id).filter(Boolean));
 
-            // Insert new items (use supabaseAdmin to bypass RLS)
-            if (items.length > 0) {
-                const itemsToInsert = items.map((item: any, index: number) => ({
+            const toUpdate: any[] = [];
+            const toInsert: any[] = [];
+
+            items.forEach((item: any, index: number) => {
+                const itemData = {
                     template_id: templateId,
                     title: item.title,
                     description: item.description || '',
@@ -99,19 +120,57 @@ export async function PUT(
                     is_mandatory: item.is_mandatory !== false,
                     start_time: item.start_time || null,
                     end_time: item.end_time || null,
-                }));
+                    parameters: sanitizeParams(item.parameters),
+                    reference_photo_url: item.reference_photo_url || null,
+                    reference_photo_source: item.reference_photo_source || null,
+                    cad_area_id: item.cad_area_id || null,
+                };
 
-                const { error: itemsError } = await supabaseAdmin
+                if (item.id && existingIds.has(item.id)) {
+                    toUpdate.push({ id: item.id, ...itemData });
+                } else {
+                    toInsert.push(itemData);
+                }
+            });
+
+            // 2. Update existing items in place so references and IDs are preserved
+            for (const item of toUpdate) {
+                const { id, ...data } = item;
+                const { error: updateError } = await supabaseAdmin
                     .from('sop_checklist_items')
-                    .insert(itemsToInsert);
+                    .update(data)
+                    .eq('id', id);
+                if (updateError) {
+                    console.error(`[PUT Template] Failed to update item ${id}:`, updateError);
+                }
+            }
 
-                if (itemsError) {
-                    return NextResponse.json({ error: 'Failed to insert items: ' + itemsError.message }, { status: 500 });
+            // 3. Insert newly added items
+            if (toInsert.length > 0) {
+                const { error: insertError } = await supabaseAdmin
+                    .from('sop_checklist_items')
+                    .insert(toInsert);
+
+                if (insertError) {
+                    console.error('[PUT Template] Failed to insert new items:', insertError);
+                    return NextResponse.json({ error: 'Failed to insert items: ' + insertError.message }, { status: 500 });
+                }
+            }
+
+            // 4. Delete items that were intentionally removed from the checklist
+            const toDeleteIds = Array.from(existingIds).filter(id => !submittedIds.has(id));
+            if (toDeleteIds.length > 0) {
+                const { error: delErr } = await supabaseAdmin
+                    .from('sop_checklist_items')
+                    .delete()
+                    .in('id', toDeleteIds);
+                if (delErr) {
+                    console.warn('[PUT Template] Could not delete removed item (retained for audit history):', delErr.message);
                 }
             }
         }
 
-        // Fetch final template with items
+        // Fetch final template with items ordered by order_index
         const { data: finalTemplate } = await supabaseAdmin
             .from('sop_templates')
             .select(`
@@ -120,6 +179,10 @@ export async function PUT(
             `)
             .eq('id', templateId)
             .single();
+
+        if (finalTemplate && Array.isArray(finalTemplate.items)) {
+            finalTemplate.items.sort((a: any, b: any) => (a.order_index ?? 0) - (b.order_index ?? 0));
+        }
 
         return NextResponse.json({ success: true, template: finalTemplate });
     } catch (err) {

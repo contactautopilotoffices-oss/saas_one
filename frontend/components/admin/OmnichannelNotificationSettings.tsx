@@ -371,7 +371,7 @@ const MODULES_META: ModuleMeta[] = [
                 key: 'checklist_completed',
                 name: 'Checklist Completed & Submitted',
                 description: 'Sent to designated supervisors/property admins when checklist photos and items are submitted.',
-                hasContextual: { requester: true }
+                hasContextual: { approver: true, requester: true }
             },
             {
                 key: 'checklist_overdue_alert',
@@ -492,13 +492,29 @@ const MODULES_META: ModuleMeta[] = [
             {
                 key: 'meeting_room_booked',
                 name: 'Meeting Room Booked',
-                description: 'Sent to selected staff/admins and the booking requester when a room is booked.',
+                description: 'Staff, admin roles & added users receive v3 (facility & refreshment prep). Booker/requester receives v4 (guest welcome).',
                 hasContextual: { requester: true }
             },
             {
                 key: 'meeting_room_cancelled',
                 name: 'Meeting Room Cancelled',
                 description: 'Sent to selected staff/admins and the booking requester when a reservation is cancelled.',
+                hasContextual: { requester: true }
+            },
+            {
+                key: 'meeting_room_start_reminder',
+                name: 'Meeting Room Starting Soon Reminder',
+                description: 'Automated reminder dispatched in advance before the scheduled meeting begins.',
+                isReminder: true,
+                reminderLabel: 'Remind before meeting starts',
+                hasContextual: { requester: true }
+            },
+            {
+                key: 'meeting_room_end_reminder',
+                name: 'Meeting Room Ending Soon Reminder',
+                description: 'Automated reminder dispatched before the meeting room session concludes (e.g. 10 minutes before end time).',
+                isReminder: true,
+                reminderLabel: 'Remind before meeting ends',
                 hasContextual: { requester: true }
             }
         ]
@@ -659,7 +675,7 @@ const DEFAULT_NOTIFICATION_MATRIX: NotificationMatrix = {
     checklists: {
         checklist_slot_reminder: { channels: { email: false, whatsapp: true, push: true }, roles: ['mst', 'staff'], user_ids: [], notify_assignee: true, reminder_minutes: 30 },
         checklist_started: { channels: { email: false, whatsapp: true, push: true }, roles: ['mst', 'staff'], user_ids: [], notify_assignee: true },
-        checklist_completed: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin', 'soft_service_manager', 'soft_service_supervisor'], user_ids: [], notify_requester: true },
+        checklist_completed: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin', 'soft_service_manager', 'soft_service_supervisor'], user_ids: [], notify_approver: true, notify_requester: true },
         checklist_overdue_alert: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin', 'org_super_admin'], user_ids: [], notify_assignee: true },
         checklist_rated: { channels: { email: false, whatsapp: true, push: true }, roles: [], user_ids: [], notify_requester: true }
     },
@@ -682,7 +698,9 @@ const DEFAULT_NOTIFICATION_MATRIX: NotificationMatrix = {
     },
     meeting_rooms: {
         meeting_room_booked: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin'], user_ids: [], notify_requester: true },
-        meeting_room_cancelled: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin'], user_ids: [], notify_requester: true }
+        meeting_room_cancelled: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin'], user_ids: [], notify_requester: true },
+        meeting_room_start_reminder: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin'], user_ids: [], notify_requester: true, reminder_minutes: 10 },
+        meeting_room_end_reminder: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin'], user_ids: [], notify_requester: true, reminder_minutes: 10 }
     },
     ppm: {
         reminder_ppm: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin', 'org_super_admin'], user_ids: [], reminder_minutes: 1440 }

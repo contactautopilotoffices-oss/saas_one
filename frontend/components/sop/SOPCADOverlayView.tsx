@@ -9,7 +9,9 @@ import ImagePreviewModal from '@/frontend/components/shared/ImagePreviewModal';
 interface CADArea {
     id: string;
     label: string;
+    shape_type?: 'rectangle' | 'polygon' | 'freehand';
     coordinates: { x: number; y: number; width: number; height: number };
+    points?: { x: number; y: number }[];
     linked_step_ids: string[];
 }
 
@@ -35,6 +37,8 @@ interface SOPCADOverlayViewProps {
     onScorePhoto?: (completionItemId: string) => void;
     /** Map of completionItemId -> loading boolean */
     aiScoring?: Record<string, boolean>;
+    /** Only admins may view the clean reference photo (benchmark). Staff must not see it. */
+    isAdmin?: boolean;
 }
 
 function scoreColors(score: number | null) {
@@ -58,6 +62,7 @@ const SOPCADOverlayView: React.FC<SOPCADOverlayViewProps> = ({
     items,
     templateTitle,
     onScorePhoto,
+    isAdmin = false,
     aiScoring = {},
 }) => {
     const [mounted, setMounted] = useState(false);
@@ -185,24 +190,45 @@ const SOPCADOverlayView: React.FC<SOPCADOverlayViewProps> = ({
                                                 {areaData.map(({ area, worst }) => {
                                                     const colors = scoreColors(worst);
                                                     const isSelected = selectedAreaId === area.id;
+                                                    const hasPolygon = Array.isArray(area.points) && area.points.length > 2;
+
+                                                    let badgeX = area.coordinates.x + area.coordinates.width / 2;
+                                                    let badgeY = area.coordinates.y + area.coordinates.height / 2;
+                                                    if (hasPolygon && area.points) {
+                                                        const sumX = area.points.reduce((acc, p) => acc + p.x, 0);
+                                                        const sumY = area.points.reduce((acc, p) => acc + p.y, 0);
+                                                        badgeX = Math.round(sumX / area.points.length);
+                                                        badgeY = Math.round(sumY / area.points.length);
+                                                    }
+
                                                     return (
                                                         <g
                                                             key={area.id}
                                                             className="cursor-pointer"
                                                             onClick={() => setSelectedAreaId(isSelected ? null : area.id)}
                                                         >
-                                                            <rect
-                                                                x={area.coordinates.x}
-                                                                y={area.coordinates.y}
-                                                                width={area.coordinates.width}
-                                                                height={area.coordinates.height}
-                                                                fill={colors.fill}
-                                                                stroke={colors.stroke}
-                                                                strokeWidth={isSelected ? 5 : 3}
-                                                                rx={4}
-                                                            />
+                                                            {hasPolygon && area.points ? (
+                                                                <polygon
+                                                                    points={area.points.map((p) => `${p.x},${p.y}`).join(' ')}
+                                                                    fill={colors.fill}
+                                                                    stroke={colors.stroke}
+                                                                    strokeWidth={isSelected ? 5 : 3}
+                                                                    strokeLinejoin="round"
+                                                                />
+                                                            ) : (
+                                                                <rect
+                                                                    x={area.coordinates.x}
+                                                                    y={area.coordinates.y}
+                                                                    width={area.coordinates.width}
+                                                                    height={area.coordinates.height}
+                                                                    fill={colors.fill}
+                                                                    stroke={colors.stroke}
+                                                                    strokeWidth={isSelected ? 5 : 3}
+                                                                    rx={4}
+                                                                />
+                                                            )}
                                                             {/* Score badge */}
-                                                            <g transform={`translate(${area.coordinates.x + area.coordinates.width / 2}, ${area.coordinates.y + area.coordinates.height / 2})`}>
+                                                            <g transform={`translate(${badgeX}, ${badgeY})`}>
                                                                 <rect
                                                                     x={-28}
                                                                     y={-16}
@@ -316,8 +342,9 @@ const SOPCADOverlayView: React.FC<SOPCADOverlayViewProps> = ({
                                                     )}
 
                                                     {/* Side-by-Side Large Photo Comparison Boxes */}
-                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                                                        {/* Clean Standard Reference Photo */}
+                                                    <div className={`grid grid-cols-1 gap-3 pt-1 ${isAdmin ? 'sm:grid-cols-2' : ''}`}>
+                                                        {/* Clean Standard Reference Photo — visible to admins only */}
+                                                        {isAdmin && (
                                                         <div className="flex flex-col gap-1.5">
                                                             <span className="text-[9px] font-black text-emerald-700 uppercase tracking-wider flex items-center gap-1">
                                                                 <span className="w-2 h-2 rounded-full bg-emerald-500" />
@@ -343,6 +370,7 @@ const SOPCADOverlayView: React.FC<SOPCADOverlayViewProps> = ({
                                                                 </div>
                                                             )}
                                                         </div>
+                                                        )}
 
                                                         {/* Uploaded Execution Photo */}
                                                         <div className="flex flex-col gap-1.5">

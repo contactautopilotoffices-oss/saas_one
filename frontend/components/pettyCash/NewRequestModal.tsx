@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { PC_CATEGORIES, PC_DEPARTMENTS } from '@/frontend/lib/pettyCash/roles';
+import { PC_DEPARTMENTS } from '@/frontend/lib/pettyCash/roles';
 import WorkflowModal from './WorkflowModal';
 import ProofUpload from './ProofUpload';
 import { pcFetch, pcJson, type Property, type Route, type Upload } from './workflowTypes';
@@ -30,8 +30,6 @@ export default function NewRequestModal({
     const [uploading, setUploading] = useState(false);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState('');
-    const [selectedCategory, setSelectedCategory] = useState(PC_CATEGORIES[0] || 'Travel');
-    const [customCategory, setCustomCategory] = useState('');
 
     if (!open) return null;
 
@@ -48,9 +46,6 @@ export default function NewRequestModal({
                     setError('');
                     const form = new FormData(event.currentTarget);
                     const saveDraft = ((event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement)?.value === 'draft';
-                    const rawCategory = String(form.get('category') || selectedCategory);
-                    const custom = String(form.get('custom_category') || customCategory).trim();
-                    const category = (rawCategory === 'custom' || rawCategory === 'Other') && custom ? custom : rawCategory === 'custom' ? 'Other' : rawCategory || 'General';
 
                     try {
                         await pcFetch(
@@ -61,7 +56,7 @@ export default function NewRequestModal({
                                 amount_requested: form.get('amount'),
                                 purpose: form.get('purpose'),
                                 department: form.get('department'),
-                                category,
+                                category: 'Multi-purpose',
                                 payment_mode: 'Cash',
                                 documents: proofs,
                                 save_draft: saveDraft
@@ -117,56 +112,16 @@ export default function NewRequestModal({
                     Purpose
                     <textarea className="pc-input" name="purpose" required maxLength={2000} />
                 </label>
-                <div className="grid sm:grid-cols-2 gap-3">
-                    <label className="block">
-                        <span className="flex items-center justify-between">
-                            <span>Category</span>
-                            {selectedCategory === 'custom' ? (
-                                <button
-                                    type="button"
-                                    onClick={() => setSelectedCategory(PC_CATEGORIES[0] || 'Travel')}
-                                    className="text-[10px] font-bold text-primary hover:underline"
-                                >
-                                    Select from list
-                                </button>
-                            ) : null}
-                        </span>
-                        <select
-                            className="pc-input"
-                            name="category"
-                            value={selectedCategory}
-                            onChange={e => setSelectedCategory(e.target.value)}
-                        >
-                            {PC_CATEGORIES.map(c => (
-                                <option key={c} value={c}>
-                                    {c}
-                                </option>
-                            ))}
-                            <option value="custom">Other / Custom (Write your own)…</option>
-                        </select>
-                        {selectedCategory === 'custom' && (
-                            <input
-                                className="pc-input mt-2"
-                                name="custom_category"
-                                placeholder="Type custom category name…"
-                                value={customCategory}
-                                onChange={e => setCustomCategory(e.target.value)}
-                                autoFocus
-                                required
-                            />
-                        )}
-                    </label>
-                    <label className="block">
-                        Department
-                        <select className="pc-input" name="department">
-                            {PC_DEPARTMENTS.map(c => (
-                                <option key={c} value={c}>
-                                    {c}
-                                </option>
-                            ))}
-                        </select>
-                    </label>
-                </div>
+                <label className="block">
+                    Department
+                    <select className="pc-input" name="department">
+                        {PC_DEPARTMENTS.map(c => (
+                            <option key={c} value={c}>
+                                {c}
+                            </option>
+                        ))}
+                    </select>
+                </label>
 
                 {/* Supporting Documents Section with Explicit Optional Clarity */}
                 <div className="rounded-2xl border border-slate-200/80 dark:border-[#30363d] p-3.5 space-y-2 bg-slate-50/60 dark:bg-[#161b22]/40">

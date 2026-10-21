@@ -86,7 +86,7 @@ export default function AiBriefCard() {
       const mt = mailbox.totals;
       paragraphs.push(
         <p key="p2" style={P_STYLE}>
-          <B>{mt.unactioned_request} purchase requests</B> are waiting for action and{' '}
+          <B>{mt.unactioned_request} purchase email threads</B> are waiting for action and{' '}
           <B>{mt.awaiting_reply} vendor threads</B> for a reply
           {mt.oldest_days > 0 ? <>; the oldest has waited <B color={CC_COLORS.amber}>{mt.oldest_days} days</B></> : null}.
         </p>);

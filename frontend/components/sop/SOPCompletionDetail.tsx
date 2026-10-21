@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { createClient } from '@/frontend/utils/supabase/client';
 import Skeleton from '@/frontend/components/ui/Skeleton';
 import { motion } from 'framer-motion';
-import { ChevronLeft, User, Calendar, CheckCircle2, Circle, Camera, Clock, Eye, Video, Play, ThumbsDown, Minus, ThumbsUp, Paperclip, Loader2, X, MapPin } from 'lucide-react';
+import { ChevronLeft, User, Calendar, CheckCircle2, Circle, Camera, Clock, Eye, Video, Play, ThumbsDown, Minus, ThumbsUp, Paperclip, Loader2, X, MapPin, ShieldCheck, Check, XCircle, MessageSquare } from 'lucide-react';
 import ImagePreviewModal from '@/frontend/components/shared/ImagePreviewModal';
 import VideoPreviewModal from '@/frontend/components/shared/VideoPreviewModal';
 import CameraCaptureModal from '@/frontend/components/shared/CameraCaptureModal';
@@ -45,34 +45,80 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
     const [showCADOverlay, setShowCADOverlay] = useState(false);
     const [aiScoring, setAiScoring] = useState<Record<string, boolean>>({});
+    const [stepNotes, setStepNotes] = useState<Record<string, string>>({});
+    const [approvingItemId, setApprovingItemId] = useState<string | null>(null);
+    const [isAIEnabled, setIsAIEnabled] = useState<boolean>(false);
+    const [isAutoEvaluating, setIsAutoEvaluating] = useState<boolean>(false);
+    const autoEvaluatedRef = React.useRef<Set<string>>(new Set());
     const supabase = React.useMemo(() => createClient(), []);
 
-    // Fire-and-forget AI cleanliness scoring after a photo is (re-)uploaded
-    const triggerAIScoring = useCallback((completionItemId: string) => {
+    // AI cleanliness & parameter scoring after a photo is uploaded or on auto-evaluation
+    const triggerAIScoring = useCallback(async (completionItemId: string) => {
         setAiScoring(prev => ({ ...prev, [completionItemId]: true }));
-        fetch(`/api/properties/${propertyId}/sop/completions/${completionId}/score-photo`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ completionItemId }),
-        })
-            .then(async (res) => {
-                const data = await res.json().catch(() => ({}));
-                if (res.ok) {
-                    setCompletion((prev: any) => prev ? ({
-                        ...prev,
-                        items: prev.items.map((it: any) =>
-                            it.id === completionItemId
-                                ? { ...it, ai_cleanliness_score: data.score, ai_cleanliness_reason: data.reason, ai_reference_used: data.referenceUsed, ai_analyzed_at: new Date().toISOString() }
-                                : it
-                        ),
-                    }) : prev);
-                } else {
-                    console.warn('[AI Score] Scoring skipped:', data.error);
-                }
-            })
-            .catch((err) => console.warn('[AI Score] Request failed:', err))
-            .finally(() => setAiScoring(prev => ({ ...prev, [completionItemId]: false })));
-    }, [completionId, propertyId]);
+        try {
+            const propId = completion?.property_id || propertyId;
+            const res = await fetch(`/api/properties/${propId}/sop/completions/${completionId}/score-photo`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ completionItemId }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok && !data.skipped) {
+                setCompletion((prev: any) => prev ? ({
+                    ...prev,
+                    items: prev.items.map((it: any) =>
+                        it.id === completionItemId
+                            ? { 
+                                ...it, 
+                                ai_cleanliness_score: data.score, 
+                                ai_cleanliness_reason: data.reason, 
+                                ai_parameter_scores: data.parameters || data.parameterScores || it.ai_parameter_scores, 
+                                ai_reference_used: data.referenceUsed, 
+                                ai_analyzed_at: new Date().toISOString() 
+                            }
+                            : it
+                    ),
+                }) : prev);
+            } else {
+                console.warn('[AI Score] Scoring skipped:', data.error || data.reason);
+            }
+        } catch (err) {
+            console.warn('[AI Score] Request failed:', err);
+        } finally {
+            setAiScoring(prev => ({ ...prev, [completionItemId]: false }));
+        }
+    }, [completionId, propertyId, completion?.property_id]);
+
+    const handleStepApproval = useCallback(async (itemId: string, status: 'approved' | 'rejected') => {
+        setApprovingItemId(itemId);
+        try {
+            const notes = stepNotes[itemId] || '';
+            const res = await fetch(`/api/properties/${propertyId}/sop/completions/${completionId}/approve-step`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ completionItemId: itemId, status, notes }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to update step approval');
+
+            setCompletion((prev: any) => prev ? ({
+                ...prev,
+                approval_status: data.completion_approval_status || prev.approval_status,
+                items: prev.items.map((it: any) => it.id === itemId ? {
+                    ...it,
+                    step_approval_status: data.step_approval_status,
+                    step_approval_notes: data.step_approval_notes,
+                    step_approved_at: data.step_approved_at,
+                    step_approved_by: data.step_approved_by,
+                } : it),
+            }) : prev);
+            setToast({ message: `Step ${status === 'approved' ? 'Approved' : 'Rejected'} successfully`, type: 'success' });
+        } catch (err: any) {
+            setToast({ message: err.message || 'Error updating approval', type: 'error' });
+        } finally {
+            setApprovingItemId(null);
+        }
+    }, [completionId, propertyId, stepNotes]);
 
 
     useEffect(() => {
@@ -89,6 +135,10 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
                 if (!res.ok) throw new Error(json.error || 'Failed to load completion');
 
                 const data = json.completion;
+
+                if (typeof json.is_ai_enabled === 'boolean') {
+                    setIsAIEnabled(json.is_ai_enabled);
+                }
 
                 // Sort items by order_index
                 if (data.items) {
@@ -107,6 +157,62 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
 
         fetchDetail();
     }, [completionId, propertyId]);
+
+    // Ensure AI setting is synced with property settings
+    useEffect(() => {
+        const propId = completion?.property_id || propertyId;
+        if (!propId || propId === 'all' || propId === 'undefined') return;
+
+        fetch(`/api/properties/${propId}/checklist-settings`)
+            .then(res => res.json())
+            .then(data => {
+                if (data?.settings) {
+                    const mode = data.settings.checklist_mode || 'basic';
+                    const enabled = mode === 'advanced' || !!data.settings.ai_scoring_enabled;
+                    setIsAIEnabled(enabled);
+                }
+            })
+            .catch(err => console.warn('[AI Check] Property settings fetch error:', err));
+    }, [propertyId, completion?.property_id]);
+
+    // When AI enabled is ON, directly evaluate any completed item with photo that hasn't been scored yet (one-time only)
+    useEffect(() => {
+        if (!isAIEnabled || !completion?.items) return;
+
+        // One-time evaluation guard: only evaluate if photo exists and it has NOT been evaluated before
+        const unscoredItems = completion.items.filter(
+            (it: any) =>
+                it.photo_url &&
+                (it.ai_cleanliness_score === null || it.ai_cleanliness_score === undefined) &&
+                !it.ai_analyzed_at &&
+                !autoEvaluatedRef.current.has(it.id)
+        );
+
+        if (unscoredItems.length === 0) return;
+
+        let isCancelled = false;
+
+        const runAutoEvaluationQueue = async () => {
+            setIsAutoEvaluating(true);
+            try {
+                for (const it of unscoredItems) {
+                    if (isCancelled) break;
+                    autoEvaluatedRef.current.add(it.id);
+                    await triggerAIScoring(it.id);
+                }
+            } finally {
+                if (!isCancelled) {
+                    setIsAutoEvaluating(false);
+                }
+            }
+        };
+
+        runAutoEvaluationQueue();
+
+        return () => {
+            isCancelled = true;
+        };
+    }, [isAIEnabled, completion?.items, triggerAIScoring]);
 
     const handleRate = useCallback(async (itemId: string, rating: number) => {
         if (!currentUserId) return;
@@ -404,6 +510,120 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
                 </div>
             </div>
 
+            {/* AI Vision Cleanliness Summary Card (Only shown if AI is enabled for this property and there are photos) */}
+            {isAIEnabled && (() => {
+                const photoItems = effectiveItems.filter((it: any) => Boolean(it.photo_url));
+                if (photoItems.length === 0) return null;
+
+                const evaluatedItems = photoItems.filter((it: any) => it.ai_cleanliness_score !== null && it.ai_cleanliness_score !== undefined);
+                const avgScore = evaluatedItems.length > 0
+                    ? Math.round(evaluatedItems.reduce((acc: number, it: any) => acc + Number(it.ai_cleanliness_score || 0), 0) / evaluatedItems.length)
+                    : null;
+                const isStillEvaluating = isAutoEvaluating || photoItems.some((it: any) => aiScoring[it.id]);
+
+                return (
+                    <div className="bg-gradient-to-r from-violet-50/80 via-indigo-50/40 to-slate-50 border border-violet-200/70 rounded-xl p-3 md:p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-2xs">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="w-9 h-9 rounded-xl bg-violet-600 text-white flex items-center justify-center flex-shrink-0 shadow-sm">
+                                {isStillEvaluating ? (
+                                    <Loader2 size={18} className="animate-spin text-white" />
+                                ) : (
+                                    <Eye size={18} />
+                                )}
+                            </div>
+                            <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                    <h4 className="text-[11px] md:text-xs font-black uppercase tracking-wider text-violet-950">
+                                        AI Vision Inspection
+                                    </h4>
+                                    <span className="px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 text-[8px] font-black uppercase tracking-wider border border-violet-200">
+                                        AI Enabled
+                                    </span>
+                                </div>
+                                <p className="text-[10px] md:text-[11px] text-violet-700 font-medium truncate mt-0.5">
+                                    {isStillEvaluating
+                                        ? `Evaluating ${photoItems.length - evaluatedItems.length} photo${photoItems.length - evaluatedItems.length > 1 ? 's' : ''} in real-time with AI Vision...`
+                                        : avgScore !== null
+                                        ? `${evaluatedItems.length}/${photoItems.length} photo${photoItems.length > 1 ? 's' : ''} inspected · Average Cleanliness: ${avgScore}/100`
+                                        : `${photoItems.length} photo${photoItems.length > 1 ? 's' : ''} submitted`}
+                                </p>
+                            </div>
+                        </div>
+
+                        {avgScore !== null && (
+                            <div className="flex items-center gap-2 self-end sm:self-auto flex-shrink-0">
+                                <div className={`px-3 py-1.5 rounded-xl font-black text-xs flex items-center gap-1.5 shadow-2xs ${
+                                    avgScore >= 80 
+                                        ? 'bg-emerald-500 text-white' 
+                                        : avgScore >= 50 
+                                        ? 'bg-amber-500 text-white' 
+                                        : 'bg-rose-500 text-white'
+                                }`}>
+                                    <span className="text-[10px] uppercase tracking-wider opacity-90">AI Score:</span>
+                                    <span className="text-sm">{avgScore}/100</span>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                );
+            })()}
+
+            {/* Overall Approver / Checker Review Banner */}
+            {completion && (
+                <div className={`p-3 md:p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                    completion.approval_status === 'approved'
+                        ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
+                        : completion.approval_status === 'rejected'
+                        ? 'bg-rose-50/70 border-rose-200 text-rose-900'
+                        : 'bg-amber-50/60 border-amber-200 text-amber-900'
+                }`}>
+                    <div className="flex items-center gap-3">
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                            completion.approval_status === 'approved'
+                                ? 'bg-emerald-600 text-white'
+                                : completion.approval_status === 'rejected'
+                                ? 'bg-rose-600 text-white'
+                                : 'bg-amber-500 text-white'
+                        }`}>
+                            {completion.approval_status === 'approved' ? (
+                                <ShieldCheck size={20} />
+                            ) : completion.approval_status === 'rejected' ? (
+                                <XCircle size={20} />
+                            ) : (
+                                <Clock size={20} />
+                            )}
+                        </div>
+                        <div>
+                            <div className="flex items-center gap-2">
+                                <span className="text-[10px] md:text-[11px] font-black uppercase tracking-widest">
+                                    {completion.approval_status === 'approved'
+                                        ? 'Checklist Approved'
+                                        : completion.approval_status === 'rejected'
+                                        ? 'Checklist Needs Rework'
+                                        : 'Checker Review Pending'}
+                                </span>
+                                <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${
+                                    completion.approval_status === 'approved'
+                                        ? 'bg-emerald-100 text-emerald-800'
+                                        : completion.approval_status === 'rejected'
+                                        ? 'bg-rose-100 text-rose-800'
+                                        : 'bg-amber-100 text-amber-800'
+                                }`}>
+                                    {effectiveItems.filter((i: any) => i.step_approval_status === 'approved').length} of {effectiveItems.length} Steps Approved
+                                </span>
+                            </div>
+                            <p className="text-[11px] opacity-80 mt-0.5 font-medium">
+                                {completion.approval_status === 'approved'
+                                    ? `Signed off on ${completion.approved_at ? new Date(completion.approved_at).toLocaleDateString() : 'all standards met'}.`
+                                    : completion.approval_status === 'rejected'
+                                    ? 'One or more checklist steps were rejected by the checker. Please review notes below.'
+                                    : 'Awaiting checker sign-off. Approvers can review each step individually below.'}
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Detailed Points List */}
             <div className="space-y-2 md:space-y-3">
                 <h3 className="text-[8px] md:text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] px-1">Audit Breakdown</h3>
@@ -473,8 +693,72 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
                                         </div>
                                     )}
 
-                                    {/* Observation Value */}
-                                    {isCompleted && templateItem?.type !== 'checkbox' && (
+                                    {/* Parameter Checkpoints Breakdown */}
+                                    {Array.isArray(templateItem?.parameters) && templateItem.parameters.length > 0 && (
+                                        <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3 mb-3">
+                                            <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-2 flex items-center justify-between">
+                                                <span>Checkpoints ({templateItem.parameters.length})</span>
+                                                <span className="text-slate-400 lowercase font-medium">no photo needed</span>
+                                            </p>
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                                {templateItem.parameters.map((param: any, pIdx: number) => {
+                                                    const paramEntry = item.parameter_values?.[param.id];
+                                                    const pVal = paramEntry?.value !== undefined ? paramEntry.value : paramEntry;
+                                                    const pType = param.type || 'yes_no';
+
+                                                    return (
+                                                        <div key={param.id || pIdx} className="bg-white px-3 py-2 rounded-xl border border-slate-200/70 flex items-center justify-between text-xs gap-2 shadow-2xs">
+                                                            <div className="flex items-center gap-1.5 min-w-0">
+                                                                <span className="font-bold text-slate-800 text-[11px] truncate">{param.name}</span>
+                                                                <span className="text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 border border-slate-200/60 flex-shrink-0">
+                                                                    {pType === 'yes_no' ? 'Yes/No' : pType === 'checkbox' ? 'Checkbox' : pType}
+                                                                </span>
+                                                            </div>
+
+                                                            <div className="flex-shrink-0">
+                                                                {pType === 'checkbox' ? (
+                                                                    pVal === true || pVal === 'true' || paramEntry?.checked ? (
+                                                                        <span className="px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-700 text-[9px] font-black uppercase tracking-wider border border-emerald-200 flex items-center gap-1">
+                                                                            <CheckCircle2 size={12} className="text-emerald-600" />
+                                                                            Checked
+                                                                        </span>
+                                                                    ) : (
+                                                                        <span className="px-2 py-0.5 rounded-lg bg-slate-50 text-slate-400 text-[9px] font-bold uppercase tracking-wider border border-slate-200 flex items-center gap-1">
+                                                                            <Circle size={12} className="text-slate-300" />
+                                                                            Unchecked
+                                                                        </span>
+                                                                    )
+                                                                ) : pType === 'yes_no' ? (
+                                                                    pVal === 'yes' ? (
+                                                                        <span className="px-2.5 py-0.5 rounded-lg bg-emerald-50 text-emerald-700 text-[9px] font-black uppercase tracking-wider border border-emerald-200">
+                                                                            Yes
+                                                                        </span>
+                                                                    ) : pVal === 'no' ? (
+                                                                        <span className="px-2.5 py-0.5 rounded-lg bg-rose-50 text-rose-700 text-[9px] font-black uppercase tracking-wider border border-rose-200">
+                                                                            No
+                                                                        </span>
+                                                                    ) : (
+                                                                        <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-400 text-[9px] font-medium">—</span>
+                                                                    )
+                                                                ) : pType === 'number' ? (
+                                                                    <span className="px-2 py-0.5 rounded-lg bg-blue-50 text-blue-800 font-mono text-[10px] font-black border border-blue-200">
+                                                                        {pVal !== undefined && pVal !== null && pVal !== '' ? String(pVal) : '—'}
+                                                                    </span>
+                                                                ) : (
+                                                                    <span className="px-2 py-0.5 rounded-lg bg-slate-100 text-slate-800 text-[10px] font-bold border border-slate-200 max-w-[120px] truncate block" title={String(pVal || '')}>
+                                                                        {pVal !== undefined && pVal !== null && pVal !== '' ? String(pVal) : '—'}
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Observation Value (for items without sub-parameters) */}
+                                    {isCompleted && (!templateItem?.parameters || templateItem.parameters.length === 0) && templateItem?.type !== 'checkbox' && (
                                         <div className="bg-slate-50/50 p-2 md:p-3 rounded-lg border border-slate-100 mb-2 md:mb-3 inline-block min-w-[120px]">
                                             <p className="text-[7px] md:text-[8px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Observation</p>
                                             <p className="text-[11px] md:text-xs font-black text-slate-900">{item.value}</p>
@@ -487,8 +771,8 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
                                             <Camera size={9} />
                                             Visual Proof
                                         </p>
-                                        {/* Side-by-Side Comparison of Clean Reference Photo vs Uploaded Execution Photo */}
-                                        {(item.photo_url || templateItem?.reference_photo_url) && (
+                                        {/* Side-by-Side Comparison — admins see clean ref + uploaded; staff see only their uploaded photo */}
+                                        {isAdmin && (item.photo_url || templateItem?.reference_photo_url) && (
                                             <div className="mb-3 p-3 bg-slate-50 border border-slate-200 rounded-xl">
                                                 <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-2 flex items-center gap-1.5">
                                                     <Camera size={10} className="text-primary" />
@@ -496,7 +780,7 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
                                                 </p>
 
                                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                                    {/* Clean Standard Reference Photo */}
+                                                    {/* Clean Standard Reference Photo — admin only */}
                                                     <div className="flex flex-col">
                                                         <span className="text-[9px] font-black text-emerald-700 uppercase tracking-wider mb-1 flex items-center gap-1">
                                                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
@@ -571,6 +855,28 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
                                             </div>
                                         )}
 
+                                        {/* Staff (non-admin) photo view: just show uploaded photo, no benchmark */}
+                                        {!isAdmin && item.photo_url && (
+                                            <div className="mb-3">
+                                                <div className="relative aspect-video max-w-xs rounded-xl overflow-hidden shadow-sm border border-slate-200 group bg-slate-900">
+                                                    <div
+                                                        className="w-full h-full cursor-pointer"
+                                                        onClick={() => setPreviewImageUrl(item.photo_url)}
+                                                    >
+                                                        <img src={item.photo_url} alt="Uploaded Photo" className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                                                        <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                                            <Eye size={20} className="text-white" />
+                                                        </div>
+                                                    </div>
+                                                    {item.checked_at && (
+                                                        <div className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 bg-black/70 rounded text-[7px] text-white font-mono font-bold">
+                                                            {new Date(item.checked_at).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).replace(',', '')}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        )}
+
                                         {/* Video Proof if present */}
                                         {item.video_url && (
                                             <div className="mb-2">
@@ -627,8 +933,8 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
                                             </button>
                                         </div>
                                     </div>
-                                    {/* ── AI Cleanliness Score (On-Demand) ── */}
-                                    {item.photo_url && (
+                                    {/* ── AI Cleanliness Score & Parameter Evaluation ── */}
+                                    {item.photo_url && (isAIEnabled || (item.ai_cleanliness_score !== null && item.ai_cleanliness_score !== undefined)) && (
                                         <div className="mt-2 md:mt-3">
                                             {aiScoring[item.id] || (item.ai_cleanliness_score !== null && item.ai_cleanliness_score !== undefined) ? (() => {
                                                 const isScoring = aiScoring[item.id];
@@ -646,7 +952,7 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
                                                         {isScoring ? (
                                                             <div className="flex items-center gap-2">
                                                                 <Loader2 size={13} className="text-primary animate-spin flex-shrink-0" />
-                                                                <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">AI analyzing cleanliness...</span>
+                                                                <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">AI analyzing cleanliness & parameters...</span>
                                                             </div>
                                                         ) : (
                                                             <>
@@ -663,27 +969,89 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
                                                                         )}
                                                                     </div>
                                                                 </div>
-                                                                <button
-                                                                    onClick={() => triggerAIScoring(item.id)}
-                                                                    className="px-2 py-1 text-[8px] font-black uppercase tracking-widest bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-slate-600 flex-shrink-0 transition-all"
-                                                                >
-                                                                    Re-Audit
-                                                                </button>
+                                                                <div className="flex items-center gap-1 px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-slate-500 text-[8px] font-black uppercase tracking-wider flex-shrink-0 shadow-2xs">
+                                                                    <ShieldCheck size={11} className="text-emerald-500" />
+                                                                    <span>Saved Audit</span>
+                                                                </div>
                                                             </>
                                                         )}
                                                     </div>
                                                 );
-                                            })() : (
-                                                <button
-                                                    onClick={() => triggerAIScoring(item.id)}
-                                                    className="w-full sm:w-auto flex items-center justify-center gap-1.5 px-3 py-2 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all cursor-pointer"
-                                                >
-                                                    <Eye size={12} />
-                                                    <span>Audit Cleanliness (AI)</span>
-                                                </button>
-                                            )}
+                                            })() : isAIEnabled ? (
+                                                <div className="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-2">
+                                                    <div className="flex items-center gap-2">
+                                                        <Loader2 size={13} className="text-primary animate-spin" />
+                                                        <span className="text-[9px] font-black uppercase tracking-widest text-slate-500">
+                                                            Evaluating with AI Vision...
+                                                        </span>
+                                                    </div>
+                                                    <button
+                                                        onClick={() => triggerAIScoring(item.id)}
+                                                        className="px-2 py-1 text-[8px] font-black uppercase tracking-widest bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-slate-600 transition-all"
+                                                    >
+                                                        Evaluate Now
+                                                    </button>
+                                                </div>
+                                            ) : null}
                                         </div>
                                     )}
+
+                                    {/* Parameter by Parameter Cleanliness Breakdown */}
+                                    {(() => {
+                                        const paramScores: any[] = Array.isArray(item.ai_parameter_scores)
+                                            ? item.ai_parameter_scores
+                                            : typeof item.ai_parameter_scores === 'string'
+                                                ? (() => { try { return JSON.parse(item.ai_parameter_scores); } catch { return []; } })()
+                                                : [];
+
+                                        if (paramScores.length === 0) return null;
+
+                                        return (
+                                            <div className="mt-2.5 bg-white/90 rounded-xl border border-slate-200/90 p-3 shadow-2xs">
+                                                <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center justify-between">
+                                                    <span>Parameter Inspection Breakdown ({paramScores.length})</span>
+                                                    <span className="text-slate-400 font-semibold lowercase">qwen-vision verified</span>
+                                                </p>
+                                                <div className="space-y-1.5">
+                                                    {paramScores.map((param: any, pIdx: number) => {
+                                                        const isPass = param.status === 'pass';
+                                                        const isFail = param.status === 'fail';
+                                                        const isNA = !param.is_assessable || param.status === 'unassessable';
+
+                                                    return (
+                                                        <div key={pIdx} className="p-2 rounded-lg bg-slate-50 border border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                                                            <div className="flex items-center gap-2 min-w-0">
+                                                                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                                                                    isPass ? 'bg-emerald-500' : isFail ? 'bg-rose-500' : 'bg-slate-300'
+                                                                }`} />
+                                                                <span className="text-xs font-bold text-slate-800">{param.name}</span>
+                                                                <span className={`text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded ${
+                                                                    isPass
+                                                                        ? 'bg-emerald-100 text-emerald-800'
+                                                                        : isFail
+                                                                        ? 'bg-rose-100 text-rose-800'
+                                                                        : 'bg-slate-200 text-slate-600'
+                                                                }`}>
+                                                                    {isPass ? 'Pass' : isFail ? 'Needs Attention' : 'N/A · Not in frame'}
+                                                                </span>
+                                                                {!isNA && param.score !== null && param.score !== undefined && (
+                                                                    <span className="text-[10px] font-black text-slate-600">
+                                                                        {param.score}/100
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                            {param.reason && (
+                                                                <p className="text-[10px] text-slate-500 font-medium sm:text-right sm:max-w-[50%] leading-tight">
+                                                                    {param.reason}
+                                                                </p>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
 
                                     {/* ── Satisfaction Rating ── */}
                                     {isCompleted && (
@@ -717,6 +1085,74 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
                                                     </span>
                                                 )}
                                             </div>
+                                        </div>
+                                    )}
+
+                                    {/* ── Checker / Approver Step Sign-Off ── */}
+                                    {isCompleted && (
+                                        <div className="mt-3 pt-3 border-t border-slate-100">
+                                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
+                                                <div className="flex items-center gap-1.5">
+                                                    <ShieldCheck size={12} className="text-primary" />
+                                                    <span className="text-[8px] md:text-[9px] font-black text-slate-600 uppercase tracking-widest">
+                                                        Checker Sign-Off
+                                                    </span>
+                                                    <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full ${
+                                                        item.step_approval_status === 'approved'
+                                                            ? 'bg-emerald-100 text-emerald-700'
+                                                            : item.step_approval_status === 'rejected'
+                                                            ? 'bg-rose-100 text-rose-700'
+                                                            : 'bg-amber-100 text-amber-700'
+                                                    }`}>
+                                                        {item.step_approval_status === 'approved' ? 'Approved' : item.step_approval_status === 'rejected' ? 'Rejected' : 'Pending Review'}
+                                                    </span>
+                                                </div>
+                                                {item.step_approved_at && (
+                                                    <span className="text-[8px] text-slate-400 font-medium">
+                                                        Reviewed {new Date(item.step_approved_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                                    </span>
+                                                )}
+                                            </div>
+
+                                            {item.step_approval_notes && (
+                                                <div className="mb-2 p-2 bg-slate-50 rounded-lg border border-slate-200/80 text-[11px] text-slate-700">
+                                                    <span className="font-bold text-slate-900 block text-[9px] uppercase tracking-wider mb-0.5">Checker Note:</span>
+                                                    {item.step_approval_notes}
+                                                </div>
+                                            )}
+
+                                            {/* Admin/Approver Action Controls */}
+                                            {isAdmin && (
+                                                <div className="space-y-2 mt-2">
+                                                    <div className="flex items-center gap-1.5">
+                                                        <input
+                                                            type="text"
+                                                            value={stepNotes[item.id] !== undefined ? stepNotes[item.id] : (item.step_approval_notes || '')}
+                                                            onChange={(e) => setStepNotes(prev => ({ ...prev, [item.id]: e.target.value }))}
+                                                            placeholder="Add checker feedback or rejection reason..."
+                                                            className="flex-1 bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-primary"
+                                                        />
+                                                    </div>
+                                                    <div className="flex items-center gap-2">
+                                                        <button
+                                                            disabled={approvingItemId === item.id || item.step_approval_status === 'approved'}
+                                                            onClick={() => handleStepApproval(item.id, 'approved')}
+                                                            className="flex-1 sm:flex-none flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[9px] font-black uppercase tracking-wider transition-all disabled:opacity-40 cursor-pointer"
+                                                        >
+                                                            {approvingItemId === item.id ? <Loader2 size={10} className="animate-spin" /> : <Check size={10} />}
+                                                            Approve Step
+                                                        </button>
+                                                        <button
+                                                            disabled={approvingItemId === item.id || item.step_approval_status === 'rejected'}
+                                                            onClick={() => handleStepApproval(item.id, 'rejected')}
+                                                            className="flex-1 sm:flex-none flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-[9px] font-black uppercase tracking-wider transition-all disabled:opacity-40 cursor-pointer"
+                                                        >
+                                                            {approvingItemId === item.id ? <Loader2 size={10} className="animate-spin" /> : <XCircle size={10} />}
+                                                            Reject Step
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
                                     )}
                                 </div>
@@ -780,6 +1216,7 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
                     cadImageUrl={completion.template.cad_converted_image_url}
                     areas={completion.template.cad_areas || []}
                     templateTitle={completion.template?.title}
+                    isAdmin={isAdmin}
                     items={effectiveItems.map((item: any) => ({
                         id: item.id,
                         checklist_item_id: item.checklist_item_id,
@@ -787,7 +1224,8 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
                         ai_cleanliness_score: item.ai_cleanliness_score ?? null,
                         ai_cleanliness_reason: item.ai_cleanliness_reason ?? null,
                         photo_url: item.photo_url || null,
-                        reference_photo_url: item.checklist_item?.reference_photo_url || null,
+                        // Only pass reference photo URL to admins — staff must not see the benchmark
+                        reference_photo_url: isAdmin ? (item.checklist_item?.reference_photo_url || null) : null,
                     }))}
                     onScorePhoto={triggerAIScoring}
                     aiScoring={aiScoring}

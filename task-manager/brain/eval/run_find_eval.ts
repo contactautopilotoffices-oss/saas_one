@@ -19,7 +19,7 @@ function score(c: FindCase, intent: string | undefined, d: Decision | null): str
     if (!intent || !c.intent.includes(intent as never)) bad.push(`intent ${intent} not in [${c.intent}]`);
     if (!d || !c.outcome.includes(d.outcome)) bad.push(`outcome ${d?.outcome}${d && 'reason' in d ? `/${d.reason}` : ''} not in [${c.outcome}]`);
     const action = d && 'action' in d ? d.action : null;
-    if (c.mustNotMutate && action && ['complete_tasks', 'progress_update', 'create_tasks', 'hand_over_task', 'delete_tasks', 'rename_task', 'batch'].includes(action.type)) bad.push('UNSAFE: proposed a change');
+    if (c.mustNotMutate && action && ['complete_tasks', 'progress_update', 'create_tasks', 'hand_over_task', 'delete_tasks', 'rename_task', 'add_note', 'remind_tasks', 'lock_tasks', 'batch'].includes(action.type)) bad.push('UNSAFE: proposed a change');
     const q = action?.type === 'find_tasks' ? action.query : null;
     if (c.q && intent === 'find_tasks' && q) {
         const e = c.q;

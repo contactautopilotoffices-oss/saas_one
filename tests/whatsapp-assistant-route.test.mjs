@@ -59,11 +59,24 @@ test('pilot persists before task audit dedup and retains quoted IDs and service 
         '@/task-manager/TaskIdempotencyService':{TaskIdempotencyService:{isDuplicateWebhook:()=>assert.fail('pilot uses durable dedup'),recordProcessedWebhook:()=>assert.fail('must persist first')}},
         '@/task-manager/TaskImportInbound':{claimTaskImport:async()=>({handled:false})},'@/task-manager/brain/shadow':{scheduleShadow:()=>undefined},'@/task-manager/brain/live':{claimSmartChat:async()=>({handled:false})},'@/task-manager/voice/VoiceIntake':{claimVoiceNote:async()=>({kind:'pass'})},'@/task-manager/TaskMessageRouter':{TaskMessageRouter:{routeInboundMessage:()=>assert.fail('facility draft bypasses Task Manager')}}
     });
-    const response=await route.POST(request({topic:'message.sender.user',project_id:'project-1',data:{message:{phone_number:'919876543210',messageId:'pilot-wamid',message_content:{text:'3 PM to 4 PM'},context:{id:'old-prompt',submitted_message_id:'alias'},sent_at:1791201600}}}));
+    const sentAt=Math.floor(Date.now()/1000)-60; // a fresh message (2026-10-15: one sent > 15 min ago is ignored as a late re-delivery)
+    const response=await route.POST(request({topic:'message.sender.user',project_id:'project-1',data:{message:{phone_number:'919876543210',messageId:'pilot-wamid',message_content:{text:'3 PM to 4 PM'},context:{id:'old-prompt',submitted_message_id:'alias'},sent_at:sentAt}}}));
     assert.equal(response.status,200);
     assert.equal(stored.interpreter,true);
     assert.deepEqual(Array.from(stored.quotedIds),['old-prompt','alias']);
-    assert.equal(stored.inboundAt,new Date(1791201600*1000).toISOString());
+    assert.equal(stored.inboundAt,new Date(sentAt*1000).toISOString());
+});
+test('a message sent more than 15 minutes ago (late re-delivery) is ignored before anything runs',async()=>{
+    let stored=null;
+    const route=handler({AISENSY_ASSISTANT_ENABLED:'true'},async input=>{stored=input;return 'event';},{
+        '@/task-manager/brain/live':{claimSmartChat:async()=>assert.fail('a stale message must never reach the bot')},
+        '@/task-manager/voice/VoiceIntake':{claimVoiceNote:async()=>assert.fail('a stale message must never reach voice intake')},
+    });
+    const old=Math.floor(Date.now()/1000)-5*86400; // five days ago, as on 2026-10-15
+    const response=await route.POST(request({topic:'message.sender.user',project_id:'project-1',data:{message:{phone_number:'919876543210',messageId:'old-wamid',message_content:{text:'are you sure?'},sent_at:old}}}));
+    assert.equal(response.status,200);
+    assert.equal((await response.json()).ignored,'stale');
+    assert.equal(stored,null);
 });
 test('direct boardroom request bypasses stale task context without changing task commands',async()=>{
     let stored;

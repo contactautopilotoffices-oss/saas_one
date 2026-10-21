@@ -1,12 +1,26 @@
 'use client';
 import { useState } from 'react';
 import { CalendarDays, BarChart2, FileText, Shield, Wrench, SearchCheck } from 'lucide-react';
+import dynamic from 'next/dynamic';
 import PPMCalendar from './PPMCalendar';
-import PPMReports from './PPMReports';
-import AMCContracts from './AMCContracts';
-import PPMCompliance from './PPMCompliance';
-import VendorManagement from '@/frontend/components/vendors/VendorManagement';
-import AuditDashboard from '@/frontend/components/audit/AuditDashboard';
+import TabLoading from '@/frontend/components/dashboard/TabLoading';
+import { usePreloadTabs } from '@/frontend/lib/dashboard/preloadTabs';
+
+// Calendar is the view PPM opens on, so it stays in this file. The other sub-tabs (Excel export and charts among them)
+// load only once PPM is opened: downloaded quietly in the background as soon as it is on screen, so switching
+// sub-tabs shows no extra spinner (performance plan Phase 8).
+const PPMReports = dynamic(() => import('./PPMReports'), { loading: TabLoading });
+const AMCContracts = dynamic(() => import('./AMCContracts'), { loading: TabLoading });
+const PPMCompliance = dynamic(() => import('./PPMCompliance'), { loading: TabLoading });
+const VendorManagement = dynamic(() => import('@/frontend/components/vendors/VendorManagement'), { loading: TabLoading });
+const AuditDashboard = dynamic(() => import('@/frontend/components/audit/AuditDashboard'), { loading: TabLoading });
+const SUB_TAB_PRELOADS = [
+    () => import('./PPMReports'),
+    () => import('./AMCContracts'),
+    () => import('./PPMCompliance'),
+    () => import('@/frontend/components/vendors/VendorManagement'),
+    () => import('@/frontend/components/audit/AuditDashboard'),
+];
 
 interface Props {
     organizationId: string;
@@ -17,6 +31,7 @@ interface Props {
 type TabId = 'calendar' | 'reports' | 'amc' | 'compliance' | 'audit' | 'vendors';
 
 export default function PPMModule({ organizationId, propertyId, properties = [] }: Props) {
+    usePreloadTabs(SUB_TAB_PRELOADS);
     const [tab, setTab] = useState<TabId>('calendar');
 
     const tabs = [

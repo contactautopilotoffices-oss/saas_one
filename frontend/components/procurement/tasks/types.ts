@@ -24,6 +24,31 @@ export interface WTask {
     canLock?: boolean;
     /** Console view only: who gave it and from which department */
     meta?: { from: string; department: string };
+    /** Who gave it (someone other than the holder), and who handed it over. Shown as a differently coloured card. */
+    assignedByName?: string | null;
+    handedOverByName?: string | null;
+    /** When it was given, and when it was finished. ISO timestamps. */
+    createdAt?: string;
+    completedAt?: string | null;
+    /** Server decision. A task given by someone else can only be deleted by them. Missing = old behaviour (allowed). */
+    canDelete?: boolean;
+}
+
+/** One row of "Assigned by me". `mine` = I gave it, so I may edit and delete it; otherwise view only (given by my team). */
+export interface AssignedTask {
+    id: string;
+    title: string;
+    description: string | null;
+    status: Status;
+    assignedDate: string;
+    createdAt: string;
+    completedAt: string | null;
+    holderId: string;
+    holderName: string;
+    assignerId: string;
+    assignerName: string;
+    mine: boolean;
+    isCarriedForward: boolean;
 }
 
 export interface WMember {
@@ -50,6 +75,10 @@ export interface WorkspaceOk {
     assignable: WAssignable[];
     /** Working with a superuser: present when the server has it (shown only for a team whose switch is ON). */
     superuserCollab?: { enabled: boolean; superusers: Array<{ userId: string; name: string }> };
+    /** Colleagues I can tell "this task of mine is pending on you". */
+    dependencyPeople?: Array<{ userId: string; name: string }>;
+    /** Per-team switches from the Control Center. */
+    features?: { assignedTab: boolean; pendingOn: boolean };
 }
 
 export type Workspace =
@@ -124,6 +153,14 @@ export function shiftDate(date: string, days: number): string {
 
 export function shortDate(date: string): string {
     return new Date(`${date}T12:00:00`).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+}
+
+/** An ISO timestamp as "19 Oct, 11:30 AM" in India time. */
+export function shortDateTime(iso: string | null | undefined): string {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true });
 }
 
 export function longDate(date: string): string {

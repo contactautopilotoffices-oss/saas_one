@@ -2,22 +2,31 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Upload, FileText, Loader2, Trash2, Save, MapPin, CheckSquare, AlertCircle, RefreshCw, Camera, Eye, Plus, Check } from 'lucide-react';
+import { X, Upload, FileText, Loader2, Trash2, Save, MapPin, CheckSquare, AlertCircle, RefreshCw, Camera, Eye, Plus, Check, Square, Shapes, Pencil, Undo2, MousePointer } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Toast } from '@/frontend/components/ui/Toast';
 import { createClient } from '@/frontend/utils/supabase/client';
 
-interface ChecklistItem {
+export type ShapeTool = 'polygon' | 'rectangle' | 'freehand' | 'select';
+
+export interface Point {
+    x: number;
+    y: number;
+}
+
+export interface ChecklistItem {
     id: string;
     title: string;
     order_index?: number;
     reference_photo_url?: string;
 }
 
-interface CADArea {
+export interface CADArea {
     id: string;
     label: string;
+    shape_type?: 'rectangle' | 'polygon' | 'freehand';
     coordinates: { x: number; y: number; width: number; height: number };
+    points?: Point[];
     linked_step_ids: string[];
 }
 
@@ -83,6 +92,10 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
     const [drawing, setDrawing] = useState(false);
     const [drawStart, setDrawStart] = useState<{ x: number; y: number } | null>(null);
     const [drawCurrent, setDrawCurrent] = useState<{ x: number; y: number } | null>(null);
+    const [shapeTool, setShapeTool] = useState<ShapeTool>('polygon');
+    const [polygonPoints, setPolygonPoints] = useState<Point[]>([]);
+    const [freehandPoints, setFreehandPoints] = useState<Point[]>([]);
+    const [currentMousePos, setCurrentMousePos] = useState<Point | null>(null);
     const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
     const [editingAreaLabel, setEditingAreaLabel] = useState('');
     const [localItems, setLocalItems] = useState<ChecklistItem[]>(items);
@@ -274,60 +287,207 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
         if (fileInputRef.current) fileInputRef.current.value = '';
     };
 
-    // Canvas drawing logic
-    const getCanvasCoordinates = useCallback((e: React.MouseEvent): { x: number; y: number } | null => {
-        if (!imageRef.current || !containerRef.current) return null;
+    // Point-in-polygon hit test for custom shapes
+    const isPointInPolygon = (pt: Point, poly: Point[]): boolean => {
+        let inside = false;
+        for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+            const xi = poly[i].x, yi = poly[i].y;
+            const xj = poly[j].x, yj = poly[j].y;
+            const intersect = ((yi > pt.y) !== (yj > pt.y)) && (pt.x < ((xj - xi) * (pt.y - yi)) / (yj - yi) + xi);
+            if (intersect) inside = !inside;
+        }
+        return inside;
+    };
+
+    // Canvas coordinate translation
+    const getCanvasCoordinates = useCallback((e: React.MouseEvent): Point | null => {
+        if (!imageRef.current) return null;
         const rect = imageRef.current.getBoundingClientRect();
-        const x = ((e.clientX - rect.left) / rect.width) * imageSize.width;
-        const y = ((e.clientY - rect.top) / rect.height) * imageSize.height;
+        if (rect.width === 0 || rect.height === 0) return null;
+        const x = Math.max(0, Math.min(imageSize.width, ((e.clientX - rect.left) / rect.width) * imageSize.width));
+        const y = Math.max(0, Math.min(imageSize.height, ((e.clientY - rect.top) / rect.height) * imageSize.height));
         return { x, y };
     }, [imageSize]);
 
-    const handleImageMouseDown = (e: React.MouseEvent) => {
-        const coords = getCanvasCoordinates(e);
-        if (!coords) return;
-        setDrawing(true);
-        setDrawStart(coords);
-        setDrawCurrent(coords);
-        setSelectedAreaId(null);
-    };
-
-    const handleImageMouseMove = (e: React.MouseEvent) => {
-        if (!drawing || !drawStart) return;
-        const coords = getCanvasCoordinates(e);
-        if (!coords) return;
-        setDrawCurrent(coords);
-    };
-
-    const handleImageMouseUp = () => {
-        if (!drawing || !drawStart || !drawCurrent) return;
-        setDrawing(false);
-
-        const x = Math.min(drawStart.x, drawCurrent.x);
-        const y = Math.min(drawStart.y, drawCurrent.y);
-        const width = Math.abs(drawCurrent.x - drawStart.x);
-        const height = Math.abs(drawCurrent.y - drawStart.y);
-
-        // Ignore tiny rectangles
-        if (width < 10 || height < 10) {
-            setDrawStart(null);
-            setDrawCurrent(null);
+    const finishPolygon = useCallback((pts: Point[], shapeType: 'polygon' | 'freehand' = 'polygon') => {
+        if (pts.length < 3) {
+            setToast({ message: 'A shape requires at least 3 points', type: 'error' });
             return;
         }
+
+        const minX = Math.round(Math.min(...pts.map((p) => p.x)));
+        const maxX = Math.round(Math.max(...pts.map((p) => p.x)));
+        const minY = Math.round(Math.min(...pts.map((p) => p.y)));
+        const maxY = Math.round(Math.max(...pts.map((p) => p.y)));
+        const width = Math.max(10, maxX - minX);
+        const height = Math.max(10, maxY - minY);
 
         const newArea: CADArea = {
             id: `area-${Date.now()}`,
             label: `Area ${areas.length + 1}`,
-            coordinates: { x, y, width, height },
+            shape_type: shapeType,
+            points: pts,
+            coordinates: { x: minX, y: minY, width, height },
             linked_step_ids: [],
         };
 
-        setAreas([...areas, newArea]);
+        setAreas((prev) => [...prev, newArea]);
         setSelectedAreaId(newArea.id);
         setEditingAreaLabel(newArea.label);
+        setPolygonPoints([]);
+        setCurrentMousePos(null);
+        setToast({ message: `Shape created: ${newArea.label}`, type: 'success' });
+    }, [areas.length]);
+
+    const handleImageMouseDown = (e: React.MouseEvent) => {
+        const coords = getCanvasCoordinates(e);
+        if (!coords) return;
+
+        if (shapeTool === 'select') {
+            const clickedArea = areas.find((area) => {
+                if (Array.isArray(area.points) && area.points.length > 2) {
+                    return isPointInPolygon(coords, area.points);
+                }
+                const { x: ax, y: ay, width: aw, height: ah } = area.coordinates;
+                return coords.x >= ax && coords.x <= ax + aw && coords.y >= ay && coords.y <= ay + ah;
+            });
+            if (clickedArea) {
+                setSelectedAreaId(clickedArea.id);
+                setEditingAreaLabel(clickedArea.label);
+            } else {
+                setSelectedAreaId(null);
+            }
+            return;
+        }
+
+        if (shapeTool === 'rectangle') {
+            setDrawing(true);
+            setDrawStart(coords);
+            setDrawCurrent(coords);
+            setSelectedAreaId(null);
+        } else if (shapeTool === 'freehand') {
+            setDrawing(true);
+            setFreehandPoints([coords]);
+            setSelectedAreaId(null);
+        } else if (shapeTool === 'polygon') {
+            // Check if clicking near point 0 to finish shape
+            if (polygonPoints.length >= 3) {
+                const p0 = polygonPoints[0];
+                const rect = imageRef.current?.getBoundingClientRect();
+                const scaleX = rect ? rect.width / imageSize.width : 1;
+                const scaleY = rect ? rect.height / imageSize.height : 1;
+                const screenDist = Math.hypot((coords.x - p0.x) * scaleX, (coords.y - p0.y) * scaleY);
+                if (screenDist < 25) {
+                    finishPolygon(polygonPoints, 'polygon');
+                    return;
+                }
+            }
+            setPolygonPoints((prev) => [...prev, coords]);
+            setSelectedAreaId(null);
+        }
+    };
+
+    const handleImageMouseMove = (e: React.MouseEvent) => {
+        const coords = getCanvasCoordinates(e);
+        if (!coords) return;
+        setCurrentMousePos(coords);
+
+        if (shapeTool === 'rectangle' && drawing) {
+            setDrawCurrent(coords);
+        } else if (shapeTool === 'freehand' && drawing) {
+            const last = freehandPoints[freehandPoints.length - 1];
+            if (!last || Math.hypot(coords.x - last.x, coords.y - last.y) > 4) {
+                setFreehandPoints((prev) => [...prev, coords]);
+            }
+        }
+    };
+
+    const handleImageMouseUp = () => {
+        if (shapeTool === 'rectangle' && drawing && drawStart && drawCurrent) {
+            setDrawing(false);
+            const x = Math.min(drawStart.x, drawCurrent.x);
+            const y = Math.min(drawStart.y, drawCurrent.y);
+            const width = Math.abs(drawCurrent.x - drawStart.x);
+            const height = Math.abs(drawCurrent.y - drawStart.y);
+
+            if (width < 10 || height < 10) {
+                setDrawStart(null);
+                setDrawCurrent(null);
+                return;
+            }
+
+            const pts: Point[] = [
+                { x, y },
+                { x: x + width, y },
+                { x: x + width, y: y + height },
+                { x, y: y + height },
+            ];
+
+            const newArea: CADArea = {
+                id: `area-${Date.now()}`,
+                label: `Area ${areas.length + 1}`,
+                shape_type: 'rectangle',
+                points: pts,
+                coordinates: { x, y, width, height },
+                linked_step_ids: [],
+            };
+
+            setAreas((prev) => [...prev, newArea]);
+            setSelectedAreaId(newArea.id);
+            setEditingAreaLabel(newArea.label);
+            setDrawStart(null);
+            setDrawCurrent(null);
+            setToast({ message: `Area created: ${newArea.label}`, type: 'success' });
+        } else if (shapeTool === 'freehand' && drawing) {
+            setDrawing(false);
+            if (freehandPoints.length >= 4) {
+                finishPolygon(freehandPoints, 'freehand');
+            }
+            setFreehandPoints([]);
+        }
+    };
+
+    const handleCanvasDoubleClick = () => {
+        if (shapeTool === 'polygon' && polygonPoints.length >= 3) {
+            finishPolygon(polygonPoints, 'polygon');
+        }
+    };
+
+    const handleUndoPolygonPoint = () => {
+        setPolygonPoints((prev) => prev.slice(0, -1));
+    };
+
+    const handleCancelPolygon = () => {
+        setPolygonPoints([]);
+        setFreehandPoints([]);
+        setDrawing(false);
         setDrawStart(null);
         setDrawCurrent(null);
     };
+
+    // Keyboard shortcuts for polygon drawing
+    useEffect(() => {
+        if (step !== 'editing') return;
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+            if (e.key === 'Escape') {
+                handleCancelPolygon();
+            } else if (e.key === 'Enter') {
+                if (shapeTool === 'polygon' && polygonPoints.length >= 3) {
+                    e.preventDefault();
+                    finishPolygon(polygonPoints, 'polygon');
+                }
+            } else if (e.key === 'Backspace' || (e.key === 'z' && (e.ctrlKey || e.metaKey))) {
+                if (shapeTool === 'polygon' && polygonPoints.length > 0) {
+                    e.preventDefault();
+                    handleUndoPolygonPoint();
+                }
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [step, shapeTool, polygonPoints, finishPolygon]);
 
     const handleDeleteArea = (areaId: string) => {
         setAreas(areas.filter((a) => a.id !== areaId));
@@ -351,50 +511,92 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
         }));
     };
 
-    const getAreaColor = (areaId: string) => {
+    const getAreaColor = useCallback((areaId: string) => {
         if (selectedAreaId === areaId) return '#3b82f6';
         const area = areas.find((a) => a.id === areaId);
         return area && area.linked_step_ids.length > 0 ? '#10b981' : '#f59e0b';
-    };
+    }, [areas, selectedAreaId]);
+
+    // Draw area badge label
+    const drawAreaBadge = useCallback((ctx: CanvasRenderingContext2D, area: CADArea, x: number, y: number) => {
+        ctx.fillStyle = getAreaColor(area.id);
+        ctx.font = 'bold 11px sans-serif';
+        const labelText = area.label + (area.linked_step_ids.length > 0 ? ` (${area.linked_step_ids.length})` : '');
+        const textWidth = ctx.measureText(labelText).width;
+        const badgeY = Math.max(20, y);
+        ctx.fillRect(x, badgeY - 18, textWidth + 10, 18);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(labelText, x + 5, badgeY - 5);
+    }, [getAreaColor]);
 
     useEffect(() => {
         const canvas = canvasRef.current;
         const image = imageRef.current;
-        if (!canvas || !image || !preview) return;
+        if (!canvas || !image || !preview || imageSize.width === 0 || imageSize.height === 0) return;
 
         const render = () => {
             const rect = image.getBoundingClientRect();
             canvas.width = rect.width;
             canvas.height = rect.height;
             const ctx = canvas.getContext('2d')!;
+            const scaleX = rect.width / imageSize.width;
+            const scaleY = rect.height / imageSize.height;
 
-            // Draw existing areas
+            // 1. Draw existing areas
             areas.forEach((area) => {
-                const scaleX = rect.width / imageSize.width;
-                const scaleY = rect.height / imageSize.height;
-                const x = area.coordinates.x * scaleX;
-                const y = area.coordinates.y * scaleY;
-                const w = area.coordinates.width * scaleX;
-                const h = area.coordinates.height * scaleY;
-
+                const isSelected = selectedAreaId === area.id;
                 ctx.strokeStyle = getAreaColor(area.id);
-                ctx.lineWidth = selectedAreaId === area.id ? 3 : 2;
-                ctx.strokeRect(x, y, w, h);
+                ctx.lineWidth = isSelected ? 3 : 2;
 
-                // Draw label
-                ctx.fillStyle = getAreaColor(area.id);
-                ctx.font = 'bold 12px sans-serif';
-                const labelText = area.label + (area.linked_step_ids.length > 0 ? ` (${area.linked_step_ids.length})` : '');
-                const textWidth = ctx.measureText(labelText).width;
-                ctx.fillRect(x, y - 20, textWidth + 10, 20);
-                ctx.fillStyle = '#ffffff';
-                ctx.fillText(labelText, x + 5, y - 6);
+                if (Array.isArray(area.points) && area.points.length > 2) {
+                    ctx.beginPath();
+                    ctx.moveTo(area.points[0].x * scaleX, area.points[0].y * scaleY);
+                    for (let i = 1; i < area.points.length; i++) {
+                        ctx.lineTo(area.points[i].x * scaleX, area.points[i].y * scaleY);
+                    }
+                    ctx.closePath();
+                    ctx.fillStyle = isSelected
+                        ? 'rgba(59, 130, 246, 0.25)'
+                        : area.linked_step_ids.length > 0
+                        ? 'rgba(16, 185, 129, 0.18)'
+                        : 'rgba(245, 158, 11, 0.18)';
+                    ctx.fill();
+                    ctx.stroke();
+
+                    // Vertex dots if selected
+                    if (isSelected) {
+                        ctx.fillStyle = '#ffffff';
+                        ctx.strokeStyle = '#3b82f6';
+                        ctx.lineWidth = 1.5;
+                        area.points.forEach((p) => {
+                            ctx.beginPath();
+                            ctx.arc(p.x * scaleX, p.y * scaleY, 3.5, 0, Math.PI * 2);
+                            ctx.fill();
+                            ctx.stroke();
+                        });
+                    }
+
+                    drawAreaBadge(ctx, area, area.coordinates.x * scaleX, area.coordinates.y * scaleY);
+                } else {
+                    const x = area.coordinates.x * scaleX;
+                    const y = area.coordinates.y * scaleY;
+                    const w = area.coordinates.width * scaleX;
+                    const h = area.coordinates.height * scaleY;
+
+                    ctx.fillStyle = isSelected
+                        ? 'rgba(59, 130, 246, 0.25)'
+                        : area.linked_step_ids.length > 0
+                        ? 'rgba(16, 185, 129, 0.18)'
+                        : 'rgba(245, 158, 11, 0.18)';
+                    ctx.fillRect(x, y, w, h);
+                    ctx.strokeRect(x, y, w, h);
+
+                    drawAreaBadge(ctx, area, x, y);
+                }
             });
 
-            // Draw current drawing rectangle
-            if (drawing && drawStart && drawCurrent) {
-                const scaleX = rect.width / imageSize.width;
-                const scaleY = rect.height / imageSize.height;
+            // 2. Draw current drawing rectangle
+            if (shapeTool === 'rectangle' && drawing && drawStart && drawCurrent) {
                 const x = Math.min(drawStart.x, drawCurrent.x) * scaleX;
                 const y = Math.min(drawStart.y, drawCurrent.y) * scaleY;
                 const w = Math.abs(drawCurrent.x - drawStart.x) * scaleX;
@@ -404,12 +606,75 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
                 ctx.lineWidth = 2;
                 ctx.setLineDash([5, 5]);
                 ctx.strokeRect(x, y, w, h);
+                ctx.fillStyle = 'rgba(59, 130, 246, 0.15)';
+                ctx.fillRect(x, y, w, h);
                 ctx.setLineDash([]);
+            }
+
+            // 3. Draw live polygon in progress
+            if (shapeTool === 'polygon' && polygonPoints.length > 0) {
+                ctx.beginPath();
+                ctx.moveTo(polygonPoints[0].x * scaleX, polygonPoints[0].y * scaleY);
+                for (let i = 1; i < polygonPoints.length; i++) {
+                    ctx.lineTo(polygonPoints[i].x * scaleX, polygonPoints[i].y * scaleY);
+                }
+
+                if (currentMousePos) {
+                    ctx.lineTo(currentMousePos.x * scaleX, currentMousePos.y * scaleY);
+                }
+
+                ctx.strokeStyle = '#3b82f6';
+                ctx.lineWidth = 2.5;
+                ctx.stroke();
+                ctx.fillStyle = 'rgba(59, 130, 246, 0.12)';
+                ctx.fill();
+
+                // Draw vertices
+                polygonPoints.forEach((p, idx) => {
+                    const px = p.x * scaleX;
+                    const py = p.y * scaleY;
+                    ctx.beginPath();
+                    ctx.arc(px, py, idx === 0 ? 6 : 4, 0, Math.PI * 2);
+                    ctx.fillStyle = idx === 0 ? '#10b981' : '#3b82f6';
+                    ctx.fill();
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                });
+
+                // Highlight snap to first point if hovering near it
+                if (currentMousePos && polygonPoints.length >= 3) {
+                    const p0 = polygonPoints[0];
+                    const dist = Math.hypot((currentMousePos.x - p0.x) * scaleX, (currentMousePos.y - p0.y) * scaleY);
+                    if (dist < 25) {
+                        ctx.beginPath();
+                        ctx.arc(p0.x * scaleX, p0.y * scaleY, 11, 0, Math.PI * 2);
+                        ctx.strokeStyle = '#10b981';
+                        ctx.lineWidth = 2.5;
+                        ctx.setLineDash([4, 4]);
+                        ctx.stroke();
+                        ctx.setLineDash([]);
+                    }
+                }
+            }
+
+            // 4. Draw live freehand in progress
+            if (shapeTool === 'freehand' && drawing && freehandPoints.length > 1) {
+                ctx.beginPath();
+                ctx.moveTo(freehandPoints[0].x * scaleX, freehandPoints[0].y * scaleY);
+                for (let i = 1; i < freehandPoints.length; i++) {
+                    ctx.lineTo(freehandPoints[i].x * scaleX, freehandPoints[i].y * scaleY);
+                }
+                ctx.strokeStyle = '#8b5cf6';
+                ctx.lineWidth = 2.5;
+                ctx.stroke();
+                ctx.fillStyle = 'rgba(139, 92, 246, 0.12)';
+                ctx.fill();
             }
         };
 
         render();
-    }, [areas, drawing, drawStart, drawCurrent, selectedAreaId, imageSize, preview, getAreaColor]);
+    }, [areas, drawing, drawStart, drawCurrent, polygonPoints, freehandPoints, currentMousePos, shapeTool, selectedAreaId, imageSize, preview, getAreaColor, drawAreaBadge]);
 
     const handleImageLoad = () => {
         if (imageRef.current) {
@@ -421,21 +686,25 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
     };
 
     const handleCanvasClick = (e: React.MouseEvent) => {
-        if (!imageRef.current) return;
-        const rect = imageRef.current.getBoundingClientRect();
-        const x = ((e.clientX - rect.left) / rect.width) * imageSize.width;
-        const y = ((e.clientY - rect.top) / rect.height) * imageSize.height;
+        if (shapeTool === 'polygon' && polygonPoints.length > 0) return;
+        if (drawing) return;
 
-        // Find clicked area
+        const coords = getCanvasCoordinates(e);
+        if (!coords) return;
+
+        // Find clicked area using point-in-polygon or bounding box
         const clickedArea = areas.find((area) => {
+            if (Array.isArray(area.points) && area.points.length > 2) {
+                return isPointInPolygon(coords, area.points);
+            }
             const { x: ax, y: ay, width: aw, height: ah } = area.coordinates;
-            return x >= ax && x <= ax + aw && y >= ay && y <= ay + ah;
+            return coords.x >= ax && coords.x <= ax + aw && coords.y >= ay && coords.y <= ay + ah;
         });
 
         if (clickedArea) {
             setSelectedAreaId(clickedArea.id);
             setEditingAreaLabel(clickedArea.label);
-        } else {
+        } else if (shapeTool === 'select') {
             setSelectedAreaId(null);
         }
     };
@@ -572,20 +841,159 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
 
                         {step === 'editing' && (
                             <div className="p-4 sm:p-5 space-y-4 flex-1 flex flex-col min-h-0 overflow-hidden">
-                                <div className="flex items-center justify-between flex-shrink-0">
-                                    <div className="flex items-center gap-2">
-                                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                                        <p className="text-xs text-slate-600 font-medium">
-                                            Draw rectangles on the floor plan to define areas, then check off the checklist steps for each area.
-                                        </p>
+                                {/* Drawing Tools & Status Bar */}
+                                <div className="flex flex-wrap items-center justify-between gap-3 p-2.5 bg-slate-50/90 rounded-2xl border border-slate-200 flex-shrink-0 shadow-sm">
+                                    {/* Tool Selectors */}
+                                    <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200/80 shadow-xs">
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setShapeTool('polygon');
+                                                handleCancelPolygon();
+                                            }}
+                                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                                                shapeTool === 'polygon'
+                                                    ? 'bg-blue-600 text-white shadow-sm'
+                                                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                                            }`}
+                                            title="Click anywhere to place points. Outline irregular rooms, L-shapes, cafeterias, etc."
+                                        >
+                                            <Shapes size={14} />
+                                            <span>Polygon (Any Shape)</span>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setShapeTool('rectangle');
+                                                handleCancelPolygon();
+                                            }}
+                                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                                                shapeTool === 'rectangle'
+                                                    ? 'bg-blue-600 text-white shadow-sm'
+                                                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                                            }`}
+                                            title="Click and drag to draw a box"
+                                        >
+                                            <Square size={14} />
+                                            <span>Rectangle</span>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setShapeTool('freehand');
+                                                handleCancelPolygon();
+                                            }}
+                                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                                                shapeTool === 'freehand'
+                                                    ? 'bg-blue-600 text-white shadow-sm'
+                                                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                                            }`}
+                                            title="Click and drag to trace freely"
+                                        >
+                                            <Pencil size={14} />
+                                            <span>Freehand Lasso</span>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setShapeTool('select');
+                                                handleCancelPolygon();
+                                            }}
+                                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                                                shapeTool === 'select'
+                                                    ? 'bg-blue-600 text-white shadow-sm'
+                                                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                                            }`}
+                                            title="Click any area on the floor plan to select and inspect it"
+                                        >
+                                            <MousePointer size={14} />
+                                            <span>Select</span>
+                                        </button>
                                     </div>
-                                    <button
-                                        onClick={handleReset}
-                                        className="text-[10px] font-black text-slate-400 hover:text-slate-600 uppercase tracking-widest flex items-center gap-1.5 px-2.5 py-1 rounded-lg hover:bg-slate-100 transition-all"
-                                    >
-                                        <RefreshCw size={12} />
-                                        Re-upload CAD
-                                    </button>
+
+                                    {/* Active Drawing Controls & Hints */}
+                                    <div className="flex items-center gap-2 text-xs flex-1 min-w-[280px]">
+                                        {shapeTool === 'polygon' && (
+                                            <>
+                                                {polygonPoints.length === 0 ? (
+                                                    <span className="text-slate-600 font-medium flex items-center gap-1.5">
+                                                        <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                                                        Click on the CAD to place the first point of any shape.
+                                                    </span>
+                                                ) : (
+                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                        <span className="px-2 py-0.5 rounded-md bg-blue-100 text-blue-700 font-black text-[11px]">
+                                                            {polygonPoints.length} point{polygonPoints.length !== 1 ? 's' : ''}
+                                                        </span>
+                                                        <span className="text-slate-500 text-[11px]">
+                                                            Click next vertex • Double-click or click start point to close
+                                                        </span>
+                                                        <button
+                                                            type="button"
+                                                            disabled={polygonPoints.length < 3}
+                                                            onClick={() => finishPolygon(polygonPoints, 'polygon')}
+                                                            className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1 transition-all ${
+                                                                polygonPoints.length >= 3
+                                                                    ? 'bg-emerald-600 text-white shadow-xs hover:bg-emerald-700'
+                                                                    : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                                                            }`}
+                                                        >
+                                                            <Check size={13} />
+                                                            Finish Shape
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={handleUndoPolygonPoint}
+                                                            className="px-2 py-1 rounded-lg text-xs font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition-all flex items-center gap-1"
+                                                            title="Undo last point (Backspace)"
+                                                        >
+                                                            <Undo2 size={13} />
+                                                            Undo
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={handleCancelPolygon}
+                                                            className="px-2 py-1 rounded-lg text-xs font-bold bg-rose-50 text-rose-600 hover:bg-rose-100 transition-all flex items-center gap-1"
+                                                            title="Cancel shape (Esc)"
+                                                        >
+                                                            <X size={13} />
+                                                            Cancel
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </>
+                                        )}
+                                        {shapeTool === 'rectangle' && (
+                                            <span className="text-slate-600 font-medium flex items-center gap-1.5">
+                                                <span className="w-2 h-2 rounded-full bg-blue-500" />
+                                                Click and drag on the CAD to draw a rectangular area.
+                                            </span>
+                                        )}
+                                        {shapeTool === 'freehand' && (
+                                            <span className="text-slate-600 font-medium flex items-center gap-1.5">
+                                                <span className="w-2 h-2 rounded-full bg-purple-500" />
+                                                Click and drag freely to trace any room boundary. Release to close.
+                                            </span>
+                                        )}
+                                        {shapeTool === 'select' && (
+                                            <span className="text-slate-600 font-medium flex items-center gap-1.5">
+                                                <span className="w-2 h-2 rounded-full bg-slate-500" />
+                                                Click any area to select it and link checklist steps.
+                                            </span>
+                                        )}
+                                    </div>
+
+                                    {/* Actions */}
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={handleReset}
+                                            className="text-[10px] font-black text-slate-400 hover:text-slate-600 uppercase tracking-widest flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg hover:bg-slate-100 transition-all"
+                                        >
+                                            <RefreshCw size={12} />
+                                            Re-upload CAD
+                                        </button>
+                                    </div>
                                 </div>
 
                                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 flex-1 min-h-0">
@@ -593,11 +1001,15 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
                                     <div className="lg:col-span-2 relative bg-slate-900 rounded-2xl overflow-auto border border-slate-200 shadow-inner flex items-center justify-center h-full min-h-[500px]">
                                         <div
                                             ref={containerRef}
-                                            className="relative cursor-crosshair max-w-full my-auto"
+                                            className={`relative max-w-full my-auto select-none ${
+                                                shapeTool === 'select' ? 'cursor-pointer' : 'cursor-crosshair'
+                                            }`}
                                             onMouseDown={handleImageMouseDown}
                                             onMouseMove={handleImageMouseMove}
                                             onMouseUp={handleImageMouseUp}
                                             onMouseLeave={handleImageMouseUp}
+                                            onClick={handleCanvasClick}
+                                            onDoubleClick={handleCanvasDoubleClick}
                                         >
                                             <img
                                                 ref={imageRef}
@@ -610,7 +1022,6 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
                                             <canvas
                                                 ref={canvasRef}
                                                 className="absolute top-0 left-0 pointer-events-none w-full h-full"
-                                                onClick={handleCanvasClick}
                                             />
                                         </div>
                                     </div>
@@ -638,7 +1049,7 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
                                             <div className="text-center py-10 px-4 text-slate-400 bg-white rounded-xl border border-dashed border-slate-200">
                                                 <MapPin size={28} className="mx-auto mb-2 text-primary/40" />
                                                 <p className="text-xs font-black text-slate-700 mb-1">No areas drawn yet</p>
-                                                <p className="text-[11px] font-medium text-slate-400">Click and drag on the floor plan on the left to create an area.</p>
+                                                <p className="text-[11px] font-medium text-slate-400">Use the shape tools on top to outline any room, cafeteria, or space on the CAD floor plan.</p>
                                             </div>
                                         )}
 
@@ -684,6 +1095,18 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
                                                                 />
                                                             </div>
                                                             <div className="flex items-center gap-1">
+                                                                {area.shape_type === 'polygon' && area.points && (
+                                                                    <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-700 flex items-center gap-1" title={`${area.points.length} polygon vertices`}>
+                                                                        <Shapes size={10} />
+                                                                        {area.points.length} pts
+                                                                    </span>
+                                                                )}
+                                                                {area.shape_type === 'freehand' && (
+                                                                    <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded-md bg-purple-50 text-purple-700 flex items-center gap-1" title="Freehand lasso shape">
+                                                                        <Pencil size={10} />
+                                                                        Lasso
+                                                                    </span>
+                                                                )}
                                                                 <span
                                                                     className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded-md ${
                                                                         linkedCount > 0

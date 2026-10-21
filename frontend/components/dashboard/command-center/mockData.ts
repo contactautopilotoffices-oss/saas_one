@@ -104,11 +104,15 @@ export interface CcDieselSummary {
   properties_count: number;
 }
 
-/** Active ticket load for a property or org rollup (everything not resolved/closed). */
+/**
+ * Active ticket load for a property or org rollup (everything not resolved/closed).
+ * tickets-summary's `open` already includes waitlist (open + blocked + waitlist), so waitlist is not added again:
+ * adding it counted waitlisted tickets twice (docs/COMMAND_CENTER_DATA_AUDIT.md §2.1).
+ */
 export function activeTicketsOf(p: {
   open: number; in_progress: number; pending_validation: number; waitlist?: number;
 }): number {
-  return p.open + p.in_progress + p.pending_validation + (p.waitlist ?? 0);
+  return p.open + p.in_progress + p.pending_validation;
 }
 
 /**

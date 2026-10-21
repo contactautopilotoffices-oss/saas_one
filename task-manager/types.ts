@@ -141,6 +141,11 @@ export interface NotificationTaskFilters {
     onlyPending?: boolean;       // Ignore completed tasks
 }
 
+export interface CarryForwardSetting {
+    enabled: boolean;   // show unfinished tasks from earlier days at all
+    days: number;       // how many days back, 1–7
+}
+
 export interface NotificationConditions {
     skipIfZeroTasks: boolean;   // Don't message if 0 tasks match
     requirePendingOnly?: boolean;// Don't message if user already completed all tasks
@@ -216,5 +221,8 @@ export interface TestingConfig {
     voiceNotesEnabled?: boolean; // WhatsApp voice notes for everyone using the Task Manager (Task Access panel; OFF unless switched on)
     nightlyAutoTuneEnabled?: boolean; // Bot plan Phase 5: draft and evaluate prompt candidates after 02:00 IST
     botAlertAdmins?: Array<{ name: string; phone: string }>;
+    /** Per department (key = department id): show unfinished tasks from earlier days, and how many days back (1–7).
+     *  Applies to the person's numbered list, so to every scheduled message AND the bot's "tasks" list. Missing = on, 7 days. */
+    carryForward?: Record<string, CarryForwardSetting>;
 }
 

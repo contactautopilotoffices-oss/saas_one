@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { readFile, mkdtemp } from 'node:fs/promises';
@@ -10,7 +11,7 @@ import { chromium } from 'playwright';
 import ts from 'typescript';
 import postcss from 'postcss';
 import tailwind from '@tailwindcss/postcss';
-const root = new URL('../..', import.meta.url).pathname;
+const root = fileURLToPath(new URL('../..', import.meta.url));
 const require = createRequire(import.meta.url);
 let build;
 try { ({ build } = require(process.env.ESBUILD_PACKAGE_PATH || 'esbuild')); }

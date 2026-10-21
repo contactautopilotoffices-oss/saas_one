@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { TaskDatabaseService } from './TaskDatabaseService';
+import { MAX_CARRY_DAYS, TaskDatabaseService, normalizeCarryForward } from './TaskDatabaseService';
 import { TaskAccessService } from './TaskAccessService';
 import { TaskNotificationService } from './TaskNotificationService';
 import { Employee, NotificationRule, NotificationRuleType, NotificationCustomTemplate } from './types';
@@ -200,6 +200,7 @@ export class DepartmentRulesService {
             delegated: ctx.delegated,
             canEdit: ctx.canEdit,
             rules: (config.rules || []).filter(r => r.departmentId === ctx.departmentId),
+            carryForward: normalizeCarryForward(config.carryForward?.[ctx.departmentId]),
             // Honest context for the screen: is anything really being delivered right now?
             pretendMode: config.whatsappPretendMode !== false,
             sandboxOn: config.enabled === true,
@@ -253,6 +254,28 @@ export class DepartmentRulesService {
             details: { ruleId: rule.id, ruleName: rule.name, ruleType: rule.ruleType, time: rule.targetTimeIST, days: rule.daysOfWeek, enabled: rule.enabled, departmentId: ctx.departmentId, created: !existing },
         });
         return rule;
+    }
+
+    /**
+     * The team's carry-forward setting: show unfinished tasks from earlier days (on/off) and how many days back (1–7).
+     * Same people as the rules (a superuser, or a team its notifications were handed to); always THEIR department.
+     * Applies to every message the team gets and to the bot's "tasks" list, so the numbers match everywhere.
+     */
+    static async saveCarryForward(actorUserId: string, input: unknown, departmentName?: string) {
+        const ctx = await this.context(actorUserId, departmentName);
+        this.requireEdit(ctx);
+        const v = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+        const days = Number(v.days);
+        if (typeof v.enabled !== 'boolean' || !Number.isInteger(days) || days < 1 || days > MAX_CARRY_DAYS) {
+            throw new RulesError(400, `Choose on or off, and between 1 and ${MAX_CARRY_DAYS} days.`, 'INVALID');
+        }
+        const setting = await TaskDatabaseService.saveCarryForward(ctx.departmentId, { enabled: v.enabled, days });
+        await TaskDatabaseService.logAudit({
+            eventType: 'carry_forward_setting_saved',
+            actorId: ctx.actor.id,
+            details: { departmentId: ctx.departmentId, enabled: setting.enabled, days: setting.days },
+        });
+        return setting;
     }
 
     static async remove(actorUserId: string, ruleId: string, departmentName?: string): Promise<void> {

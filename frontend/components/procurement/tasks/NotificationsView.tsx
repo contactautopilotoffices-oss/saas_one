@@ -2,9 +2,12 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { AlertTriangle, Bell, CheckCircle2, Clock, Eye, Loader2, Lock, Moon, Plus, Send, Sun, Trash2 } from 'lucide-react';
+import { AlertTriangle, Bell, CheckCircle2, Clock, Eye, Loader2, Lock, Moon, Plus, RotateCcw, Send, Sun, Trash2 } from 'lucide-react';
 import { EASE } from './types';
 import TimeWheelPicker from './TimeWheelPicker';
+
+/** Most days a team can carry unfinished tasks forward (same limit as MAX_CARRY_DAYS on the server, which checks it again). */
+const MAX_CARRY_DAYS = 30;
 
 /**
  * Notifications view: a team sets WHEN its Task Manager messages go out and WHAT they say.
@@ -258,6 +261,73 @@ function RuleCard({ draft, baseline, canEdit, department, endpoint, personal, on
     );
 }
 
+interface CarryForward { enabled: boolean; days: number }
+
+/**
+ * The team's carry-forward setting: unfinished tasks from earlier days, shown first under "Carry forward tasks".
+ * One setting for the whole team, used by every message AND the bot's "tasks" list, so "done 3" means the same task everywhere.
+ */
+function CarryForwardCard({ value, canEdit, onSave }: { value: CarryForward; canEdit: boolean; onSave: (v: CarryForward) => Promise<void> }) {
+    const [draft, setDraft] = useState<CarryForward>(value);
+    const [saving, setSaving] = useState(false);
+    useEffect(() => { setDraft(value); }, [value]);
+    const dirty = draft.enabled !== value.enabled || draft.days !== value.days;
+    // Owner 2026-10-20: any number of days from 1 to 30 can be typed, not only the 1–7 buttons.
+    const daysOk = Number.isInteger(draft.days) && draft.days >= 1 && draft.days <= MAX_CARRY_DAYS;
+    const cap = 'text-[10px] font-black uppercase tracking-widest text-zinc-500';
+    return (
+        <section className="space-y-4 rounded-3xl border border-zinc-200 bg-white p-5 shadow-xs dark:border-zinc-800 dark:bg-zinc-900" aria-labelledby="carry-forward-title">
+            <header className="flex items-center gap-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600 dark:bg-amber-950/50 dark:text-amber-300"><RotateCcw className="h-4 w-4" /></span>
+                <div className="min-w-0 flex-1">
+                    <h4 id="carry-forward-title" className="text-sm font-black text-zinc-900 dark:text-zinc-100">Carry-forward tasks</h4>
+                    <p className="text-[11px] text-zinc-500">Unfinished tasks from earlier days, shown first under &ldquo;Carry forward tasks&rdquo;, then &ldquo;Today&apos;s tasks&rdquo;.</p>
+                </div>
+                <Switch on={draft.enabled} disabled={!canEdit} onChange={v => setDraft(d => ({ ...d, enabled: v }))} label="Include carry-forward tasks" />
+            </header>
+
+            <div className={draft.enabled ? '' : 'opacity-50'}>
+                <p className={cap}>Go back this many days</p>
+                <div className="mt-1.5 flex flex-wrap gap-1.5" role="radiogroup" aria-label="How many days back">
+                    {[1, 2, 3, 4, 5, 6, 7].map(n => {
+                        const on = draft.days === n;
+                        return (
+                            <button key={n} type="button" role="radio" aria-checked={on} disabled={!canEdit || !draft.enabled} onClick={() => setDraft(d => ({ ...d, days: n }))}
+                                title={n === 1 ? 'Yesterday only' : `The last ${n} days`}
+                                className={`h-9 min-w-9 rounded-full px-2 text-xs font-black transition-all disabled:cursor-not-allowed ${on ? 'bg-indigo-600 text-white shadow-sm' : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700'}`}>{n}</button>
+                        );
+                    })}
+                    <label className="ml-1 flex items-center gap-1.5 text-[11px] font-bold text-zinc-500">
+                        or
+                        <input
+                            type="number" inputMode="numeric" min={1} max={MAX_CARRY_DAYS} step={1}
+                            value={Number.isFinite(draft.days) ? draft.days : ''} disabled={!canEdit || !draft.enabled}
+                            onChange={e => setDraft(d => ({ ...d, days: e.target.value === '' ? NaN : Math.floor(Number(e.target.value)) }))}
+                            aria-label={`Number of days, 1 to ${MAX_CARRY_DAYS}`}
+                            className={`h-9 w-16 rounded-full border bg-white px-3 text-center text-xs font-black text-zinc-800 outline-none focus:border-indigo-400 disabled:cursor-not-allowed dark:bg-zinc-950 dark:text-zinc-100 ${daysOk ? 'border-zinc-300 dark:border-zinc-700' : 'border-rose-400'}`}
+                        />
+                        days (up to {MAX_CARRY_DAYS})
+                    </label>
+                </div>
+                {!daysOk && draft.enabled && <p className="mt-1.5 text-[11px] font-bold text-rose-600">Enter a whole number from 1 to {MAX_CARRY_DAYS}.</p>}
+                <p className="mt-2 text-[11px] text-zinc-500">
+                    {draft.enabled ? (draft.days === 1 ? 'Unfinished tasks from yesterday are carried into today.' : `Unfinished tasks from the last ${draft.days} days are carried into today.`) : 'Only today’s tasks are shown. Older unfinished tasks stay in the dashboard but not in WhatsApp.'}
+                    {' '}This applies to every message your team gets and to the bot&apos;s &ldquo;tasks&rdquo; list.
+                </p>
+            </div>
+
+            {canEdit && (
+                <footer className="flex justify-end border-t border-zinc-100 pt-3 dark:border-zinc-800">
+                    <button type="button" disabled={!dirty || saving || (draft.enabled && !daysOk)} onClick={async () => { setSaving(true); try { await onSave(draft); } finally { setSaving(false); } }}
+                        className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-black text-white shadow-sm transition-all hover:bg-indigo-700 disabled:opacity-40">
+                        {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{dirty ? 'Save changes' : 'Saved'}
+                    </button>
+                </footer>
+            )}
+        </section>
+    );
+}
+
 /** `personal`: the signed-in superuser's OWN notifications (sent only to them) instead of a department's. */
 export default function NotificationsView({ departmentName = 'Procurement', personal = false }: { departmentName?: string; personal?: boolean }) {
     const endpoint = personal ? '/api/task-manager/personal-rules' : '/api/task-manager/department-rules';
@@ -270,6 +340,7 @@ export default function NotificationsView({ departmentName = 'Procurement', pers
     const [baselines, setBaselines] = useState<Record<string, string>>({});
     const [savingKey, setSavingKey] = useState<string | null>(null);
     const [adding, setAdding] = useState(false);
+    const [carryForward, setCarryForward] = useState<CarryForward | null>(null);
     const newCounter = useRef(0);
 
     const say = useCallback((kind: 'ok' | 'err', text: string) => {
@@ -286,6 +357,7 @@ export default function NotificationsView({ departmentName = 'Procurement', pers
             setDrafts(prev => [...list, ...prev.filter(p => !p.id)]); // keep unsaved new ones
             setBaselines(Object.fromEntries(list.map(d => [d.key, signature(d)])));
             setMeta({ delegated: data.delegated, canEdit: data.canEdit, pretendMode: data.pretendMode, sandboxOn: data.sandboxOn, variables: data.variables, departmentName: data.departmentName });
+            setCarryForward(data.carryForward ? { enabled: data.carryForward.enabled !== false, days: Number(data.carryForward.days) || 7 } : null);
             setError(null);
         } catch (e) {
             setError(e instanceof Error ? e.message : 'Could not load notifications');
@@ -353,6 +425,16 @@ export default function NotificationsView({ departmentName = 'Procurement', pers
         }
     };
 
+    const saveCarryForward = async (v: CarryForward) => {
+        try {
+            const data = await post({ action: 'save_carry_forward', carryForward: v });
+            setCarryForward(data.carryForward);
+            say('ok', 'Saved');
+        } catch (e) {
+            say('err', e instanceof Error ? e.message : 'Could not save');
+        }
+    };
+
     const addNew = (type: RuleType) => {
         const t = typeOf(type);
         newCounter.current += 1;
@@ -383,7 +465,7 @@ export default function NotificationsView({ departmentName = 'Procurement', pers
                     <h3 className="text-sm font-black text-zinc-900 dark:text-zinc-100">{personal ? 'Your own WhatsApp notifications' : `WhatsApp notifications for ${meta.departmentName}`}</h3>
                     <p className="text-xs leading-relaxed text-zinc-500">
                         {personal ? 'Choose when you get your own task messages. They go only to you, with the tasks assigned to you.' : 'Choose when your team gets its task messages.'} A message goes out within about 15 minutes of the time you pick.
-                        Messages are sent as WhatsApp&apos;s approved templates, so they reach everyone, even people who have not messaged the bot recently.
+                        People who messaged the bot in the last 24 hours get a neat list, one task per line. Everyone else gets WhatsApp&apos;s approved template, so the message still reaches them.
                     </p>
                 </div>
             </div>
@@ -407,6 +489,8 @@ export default function NotificationsView({ departmentName = 'Procurement', pers
                     </motion.div>
                 )}
             </AnimatePresence>
+
+            {!personal && carryForward && <CarryForwardCard value={carryForward} canEdit={meta.canEdit} onSave={saveCarryForward} />}
 
             <AnimatePresence initial={false}>
                 {ordered.map(d => (

@@ -1,4 +1,5 @@
 import type { Action, BrainContext, BrainTask } from './types';
+import { sectionedList } from './text';
 
 /**
  * "One front door" — Phase 3 of docs/WHATSAPP_BOT_PRODUCTION_PLAN.md (owner decisions 2026-10-11).
@@ -31,7 +32,7 @@ export function parseExactCommand(text: string): ExactCommand | null {
     if (/^(undo|undo that|undo it|undo last|wapas karo|wapas|galti se|galti ho gayi)$/.test(t)) return { kind: 'undo' };
     if (/^(tasks?|my tasks|view tasks|status|today'?s? tasks)$/.test(t)) return { kind: 'view' };
     if (/^(done ?all|done-all|all done|complete all|completed all|finished all)$/.test(t)) return { kind: 'done_all' };
-    const m = /^(?:done|complete|completed|finish|finished) ((?:\d{1,2})(?:(?: ?, ?| and | & | )\d{1,2})*)$/.exec(t);
+    const m = /^(?:done|complete|completed|finish|finished)(?: (?:my )?tasks?)? ((?:\d{1,2})(?:(?: ?, ?| and | & | )\d{1,2})*)$/.exec(t);
     if (m) {
         const numbers = [...new Set(m[1].split(/ ?, ?| and | & | /).filter(Boolean).map(Number))];
         if (numbers.length && numbers.every(n => Number.isInteger(n) && n >= 1)) return { kind: 'done', numbers };
@@ -99,7 +100,8 @@ export type ExactPlan =
     | { kind: 'undo'; change: LastChange | null };
 
 const since = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });   // "10 Oct"
-const list = (tasks: BrainTask[]) => tasks.map(t => `${t.n}. ${t.title}${t.from ? ` (from ${since(t.from)})` : ''} ${t.status === 'completed' ? '✅' : t.status === 'in_progress' ? '🔄' : '⏳'}`).join('\n');
+// Three sections (owner 2026-10-16): carry forward → pending today → completed; the numbers stay the same.
+const list = (tasks: BrainTask[]) => sectionedList(tasks.map(t => ({ carried: !!t.from, done: t.status === 'completed', line: `${t.n}. ${t.title}${t.from ? ` (from ${since(t.from)})` : ''} ${t.status === 'completed' ? '✅' : t.status === 'in_progress' ? '🔄' : '⏳'}` })));
 
 /** null = not something code should answer → the AI handles it as before (e.g. "done 7" when there is no task 7). */
 export function planExact(cmd: ExactCommand, ctx: BrainContext): ExactPlan | null {

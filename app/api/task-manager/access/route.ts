@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
-import { TaskAccessService, AccessNotProvisionedError } from '@/task-manager/TaskAccessService';
+import { TaskAccessService, AccessNotProvisionedError, TEAM_FEATURES, TeamFeature } from '@/task-manager/TaskAccessService';
 import { TaskDatabaseService } from '@/task-manager/TaskDatabaseService';
 import { resetBotSwitchCache } from '@/task-manager/BotSwitches';
 import { clearAllMemory } from '@/task-manager/ConversationMemory';
@@ -67,6 +67,29 @@ export async function POST(request: NextRequest) {
                     ? 'Team sharing ON: members of this department can see and assign each other\'s tasks.'
                     : 'Team sharing OFF: only the reporting chain applies.'
             });
+        }
+
+        // Owner 2026-10-19: "assign to anyone in team" (give tasks to anyone in the department; seeing stays by the chain)
+        if (body.action === 'set_team_assign') {
+            if (!body.departmentId || typeof body.enabled !== 'boolean') {
+                return NextResponse.json({ success: false, error: 'Missing departmentId or enabled (true/false)' }, { status: 400 });
+            }
+            await TaskAccessService.setTeamAssign(body.departmentId, body.enabled, guard.label);
+            return NextResponse.json({
+                success: true,
+                message: body.enabled
+                    ? 'Assign to anyone in team ON: members can give tasks to anyone in this department. They still only see their own tasks and those below them.'
+                    : 'Assign to anyone in team OFF: members can give tasks only to people below them.'
+            });
+        }
+
+        // Owner 2026-10-19: the other per-team switches (Pending on…, Protect given tasks, Assigned by me tab)
+        if (body.action === 'set_team_feature') {
+            if (!body.departmentId || typeof body.enabled !== 'boolean' || !TEAM_FEATURES.includes(body.feature)) {
+                return NextResponse.json({ success: false, error: 'Missing departmentId, feature or enabled (true/false)' }, { status: 400 });
+            }
+            await TaskAccessService.setTeamFeature(body.departmentId, body.feature as TeamFeature, body.enabled, guard.label);
+            return NextResponse.json({ success: true, message: body.enabled ? 'Switched ON for this department.' : 'Switched OFF for this department.' });
         }
 
         // Superuser role (Task Manager): make or remove a superuser. Admin-only; the last superuser cannot be removed.

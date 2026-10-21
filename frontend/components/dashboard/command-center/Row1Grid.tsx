@@ -2,21 +2,28 @@
 
 import React from 'react';
 import HealthScoreCard from './HealthScoreCard';
-import AiBriefCard from './AiBriefCard';
+import AlertsCard from './AlertsCard';
 import PortfolioOverviewCard from './PortfolioOverviewCard';
 
-export default function Row1Grid() {
+export default function Row1Grid({
+  orgId,
+  propertyId,
+}: {
+  orgId?: string | null;
+  propertyId?: string | null;
+} = {}) {
   return (
     <div
+      // Columns come from .cc-band-hero (container query on .cc-board): 3 → 2 + full → 1.
+      className="cc-band-hero"
       style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
         gap: 14,
         alignItems: 'stretch',
       }}
     >
       <HealthScoreCard />
-      <AiBriefCard />
+      <AlertsCard orgId={orgId ?? null} propertyId={propertyId ?? null} />
       <PortfolioOverviewCard />
     </div>
   );

@@ -23,6 +23,12 @@ interface AccessDepartment {
     name: string;
     enabled: boolean;
     peerAssign: boolean;
+    /** Owner 2026-10-19: members may give tasks to anyone in the team (seeing still follows the reporting chain). */
+    teamAssign?: boolean;
+    /** Owner 2026-10-19: the "Pending on…" button, protection of given tasks, and the "Assigned by me" tab. */
+    pendingOn?: boolean;
+    protectGiven?: boolean;
+    assignedTab?: boolean;
     notificationsDelegated: boolean;
     taskImportEnabled: boolean;
     smartChatEnabled: boolean;
@@ -60,6 +66,8 @@ export default function TaskAccessPanel({ orgId }: { orgId?: string }) {
     const [smartChatColumnMissing, setSmartChatColumnMissing] = useState(false);
     const [collabColumnMissing, setCollabColumnMissing] = useState(false);
     const [sharingColumnMissing, setSharingColumnMissing] = useState(false);
+    const [teamAssignColumnMissing, setTeamAssignColumnMissing] = useState(false);
+    const [teamFeaturesColumnMissing, setTeamFeaturesColumnMissing] = useState(false);
     const [notificationsColumnMissing, setNotificationsColumnMissing] = useState(false);
     const [departments, setDepartments] = useState<AccessDepartment[]>([]);
     const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -80,6 +88,8 @@ export default function TaskAccessPanel({ orgId }: { orgId?: string }) {
             setSmartChatColumnMissing(Boolean(data.smartChatColumnMissing));
             setCollabColumnMissing(Boolean(data.superuserCollabColumnMissing));
             setSharingColumnMissing(Boolean(data.teamSharingColumnMissing));
+            setTeamAssignColumnMissing(Boolean(data.teamAssignColumnMissing));
+            setTeamFeaturesColumnMissing(Boolean(data.teamFeaturesColumnMissing));
             setNotificationsColumnMissing(Boolean(data.notificationsColumnMissing));
             if (data.readable === false) setError('Access settings could not be read. Everyone is treated as locked until this works again.');
             setDepartments(data.departments || []);
@@ -132,6 +142,38 @@ export default function TaskAccessPanel({ orgId }: { orgId?: string }) {
             : `Switch team sharing OFF for ${d.name}?\n\nMembers will only see themselves and the people who report to them.`;
         if (!window.confirm(text)) return;
         post(`share-${d.departmentId}`, { action: 'set_team_sharing', departmentId: d.departmentId, enabled: next });
+    };
+
+    const toggleTeamAssign = (d: AccessDepartment) => {
+        const next = !d.teamAssign;
+        const text = next
+            ? `Switch "Assign to anyone in team" ON for ${d.name}?\n\nEveryone in ${d.name} will be able to give a task to anyone else in ${d.name}, including their own manager (web Tasks tab and WhatsApp).\n\nSeeing tasks does not change: each person still sees only their own tasks and those of the people below them.`
+            : `Switch "Assign to anyone in team" OFF for ${d.name}?\n\nMembers will be able to give tasks only to the people below them.`;
+        if (!window.confirm(text)) return;
+        post(`assign-${d.departmentId}`, { action: 'set_team_assign', departmentId: d.departmentId, enabled: next });
+    };
+
+    // Owner 2026-10-19: one handler for the three new per-team switches.
+    const TEAM_FEATURE_TEXT = {
+        pending_on: {
+            on: (n: string) => `Switch "Pending on" ON for ${n}?\n\nPeople in ${n} get a "Pending on…" button on their own open tasks, to tell a colleague the task is waiting on them. The colleague gets an app notification and a WhatsApp message. Nobody can see anyone else's board because of this.`,
+            off: (n: string) => `Switch "Pending on" OFF for ${n}?\n\nThe button disappears for this team.`,
+        },
+        protect_given: {
+            on: (n: string) => `Switch "Protect given tasks" ON for ${n}?\n\nA task someone else gave a person in ${n} can no longer be deleted or renamed by that person. Only the giver, the giver's manager (or anyone above), or a superuser can.`,
+            off: (n: string) => `Switch "Protect given tasks" OFF for ${n}?\n\nPeople can delete any task on their own list again.`,
+        },
+        assigned_tab: {
+            on: (n: string) => `Switch the "Assigned by me" tab ON for ${n}?\n\nPeople in ${n} see every task they gave, with status and times, and can edit or delete them. Managers also see (view only) the tasks given by the people below them.`,
+            off: (n: string) => `Switch the "Assigned by me" tab OFF for ${n}?\n\nThe tab disappears for this team. No task is changed.`,
+        },
+    } as const;
+    type TeamFeatureKey = keyof typeof TEAM_FEATURE_TEXT;
+    const featureValue = (d: AccessDepartment, f: TeamFeatureKey) => (f === 'pending_on' ? d.pendingOn : f === 'protect_given' ? d.protectGiven : d.assignedTab) === true;
+    const toggleTeamFeature = (d: AccessDepartment, feature: TeamFeatureKey) => {
+        const next = !featureValue(d, feature);
+        if (!window.confirm(next ? TEAM_FEATURE_TEXT[feature].on(d.name) : TEAM_FEATURE_TEXT[feature].off(d.name))) return;
+        post(`${feature}-${d.departmentId}`, { action: 'set_team_feature', departmentId: d.departmentId, feature, enabled: next });
     };
 
     const toggleNotificationsDelegated = (d: AccessDepartment) => {
@@ -293,6 +335,13 @@ Their files and images go back to being handled exactly as before.`;
                 <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs">
                     <p className="font-black flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Team sharing needs one more SQL file</p>
                     <p>Run <code className="font-mono bg-white/70 px-1 rounded">supabase/migrations/20261007000002_task_manager_team_sharing.sql</code> once in the Supabase SQL Editor. Until then team sharing is OFF everywhere and its buttons are disabled.</p>
+                </div>
+            )}
+
+            {provisioned && (teamAssignColumnMissing || teamFeaturesColumnMissing) && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs">
+                    <p className="font-black flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> The new team switches need one more SQL file</p>
+                    <p>Run <code className="font-mono bg-white/70 px-1 rounded">supabase/migrations/20261019000001_task_manager_team_controls.sql</code> once in the Supabase SQL Editor. Until then &quot;Assign to anyone in team&quot;, &quot;Pending on&quot;, &quot;Protect given tasks&quot; and &quot;Assigned by me&quot; are OFF everywhere and their buttons are disabled.</p>
                 </div>
             )}
 
@@ -467,6 +516,39 @@ Their files and images go back to being handled exactly as before.`;
                                 >
                                     Team sharing: {d.peerAssign ? 'ON' : 'OFF'}
                                 </button>
+                                <button
+                                    type="button"
+                                    disabled={!provisioned || teamAssignColumnMissing || busyKey === `assign-${d.departmentId}`}
+                                    onClick={() => toggleTeamAssign(d)}
+                                    className={`px-3 py-1.5 rounded-xl font-bold text-[11px] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                                        d.teamAssign
+                                            ? 'bg-violet-600 hover:bg-violet-700 text-white'
+                                            : 'bg-white border border-slate-300 hover:bg-slate-100 text-slate-600'
+                                    }`}
+                                    title="Members can give tasks to anyone in the team (including their manager), but still only see their own tasks and those below them"
+                                >
+                                    Assign to anyone in team: {d.teamAssign ? 'ON' : 'OFF'}
+                                </button>
+                                {([
+                                    ['pending_on', 'Pending on', 'bg-amber-600 hover:bg-amber-700', 'A "Pending on…" button to tell a colleague a task is waiting on them'],
+                                    ['protect_given', 'Protect given tasks', 'bg-rose-600 hover:bg-rose-700', 'People cannot delete or rename tasks someone else gave them'],
+                                    ['assigned_tab', 'Assigned by me', 'bg-teal-600 hover:bg-teal-700', 'Show the "Assigned by me" tab (tasks you gave, with status and times)'],
+                                ] as Array<[TeamFeatureKey, string, string, string]>).map(([feature, label, onClass, title]) => (
+                                    <button
+                                        key={feature}
+                                        type="button"
+                                        disabled={!provisioned || teamFeaturesColumnMissing || busyKey === `${feature}-${d.departmentId}`}
+                                        onClick={() => toggleTeamFeature(d, feature)}
+                                        className={`px-3 py-1.5 rounded-xl font-bold text-[11px] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                                            featureValue(d, feature)
+                                                ? `${onClass} text-white`
+                                                : 'bg-white border border-slate-300 hover:bg-slate-100 text-slate-600'
+                                        }`}
+                                        title={title}
+                                    >
+                                        {label}: {featureValue(d, feature) ? 'ON' : 'OFF'}
+                                    </button>
+                                ))}
                                 <button
                                     type="button"
                                     disabled={!provisioned || busy}

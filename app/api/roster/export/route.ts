@@ -62,7 +62,7 @@ export async function GET(request: NextRequest) {
                 user_id,
                 role,
                 custom_designation,
-                users ( id, full_name )
+                users:users!property_memberships_user_id_fkey ( id, full_name )
             `)
             .eq('property_id', propertyId)
             .eq('is_active', true)

@@ -72,14 +72,14 @@ interface Ticket {
   title: string;
   description: string;
   status:
-    | "open"
-    | "assigned"
-    | "in_progress"
-    | "blocked"
-    | "resolved"
-    | "closed"
-    | "waitlist"
-    | "pending_validation";
+  | "open"
+  | "assigned"
+  | "in_progress"
+  | "blocked"
+  | "resolved"
+  | "closed"
+  | "waitlist"
+  | "pending_validation";
   priority: string;
   category?: { name: string; code: string };
   skill_group?: { name: string; code: string };
@@ -472,12 +472,12 @@ export default function TicketDetailPage() {
                     : creatorMembership.role === "tenant"
                       ? "Client"
                       : creatorMembership.role
-                          .split("_")
-                          .map(
-                            (word: string) =>
-                              word.charAt(0).toUpperCase() + word.slice(1),
-                          )
-                          .join(" ");
+                        .split("_")
+                        .map(
+                          (word: string) =>
+                            word.charAt(0).toUpperCase() + word.slice(1),
+                        )
+                        .join(" ");
                 setCreatorRole(formattedRole);
               } else if ((t.property as any)?.organization_id) {
                 const { data: orgMembership } = await supabase
@@ -525,12 +525,12 @@ export default function TicketDetailPage() {
                   assigneeMembership.role === "mst"
                     ? "MST"
                     : assigneeMembership.role
-                        .split("_")
-                        .map(
-                          (word: string) =>
-                            word.charAt(0).toUpperCase() + word.slice(1),
-                        )
-                        .join(" ");
+                      .split("_")
+                      .map(
+                        (word: string) =>
+                          word.charAt(0).toUpperCase() + word.slice(1),
+                      )
+                      .join(" ");
                 setAssigneeRole(formattedRole);
               } else if ((t.property as any)?.organization_id) {
                 const { data: orgMembership } = await supabase
@@ -642,7 +642,7 @@ export default function TicketDetailPage() {
 
   const executeDeleteRequest = async () => {
     if (!deleteRequestId) return;
-    
+
     try {
       setIsDeleting(true);
       const res = await fetch(`/api/procurement/requests/${deleteRequestId}`, {
@@ -787,7 +787,7 @@ export default function TicketDetailPage() {
         (m) => m.property_id === propertyId
       );
 
-      const isElevatedRole = (r?: string) => 
+      const isElevatedRole = (r?: string) =>
         ["property_admin", "ops_super_admin", "org_super_admin", "org_admin", "master_admin", "owner"].includes(r || "");
 
       if (
@@ -1058,10 +1058,10 @@ export default function TicketDetailPage() {
     setTicket((prev: any) =>
       prev
         ? {
-            ...prev,
-            status: nextStatus,
-            resolved_at: new Date().toISOString(),
-          }
+          ...prev,
+          status: nextStatus,
+          resolved_at: new Date().toISOString(),
+        }
         : null,
     );
     playTickleSound();
@@ -1243,59 +1243,59 @@ export default function TicketDetailPage() {
     }
   };
 
-    const [ticketDeliveryFiles, setTicketDeliveryFiles] = useState<{ [reqId: string]: FileList | null }>({});
-    const [uploadingDeliveryReqId, setUploadingDeliveryReqId] = useState<string | null>(null);
+  const [ticketDeliveryFiles, setTicketDeliveryFiles] = useState<{ [reqId: string]: FileList | null }>({});
+  const [uploadingDeliveryReqId, setUploadingDeliveryReqId] = useState<string | null>(null);
 
-    const handleMaterialAction = async (requestId: string, status: string, extra?: any) => {
-        try {
-            const res = await fetch(`/api/procurement/requests/${requestId}`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status, ...extra })
-            });
-            if (res.ok) {
-                fetchMaterialRequests();
-                showToast(`Order ${status.replace('_', ' ')}`, 'success');
-            } else {
-                const data = await res.json();
-                throw new Error(data.error || 'Action failed');
-            }
-        } catch (err: any) {
-            console.error(err);
-            showToast(err.message || 'Failed to update order status', 'error');
+  const handleMaterialAction = async (requestId: string, status: string, extra?: any) => {
+    try {
+      const res = await fetch(`/api/procurement/requests/${requestId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, ...extra })
+      });
+      if (res.ok) {
+        fetchMaterialRequests();
+        showToast(`Order ${status.replace('_', ' ')}`, 'success');
+      } else {
+        const data = await res.json();
+        throw new Error(data.error || 'Action failed');
+      }
+    } catch (err: any) {
+      console.error(err);
+      showToast(err.message || 'Failed to update order status', 'error');
+    }
+  };
+
+  const handleTicketMarkDelivered = async (requestId: string) => {
+    const files = ticketDeliveryFiles[requestId];
+    let uploadedUrls: string[] = [];
+    if (files && files.length > 0) {
+      setUploadingDeliveryReqId(requestId);
+      try {
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          const formData = new FormData();
+          formData.append('file', file);
+          const uploadRes = await fetch(`/api/procurement/requests/${requestId}/upload`, {
+            method: 'POST',
+            body: formData
+          });
+          if (uploadRes.ok) {
+            const uploadData = await uploadRes.json();
+            if (uploadData.url) uploadedUrls.push(uploadData.url);
+          }
         }
-    };
+      } catch (e) {
+        console.error('Error uploading delivery photos:', e);
+      } finally {
+        setUploadingDeliveryReqId(null);
+      }
+    }
+    setTicketDeliveryFiles((prev) => ({ ...prev, [requestId]: null }));
+    await handleMaterialAction(requestId, 'delivered', { delivery_photos: uploadedUrls });
+  };
 
-    const handleTicketMarkDelivered = async (requestId: string) => {
-        const files = ticketDeliveryFiles[requestId];
-        let uploadedUrls: string[] = [];
-        if (files && files.length > 0) {
-            setUploadingDeliveryReqId(requestId);
-            try {
-                for (let i = 0; i < files.length; i++) {
-                    const file = files[i];
-                    const formData = new FormData();
-                    formData.append('file', file);
-                    const uploadRes = await fetch(`/api/procurement/requests/${requestId}/upload`, {
-                        method: 'POST',
-                        body: formData
-                    });
-                    if (uploadRes.ok) {
-                        const uploadData = await uploadRes.json();
-                        if (uploadData.url) uploadedUrls.push(uploadData.url);
-                    }
-                }
-            } catch (e) {
-                console.error('Error uploading delivery photos:', e);
-            } finally {
-                setUploadingDeliveryReqId(null);
-            }
-        }
-        setTicketDeliveryFiles((prev) => ({ ...prev, [requestId]: null }));
-        await handleMaterialAction(requestId, 'delivered', { delivery_photos: uploadedUrls });
-    };
-
-    const handleEditSubmit = async () => {
+  const handleEditSubmit = async () => {
     if (!editTitle.trim()) return;
     setIsUpdatingContent(true);
     try {
@@ -1752,7 +1752,7 @@ export default function TicketDetailPage() {
                 {ticket.ticket_number}
               </span>
               {(ticket as any).category &&
-              typeof (ticket as any).category === "string" ? (
+                typeof (ticket as any).category === "string" ? (
                 <span
                   className={`inline-flex items-center px-3 py-0 ${isDark ? "bg-info/10 border-info/20 text-info" : "bg-info/10 border-info/20 text-info"} border rounded text-[10px] font-bold uppercase tracking-widest leading-none h-6`}
                 >
@@ -1768,8 +1768,7 @@ export default function TicketDetailPage() {
                 )
               )}
               <span
-                className={`inline-flex items-center px-3 py-0 rounded border text-[10px] font-bold uppercase tracking-widest leading-none h-6 ${
-                  ticket.priority === "urgent"
+                className={`inline-flex items-center px-3 py-0 rounded border text-[10px] font-bold uppercase tracking-widest leading-none h-6 ${ticket.priority === "urgent"
                     ? isDark
                       ? "bg-error/10 border-error/20 text-error"
                       : "bg-error/5 border-error/20 text-error"
@@ -1780,7 +1779,7 @@ export default function TicketDetailPage() {
                       : isDark
                         ? "bg-info/10 border-info/20 text-info"
                         : "bg-info/5 border-info/20 text-info"
-                }`}
+                  }`}
               >
                 {ticket.priority} Priority
               </span>
@@ -1862,14 +1861,13 @@ export default function TicketDetailPage() {
                   )}
                 </div>
               </div>
-              
+
               {/* Sleek AI Classification Details in Header */}
               <div
-                className={`flex items-start gap-2.5 px-4 py-2.5 rounded-2xl border text-xs leading-relaxed ${
-                  isDark
+                className={`flex items-start gap-2.5 px-4 py-2.5 rounded-2xl border text-xs leading-relaxed ${isDark
                     ? "bg-indigo-950/30 border-indigo-900/40 text-indigo-200"
                     : "bg-indigo-50/70 border-indigo-100/80 text-indigo-900 shadow-sm"
-                }`}
+                  }`}
               >
                 <Brain className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" />
                 <div className="flex-1 min-w-0">
@@ -1897,7 +1895,7 @@ export default function TicketDetailPage() {
                       }
                       const text = `${ticket.title || ""} ${ticket.description || ""}`.toLowerCase();
                       const detectedKeywords: string[] = [];
-                      
+
                       if (text.includes("race box") || text.includes("raceway") || text.includes("workstation") || text.includes("cable") || text.includes("wire") || text.includes("wiring") || text.includes("switch") || text.includes("plug") || text.includes("power") || text.includes("socket")) {
                         detectedKeywords.push("workstation raceway / wiring fixtures");
                       }
@@ -1914,8 +1912,8 @@ export default function TicketDetailPage() {
                         detectedKeywords.push("housekeeping & cleaning request markers");
                       }
 
-                      const keywordSnippet = detectedKeywords.length > 0 
-                        ? `Triggered by keywords in description (${detectedKeywords.join(", ")})` 
+                      const keywordSnippet = detectedKeywords.length > 0
+                        ? `Triggered by keywords in description (${detectedKeywords.join(", ")})`
                         : `NLP engine evaluated the title & description keywords`;
 
                       return `${keywordSnippet} and routed to ${ticket.skill_group?.name || "technical resolver"} for physical resolution.`;
@@ -1925,73 +1923,72 @@ export default function TicketDetailPage() {
               </div>
             </div>
           </div>
-            <div className="text-right mt-2 sm:mt-0">
-              <div
-                className={`text-[10px] font-black uppercase tracking-widest mb-1.5 px-4 py-1.5 rounded-full border inline-block ${
-                  ticket.status === "closed" || ticket.status === "resolved"
-                    ? isDark
-                      ? "bg-success/10 border-success/20 text-success"
-                      : "bg-success/5 border-success/20 text-success"
-                    : ticket.status === "pending_validation"
-                      ? isDark
-                        ? "bg-violet-900/30 border-violet-700/40 text-violet-300"
-                        : "bg-violet-50 border-violet-200 text-violet-700"
-                      : ticket.status === "in_progress"
-                        ? isDark
-                          ? "bg-info/10 border-info/20 text-info"
-                          : "bg-info/5 border-info/20 text-info"
-                        : ticket.status === "assigned"
-                          ? isDark
-                            ? "bg-primary/10 border-primary/20 text-primary-light"
-                            : "bg-primary/5 border-primary/20 text-primary"
-                          : isDark
-                            ? "bg-[#21262d] border-[#30363d] text-slate-400"
-                            : "bg-slate-100 border-slate-200 text-slate-500"
-                }`}
-              >
-                {ticket.status === "closed" || ticket.status === "resolved"
-                  ? "DONE"
+          <div className="text-right mt-2 sm:mt-0">
+            <div
+              className={`text-[10px] font-black uppercase tracking-widest mb-1.5 px-4 py-1.5 rounded-full border inline-block ${ticket.status === "closed" || ticket.status === "resolved"
+                  ? isDark
+                    ? "bg-success/10 border-success/20 text-success"
+                    : "bg-success/5 border-success/20 text-success"
                   : ticket.status === "pending_validation"
-                    ? "WAITING FOR CHECK"
-                    : ticket.status.replace("_", " ")}
-              </div>
-              {ticket.sla_deadline && ticket.status !== "closed" && (
-                <div className="flex items-center justify-end mt-1">
-                  {ticket.sla_breached ? (
-                    <div className="flex flex-col items-end gap-0.5">
-                      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-500 border border-rose-600 rounded-lg animate-pulse">
-                        <AlertTriangle className="w-3 h-3 text-white" />
-                        <span className="text-[10px] font-black text-white uppercase tracking-widest">
-                          Service Level Agreement Breached
-                        </span>
-                      </div>
-                      <span
-                        className={`text-[10px] font-bold ${isDark ? "text-rose-400" : "text-rose-500"}`}
-                      >
-                        {(() => {
-                          const breachTime = parseDate(
-                            ticket.sla_deadline,
-                          )?.getTime() || 0;
-                          const diff = Date.now() - breachTime;
-                          const hrs = Math.floor(diff / 3600000);
-                          const mins = Math.floor((diff % 3600000) / 60000);
-                          return hrs > 0
-                            ? `${hrs}h ${mins}m overdue`
-                            : `${mins}m overdue`;
-                        })()}
+                    ? isDark
+                      ? "bg-violet-900/30 border-violet-700/40 text-violet-300"
+                      : "bg-violet-50 border-violet-200 text-violet-700"
+                    : ticket.status === "in_progress"
+                      ? isDark
+                        ? "bg-info/10 border-info/20 text-info"
+                        : "bg-info/5 border-info/20 text-info"
+                      : ticket.status === "assigned"
+                        ? isDark
+                          ? "bg-primary/10 border-primary/20 text-primary-light"
+                          : "bg-primary/5 border-primary/20 text-primary"
+                        : isDark
+                          ? "bg-[#21262d] border-[#30363d] text-slate-400"
+                          : "bg-slate-100 border-slate-200 text-slate-500"
+                }`}
+            >
+              {ticket.status === "closed" || ticket.status === "resolved"
+                ? "DONE"
+                : ticket.status === "pending_validation"
+                  ? "WAITING FOR CHECK"
+                  : ticket.status.replace("_", " ")}
+            </div>
+            {ticket.sla_deadline && ticket.status !== "closed" && (
+              <div className="flex items-center justify-end mt-1">
+                {ticket.sla_breached ? (
+                  <div className="flex flex-col items-end gap-0.5">
+                    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-500 border border-rose-600 rounded-lg animate-pulse">
+                      <AlertTriangle className="w-3 h-3 text-white" />
+                      <span className="text-[10px] font-black text-white uppercase tracking-widest">
+                        Service Level Agreement Breached
                       </span>
                     </div>
-                  ) : (
-                    <div
-                      className={`flex items-center gap-1 text-xs font-bold ${isDark ? "text-slate-500" : "text-slate-400"}`}
+                    <span
+                      className={`text-[10px] font-bold ${isDark ? "text-rose-400" : "text-rose-500"}`}
                     >
-                      <Clock className="w-3 h-3" />
-                      {`Due ${parseDate(ticket.sla_deadline)?.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+                      {(() => {
+                        const breachTime = parseDate(
+                          ticket.sla_deadline,
+                        )?.getTime() || 0;
+                        const diff = Date.now() - breachTime;
+                        const hrs = Math.floor(diff / 3600000);
+                        const mins = Math.floor((diff % 3600000) / 60000);
+                        return hrs > 0
+                          ? `${hrs}h ${mins}m overdue`
+                          : `${mins}m overdue`;
+                      })()}
+                    </span>
+                  </div>
+                ) : (
+                  <div
+                    className={`flex items-center gap-1 text-xs font-bold ${isDark ? "text-slate-500" : "text-slate-400"}`}
+                  >
+                    <Clock className="w-3 h-3" />
+                    {`Due ${parseDate(ticket.sla_deadline)?.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
 
 
 
@@ -2126,7 +2123,7 @@ export default function TicketDetailPage() {
                 </button>
               </>
             )}
-      </div>
+          </div>
 
           {/* Quick Navigation Bar */}
           <div className="flex items-center gap-6 mt-4 pb-2 overflow-x-auto no-scrollbar border-t border-slate-100 dark:border-[#21262d] pt-4">
@@ -2183,24 +2180,22 @@ export default function TicketDetailPage() {
             {/* Vendor Procurement Status Banner */}
             {Boolean((ticket as any)?.needs_vendor_procurement) && (
               <div
-                className={`p-6 rounded-3xl border shadow-sm transition-all ${
-                  (ticket as any)?.vendor_procurement_status === "vendor_arranged"
+                className={`p-6 rounded-3xl border shadow-sm transition-all ${(ticket as any)?.vendor_procurement_status === "vendor_arranged"
                     ? isDark
                       ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
                       : "bg-emerald-50 border-emerald-200 text-emerald-900"
                     : isDark
-                    ? "bg-amber-500/10 border-amber-500/30 text-amber-300"
-                    : "bg-amber-50 border-amber-200 text-amber-900"
-                }`}
+                      ? "bg-amber-500/10 border-amber-500/30 text-amber-300"
+                      : "bg-amber-50 border-amber-200 text-amber-900"
+                  }`}
               >
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex items-start gap-3">
                     <div
-                      className={`p-2.5 rounded-2xl ${
-                        (ticket as any)?.vendor_procurement_status === "vendor_arranged"
+                      className={`p-2.5 rounded-2xl ${(ticket as any)?.vendor_procurement_status === "vendor_arranged"
                           ? "bg-emerald-500 text-white"
                           : "bg-amber-500 text-white"
-                      } shadow-md`}
+                        } shadow-md`}
                     >
                       <ShoppingBag className="w-5 h-5" />
                     </div>
@@ -2219,11 +2214,10 @@ export default function TicketDetailPage() {
                       </p>
                     </div>
                   </div>
-                  <span className={`px-2.5 py-1 text-[10px] font-black uppercase tracking-widest rounded-lg border ${
-                    (ticket as any)?.vendor_procurement_status === "vendor_arranged"
+                  <span className={`px-2.5 py-1 text-[10px] font-black uppercase tracking-widest rounded-lg border ${(ticket as any)?.vendor_procurement_status === "vendor_arranged"
                       ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-600 dark:text-emerald-300"
                       : "bg-amber-500/20 border-amber-500/40 text-amber-600 dark:text-amber-300"
-                  }`}>
+                    }`}>
                     {(ticket as any)?.vendor_procurement_status === "vendor_arranged" ? "Arranged" : "Pending Vendor"}
                   </span>
                 </div>
@@ -2952,19 +2946,19 @@ export default function TicketDetailPage() {
                     {escalationLogs.map((log) => {
                       const fromInitials = log.from_employee?.full_name
                         ? log.from_employee.full_name
-                            .split(" ")
-                            .map((n: string) => n[0])
-                            .join("")
-                            .slice(0, 2)
-                            .toUpperCase()
+                          .split(" ")
+                          .map((n: string) => n[0])
+                          .join("")
+                          .slice(0, 2)
+                          .toUpperCase()
                         : "?";
                       const toInitials = log.to_employee?.full_name
                         ? log.to_employee.full_name
-                            .split(" ")
-                            .map((n: string) => n[0])
-                            .join("")
-                            .slice(0, 2)
-                            .toUpperCase()
+                          .split(" ")
+                          .map((n: string) => n[0])
+                          .join("")
+                          .slice(0, 2)
+                          .toUpperCase()
                         : "?";
                       const reasonLabel =
                         log.reason === "timeout"
@@ -3108,8 +3102,7 @@ export default function TicketDetailPage() {
                       <div className="absolute left-[15px] top-8 bottom-[-40px] w-0.5 bg-slate-100 dark:bg-[#30363d] last:hidden" />
 
                       <div
-                        className={`absolute left-0 top-0 w-8 h-8 rounded-xl flex items-center justify-center text-white shadow-lg z-10 transition-transform hover:scale-110 ${
-                          req.status === "pending_quotation" || req.status === "pending_approval"
+                        className={`absolute left-0 top-0 w-8 h-8 rounded-xl flex items-center justify-center text-white shadow-lg z-10 transition-transform hover:scale-110 ${req.status === "pending_quotation" || req.status === "pending_approval"
                             ? "bg-amber-500"
                             : req.status === "quoted" || req.status === "approved"
                               ? "bg-blue-500"
@@ -3120,7 +3113,7 @@ export default function TicketDetailPage() {
                                   : req.status === "rejected"
                                     ? "bg-rose-500"
                                     : "bg-slate-500"
-                        }`}
+                          }`}
                       >
                         {req.status === "delivered" ? (
                           <CheckCircle2 className="w-4 h-4" />
@@ -3154,10 +3147,10 @@ export default function TicketDetailPage() {
                               {req.service_description && ` • ${req.service_description.slice(0, 40)}${req.service_description.length > 40 ? '...' : ''}`}
                               {req.status === "pending_quotation" && ` • Awaiting quotation`}
                               {req.status === "pending_approval" && (
-                                req.target_approver_names?.length > 0 
-                                  ? ` • Pending from ${req.target_approver_names.join(' or ')}` 
-                                  : req.target_approver?.full_name 
-                                    ? ` • Pending from ${req.target_approver.full_name}` 
+                                req.target_approver_names?.length > 0
+                                  ? ` • Pending from ${req.target_approver_names.join(' or ')}`
+                                  : req.target_approver?.full_name
+                                    ? ` • Pending from ${req.target_approver.full_name}`
                                     : ''
                               )}
                               {req.status === "quoted" && req.vendor_name && ` • Vendor: ${req.vendor_name}`}
@@ -3170,8 +3163,7 @@ export default function TicketDetailPage() {
                           </div>
                           <div className="flex items-center gap-3">
                             <span
-                              className={`text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded-lg border ${
-                                req.status === "pending_quotation" || req.status === "pending_approval"
+                              className={`text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded-lg border ${req.status === "pending_quotation" || req.status === "pending_approval"
                                   ? "bg-amber-500/10 border-amber-500/20 text-amber-500"
                                   : req.status === "quoted" || req.status === "approved"
                                     ? "bg-blue-500/10 border-blue-500/20 text-blue-500"
@@ -3182,7 +3174,7 @@ export default function TicketDetailPage() {
                                         : req.status === "rejected"
                                           ? "bg-rose-500/10 border-rose-500/20 text-rose-500"
                                           : "bg-slate-500/10 border-slate-500/20 text-slate-500"
-                              }`}
+                                }`}
                             >
                               {req.status === 'pending_quotation' ? 'Pending Quotation' : req.status.replace("_", " ")}
                             </span>
@@ -3250,22 +3242,20 @@ export default function TicketDetailPage() {
                                 className="flex-1 flex flex-col gap-1.5"
                               >
                                 <div
-                                  className={`h-1.5 rounded-full transition-all duration-500 ${
-                                    isActive
+                                  className={`h-1.5 rounded-full transition-all duration-500 ${isActive
                                       ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.3)]"
                                       : isDark
                                         ? "bg-[#21262d]"
                                         : "bg-slate-100"
-                                  } ${isCurrent ? "animate-pulse" : ""}`}
+                                    } ${isCurrent ? "animate-pulse" : ""}`}
                                 />
                                 <span
-                                  className={`text-[8px] font-black uppercase tracking-tighter text-center transition-colors ${
-                                    isActive
+                                  className={`text-[8px] font-black uppercase tracking-tighter text-center transition-colors ${isActive
                                       ? "text-emerald-500"
                                       : isDark
                                         ? "text-slate-600"
                                         : "text-slate-300"
-                                  }`}
+                                    }`}
                                 >
                                   {labelMap[s] || s.split("_")[0]}
                                 </span>
@@ -3299,13 +3289,12 @@ export default function TicketDetailPage() {
                             else newSet.add(req.id);
                             setExpandedMaterials(newSet);
                           }}
-                          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
-                            expandedMaterials.has(req.id)
+                          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${expandedMaterials.has(req.id)
                               ? "bg-slate-900 text-white"
                               : isDark
                                 ? "bg-[#21262d] text-slate-400 hover:text-white"
                                 : "bg-slate-50 text-slate-500 hover:bg-slate-100"
-                          }`}
+                            }`}
                         >
                           <Package className="w-3.5 h-3.5" />
                           {expandedMaterials.has(req.id)
@@ -3362,39 +3351,39 @@ export default function TicketDetailPage() {
                           </div>
                         )}
                       </div>
-                      
+
                       {/* Delivery Action & Photos */}
                       {(req.status === 'ordered' || req.status === 'approved') && (
                         userRole === 'admin' || userRole === 'procurement' || req.requested_by === userId
                       ) && (
-                        <div className="mt-4 pt-4 border-t border-slate-100 dark:border-[#30363d] space-y-3">
-                          <div>
-                            <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">
-                              Upload Received Item Photos
-                            </label>
-                            <input
-                              type="file"
-                              multiple
-                              accept="image/*"
-                              onChange={(e) => setTicketDeliveryFiles(prev => ({ ...prev, [req.id]: e.target.files }))}
-                              className="w-full text-xs text-slate-600 dark:text-slate-300 file:mr-3 file:py-1 file:px-2.5 file:rounded-lg file:border-0 file:text-[10px] file:font-bold file:uppercase file:bg-emerald-600 file:text-white hover:file:bg-emerald-700 cursor-pointer"
-                            />
-                            {ticketDeliveryFiles[req.id] && (ticketDeliveryFiles[req.id]?.length || 0) > 0 && (
-                              <p className="text-[10px] text-emerald-600 font-semibold mt-1">
-                                {ticketDeliveryFiles[req.id]?.length} photo(s) selected
-                              </p>
-                            )}
+                          <div className="mt-4 pt-4 border-t border-slate-100 dark:border-[#30363d] space-y-3">
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">
+                                Upload Received Item Photos
+                              </label>
+                              <input
+                                type="file"
+                                multiple
+                                accept="image/*"
+                                onChange={(e) => setTicketDeliveryFiles(prev => ({ ...prev, [req.id]: e.target.files }))}
+                                className="w-full text-xs text-slate-600 dark:text-slate-300 file:mr-3 file:py-1 file:px-2.5 file:rounded-lg file:border-0 file:text-[10px] file:font-bold file:uppercase file:bg-emerald-600 file:text-white hover:file:bg-emerald-700 cursor-pointer"
+                              />
+                              {ticketDeliveryFiles[req.id] && (ticketDeliveryFiles[req.id]?.length || 0) > 0 && (
+                                <p className="text-[10px] text-emerald-600 font-semibold mt-1">
+                                  {ticketDeliveryFiles[req.id]?.length} photo(s) selected
+                                </p>
+                              )}
+                            </div>
+                            <button
+                              onClick={() => handleTicketMarkDelivered(req.id)}
+                              disabled={uploadingDeliveryReqId === req.id}
+                              className="w-full bg-[#238636] hover:bg-[#2ea043] text-white font-semibold py-2 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors shadow-md disabled:opacity-50"
+                            >
+                              {uploadingDeliveryReqId === req.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                              MARK AS DELIVERED / RECEIVED
+                            </button>
                           </div>
-                          <button
-                            onClick={() => handleTicketMarkDelivered(req.id)}
-                            disabled={uploadingDeliveryReqId === req.id}
-                            className="w-full bg-[#238636] hover:bg-[#2ea043] text-white font-semibold py-2 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors shadow-md disabled:opacity-50"
-                          >
-                            {uploadingDeliveryReqId === req.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                            MARK AS DELIVERED / RECEIVED
-                          </button>
-                        </div>
-                      )}
+                        )}
 
                       {req.delivery_photos && req.delivery_photos.length > 0 && (
                         <div className="mt-4 pt-4 border-t border-slate-100 dark:border-[#30363d] space-y-2">
@@ -3410,7 +3399,7 @@ export default function TicketDetailPage() {
                           </div>
                         </div>
                       )}
-                      
+
                       <ProcurementComparativeFlow
                         request={req}
                         isAdmin={userRole === 'admin'}
@@ -3517,9 +3506,9 @@ export default function TicketDetailPage() {
                 {/* Procurement & Assignment History */}
                 {activities
                   .filter(
-                    (a) => 
-                      a.action === "reassigned" || 
-                      a.action === "assigned" || 
+                    (a) =>
+                      a.action === "reassigned" ||
+                      a.action === "assigned" ||
                       a.action.startsWith("procurement_") ||
                       a.action.startsWith("vendor_procurement_"),
                   )
@@ -3545,18 +3534,18 @@ export default function TicketDetailPage() {
                         <p
                           className={`text-sm font-bold ${isDark ? "text-white" : "text-slate-900"}`}
                         >
-                          {isProcurement 
-                            ? (act.action === "procurement_requested" 
-                                ? "Material Requested" 
-                                : act.action === "vendor_procurement_tagged"
+                          {isProcurement
+                            ? (act.action === "procurement_requested"
+                              ? "Material Requested"
+                              : act.action === "vendor_procurement_tagged"
                                 ? "Vendor Tagged"
                                 : act.action === "vendor_procurement_updated"
-                                ? "Vendor Request Updated"
-                                : act.action === "vendor_procurement_removed"
-                                ? "Vendor Request Removed"
-                                : act.action === "vendor_procurement_arranged" || act.action === "vendor_procurement_arranged_updated"
-                                ? "Vendor Arranged"
-                                : "Procurement Update") 
+                                  ? "Vendor Request Updated"
+                                  : act.action === "vendor_procurement_removed"
+                                    ? "Vendor Request Removed"
+                                    : act.action === "vendor_procurement_arranged" || act.action === "vendor_procurement_arranged_updated"
+                                      ? "Vendor Arranged"
+                                      : "Procurement Update")
                             : "Assignment Update"}
                         </p>
                         <p
@@ -3565,17 +3554,17 @@ export default function TicketDetailPage() {
                           {isProcurement ? (
                             <>
                               <span className="font-bold">{act.user?.full_name || "System"}</span>{" "}
-                              {act.action === "vendor_procurement_tagged" 
+                              {act.action === "vendor_procurement_tagged"
                                 ? "tagged Procurement for vendor arrangement"
                                 : act.action === "vendor_procurement_updated"
-                                ? "updated vendor procurement requirements"
-                                : act.action === "vendor_procurement_removed"
-                                ? "cancelled vendor procurement request"
-                                : act.action === "vendor_procurement_arranged" || act.action === "vendor_procurement_arranged_updated"
-                                ? "arranged an external vendor for this ticket"
-                                : act.action === "procurement_requested" 
-                                ? "created a material request" 
-                                : act.action.replace("procurement_", "").replace(/_/g, " ") + " the request"}
+                                  ? "updated vendor procurement requirements"
+                                  : act.action === "vendor_procurement_removed"
+                                    ? "cancelled vendor procurement request"
+                                    : act.action === "vendor_procurement_arranged" || act.action === "vendor_procurement_arranged_updated"
+                                      ? "arranged an external vendor for this ticket"
+                                      : act.action === "procurement_requested"
+                                        ? "created a material request"
+                                        : act.action.replace("procurement_", "").replace(/_/g, " ") + " the request"}
                               {act.notes && (
                                 <span className="ml-1 text-amber-500 font-bold">: "{act.notes}"</span>
                               )}
@@ -3601,42 +3590,37 @@ export default function TicketDetailPage() {
                 {Boolean((ticket as any)?.needs_vendor_procurement) && (
                   <div className="relative pl-12">
                     <div
-                      className={`absolute left-0 top-0 mt-0.5 z-10 w-8 h-8 rounded-full flex items-center justify-center ring-4 ${
-                        isDark ? "ring-[#161b22]" : "ring-white"
-                      } shadow-lg ${
-                        (ticket as any)?.vendor_procurement_status === "vendor_arranged"
+                      className={`absolute left-0 top-0 mt-0.5 z-10 w-8 h-8 rounded-full flex items-center justify-center ring-4 ${isDark ? "ring-[#161b22]" : "ring-white"
+                        } shadow-lg ${(ticket as any)?.vendor_procurement_status === "vendor_arranged"
                           ? "bg-emerald-500 text-white shadow-emerald-500/20"
                           : "bg-amber-500 text-white shadow-amber-500/20 animate-pulse"
-                      }`}
+                        }`}
                     >
                       <ShoppingBag className="w-4 h-4" />
                     </div>
                     <p
-                      className={`text-[10px] font-black uppercase tracking-widest ${
-                        (ticket as any)?.vendor_procurement_status === "vendor_arranged"
+                      className={`text-[10px] font-black uppercase tracking-widest ${(ticket as any)?.vendor_procurement_status === "vendor_arranged"
                           ? "text-emerald-500"
                           : "text-amber-500"
-                      } mb-1`}
+                        } mb-1`}
                     >
                       {(ticket as any)?.vendor_procurement_status === "vendor_arranged"
                         ? parseDate((ticket as any)?.vendor_arranged_at)?.toLocaleString() || "VENDOR ARRANGED"
                         : parseDate((ticket as any)?.vendor_tagged_at)?.toLocaleString() || "VENDOR REQUESTED"}
                     </p>
                     <p
-                      className={`text-sm font-bold ${
-                        isDark ? "text-white" : "text-slate-900"
-                      }`}
+                      className={`text-sm font-bold ${isDark ? "text-white" : "text-slate-900"
+                        }`}
                     >
                       {(ticket as any)?.vendor_procurement_status === "vendor_arranged"
                         ? "Vendor Arranged by Procurement"
                         : "Vendor Arrangement Requested"}
                     </p>
                     <p
-                      className={`text-xs ${
-                        (ticket as any)?.vendor_procurement_status === "vendor_arranged"
+                      className={`text-xs ${(ticket as any)?.vendor_procurement_status === "vendor_arranged"
                           ? isDark ? "text-emerald-400" : "text-emerald-600"
                           : isDark ? "text-amber-400" : "text-amber-600"
-                      } font-medium mt-0.5`}
+                        } font-medium mt-0.5`}
                     >
                       {(ticket as any)?.vendor_procurement_status === "vendor_arranged"
                         ? (ticket as any)?.vendor_arranged_details || "External vendor assigned to visit site."
@@ -4002,78 +3986,78 @@ export default function TicketDetailPage() {
                                   {userNameMap[act.new_value!] || act.new_value}
                                 </span>
                               </>
-                             ) : (act.action.startsWith("procurement_") || act.action.startsWith("vendor_procurement_")) ? (
-                                <>
-                                  <span className={`font-bold ${isDark ? "text-white" : "text-slate-900"}`}>
-                                    {act.user?.full_name || "System"}:
-                                  </span>{" "}
-                                  <span className="text-amber-500 font-bold">
-                                    {act.action === "vendor_procurement_tagged"
-                                      ? "tagged Procurement for vendor arrangement"
-                                      : act.action === "vendor_procurement_updated"
+                            ) : (act.action.startsWith("procurement_") || act.action.startsWith("vendor_procurement_")) ? (
+                              <>
+                                <span className={`font-bold ${isDark ? "text-white" : "text-slate-900"}`}>
+                                  {act.user?.full_name || "System"}:
+                                </span>{" "}
+                                <span className="text-amber-500 font-bold">
+                                  {act.action === "vendor_procurement_tagged"
+                                    ? "tagged Procurement for vendor arrangement"
+                                    : act.action === "vendor_procurement_updated"
                                       ? "updated vendor procurement requirements"
                                       : act.action === "vendor_procurement_removed"
-                                      ? "cancelled vendor procurement request"
-                                      : act.action === "vendor_procurement_arranged" || act.action === "vendor_procurement_arranged_updated"
-                                      ? "arranged external vendor"
-                                      : act.action === "procurement_requested"
-                                      ? "material request created"
-                                      : act.action.replace("procurement_", "").replace(/_/g, " ")}
+                                        ? "cancelled vendor procurement request"
+                                        : act.action === "vendor_procurement_arranged" || act.action === "vendor_procurement_arranged_updated"
+                                          ? "arranged external vendor"
+                                          : act.action === "procurement_requested"
+                                            ? "material request created"
+                                            : act.action.replace("procurement_", "").replace(/_/g, " ")}
+                                </span>
+                                {act.notes && (
+                                  <span className={`ml-1 italic ${isDark ? "text-slate-400" : "text-slate-600"}`}>
+                                    — "{act.notes}"
                                   </span>
-                                  {act.notes && (
-                                    <span className={`ml-1 italic ${isDark ? "text-slate-400" : "text-slate-600"}`}>
-                                      — "{act.notes}"
-                                    </span>
-                                  )}
-                                  {act.new_value && (
-                                    <span className={`ml-1 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
-                                      {act.new_value.startsWith("http") ? (
-                                        <a 
-                                          href={act.new_value} 
-                                          target="_blank" 
-                                          rel="noopener noreferrer" 
-                                          className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-500/10 text-blue-500 rounded-md hover:bg-blue-500/20 transition-colors font-bold"
-                                        >
-                                          <Eye className="w-3 h-3" />
-                                          View Attachment
-                                        </a>
-                                      ) : (
-                                        <>: {act.new_value.replace(/\.?\s*Quoted Price:\s*[\d.]+/gi, '').replace(/\.?\s*Vendor:\s*N\/A/gi, '')}</>
-                                      )}
-                                    </span>
-                                  )}
-                                </>
-                              ) : (
-                                <>
-                                  <span className={`font-bold ${isDark ? "text-white" : "text-slate-900"}`}>
-                                    {act.user?.full_name || "System"}:
-                                  </span>{" "}
-                                  <span
-                                    className={`${act.action === "force_closed" ? "text-rose-500 font-black uppercase tracking-tighter" : ""}`}
-                                  >
-                                    {act.action.replace(/_/g, " ")}
+                                )}
+                                {act.new_value && (
+                                  <span className={`ml-1 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
+                                    {act.new_value.startsWith("http") ? (
+                                      <a
+                                        href={act.new_value}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-500/10 text-blue-500 rounded-md hover:bg-blue-500/20 transition-colors font-bold"
+                                      >
+                                        <Eye className="w-3 h-3" />
+                                        View Attachment
+                                      </a>
+                                    ) : (
+                                      <>: {act.new_value.replace(/\.?\s*Quoted Price:\s*[\d.]+/gi, '').replace(/\.?\s*Vendor:\s*N\/A/gi, '')}</>
+                                    )}
                                   </span>
-                                  {act.new_value && (
-                                    <span className="text-success font-bold ml-1">
-                                      → {userNameMap[act.new_value] || act.new_value}
-                                    </span>
-                                  )}
-                                </>
-                              )}
+                                )}
+                              </>
+                            ) : (
+                              <>
+                                <span className={`font-bold ${isDark ? "text-white" : "text-slate-900"}`}>
+                                  {act.user?.full_name || "System"}:
+                                </span>{" "}
+                                <span
+                                  className={`${act.action === "force_closed" ? "text-rose-500 font-black uppercase tracking-tighter" : ""}`}
+                                >
+                                  {act.action.replace(/_/g, " ")}
+                                </span>
+                                {act.new_value && (
+                                  <span className="text-success font-bold ml-1">
+                                    → {userNameMap[act.new_value] || act.new_value}
+                                  </span>
+                                )}
+                              </>
+                            )}
                           </p>
                         </div>
-                      <span
-                        className={`text-[9px] ${isDark ? "text-slate-600" : "text-slate-400"} font-bold uppercase whitespace-nowrap`}
-                      >
-                        {parseDate(act.created_at)?.toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </span>
-                        </div>
-                      );
-                    })}
-                  </div>
+                        <span
+                          className={`text-[9px] ${isDark ? "text-slate-600" : "text-slate-400"} font-bold uppercase whitespace-nowrap`}
+                        >
+                          {parseDate(act.created_at)?.toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           </div>
@@ -4115,7 +4099,7 @@ export default function TicketDetailPage() {
                 {comments.map((comment) => {
                   if (comment.is_internal && userRole === "tenant") return null;
                   const isMe = comment.user_id === userId;
-                  
+
                   // Helper to capitalize names
                   const formatName = (name: string) => {
                     if (!name) return "System";
@@ -4125,8 +4109,8 @@ export default function TicketDetailPage() {
                   // WhatsApp Group Chat Name Colors
                   const getParticipantColor = (name: string) => {
                     const colors = [
-                      'text-[#ff5252]', 'text-[#2196f3]', 'text-[#4caf50]', 
-                      'text-[#ff9800]', 'text-[#9c27b0]', 'text-[#00bcd4]', 
+                      'text-[#ff5252]', 'text-[#2196f3]', 'text-[#4caf50]',
+                      'text-[#ff9800]', 'text-[#9c27b0]', 'text-[#00bcd4]',
                       'text-[#e91e63]', 'text-[#673ab7]', 'text-[#3f51b5]',
                       'text-[#8bc34a]', 'text-[#ffc107]', 'text-[#ff5722]'
                     ];
@@ -4138,8 +4122,8 @@ export default function TicketDetailPage() {
                   };
 
                   // Detect system/material messages
-                  const isSystemMessage = 
-                    comment.comment.includes("Material requested") || 
+                  const isSystemMessage =
+                    comment.comment.includes("Material requested") ||
                     comment.comment.includes("Material Request Status Updated") ||
                     comment.comment.includes("Ticket Status Updated") ||
                     comment.comment.startsWith("STATUS CHANGE:") ||
@@ -4148,9 +4132,8 @@ export default function TicketDetailPage() {
                   if (isSystemMessage) {
                     return (
                       <div key={comment.id} className="w-full flex justify-center py-1">
-                        <div className={`px-3 py-1 rounded-lg text-center shadow-sm text-[11px] font-bold uppercase tracking-tighter ${
-                          isDark ? "bg-[#182229] text-amber-200/70 border border-white/5" : "bg-white/80 backdrop-blur-sm text-slate-500 border border-slate-200"
-                        }`}>
+                        <div className={`px-3 py-1 rounded-lg text-center shadow-sm text-[11px] font-bold uppercase tracking-tighter ${isDark ? "bg-[#182229] text-amber-200/70 border border-white/5" : "bg-white/80 backdrop-blur-sm text-slate-500 border border-slate-200"
+                          }`}>
                           {comment.comment}
                         </div>
                       </div>
@@ -4163,19 +4146,18 @@ export default function TicketDetailPage() {
                       className={`w-full flex ${isMe ? "justify-end" : "justify-start"} animate-in fade-in slide-in-from-bottom-1 duration-300`}
                     >
                       <div
-                        className={`relative max-w-[85%] px-3 py-1.5 rounded-[12px] shadow-sm flex flex-col ${
-                          isMe
+                        className={`relative max-w-[85%] px-3 py-1.5 rounded-[12px] shadow-sm flex flex-col ${isMe
                             ? `bg-[#dcf8c6] dark:bg-[#005c4b] text-slate-800 dark:text-slate-100 rounded-tr-none`
                             : isDark
                               ? "bg-[#202c33] text-slate-200 rounded-tl-none"
                               : "bg-white text-slate-800 rounded-tl-none border border-slate-200/50"
-                        }`}
+                          }`}
                       >
                         {/* Sender name for group-like chat */}
                         <span className={`text-[11px] font-bold mb-0.5 ${isMe ? (isDark ? "text-emerald-400" : "text-emerald-600") : getParticipantColor(comment.user?.full_name || "Unknown")}`}>
                           {isMe ? "You" : formatName(comment.user?.full_name || "Unknown")}
                         </span>
-                        
+
                         <div className="flex flex-wrap items-end gap-x-4 gap-y-1">
                           <p className={`text-[14px] font-medium grow leading-relaxed ${isMe ? "text-slate-900 dark:text-white" : isDark ? "text-slate-100" : "text-slate-900"}`}>
                             {comment.comment}
@@ -4255,10 +4237,10 @@ export default function TicketDetailPage() {
                           u.full_name?.toLowerCase().includes(mentionSearch) ||
                           u.email?.toLowerCase().includes(mentionSearch),
                       ).length === 0 && (
-                        <div className="p-4 text-center text-xs text-slate-500 italic">
-                          No procurement users match search
-                        </div>
-                      )}
+                          <div className="p-4 text-center text-xs text-slate-500 italic">
+                            No procurement users match search
+                          </div>
+                        )}
                     </div>
                   </div>
                 )}
@@ -4281,15 +4263,14 @@ export default function TicketDetailPage() {
                       className={`flex-1 min-w-0 bg-transparent px-1 py-1 text-[15px] font-medium focus:outline-none placeholder:text-slate-400 ${isDark ? "text-white" : "text-black"}`}
                     />
                   </div>
-                  
+
                   <button
                     onClick={handlePostComment}
                     disabled={!commentText.trim()}
-                    className={`w-11 h-11 flex-none rounded-full flex items-center justify-center shadow-lg transition-all ${
-                      commentText.trim() 
-                        ? "bg-primary text-white" 
+                    className={`w-11 h-11 flex-none rounded-full flex items-center justify-center shadow-lg transition-all ${commentText.trim()
+                        ? "bg-primary text-white"
                         : "bg-primary opacity-50 text-white cursor-not-allowed"
-                    }`}
+                      }`}
                   >
                     <ArrowRight className="w-5 h-5" />
                   </button>
@@ -4449,11 +4430,10 @@ export default function TicketDetailPage() {
                     value={resolverSearch}
                     onChange={(e) => setResolverSearch(e.target.value)}
                     placeholder="Search technician by name or role..."
-                    className={`w-full pl-10 pr-9 py-2.5 rounded-xl border text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all ${
-                      isDark
+                    className={`w-full pl-10 pr-9 py-2.5 rounded-xl border text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all ${isDark
                         ? "bg-[#0d1117] border-[#30363d] text-white placeholder-slate-500"
                         : "bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400"
-                    }`}
+                      }`}
                   />
                   {resolverSearch && (
                     <button
@@ -4478,24 +4458,22 @@ export default function TicketDetailPage() {
                       <div
                         key={r.user_id}
                         onClick={() => setSelectedResolver(r.user_id)}
-                        className={`p-3 rounded-2xl border-2 transition-all cursor-pointer ${
-                          selectedResolver === r.user_id
+                        className={`p-3 rounded-2xl border-2 transition-all cursor-pointer ${selectedResolver === r.user_id
                             ? "bg-primary/10 border-primary text-white"
                             : isDark
                               ? "bg-[#0d1117] border-[#30363d] text-slate-300 hover:border-slate-600"
                               : "bg-white border-slate-200 text-slate-700 hover:border-slate-300 shadow-sm"
-                        }`}
+                          }`}
                       >
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-3 min-w-0">
                             <div
-                              className={`w-9 h-9 rounded-xl flex items-center justify-center font-black text-xs shrink-0 ${
-                                selectedResolver === r.user_id
+                              className={`w-9 h-9 rounded-xl flex items-center justify-center font-black text-xs shrink-0 ${selectedResolver === r.user_id
                                   ? "bg-primary text-white"
                                   : isDark
                                     ? "bg-[#21262d] text-slate-300"
                                     : "bg-slate-100 text-slate-700"
-                              }`}
+                                }`}
                             >
                               {r.user?.full_name?.[0]?.toUpperCase() || "T"}
                             </div>
@@ -4520,14 +4498,14 @@ export default function TicketDetailPage() {
                     const query = resolverSearch.toLowerCase().trim();
                     return !query || name.includes(query) || role.includes(query);
                   }).length === 0 && (
-                    <div
-                      className={`text-center py-8 text-xs ${isDark ? "text-slate-500" : "text-slate-400"} italic`}
-                    >
-                      {resolverSearch
-                        ? `No technicians matching "${resolverSearch}"`
-                        : "No technicians detected for this property."}
-                    </div>
-                  )}
+                      <div
+                        className={`text-center py-8 text-xs ${isDark ? "text-slate-500" : "text-slate-400"} italic`}
+                      >
+                        {resolverSearch
+                          ? `No technicians matching "${resolverSearch}"`
+                          : "No technicians detected for this property."}
+                      </div>
+                    )}
                 </div>
 
                 <div className="flex gap-3">
@@ -4825,7 +4803,7 @@ export default function TicketDetailPage() {
                   {comments.map((comment) => {
                     if (comment.is_internal && userRole === "tenant") return null;
                     const isMe = comment.user_id === userId;
-                    
+
                     const formatName = (name: string) => {
                       if (!name) return "System";
                       return name.toLowerCase().split(' ').map(s => s.charAt(0).toUpperCase() + s.substring(1)).join(' ');
@@ -4833,8 +4811,8 @@ export default function TicketDetailPage() {
 
                     const getParticipantColor = (name: string) => {
                       const colors = [
-                        'text-[#ff5252]', 'text-[#2196f3]', 'text-[#4caf50]', 
-                        'text-[#ff9800]', 'text-[#9c27b0]', 'text-[#00bcd4]', 
+                        'text-[#ff5252]', 'text-[#2196f3]', 'text-[#4caf50]',
+                        'text-[#ff9800]', 'text-[#9c27b0]', 'text-[#00bcd4]',
                         'text-[#e91e63]', 'text-[#673ab7]', 'text-[#3f51b5]',
                         'text-[#8bc34a]', 'text-[#ffc107]', 'text-[#ff5722]'
                       ];
@@ -4845,8 +4823,8 @@ export default function TicketDetailPage() {
                       return colors[Math.abs(hash) % colors.length];
                     };
 
-                    const isSystemMessage = 
-                      comment.comment.includes("Material requested") || 
+                    const isSystemMessage =
+                      comment.comment.includes("Material requested") ||
                       comment.comment.includes("Material Request Status Updated") ||
                       comment.comment.includes("Ticket Status Updated") ||
                       comment.comment.startsWith("STATUS CHANGE:") ||
@@ -4855,9 +4833,8 @@ export default function TicketDetailPage() {
                     if (isSystemMessage) {
                       return (
                         <div key={comment.id} className="w-full flex justify-center py-1">
-                          <div className={`px-3 py-1 rounded-lg text-center shadow-sm text-[11px] font-bold uppercase tracking-tighter ${
-                            isDark ? "bg-[#182229] text-amber-200/70 border border-white/5" : "bg-white/80 backdrop-blur-sm text-slate-500 border border-slate-200"
-                          }`}>
+                          <div className={`px-3 py-1 rounded-lg text-center shadow-sm text-[11px] font-bold uppercase tracking-tighter ${isDark ? "bg-[#182229] text-amber-200/70 border border-white/5" : "bg-white/80 backdrop-blur-sm text-slate-500 border border-slate-200"
+                            }`}>
                             {comment.comment}
                           </div>
                         </div>
@@ -4870,18 +4847,17 @@ export default function TicketDetailPage() {
                         className={`w-full flex ${isMe ? "justify-end" : "justify-start"}`}
                       >
                         <div
-                          className={`relative max-w-[85%] px-3 py-1.5 rounded-[12px] shadow-sm flex flex-col ${
-                            isMe
+                          className={`relative max-w-[85%] px-3 py-1.5 rounded-[12px] shadow-sm flex flex-col ${isMe
                               ? `bg-[#dcf8c6] dark:bg-[#005c4b] text-slate-800 dark:text-slate-100 rounded-tr-none`
                               : isDark
                                 ? "bg-[#202c33] text-slate-200 rounded-tl-none"
                                 : "bg-white text-slate-800 rounded-tl-none border border-slate-200/50"
-                          }`}
+                            }`}
                         >
                           <span className={`text-[11px] font-bold mb-0.5 ${isMe ? (isDark ? "text-emerald-400" : "text-emerald-600") : getParticipantColor(comment.user?.full_name || "Unknown")}`}>
                             {isMe ? "You" : formatName(comment.user?.full_name || "Unknown")}
                           </span>
-                          
+
                           <div className="flex flex-wrap items-end gap-x-4 gap-y-1">
                             <p className={`text-[14px] font-medium grow leading-relaxed ${isMe ? "text-slate-900 dark:text-white" : isDark ? "text-slate-100" : "text-slate-900"}`}>
                               {comment.comment}
@@ -4963,9 +4939,8 @@ export default function TicketDetailPage() {
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
-              className={`w-full max-w-lg rounded-3xl p-6 shadow-2xl border ${
-                isDark ? "bg-[#161b22] border-[#30363d] text-white" : "bg-white border-slate-200 text-slate-900"
-              }`}
+              className={`w-full max-w-lg rounded-3xl p-6 shadow-2xl border ${isDark ? "bg-[#161b22] border-[#30363d] text-white" : "bg-white border-slate-200 text-slate-900"
+                }`}
             >
               <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-[#30363d]">
                 <div className="flex items-center gap-2.5">
@@ -5001,9 +4976,8 @@ export default function TicketDetailPage() {
                         setSelectedSkillGroupOverride(selectedCat.skill_group_id);
                       }
                     }}
-                    className={`w-full px-3 py-2.5 rounded-xl border text-xs font-semibold ${
-                      isDark ? "bg-[#0d1117] border-[#30363d] text-white" : "bg-slate-50 border-slate-200 text-slate-900"
-                    }`}
+                    className={`w-full px-3 py-2.5 rounded-xl border text-xs font-semibold ${isDark ? "bg-[#0d1117] border-[#30363d] text-white" : "bg-slate-50 border-slate-200 text-slate-900"
+                      }`}
                   >
                     <option value="">-- Choose Category --</option>
                     {availableCategories.map((cat) => (
@@ -5023,9 +4997,8 @@ export default function TicketDetailPage() {
                     value={overrideReason}
                     onChange={(e) => setOverrideReason(e.target.value)}
                     placeholder="e.g., Escalated to specialized vendor / Incorrect initial categorization"
-                    className={`w-full px-3 py-2.5 rounded-xl border text-xs font-medium ${
-                      isDark ? "bg-[#0d1117] border-[#30363d] text-white" : "bg-slate-50 border-slate-200 text-slate-900"
-                    }`}
+                    className={`w-full px-3 py-2.5 rounded-xl border text-xs font-medium ${isDark ? "bg-[#0d1117] border-[#30363d] text-white" : "bg-slate-50 border-slate-200 text-slate-900"
+                      }`}
                   />
                 </div>
               </div>
@@ -5033,9 +5006,8 @@ export default function TicketDetailPage() {
               <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100 dark:border-[#30363d]">
                 <button
                   onClick={() => setShowOverrideModal(false)}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold ${
-                    isDark ? "bg-[#21262d] text-slate-300 hover:bg-[#30363d]" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                  }`}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold ${isDark ? "bg-[#21262d] text-slate-300 hover:bg-[#30363d]" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                    }`}
                 >
                   Cancel
                 </button>

@@ -386,6 +386,254 @@ export const EmailService = {
         }
     },
 
+    async sendMeetingRoomReminderEmail({
+        emailTo,
+        roomName,
+        date,
+        startTime,
+        endTime,
+        propertyName,
+        requesterName,
+        requesterEmail,
+        reminderType = 'end',
+        remainingMinutes = 10,
+        comment,
+        customHtml
+    }: {
+        emailTo: string;
+        roomName: string;
+        date: string;
+        startTime: string;
+        endTime: string;
+        propertyName: string;
+        requesterName: string;
+        requesterEmail: string;
+        reminderType?: 'start' | 'end';
+        remainingMinutes?: number;
+        comment?: string | null;
+        customHtml?: string | null;
+    }) {
+        if (!process.env.SMTP_USER) {
+            console.warn('[EmailService] SMTP credentials not found, skipping email send.');
+            return false;
+        }
+
+        const formatTime12h = (timeStr: string) => {
+            if (!timeStr) return '';
+            const [hours, minutes] = timeStr.split(':');
+            let h = parseInt(hours, 10);
+            const ampm = h >= 12 ? 'PM' : 'AM';
+            h = h % 12;
+            h = h ? h : 12;
+            return `${h.toString().padStart(2, '0')}:${minutes} ${ampm}`;
+        };
+
+        const formattedStart = formatTime12h(startTime);
+        const formattedEnd = formatTime12h(endTime);
+
+        const formatDate = (d: string) => {
+            if (!d) return d;
+            const parts = d.split('-');
+            if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
+            return d;
+        };
+        const formattedDate = formatDate(date);
+
+        const isEnd = reminderType === 'end';
+        const subject = isEnd
+            ? `Reminder: Meeting in ${roomName} concludes in ${remainingMinutes} mins (${formattedEnd})`
+            : `Upcoming: Meeting in ${roomName} begins in ${remainingMinutes} mins (${formattedStart})`;
+
+        const badgeBg = isEnd ? '#fff7ed' : '#eff6ff';
+        const badgeBorder = isEnd ? '#fed7aa' : '#bfdbfe';
+        const badgeColor = isEnd ? '#c2410c' : '#1d4ed8';
+        const badgeIcon = isEnd ? '⏳' : '🗓️';
+        const badgeText = isEnd
+            ? `Ending Soon: ${remainingMinutes} Minutes Remaining`
+            : `Starting Soon: Begins in ${remainingMinutes} Minutes`;
+
+        const bannerText = isEnd
+            ? `Your ongoing meeting session in <b>${roomName}</b> is scheduled to wrap up at <b>${formattedEnd}</b>.`
+            : `Your upcoming meeting reservation in <b>${roomName}</b> is scheduled to start promptly at <b>${formattedStart}</b>.`;
+
+        const tipsList = isEnd
+            ? `
+                <li style="margin-bottom: 6px;">Please wrap up key discussion points and conclusions on time.</li>
+                <li style="margin-bottom: 6px;">Ensure video-conferencing screens, displays, and AC are turned off if leaving the room vacant.</li>
+                <li style="margin-bottom: 6px;">If you require an extension, please verify next-slot availability on the portal before extending.</li>
+            `
+            : `
+                <li style="margin-bottom: 6px;">The meeting room displays, high-speed Wi-Fi, and presentation cables are prepped.</li>
+                <li style="margin-bottom: 6px;">Please arrive 2-3 minutes early to test video conferencing or presentation equipment.</li>
+                <li style="margin-bottom: 6px;">For beverage or hospitality requests, reach out to front-desk assistance.</li>
+            `;
+
+        const varMap: Record<string, string> = {
+            '{{roomName}}': roomName,
+            '{{propertyName}}': propertyName,
+            '{{date}}': formattedDate,
+            '{{startTime}}': formattedStart,
+            '{{endTime}}': formattedEnd,
+            '{{remainingMinutes}}': String(remainingMinutes),
+            '{{requesterName}}': requesterName,
+            '{{requesterEmail}}': requesterEmail,
+            '{{comment}}': comment || '',
+        };
+
+        let html: string;
+        if (customHtml) {
+            html = customHtml.replace(/\{\{(\w+)\}\}/g, (match) => varMap[match] ?? match);
+        } else {
+            html = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="utf-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>${subject}</title>
+            </head>
+            <body style="margin: 0; padding: 24px 0; background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color: #f8fafc;">
+                    <tr>
+                        <td align="center">
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width: 600px; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
+                                
+                                <!-- Brand Header -->
+                                <tr>
+                                    <td style="padding: 24px 32px; background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);">
+                                        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                                            <tr>
+                                                <td>
+                                                    <span style="font-size: 11px; font-weight: 800; letter-spacing: 0.1em; color: #94a3b8; text-transform: uppercase;">Autopilot Facilities Management</span>
+                                                    <h1 style="margin: 6px 0 0; font-size: 20px; font-weight: 700; color: #ffffff;">Meeting Room Notification</h1>
+                                                </td>
+                                                <td align="right">
+                                                    <span style="display: inline-block; padding: 6px 14px; background: ${badgeBg}; border: 1px solid ${badgeBorder}; border-radius: 9999px; font-size: 12px; font-weight: 700; color: ${badgeColor};">
+                                                        ${badgeIcon} ${badgeText}
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+
+                                <!-- Content Body -->
+                                <tr>
+                                    <td style="padding: 32px;">
+                                        <p style="margin: 0 0 16px; font-size: 15px; color: #334155; line-height: 1.6;">
+                                            Hello <b>${requesterName}</b>,
+                                        </p>
+                                        <p style="margin: 0 0 24px; font-size: 15px; color: #475569; line-height: 1.6;">
+                                            ${bannerText}
+                                        </p>
+
+                                        <!-- Highlight Box -->
+                                        <div style="background-color: ${badgeBg}; border: 1px solid ${badgeBorder}; border-radius: 12px; padding: 18px 20px; margin-bottom: 24px;">
+                                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                                                <tr>
+                                                    <td style="font-size: 28px; line-height: 1; width: 44px; vertical-align: middle;">
+                                                        ${badgeIcon}
+                                                    </td>
+                                                    <td style="vertical-align: middle;">
+                                                        <div style="font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: ${badgeColor};">
+                                                            ${isEnd ? 'Remaining Meeting Time' : 'Time Before Start'}
+                                                        </div>
+                                                        <div style="font-size: 18px; font-weight: 800; color: #0f172a; margin-top: 2px;">
+                                                            ${remainingMinutes} Minutes Notice
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            </table>
+                                        </div>
+
+                                        <!-- Reservation Details Table -->
+                                        <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; margin-bottom: 24px;">
+                                            <h3 style="margin: 0 0 14px; font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b;">
+                                                Reservation Summary
+                                            </h3>
+                                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size: 14px;">
+                                                <tr>
+                                                    <td style="padding: 6px 0; color: #64748b; width: 130px; font-weight: 600;">Meeting Room:</td>
+                                                    <td style="padding: 6px 0; color: #0f172a; font-weight: 700;">${roomName}</td>
+                                                </tr>
+                                                <tr>
+                                                    <td style="padding: 6px 0; color: #64748b; font-weight: 600;">Location / Property:</td>
+                                                    <td style="padding: 6px 0; color: #0f172a; font-weight: 600;">${propertyName}</td>
+                                                </tr>
+                                                <tr>
+                                                    <td style="padding: 6px 0; color: #64748b; font-weight: 600;">Date:</td>
+                                                    <td style="padding: 6px 0; color: #0f172a; font-weight: 600;">${formattedDate}</td>
+                                                </tr>
+                                                <tr>
+                                                    <td style="padding: 6px 0; color: #64748b; font-weight: 600;">Reserved Slot:</td>
+                                                    <td style="padding: 6px 0; color: #0f172a; font-weight: 700;">${formattedStart} – ${formattedEnd}</td>
+                                                </tr>
+                                                <tr>
+                                                    <td style="padding: 6px 0; color: #64748b; font-weight: 600;">Booked By:</td>
+                                                    <td style="padding: 6px 0; color: #0f172a; font-weight: 600;">${requesterName} (${requesterEmail})</td>
+                                                </tr>
+                                                ${comment ? `
+                                                <tr>
+                                                    <td style="padding: 6px 0; color: #64748b; font-weight: 600;">Purpose / Note:</td>
+                                                    <td style="padding: 6px 0; color: #0f172a; font-weight: 500;">${comment}</td>
+                                                </tr>` : ''}
+                                            </table>
+                                        </div>
+
+                                        <!-- Courteous Reminders -->
+                                        <div style="background-color: #ffffff; border-left: 3px solid ${isEnd ? '#f97316' : '#3b82f6'}; padding: 14px 18px; margin-bottom: 24px;">
+                                            <h4 style="margin: 0 0 8px; font-size: 13px; font-weight: 700; color: #0f172a;">
+                                                ${isEnd ? 'Wrap-Up Checklist' : 'Meeting Preparation'}
+                                            </h4>
+                                            <ul style="margin: 0; padding-left: 18px; font-size: 13px; color: #64748b; line-height: 1.5;">
+                                                ${tipsList}
+                                            </ul>
+                                        </div>
+
+                                        <p style="margin: 0; font-size: 13px; color: #94a3b8; line-height: 1.5;">
+                                            Need help or want to report an issue? Contact your on-site property operations team.
+                                        </p>
+                                    </td>
+                                </tr>
+
+                                <!-- Footer -->
+                                <tr>
+                                    <td style="padding: 24px 32px; background-color: #f8fafc; border-top: 1px solid #e2e8f0; text-align: center;">
+                                        <div style="margin-bottom: 16px;">
+                                            <img src="${process.env.NEXT_PUBLIC_APP_URL || 'https://fms.autopilotoffices.com'}/email-banner.png" alt="Autopilot Offices" style="max-width: 180px; height: auto; display: inline-block;" />
+                                        </div>
+                                        <p style="margin: 0 0 8px; font-size: 12px; color: #64748b; font-weight: 600;">
+                                            Autopilot Offices • Smart Facility Management System
+                                        </p>
+                                        <p style="margin: 0; font-size: 11px; color: #94a3b8; line-height: 1.4;">
+                                            This is an automated operational notification. Please do not reply directly to this email.
+                                        </p>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                </table>
+            </body>
+            </html>
+            `;
+        }
+
+        try {
+            await transporter.sendMail({
+                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                to: emailTo,
+                subject,
+                html,
+            });
+            console.log(`[EmailService] Meeting room ${reminderType} reminder email sent to ${emailTo}`);
+            return true;
+        } catch (error) {
+            console.error('[EmailService] Failed to send meeting room reminder email:', error);
+            return false;
+        }
+    },
+
     async sendLeadAssignmentEmail({
         emailTo,
         assigneeName,

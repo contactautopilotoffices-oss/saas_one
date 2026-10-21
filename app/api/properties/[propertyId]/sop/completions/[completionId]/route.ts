@@ -21,7 +21,8 @@ export async function GET(
             .select(`
                 *,
                 template:sop_templates(*, items:sop_checklist_items(*)),
-                user:users(full_name),
+                user:users!completed_by(full_name),
+                approver:users!approver_id(full_name),
                 items:sop_completion_items(
                     *,
                     checklist_item:sop_checklist_items(*),
@@ -37,7 +38,8 @@ export async function GET(
         const { data: completion, error } = await getQuery.single();
 
         if (error || !completion) {
-            return NextResponse.json({ error: 'Completion not found' }, { status: 404 });
+            console.error('[GET completion error]:', error?.message || error, 'propertyId:', propertyId, 'completionId:', completionId);
+            return NextResponse.json({ error: error?.message || 'Completion not found' }, { status: 404 });
         }
 
         // ── Self-heal: insert any missing sop_completion_items rows ──────────
@@ -61,7 +63,8 @@ export async function GET(
                 .select(`
                     *,
                     template:sop_templates(*, items:sop_checklist_items(*)),
-                    user:users(full_name),
+                    user:users!completed_by(full_name),
+                    approver:users!approver_id(full_name),
                     items:sop_completion_items(
                         *,
                         checklist_item:sop_checklist_items(*),
@@ -74,12 +77,58 @@ export async function GET(
                 healedQuery = healedQuery.eq('property_id', propertyId);
             }
 
-            const { data: healed } = await healedQuery.single();
+            const { data: healed, error: healedError } = await healedQuery.single();
+            if (healedError) {
+                console.error('[GET healed completion error]:', healedError);
+            }
 
-            return NextResponse.json({ success: true, completion: healed });
+            const finalCompletion = healed || completion;
+            const effectivePropId = finalCompletion.property_id || propertyId;
+            let isAiEnabled = false;
+            if (effectivePropId && effectivePropId !== 'all' && effectivePropId !== 'undefined' && effectivePropId !== 'null') {
+                const { data: propSettings } = await supabaseAdmin
+                    .from('checklist_property_settings')
+                    .select('checklist_mode, ai_scoring_enabled')
+                    .eq('property_id', effectivePropId)
+                    .maybeSingle();
+
+                if (propSettings) {
+                    isAiEnabled = propSettings.checklist_mode === 'advanced' || propSettings.ai_scoring_enabled === true;
+                } else {
+                    const { data: prop } = await supabaseAdmin
+                        .from('properties')
+                        .select('checklist_mode')
+                        .eq('id', effectivePropId)
+                        .maybeSingle();
+                    isAiEnabled = prop?.checklist_mode === 'advanced';
+                }
+            }
+
+            return NextResponse.json({ success: true, completion: finalCompletion, is_ai_enabled: isAiEnabled });
         }
 
-        return NextResponse.json({ success: true, completion });
+        const effectivePropId = completion.property_id || propertyId;
+        let isAiEnabled = false;
+        if (effectivePropId && effectivePropId !== 'all' && effectivePropId !== 'undefined' && effectivePropId !== 'null') {
+            const { data: propSettings } = await supabaseAdmin
+                .from('checklist_property_settings')
+                .select('checklist_mode, ai_scoring_enabled')
+                .eq('property_id', effectivePropId)
+                .maybeSingle();
+
+            if (propSettings) {
+                isAiEnabled = propSettings.checklist_mode === 'advanced' || propSettings.ai_scoring_enabled === true;
+            } else {
+                const { data: prop } = await supabaseAdmin
+                    .from('properties')
+                    .select('checklist_mode')
+                    .eq('id', effectivePropId)
+                    .maybeSingle();
+                isAiEnabled = prop?.checklist_mode === 'advanced';
+            }
+        }
+
+        return NextResponse.json({ success: true, completion, is_ai_enabled: isAiEnabled });
     } catch (err) {
         return NextResponse.json(
             { error: err instanceof Error ? err.message : 'Unknown error' },
@@ -215,7 +264,7 @@ export async function PUT(
         }
 
         if (item) {
-            const { completionItemId, is_checked, comment, photo_url, video_url, value } = item;
+            const { completionItemId, is_checked, comment, photo_url, video_url, value, parameter_values } = item;
 
             if (!completionItemId) {
                 return NextResponse.json({ error: 'completionItemId is required in item payload' }, { status: 400 });
@@ -227,6 +276,7 @@ export async function PUT(
             if (photo_url !== undefined) itemUpdates.photo_url = photo_url;
             if (video_url !== undefined) itemUpdates.video_url = video_url;
             if (value !== undefined) itemUpdates.value = value;
+            if (parameter_values !== undefined) itemUpdates.parameter_values = parameter_values;
             if (is_checked) {
                 itemUpdates.checked_at = new Date().toISOString();
                 itemUpdates.checked_by = user.id;

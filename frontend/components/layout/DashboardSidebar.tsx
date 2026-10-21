@@ -9,7 +9,7 @@ import {
     FileUp, Bot, Building2, Send, CalendarDays, Droplets, Coffee,
     Sparkles, DollarSign, ClipboardList, Target, TrendingUp,
     BellRing, HelpCircle, Megaphone, Radio, BookOpen, Smartphone, MessageSquarePlus,
-    ShieldCheck, Wallet, Zap, Gauge, UserCheck, Plus, UserCircle, FileText
+    ShieldCheck, Wallet, Zap, Gauge, UserCheck, Plus, UserCircle, FileText, DoorOpen
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { CapabilityDomain } from '@/frontend/types/rbac';
@@ -21,6 +21,7 @@ import { isBdSuperAdmin as checkBdSuperAdmin } from '@/frontend/constants/bdSupe
 import SignOutModal from '../ui/SignOutModal';
 import { motion, AnimatePresence } from 'framer-motion';
 import NotificationBell from '@/frontend/components/dashboard/NotificationBell';
+import { isCreditFreeBookingRole } from '@/frontend/lib/meetingRooms/creditFreeRoles';
 
 interface DashboardSidebarProps {
     isOpen?: boolean;
@@ -88,6 +89,7 @@ export default function DashboardSidebar({
                 { label: 'Identity Reconciliation', href: `/${orgId}/hr-tickets?tab=reconciliation`, icon: UserCheck, domain: 'tickets' as const },
                 { label: 'Admin Config', href: `/${orgId}/hr-tickets?tab=config`, icon: Settings, domain: 'tickets' as const },
                 { label: 'Analytics', href: `/${orgId}/hr-tickets?tab=analytics`, icon: BarChart3, domain: 'tickets' as const },
+                { label: 'Task Manager', href: `/${orgId}/hr-tickets?tab=tasks`, icon: ClipboardList, domain: 'tickets' as const },
             ];
         }
 
@@ -470,6 +472,23 @@ export default function DashboardSidebar({
                             </div>
 
                             <PettyCashNavLink onNavigate={handleLinkClick} />
+
+                            {/* HR and CRM teams book meeting rooms here, without credits */}
+                            {(isCreditFreeBookingRole(userRole) || isCreditFreeBookingRole(membership?.org_role)) && (
+                                <Link
+                                    href={`/${orgId}/book-room`}
+                                    onClick={handleLinkClick}
+                                    className={`flex items-center gap-3 px-3.5 py-2 rounded-xl transition-all font-semibold text-xs sm:text-sm group ${
+                                        pathname?.endsWith('/book-room')
+                                            ? 'bg-[#587e85] text-white shadow-xs font-bold'
+                                            : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
+                                    }`}
+                                >
+                                    <DoorOpen className="w-4 h-4 shrink-0 transition-transform group-hover:scale-105" />
+                                    <span className="truncate">Book Meeting Room</span>
+                                </Link>
+                            )}
+
                             {!['hr', 'hr_head', 'hr_manager', 'hr_ops'].includes(userRole) && (
                                 <Link
                                     href={isOrgSuperAdmin ? `/${orgId}/dashboard?tab=grievance` : `/${orgId}/hr-tickets?tab=tickets`}

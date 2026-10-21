@@ -9,6 +9,7 @@ import { SessionProvider, CookieConsentToast } from "@/frontend/components/analy
 import { SoundProvider } from "@/frontend/context/SoundContext";
 import NotificationSystem from "@/frontend/components/ops/NotificationSystem";
 import ErrorTrackingProvider from "@/frontend/components/ErrorTrackingProvider";
+import HrAssistantBot from "@/frontend/components/hr-assistant/HrAssistantBot";
 
 const poppins = Poppins({
     subsets: ["latin"],
@@ -54,10 +55,6 @@ export default function RootLayout({
         <html lang="en" className={`${poppins.variable} ${urbanist.variable}`} suppressHydrationWarning>
             <head>
                 <link rel="manifest" href="/manifest.json" />
-                <link
-                    href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"
-                    rel="stylesheet"
-                />
             </head>
             <body className="bg-background text-foreground antialiased overflow-x-hidden font-body">
                 <ErrorTrackingProvider>
@@ -83,7 +80,12 @@ export default function RootLayout({
                                 // Also handle async promise rejections for chunks
                                 window.addEventListener('unhandledrejection', function(e) {
                                     if (e.reason && e.reason.name === 'ChunkLoadError') {
-                                        window.location.reload();
+                                        const lastReload = localStorage.getItem('last_chunk_reload');
+                                        const now = Date.now();
+                                        if (!lastReload || (now - parseInt(lastReload)) > 5000) {
+                                            localStorage.setItem('last_chunk_reload', now.toString());
+                                            window.location.reload();
+                                        }
                                     }
                                 });
 
@@ -139,6 +141,8 @@ export default function RootLayout({
                                         {children}
                                         <NotificationSystem />
                                         <CookieConsentToast />
+                                        {/* Floating HR policy assistant: staff only, hidden on public pages (self-gates) */}
+                                        <HrAssistantBot />
                                     </SoundProvider>
                                 </SessionProvider>
                             </DataCacheProvider>

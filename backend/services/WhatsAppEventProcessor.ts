@@ -4,6 +4,7 @@ import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { WhatsAppRecipientResolver, ResolvedWhatsAppUser } from '@/backend/services/WhatsAppRecipientResolver';
 import { WhatsAppQueueService } from '@/backend/services/WhatsAppQueueService';
 import { PettyCashNotificationService } from '@/backend/services/PettyCashNotificationService';
+import { sanitizeWhatsAppParam, sanitizeWhatsAppParams } from '@/backend/lib/whatsapp/sanitize';
 
 interface DispatchOptions {
     durableBatch?: boolean;
@@ -135,6 +136,12 @@ export const WhatsAppEventProcessor = {
             case 'ROOM_CANCELLED':
             case 'ROOM_BOOKING_CANCELLED':
                 await this.handleMeetingRoomEvent(payload, true);
+                break;
+            case 'MEETING_ROOM_START_REMINDER':
+                await this.handleMeetingRoomReminderEvent(payload, 'start', payload.remaining_minutes || 10);
+                break;
+            case 'MEETING_ROOM_END_REMINDER':
+                await this.handleMeetingRoomReminderEvent(payload, 'end', payload.remaining_minutes || 10);
                 break;
 
             // Procurement & Materials
@@ -314,12 +321,33 @@ export const WhatsAppEventProcessor = {
                 .from('users')
                 .select('id, phone, full_name')
                 .in('id', missingIds);
+
             if (contextualError && options.durableBatch) throw contextualError;
-            (contextualUsers || [])
-                .filter((u: any) => u?.phone && String(u.phone).trim())
-                .forEach((u: any) => {
-                    userMap.set(u.id, { id: u.id, phone: String(u.phone).trim(), name: u.full_name || null });
+
+            const needEmpPhone = (contextualUsers || []).filter((u: any) => !u?.phone || !String(u.phone).trim() || String(u.phone).trim().toLowerCase() === 'n/a');
+            const empPhoneMap = new Map<string, string>();
+            if (needEmpPhone.length > 0) {
+                const { data: emps } = await supabaseAdmin
+                    .from('employee_profiles')
+                    .select('user_id, phone')
+                    .in('user_id', needEmpPhone.map((u: any) => u.id))
+                    .not('phone', 'is', null);
+                (emps || []).forEach((e: any) => {
+                    if (e.phone && String(e.phone).trim() && String(e.phone).trim().toLowerCase() !== 'n/a') {
+                        empPhoneMap.set(e.user_id, String(e.phone).trim());
+                        supabaseAdmin.from('users').update({ phone: String(e.phone).trim() }).eq('id', e.user_id).then();
+                    }
                 });
+            }
+
+            (contextualUsers || []).forEach((u: any) => {
+                const phone = (u?.phone && String(u.phone).trim() && String(u.phone).trim().toLowerCase() !== 'n/a')
+                    ? String(u.phone).trim()
+                    : empPhoneMap.get(u.id);
+                if (phone) {
+                    userMap.set(u.id, { id: u.id, phone, name: u.full_name || null });
+                }
+            });
         }
 
         // Strictly deduplicate by cleaned 10+ digit phone number so 1 phone number never receives multiple copies of the same alert
@@ -357,14 +385,18 @@ export const WhatsAppEventProcessor = {
             requisition_status_updated: { campaign_name: 'requisition_status_updated_v1', params: ['user_name', 'property', 'month', 'year', 'status', 'approver_name', 'total_amount', 'remarks'] },
             requisition_po_issued: { campaign_name: 'requisition_po_issued_v1', params: ['user_name', 'month', 'year', 'property', 'vendor_name', 'po_number', 'total_amount'] },
             meeting_room_booked: { campaign_name: 'meeting_room_booked_v3', params: ['user_name', 'room_name', 'property', 'date', 'start_time', 'end_time', 'booker', 'booker_phone'] },
+            meeting_room_booked_v4: { campaign_name: 'meeting_room_booked_v4', params: ['user_name', 'room_name', 'property', 'date', 'start_time', 'end_time', 'booker', 'booker_phone'] },
+            meeting_room_booked_v3: { campaign_name: 'meeting_room_booked_v3', params: ['user_name', 'room_name', 'property', 'date', 'start_time', 'end_time', 'booker', 'booker_phone'] },
             meeting_room_cancelled: { campaign_name: 'meeting_room_cancelled_v2', params: ['user_name', 'room_name', 'property', 'date', 'start_time', 'end_time', 'booker'] },
+            meeting_room_start_reminder: { campaign_name: 'meeting_room_start_reminder_v1', params: ['user_name', 'room_name', 'property', 'remaining_minutes', 'start_time'] },
+            meeting_room_end_reminder: { campaign_name: 'meeting_room_end_reminder_v1', params: ['user_name', 'room_name', 'property', 'remaining_minutes', 'end_time'] },
             lead_created: { campaign_name: 'crm_lead_created_v1', params: ['user_name', 'company_name', 'contact_person', 'phone', 'source', 'property_interest'] },
             crm_lead_created: { campaign_name: 'crm_lead_created_v1', params: ['user_name', 'company_name', 'contact_person', 'phone', 'source', 'property_interest'] },
             lead_assigned: { campaign_name: 'crm_lead_assigned_v1', params: ['user_name', 'company_name', 'contact_person', 'phone', 'property_interest', 'next_followup'] },
             crm_lead_assigned: { campaign_name: 'crm_lead_assigned_v1', params: ['user_name', 'company_name', 'contact_person', 'phone', 'property_interest', 'next_followup'] },
             ticket_created: { campaign_name: 'ticket_created_v3', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'] },
-            ticket_created_media: { campaign_name: 'ticket_created_v3_media', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'] },
-            ticket_assigned: { campaign_name: 'ticket_assigned_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone'] },
+            ticket_created_media: { campaign_name: 'ticket_created_v3_media', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'] },
+            ticket_assigned: { campaign_name: 'ticket_assigned_v2', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone'] },
             ticket_completed: { campaign_name: 'ticket_completed_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'resolved_by'] },
             ticket_completed_media: { campaign_name: 'ticket_completed_v1_media', params: ['user_name', 'ticket_number', 'title', 'property', 'resolved_by'] },
             daily_property_report: { campaign_name: 'ai_property_report_v1', params: ['user_name', 'org_name', 'date', 'critical_count', 'open_count', 'resolved_count', 'electricity_kwh', 'dg_liters', 'ppm_completed', 'ppm_missed', 'sop_compliance', 'property_summary', 'ai_insights'] },
@@ -439,11 +471,17 @@ export const WhatsAppEventProcessor = {
             'requisition_po_issued_v1': ['user_name', 'month', 'year', 'property', 'vendor_name', 'po_number', 'total_amount'],
             'requisition_po_issued': ['user_name', 'month', 'year', 'property', 'vendor_name', 'po_number', 'total_amount'],
 
+            'meeting_room_booked_v4': ['user_name', 'room_name', 'property', 'date', 'start_time', 'end_time', 'booker', 'booker_phone'],
             'meeting_room_booked_v3': ['user_name', 'room_name', 'property', 'date', 'start_time', 'end_time', 'booker', 'booker_phone'],
             'meeting_room_booked': ['user_name', 'room_name', 'property', 'date', 'start_time', 'end_time', 'booker', 'booker_phone'],
 
             'meeting_room_cancelled_v2': ['user_name', 'room_name', 'property', 'date', 'start_time', 'end_time', 'booker'],
             'meeting_room_cancelled': ['user_name', 'room_name', 'property', 'date', 'start_time', 'end_time', 'booker'],
+
+            'meeting_room_start_reminder_v1': ['user_name', 'room_name', 'property', 'remaining_minutes', 'start_time'],
+            'meeting_room_start_reminder': ['user_name', 'room_name', 'property', 'remaining_minutes', 'start_time'],
+            'meeting_room_end_reminder_v1': ['user_name', 'room_name', 'property', 'remaining_minutes', 'end_time'],
+            'meeting_room_end_reminder': ['user_name', 'room_name', 'property', 'remaining_minutes', 'end_time'],
 
             'crm_lead_created_v1': ['user_name', 'company_name', 'contact_person', 'phone', 'source', 'property_interest'],
             'lead_created': ['user_name', 'company_name', 'contact_person', 'phone', 'source', 'property_interest'],
@@ -452,10 +490,11 @@ export const WhatsAppEventProcessor = {
             'lead_assigned': ['user_name', 'company_name', 'contact_person', 'phone', 'property_interest', 'next_followup'],
 
             'ticket_created_v3': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'],
-            'ticket_created_v3_media': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'],
+            'ticket_created_v3_media': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'],
             'ticket_created': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'],
-            'ticket_created_media': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'],
+            'ticket_created_media': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'],
 
+            'ticket_assigned_v2': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone'],
             'ticket_assigned_v1': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone'],
             'ticket_assigned': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone'],
 
@@ -570,8 +609,31 @@ export const WhatsAppEventProcessor = {
         const effectiveMediaUrl = isMediaTemplate ? (options.mediaUrl || undefined) : undefined;
         const effectiveMediaType = isMediaTemplate ? options.mediaType : undefined;
 
+        // For meeting room bookings:
+        // - Booker / Requester receives v4 template (hospitality notice without staff refreshment directive)
+        // - Staff roles AND specific added users (+ Add user...) receive v3 template (staff operational directive: "Please ensure facilities and refreshments are arranged")
+        const isMeetingRoomBooked = templateEventKey === 'meeting_room_booked';
+        const requesterId = (isMeetingRoomBooked && contextualUserIds?.requesterId)
+            ? String(contextualUserIds.requesterId).trim()
+            : null;
+
         // Dispatch per recipient to personalize `user_name` / `approver_name` with recipient's actual name
         for (const recipient of recipients) {
+            let recipientTemplateName = template.campaign_name;
+            let currentParamKeys = paramKeys;
+
+            if (isMeetingRoomBooked) {
+                const isRequester = Boolean(requesterId && recipient.id === requesterId);
+                if (isRequester) {
+                    // Only the actual booker/requester receives v4
+                    recipientTemplateName = templatesMap['meeting_room_booked_v4']?.campaign_name || 'meeting_room_booked_v4';
+                } else {
+                    // Staff, property admins, and specific added users (+ Add user...) receive v3
+                    recipientTemplateName = templatesMap['meeting_room_booked_v3']?.campaign_name || templatesMap['meeting_room_booked']?.campaign_name || 'meeting_room_booked_v3';
+                }
+                currentParamKeys = CANONICAL_CAMPAIGN_PARAMS[recipientTemplateName] || paramKeys;
+            }
+
             const recipientName = recipient.name?.trim() || paramValues['user_name'] || 'Team';
 
             const recipientParamValues: Record<string, string> = {
@@ -580,10 +642,10 @@ export const WhatsAppEventProcessor = {
                 approver_name: recipient.name?.trim() || paramValues['approver_name'] || 'Approver'
             };
 
-            const orderedParams: string[] = paramKeys.map((key: string) => {
+            const orderedParams: string[] = currentParamKeys.map((key: string) => {
                 let value = recipientParamValues[key];
                 // Resolve aliases if direct key is empty
-                if (value === undefined || value === null || value === '') {
+                if (value === undefined || value === null || String(value).trim() === '') {
                     if (key === 'approver_name') value = recipientParamValues['user_name'] || recipientParamValues['action_by'] || 'Approver';
                     else if (key === 'user_name') value = recipientParamValues['approver_name'] || recipientParamValues['requested_by'] || recipientParamValues['uploaded_by'] || 'Procurement Team';
                     else if (key === 'requested_by') value = recipientParamValues['uploaded_by'] || recipientParamValues['user_name'] || 'Site Admin';
@@ -592,7 +654,7 @@ export const WhatsAppEventProcessor = {
                     else if (key === 'total_amount') value = recipientParamValues['total_cost'] || recipientParamValues['total_po_amount'] || recipientParamValues['amount'] || '0';
                     else if (key === 'vendor_name') value = recipientParamValues['vendor'] || recipientParamValues['selected_vendor'] || 'Selected Vendor';
                 }
-                return value !== undefined && value !== null && value !== '' ? String(value) : 'N/A';
+                return sanitizeWhatsAppParam(value, key);
             });
 
             await WhatsAppQueueService.enqueue({
@@ -601,7 +663,7 @@ export const WhatsAppEventProcessor = {
                 eventType: templateEventKey.toUpperCase(),
                 organizationId,
                 propertyId: propertyId || undefined,
-                templateName: template.campaign_name,
+                templateName: recipientTemplateName,
                 templateParams: orderedParams,
                 entityId: entityId || undefined,
                 mediaUrl: effectiveMediaUrl,
@@ -624,13 +686,8 @@ export const WhatsAppEventProcessor = {
         const orgId = ticket?.property?.organization_id || payload.organization_id;
         const propId = ticket?.property_id || payload.property_id;
 
-        const raiser = ticket?.raised_by_user?.full_name
-            ? { name: ticket.raised_by_user.full_name, phone: ticket.raised_by_user.phone }
-            : await this.getUserDetails(payload.raised_by);
-
-        const assignee = ticket?.assigned_to_user?.full_name
-            ? { name: ticket.assigned_to_user.full_name, phone: ticket.assigned_to_user.phone }
-            : await this.getUserDetails(payload.assigned_to);
+        const raiser = await this.getUserDetails(ticket?.raised_by || payload.raised_by, ticket?.raised_by_user);
+        const assignee = await this.getUserDetails(payload.assigned_to || ticket?.assigned_to, ticket?.assigned_to_user);
 
         const assigneeId = ticket?.assigned_to || payload.assigned_to;
         const photoBeforeUrl = ticket?.photo_before_url || payload.photo_before_url || null;
@@ -682,13 +739,8 @@ export const WhatsAppEventProcessor = {
         const orgId = ticket?.property?.organization_id || payload.organization_id;
         const propId = ticket?.property_id || payload.property_id;
 
-        const raiser = ticket?.raised_by_user?.full_name
-            ? { name: ticket.raised_by_user.full_name, phone: ticket.raised_by_user.phone }
-            : await this.getUserDetails(payload.raised_by);
-
-        const assignee = ticket?.assigned_to_user?.full_name
-            ? { name: ticket.assigned_to_user.full_name, phone: ticket.assigned_to_user.phone }
-            : await this.getUserDetails(assignedToId);
+        const raiser = await this.getUserDetails(ticket?.raised_by || payload.raised_by, ticket?.raised_by_user);
+        const assignee = await this.getUserDetails(assignedToId, ticket?.assigned_to_user);
 
         await this.dispatch({
             featureKey: 'ticket_assigned',
@@ -710,7 +762,7 @@ export const WhatsAppEventProcessor = {
                 ticket_id: ticketId || ''
             },
             summaryMessage: `Ticket #${ticket?.ticket_number || payload.ticket_number || 'N/A'} (${ticket?.title || payload.title}) assigned to ${assignee.name}`,
-            contextualUserIds: { assigneeId: assignedToId, requesterId: ticket?.raised_by || payload.raised_by }
+            contextualUserIds: { assigneeId: assignedToId }
         });
     },
 
@@ -726,13 +778,8 @@ export const WhatsAppEventProcessor = {
         const orgId = ticket?.property?.organization_id || payload.organization_id;
         const propId = ticket?.property_id || payload.property_id;
 
-        const raiser = ticket?.raised_by_user?.full_name
-            ? { name: ticket.raised_by_user.full_name, phone: ticket.raised_by_user.phone }
-            : await this.getUserDetails(payload.raised_by);
-
-        const completer = ticket?.assigned_to_user?.full_name
-            ? { name: ticket.assigned_to_user.full_name, phone: ticket.assigned_to_user.phone }
-            : await this.getUserDetails(payload.assigned_to || payload.updated_by || payload.action_by);
+        const raiser = await this.getUserDetails(ticket?.raised_by || payload.raised_by, ticket?.raised_by_user);
+        const completer = await this.getUserDetails(payload.assigned_to || payload.updated_by || payload.action_by || ticket?.assigned_to, ticket?.assigned_to_user);
 
         const photoAfterUrl = ticket?.photo_after_url || payload.photo_after_url || null;
 
@@ -806,12 +853,111 @@ export const WhatsAppEventProcessor = {
             ? `Meeting room cancelled: ${roomName} on ${formattedDate} at ${formattedStartTime}`
             : `Meeting room booked: ${roomName} at ${property.name} on ${formattedDate} (${formattedStartTime} - ${formattedEndTime}) by ${booker.name}`;
 
+        // Resolve any attendee emails into user IDs so custom invited users receive the v4 template
+        let attendeeEmail = payload.attendee_email;
+        if (!attendeeEmail && payload.id) {
+            const { data: bookingRow } = await supabaseAdmin
+                .from('meeting_room_bookings')
+                .select('attendee_email')
+                .eq('id', payload.id)
+                .maybeSingle();
+            if (bookingRow?.attendee_email) {
+                attendeeEmail = bookingRow.attendee_email;
+            }
+        }
+
+        const extraUserIds: string[] = [];
+        if (attendeeEmail) {
+            const emails = String(attendeeEmail)
+                .split(/[,;]+/)
+                .map(e => e.trim().toLowerCase())
+                .filter(e => e.includes('@'));
+            if (emails.length > 0) {
+                const { data: attendeeUsers } = await supabaseAdmin
+                    .from('users')
+                    .select('id')
+                    .in('email', emails);
+                if (attendeeUsers && attendeeUsers.length > 0) {
+                    extraUserIds.push(...attendeeUsers.map((u: any) => u.id));
+                }
+            }
+        }
+
         await this.dispatch({
             featureKey: isCancellation ? 'meeting_room_cancelled' : 'meeting_room_booked',
             templateEventKey: isCancellation ? 'meeting_room_cancelled' : 'meeting_room_booked',
             organizationId: property.organization_id,
             propertyId,
             entityId: payload.id,
+            contextualUserIds: { requesterId: payload.user_id, extraUserIds },
+            paramValues,
+            summaryMessage
+        });
+    },
+
+    async handleMeetingRoomReminderEvent(payload: any, reminderType: 'start' | 'end', remainingMinutes: number): Promise<void> {
+        const bookingId = payload.id;
+        const meetingRoomId = payload.meeting_room_id;
+        const propertyId = payload.property_id;
+
+        const { data: property } = await supabaseAdmin
+            .from('properties')
+            .select('id, name, organization_id')
+            .eq('id', propertyId)
+            .maybeSingle();
+
+        if (!property?.organization_id) return;
+
+        const { data: room } = await supabaseAdmin
+            .from('meeting_rooms')
+            .select('name')
+            .eq('id', meetingRoomId)
+            .maybeSingle();
+
+        const roomName = room?.name || 'Meeting Room';
+        const booker = await this.getUserDetails(payload.user_id);
+
+        const formatTime = (timeStr: string) => {
+            if (!timeStr) return '';
+            const [hours, minutes] = timeStr.split(':');
+            let h = parseInt(hours, 10);
+            const ampm = h >= 12 ? 'PM' : 'AM';
+            h = h % 12;
+            h = h ? h : 12;
+            return `${h.toString().padStart(2, '0')}:${minutes} ${ampm}`;
+        };
+
+        const formattedDate = payload.booking_date
+            ? payload.booking_date.split('-').reverse().join('/')
+            : '';
+        const formattedStartTime = formatTime(payload.start_time);
+        const formattedEndTime = formatTime(payload.end_time);
+
+        const isEnd = reminderType === 'end';
+        const featureKey = isEnd ? 'meeting_room_end_reminder' : 'meeting_room_start_reminder';
+
+        const paramValues: Record<string, string> = {
+            user_name: '', // Injected per recipient
+            room_name: roomName,
+            property: property.name || 'Property',
+            remaining_minutes: String(remainingMinutes || 10),
+            start_time: formattedStartTime,
+            end_time: formattedEndTime,
+            date: formattedDate,
+            booker: booker.name,
+            booker_phone: booker.phone || 'N/A'
+        };
+
+        const summaryMessage = isEnd
+            ? `Meeting room ending soon: ${roomName} in ${remainingMinutes} mins (ends at ${formattedEndTime})`
+            : `Upcoming meeting reminder: ${roomName} begins in ${remainingMinutes} mins (starts at ${formattedStartTime})`;
+
+        await this.dispatch({
+            featureKey,
+            templateEventKey: featureKey,
+            organizationId: property.organization_id,
+            propertyId,
+            entityId: bookingId,
             contextualUserIds: { requesterId: payload.user_id },
             paramValues,
             summaryMessage
@@ -1621,6 +1767,19 @@ export const WhatsAppEventProcessor = {
         const propertyName = await this.getPropertyName(payload.property_id);
         const completedBy = await this.getUserDetails(payload.completed_by);
 
+        // Resolve assigned approver for this property/completion if configured
+        let approverId = payload.approver_id;
+        if (!approverId && payload.property_id) {
+            const { data: propSettings } = await supabaseAdmin
+                .from('checklist_property_settings')
+                .select('approver_user_id')
+                .eq('property_id', payload.property_id)
+                .maybeSingle();
+            if (propSettings?.approver_user_id) {
+                approverId = propSettings.approver_user_id;
+            }
+        }
+
         await this.dispatch({
             featureKey: 'checklist_completed',
             templateEventKey: 'checklist_completed',
@@ -1635,7 +1794,7 @@ export const WhatsAppEventProcessor = {
                 time: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })
             },
             summaryMessage: `Checklist "${payload.template_title}" completed at ${propertyName} by ${completedBy.name}`,
-            contextualUserIds: { requesterId: payload.completed_by }
+            contextualUserIds: { requesterId: payload.completed_by, approverId }
         });
     },
 
@@ -1716,17 +1875,55 @@ export const WhatsAppEventProcessor = {
         return property?.name || 'N/A';
     },
 
-    async getUserDetails(userId?: string | string[] | null): Promise<{ name: string; phone: string | null }> {
+    async getUserDetails(
+        userId?: string | string[] | null,
+        prefetched?: { full_name?: string | null; phone?: string | null } | null
+    ): Promise<{ name: string; phone: string | null }> {
         const cleanId = Array.isArray(userId) ? userId[0] : userId;
-        if (!cleanId || typeof cleanId !== 'string' || !cleanId.trim()) return { name: 'Staff', phone: null };
-        const { data: user } = await supabaseAdmin
-            .from('users')
-            .select('full_name, phone')
-            .eq('id', cleanId.trim())
-            .maybeSingle();
+        let name = prefetched?.full_name || null;
+        let phone = prefetched?.phone ? String(prefetched.phone).trim() : null;
+
+        // If already has a valid phone (not empty, not 'n/a')
+        if (phone && phone.toLowerCase() !== 'n/a') {
+            return { name: name || 'Staff', phone };
+        }
+
+        if (!cleanId || typeof cleanId !== 'string' || !cleanId.trim()) {
+            return { name: name || 'Staff', phone: null };
+        }
+
+        const trimmedId = cleanId.trim();
+
+        // If name or phone is missing, fetch from users table
+        if (!name || !phone) {
+            const { data: user } = await supabaseAdmin
+                .from('users')
+                .select('full_name, phone')
+                .eq('id', trimmedId)
+                .maybeSingle();
+            if (user) {
+                if (!name && user.full_name) name = user.full_name;
+                if (!phone && user.phone) phone = String(user.phone).trim();
+            }
+        }
+
+        // If phone is still missing or 'n/a', fallback to employee_profiles table
+        if (!phone || phone.toLowerCase() === 'n/a') {
+            const { data: emp } = await supabaseAdmin
+                .from('employee_profiles')
+                .select('phone')
+                .eq('user_id', trimmedId)
+                .maybeSingle();
+            if (emp?.phone && String(emp.phone).trim()) {
+                phone = String(emp.phone).trim();
+                // Opportunistically backfill users table so subsequent lookups are instant
+                supabaseAdmin.from('users').update({ phone }).eq('id', trimmedId).then();
+            }
+        }
+
         return {
-            name: user?.full_name || 'Staff',
-            phone: user?.phone || null
+            name: name || 'Staff',
+            phone: (phone && phone.toLowerCase() !== 'n/a') ? phone : null
         };
     },
 

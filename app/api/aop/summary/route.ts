@@ -47,6 +47,18 @@ export async function GET(request: NextRequest) {
     const sp = new URL(request.url).searchParams;
     const pinnedMonth = sp.get('month');
 
+    // The import warnings (read at the end) don't depend on anything below: start that read now so it runs alongside
+    // the summary view (performance plan Phase 5b). Used exactly as before; its errors were and are ignored.
+    // (.then(r => r) starts a Supabase query now; a query builder on its own only runs when awaited.)
+    const warningsRequest = supabaseAdmin
+        .from('aop_import_warnings')
+        .select('id, severity, message, sheet_name, site_label, imported_at')
+        .eq('organization_id', access.organizationId)
+        .eq('is_acknowledged', false)
+        .order('imported_at', { ascending: false })
+        .limit(20)
+        .then(result => result);
+
     const { data, error } = await supabaseAdmin
         .from('aop_site_month_summary')
         .select('*')
@@ -157,13 +169,7 @@ export async function GET(request: NextRequest) {
 
     // Unacknowledged import problems ride along so the widget can flag a stale/suspect MIS
     // rather than presenting numbers it has reason to doubt.
-    const { data: warnings } = await supabaseAdmin
-        .from('aop_import_warnings')
-        .select('id, severity, message, sheet_name, site_label, imported_at')
-        .eq('organization_id', access.organizationId)
-        .eq('is_acknowledged', false)
-        .order('imported_at', { ascending: false })
-        .limit(20);
+    const { data: warnings } = await warningsRequest;
 
     return NextResponse.json({
         provisioned: true,

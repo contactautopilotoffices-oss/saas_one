@@ -70,10 +70,10 @@ export async function GET(
     if (!profile?.is_master_admin) {
         const [orgRes, propRes] = await Promise.all([
             supabaseAdmin.from('organization_memberships')
-                .select('id').eq('user_id', user.id).eq('organization_id', orgId)
+                .select('user_id').eq('user_id', user.id).eq('organization_id', orgId)
                 .eq('is_active', true).limit(1),
             supabaseAdmin.from('property_memberships')
-                .select('id').eq('user_id', user.id).eq('organization_id', orgId)
+                .select('user_id').eq('user_id', user.id).eq('organization_id', orgId)
                 .eq('is_active', true).limit(1),
         ]);
         if (!(orgRes.data?.length || propRes.data?.length)) {

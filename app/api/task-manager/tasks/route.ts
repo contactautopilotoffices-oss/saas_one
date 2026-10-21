@@ -7,6 +7,8 @@ import { notifyGiversOfCompletion } from '@/task-manager/completionNotice';
 import { TaskAccessService } from '@/task-manager/TaskAccessService';
 import { requireActor } from '../_shared/adminGuard';
 import { TaskAssignment } from '@/task-manager/types';
+import { MAX_CARRY_DAYS, carryDaysOf } from '@/task-manager/TaskDatabaseService';
+import { addDaysIso, parseRange } from '@/task-manager/dateRange';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,7 +21,11 @@ export async function GET(request: NextRequest) {
         const departmentId = searchParams.get('departmentId') || '';
         const employeeId = searchParams.get('employeeId') || '';
         const status = searchParams.get('status') || '';
-        const date = searchParams.get('date') || new Date().toISOString().slice(0, 10);
+        // Owner 2026-10-15: a date RANGE (from / to, at most 31 days); the old single `date` still works.
+        const range = parseRange(searchParams);
+        if (!range.ok) return NextResponse.json({ success: false, error: range.error }, { status: 400 });
+        const { from, to } = range;
+        const date = from;
 
         if (!actorId) {
             return NextResponse.json({ success: false, error: 'Missing actorId parameter' }, { status: 400 });
@@ -58,43 +64,52 @@ export async function GET(request: NextRequest) {
             employees = employees.filter(e => e.department_id === targetDepartmentId);
         }
 
-        // 4. Query Task Assignments with filters
-        let taskQuery = supabaseAdmin
-            .from('task_assignments')
-            .select(`
+        // 4. Query Task Assignments with filters (the same people for the range and for carry-forward)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the Supabase query builder type is not exported
+        const scoped = (q: any) => {
+            if (actor.role === 'employee') return q.eq('employee_id', actor.id);
+            if (employeeId) return q.eq('employee_id', employeeId);
+            if (actor.role === 'reporting_manager') {
+                const allowedUserIds = employees.map(e => e.id);
+                return allowedUserIds.length > 0 ? q.in('employee_id', allowedUserIds) : q.eq('employee_id', actor.id); // fallback
+            }
+            if (targetDepartmentId) {
+                const deptUserIds = employees.map(e => e.id);
+                return deptUserIds.length > 0 ? q.in('employee_id', deptUserIds) : q.eq('employee_id', '00000000-0000-0000-0000-000000000000');
+            }
+            return q;
+        };
+        const select = `
                 *,
                 template:task_templates(*),
                 employee:users!task_assignments_employee_id_fkey(id, full_name, phone)
-            `)
-            .eq('assigned_date', date)
-            .order('created_at', { ascending: false });
-
-        if (actor.role === 'employee') {
-            taskQuery = taskQuery.eq('employee_id', actor.id);
-        } else if (employeeId) {
-            taskQuery = taskQuery.eq('employee_id', employeeId);
-        } else if (actor.role === 'reporting_manager') {
-            const allowedUserIds = employees.map(e => e.id);
-            if (allowedUserIds.length > 0) {
-                taskQuery = taskQuery.in('employee_id', allowedUserIds);
-            } else {
-                taskQuery = taskQuery.eq('employee_id', actor.id); // fallback
-            }
-        } else if (targetDepartmentId) {
-            const deptUserIds = employees.map(e => e.id);
-            if (deptUserIds.length > 0) {
-                taskQuery = taskQuery.in('employee_id', deptUserIds);
-            } else {
-                taskQuery = taskQuery.eq('employee_id', '00000000-0000-0000-0000-000000000000');
-            }
-        }
-
+            `;
+        let taskQuery = scoped(supabaseAdmin.from('task_assignments').select(select).gte('assigned_date', from).lte('assigned_date', to))
+            .order('assigned_date', { ascending: false }).order('created_at', { ascending: false });
         if (status && ['pending', 'in_progress', 'completed'].includes(status)) {
             taskQuery = taskQuery.eq('status', status);
         }
 
-        const { data: rawTasks, error: taskErr } = await taskQuery.limit(100);
+        // Owner 2026-10-15: unfinished tasks from BEFORE the range are shown too ("carry forward"), as far back as each
+        // person's department setting allows (Notifications tab, 1–30 days, or off). Never for the "Done" filter.
+        const carryQuery = status === 'completed' ? null
+            : scoped(supabaseAdmin.from('task_assignments').select(select).gte('assigned_date', addDaysIso(from, -MAX_CARRY_DAYS)).lt('assigned_date', from).neq('status', 'completed'))
+                .order('assigned_date', { ascending: true }).limit(300);
+
+        const [{ data: rawTasks, error: taskErr }, carried] = await Promise.all([taskQuery.limit(500), carryQuery ?? Promise.resolve({ data: [], error: null })]);
         if (taskErr) throw taskErr;
+        if (carried.error) throw carried.error;
+        const deptOf = new Map((await TaskDatabaseService.getAllEmployees()).map(e => [e.id, e.department_id ?? null]));
+        const daysByDept = new Map<string | null, number>();
+        const carryDays = async (dept: string | null) => {
+            if (!daysByDept.has(dept)) daysByDept.set(dept, carryDaysOf(await TaskDatabaseService.getCarryForward(dept)));
+            return daysByDept.get(dept)!;
+        };
+        const carriedTasks: Array<TaskAssignment & { is_carried_forward: true }> = [];
+        for (const t of (carried.data || []) as TaskAssignment[]) {
+            const days = await carryDays(deptOf.get(t.employee_id) ?? null);
+            if (days > 0 && t.assigned_date >= addDaysIso(from, -days)) carriedTasks.push({ ...t, is_carried_forward: true });
+        }
 
         // 5. Query Templates for accessible department
         const templateDeptId = actor.role === 'reporting_manager' ? actor.department_id : targetDepartmentId || undefined;
@@ -107,9 +122,16 @@ export async function GET(request: NextRequest) {
             actor,
             departments: accessibleDepartments,
             employees,
-            tasks: rawTasks || [],
+            tasks: [...carriedTasks, ...(rawTasks || [])],
+            // Owner 2026-10-15: everyone the actor may assign to (a superuser: every department), for the Assign window's
+            // department filter. The list above stays filtered to the chosen department.
+            assignableEmployees: actor.role === 'superuser' ? await TaskDatabaseService.getAllEmployees() : employees,
             templates,
-            date
+            date,
+            from,
+            to,
+            // "All time" or a busy range: only the newest 500 are listed (the screen says so).
+            truncated: (rawTasks || []).length >= 500
         });
     } catch (err: any) {
         if (err instanceof PermissionDeniedError) {
@@ -176,6 +198,9 @@ export async function POST(request: NextRequest) {
 
             // Send instant WhatsApp notification to the assigned employee (non-blocking)
             // Same approved template as the Tasks tab (task_assigned_v1), so it also reaches people outside the 24-hour window.
+            if (target.id !== actor.id) {
+                void import('@/task-manager/taskBell').then(({ taskBell }) => taskBell({ userId: target.id, kind: 'TASK_ASSIGNED', title: `New task from ${actor.name}`, message: `${actor.name} gave you: ${newTask.title}`, departmentName: target.department_name }));
+            }
             void sendTaskAssigned(target.phone_number, {
                 titles: [newTask.title], fromLabel: personLabel(actor.name, actor.department_name),
                 date: newTask.assigned_date || new Date().toISOString().slice(0, 10), departmentId: target.department_id || undefined,

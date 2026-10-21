@@ -3,7 +3,7 @@ import type { AccessDecision } from './TaskAccessService';
 import type { Employee, TestingConfig } from './types';
 import type { ParseInput } from './TaskImportParser';
 import {
-    AWAITING_TTL_MIN, IMPORT_CONTEXT, ImportClaim, ImportDeps, IMPORT_TEXT, TaskImportService, captionMentionsTasks, looksLikeImportText,
+    AWAITING_TTL_MIN, IMPORT_CONTEXT, ImportClaim, ImportDeps, IMPORT_TEXT, TaskImportService, captionMentionsTasks, looksLikeImportText, looksLikeOneTask,
 } from './TaskImportService';
 import { parseConfirmAnswer } from './TaskGateway';
 
@@ -189,6 +189,9 @@ export interface InboundIO {
     getConfig(): Promise<TestingConfig>;
     /** Departments with Task Import switched ON. Empty when none, or when it cannot be read (fail closed). */
     getImportDepartments(): Promise<ReadonlySet<string>>;
+    /** Owner 2026-10-19: departments with Smart chat ON. Typed text from them goes to the AI, not to this importer.
+     *  Absent (older callers / tests) → treated as none, i.e. the previous behaviour. */
+    getSmartChatDepartments?(): Promise<ReadonlySet<string>>;
     getEmployee(phone: string): Promise<Employee | null>;
     checkAccess(employee: Employee): Promise<AccessDecision>;
     fetchMedia(url: string): Promise<MediaFetchResult>;
@@ -211,8 +214,11 @@ export async function claimTaskImport(body: unknown, io?: InboundIO): Promise<Im
     const deps = real.importDeps;
 
     try {
-        // Cheap checks first: ordinary chat never costs a database read.
-        if (cand.mediaClass === 'text' && !looksLikeImportText(cand.text, deps.today()) && !PHOTO_ANSWER.test(cand.text)) return NOT_HANDLED;
+        // Cheap checks first: ordinary chat never costs a database read. A single line that reads like a task costs ONE
+        // state read, and is only taken when the person just said "add tasks" (2026-10-17).
+        if (cand.mediaClass === 'text' && !looksLikeImportText(cand.text, deps.today()) && !PHOTO_ANSWER.test(cand.text)) {
+            if (!looksLikeOneTask(cand.text) || !await TaskImportService.isAwaiting(cand.phone, deps)) return NOT_HANDLED;
+        }
 
         // One small read first: while no department has Task Import ON (the default), nothing else is read.
         const importDepartments = await real.getImportDepartments();
@@ -222,6 +228,19 @@ export async function claimTaskImport(body: unknown, io?: InboundIO): Promise<Im
         const access = await real.checkAccess(employee);
         const config = await real.getConfig();
         if (!decideImportEligibility(config, cand.phone, employee, access, importDepartments).ok) return NOT_HANDLED;
+
+        // Owner 2026-10-19: for a team with Smart chat ON, TYPED tasks ("add task: Autopilot amplify payment") are handled by the
+        // AI, which understands one task or several. This importer keeps images and Excel files, and only finishes a list it is
+        // already in the middle of (a preview waiting for YES, a file being read, the "task list or ticket?" photo question).
+        if (cand.mediaClass === 'text' && real.getSmartChatDepartments && (await real.getSmartChatDepartments()).has(employee.department_id)) {
+            const ctx = await deps.getContext(cand.phone);
+            const midImport = ctx?.type === IMPORT_CONTEXT.PREVIEW || ctx?.type === IMPORT_CONTEXT.PROCESSING || ctx?.type === IMPORT_CONTEXT.PHOTO_CHOICE;
+            if (!midImport) {
+                // An old "send me your list" wait would make the AI step aside; drop it so the AI answers this message.
+                if (ctx?.type === IMPORT_CONTEXT.AWAITING) await deps.clearContext(cand.phone);
+                return NOT_HANDLED;
+            }
+        }
 
         if (cand.messageId && real.seenBefore(cand.messageId)) return HANDLED; // a repeat delivery of something we already took
 
@@ -343,6 +362,7 @@ export async function defaultInboundIO(): Promise<InboundIO> {
         importDeps,
         getConfig: () => TaskDatabaseService.getTestingConfig(),
         getImportDepartments: async () => (await TaskAccessService.getTaskImportDepartments()).departments,
+        getSmartChatDepartments: async () => (await TaskAccessService.getSmartChatDepartments()).departments,
         getEmployee: phone => TaskDatabaseService.getEmployeeByPhone(phone),
         checkAccess: employee => TaskAccessService.check({ userId: employee.id, departmentId: employee.department_id }),
         fetchMedia: url => fetchMediaSafely(url),

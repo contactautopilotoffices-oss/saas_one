@@ -185,7 +185,11 @@ async function run() {
     const tab = read('frontend/components/procurement/ProcurementTasksTab.tsx');
     check('the Tasks tab offers only teammates (never myself) and the server\'s assignable list', /ok\.assignable\.filter\(a => !a\.isMe\)/.test(tab) && /give=\{give\}/.test(tab));
     const board = read('frontend/components/procurement/tasks/Board.tsx');
-    check('the button shows only on cards the server marked canHandOver, never on the floating drag copy', /!floating && give && task\.canHandOver/.test(board));
+    // Owner 2026-10-21: "Give to" moved into the task window, opened only by the card's "View / Assign" button.
+    const view = read('frontend/components/procurement/tasks/TaskView.tsx');
+    check('"Give to" shows only for tasks the server marked canHandOver, and the View button never on the floating drag copy',
+        /actions\?\.onGive && task\.canHandOver/.test(view) && /const showView = !floating && !!onView/.test(board) && /<TaskView[\s\S]{0,300}actions=\{give \?/.test(board));
+    check('clicks on "View / Assign" cannot start a drag', /onPointerDown=\{e => e\.stopPropagation\(\)\}/.test(board));
     const giveTo = read('frontend/components/procurement/tasks/GiveTo.tsx');
     check('clicks inside "Give to…" cannot start a drag, and it asks for confirmation before moving', /onPointerDown=\{stop\}/.test(giveTo) && /onKeyDown=\{stop\}/.test(giveTo) && /Give this task to/.test(giveTo));
 

@@ -25,6 +25,7 @@ function setup({facilityActive=false,choice=false,testingConfig=null}={}){
     imports['./TaskErrorHandler']=load('task-manager/TaskErrorHandler.ts',{});
     imports['./taskAlerts']={personLabel:(name,dept)=>dept?`${name} (${dept})`:name,sendTaskAssigned:async()=>true}; // event alerts: approved templates
     imports['./completionNotice']={notifyGiversOfCompletion:async()=>0}; // task_completed_notice_v1 to the giver
+    imports['./brain/text']={headedList:items=>items.map(i=>i.line).join('\n')}; // 2026-10-14 headings; these tasks are not carried, so a plain list
     imports['./TaskCommandHandler']=load('task-manager/TaskCommandHandler.ts',imports);
     const router=load('task-manager/TaskMessageRouter.ts',imports);
     const route=load('app/api/webhooks/aisensy/route.ts',{

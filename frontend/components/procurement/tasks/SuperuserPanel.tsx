@@ -39,7 +39,8 @@ export default function SuperuserPanel({ onAddTask, onDeleteTask, onChanged }: {
     const { panel, loading, error, send, cancel, saveReminder, reload } = useSuperuserPings(true);
     const [picked, setPicked] = useState<Set<string>>(new Set());
     const [from, setFrom] = useState('');
-    const [note, setNote] = useState('');
+    // The optional manager note was retired from the screen; reminders go out without one.
+    const note = '';
     const [whenDate, setWhenDate] = useState('');
     const [whenTime, setWhenTime] = useState('09:00');
     const [newTask, setNewTask] = useState('');
@@ -81,7 +82,7 @@ export default function SuperuserPanel({ onAddTask, onDeleteTask, onChanged }: {
         setBusy('send');
         const r = await send({ taskIds: chosen.map(t => t.id), fromLabel: from, note, sendAt, force });
         setBusy(null);
-        if (r.ok) { flash('ok', r.status === 'sent' ? `Sent to ${first}.` : `Scheduled for ${whenLabel(sendAt!)}.`); setNote(''); setWhenDate(''); return; }
+        if (r.ok) { flash('ok', r.status === 'sent' ? `Sent to ${first}.` : `Scheduled for ${whenLabel(sendAt!)}.`); setWhenDate(''); return; }
         if (r.code === 'RECENT' && window.confirm(`${r.message}`)) return doSend(sendAt, true);
         if (r.code !== 'RECENT') flash('err', r.message);
     };
@@ -169,9 +170,6 @@ export default function SuperuserPanel({ onAddTask, onDeleteTask, onChanged }: {
                         <input className={`${input} mt-1 opacity-70`} value={panel.department} readOnly />
                     </label>
                 </div>
-                <label className="mt-2 block text-[11px] font-bold text-zinc-500">Note (optional, saved in the app, not sent on WhatsApp)
-                    <textarea className={`${input} mt-1 h-16 resize-none`} value={note} onChange={e => setNote(e.target.value)} maxLength={300} placeholder="Anything the manager should know" />
-                </label>
 
                 <p className="mb-1 mt-3 text-[11px] font-bold uppercase tracking-wide text-zinc-400">What {first} will see</p>
                 <div className="rounded-2xl bg-[#dcf8c6] p-3 text-[13px] leading-relaxed text-zinc-900 shadow-inner dark:bg-emerald-900/40 dark:text-emerald-50">

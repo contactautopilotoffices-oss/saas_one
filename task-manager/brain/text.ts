@@ -63,3 +63,85 @@ export function dayLabel(iso: string): string {
 }
 
 export const clip = (s: unknown, n: number): string => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
+
+/**
+ * Carry-forward tasks and today's tasks under their own headings (owner 2026-10-14). Lines keep their real numbers, so
+ * "done 3" still means the same task. With nothing carried over the list is exactly as before (no headings).
+ */
+export const CARRY_HEADING = '🔄 *Carry forward tasks*';
+export const TODAY_HEADING = "📋 *Today's tasks*";
+export function headedList(items: Array<{ carried: boolean; line: string }>): string {
+    const carried = items.filter(i => i.carried).map(i => i.line), today = items.filter(i => !i.carried).map(i => i.line);
+    if (!carried.length) return today.join('\n');
+    return [CARRY_HEADING, ...carried, ...(today.length ? ['', TODAY_HEADING, ...today] : [])].join('\n');
+}
+
+/** The same grouping on ONE line, for approved templates (no line breaks allowed): "Carry forward: 1. A | 2. B — Today: 3. C".
+ *  Cut at `max` characters with "…and N more". */
+export function headedOneLine(input: Array<{ carried: boolean; line: string }>, max = 700): string {
+    const items = [...input.filter(i => i.carried), ...input.filter(i => !i.carried)];   // carried first, like headedList
+    const grouped = items.some(i => i.carried);
+    let out = '';
+    for (let i = 0; i < items.length; i++) {
+        const label = !grouped ? '' : i === 0 ? (items[0].carried ? 'Carry forward: ' : 'Today: ') : (!items[i].carried && items[i - 1].carried ? 'Today: ' : '');
+        const sep = i === 0 ? '' : label ? ' — ' : ' | ';
+        const next = `${out}${sep}${label}${items[i].line}`;
+        if (next.length > max) return `${out} | …and ${items.length - i} more`;
+        out = next;
+    }
+    return out;
+}
+
+/**
+ * Three sections (owner 2026-10-16): 🔄 Carry forward (older tasks still open) → ⏳ Pending today → ✅ Completed (today's and
+ * carried-forward tasks finished today). Used by the "tasks" reply and the midday check-in so they always look the same.
+ * Lines keep their real numbers ("done 3" still means the same task); each section keeps the list order; an empty section
+ * is left out. An in-progress task (🔄) still counts as pending.
+ */
+export const SECTION_CARRY = '🔄 *Carry forward*';
+export const SECTION_PENDING = '⏳ *Pending today*';
+export const SECTION_DONE = '✅ *Completed*';
+export type SectionItem = { carried: boolean; done: boolean; line: string };
+function splitSections(items: SectionItem[]) {
+    return {
+        carry: items.filter(i => i.carried && !i.done).map(i => i.line),
+        pending: items.filter(i => !i.carried && !i.done).map(i => i.line),
+        done: items.filter(i => i.done).map(i => i.line),
+    };
+}
+export function sectionedList(items: SectionItem[]): string {
+    const s = splitSections(items);
+    const blocks: string[] = [];
+    if (s.carry.length) blocks.push([`${SECTION_CARRY} (${s.carry.length})`, ...s.carry].join('\n'));
+    if (s.pending.length) blocks.push([`${SECTION_PENDING} (${s.pending.length})`, ...s.pending].join('\n'));
+    if (s.done.length) blocks.push([`${SECTION_DONE} (${s.done.length})`, ...s.done].join('\n'));
+    return blocks.join('\n\n');
+}
+
+/** The same three sections on ONE line, for approved templates (no line breaks allowed):
+ *  "Carry forward: 1. A ⏳ | 2. B 🔄 — Pending today: 4. C ⏳ — Completed: 3. D ✅". Cut at `max` with "…and N more". */
+export function sectionedOneLine(items: SectionItem[], max = 700): string {
+    const s = splitSections(items);
+    const ordered = [
+        ...s.carry.map((line, i) => ({ label: i === 0 ? 'Carry forward: ' : '', line })),
+        ...s.pending.map((line, i) => ({ label: i === 0 ? 'Pending today: ' : '', line })),
+        ...s.done.map((line, i) => ({ label: i === 0 ? 'Completed: ' : '', line })),
+    ];
+    let out = '';
+    for (let i = 0; i < ordered.length; i++) {
+        const sep = i === 0 ? '' : ordered[i].label ? ' — ' : ' | ';
+        const next = `${out}${sep}${ordered[i].label}${ordered[i].line}`;
+        if (next.length > max) return `${out} | …and ${ordered.length - i} more`;
+        out = next;
+    }
+    return out;
+}
+
+/**
+ * A placeholder value that must sit on its own line(s) in a reply (owner 2026-10-14: every reply structured): a list, a
+ * bullet, a numbered line, a status line, or a "Reply …" hint. Short values (a name, a date, a count) stay inside the sentence.
+ */
+export function isBlockValue(value: string): boolean {
+    const v = String(value ?? '').trim();
+    return v.includes('\n') || /^(?:[•\-]\s|\d+\.\s|✅|⚠️|🔄|📋|Reply\b|\*Reply)/u.test(v);
+}

@@ -20,7 +20,10 @@
     "test:invoices": "node --test --test-isolation=none tests/invoices/match.test.mjs tests/invoices/lib.test.mjs tests/invoices/schedule.test.mjs tests/invoices/database.test.mjs",
     "test:accounts": "node --test --test-isolation=none tests/accounts-onboarding.test.mjs tests/accounts-onboarding-ui.test.mjs",
     "test:whatsapp-interpreter": "node --test --test-isolation=none tests/whatsapp-interpreter-*.test.mjs",
-    "test:requisition-drafts": "node --test --test-isolation=none tests/requisition-drafts.test.mjs tests/requisition-drafts-db.test.mjs tests/requisition-drafts-hook.test.mjs"
+    "test:requisition-drafts": "node --test --test-isolation=none tests/requisition-drafts.test.mjs tests/requisition-drafts-db.test.mjs tests/requisition-drafts-hook.test.mjs",
+    "test:hr-assistant": "tsx --test \"tests/hr-assistant/*.test.ts\"",
+    "hr:ingest": "tsx --env-file=.env.local scripts/hr-assistant/ingest.ts",
+    "hr:eval": "tsx --env-file=.env.local scripts/hr-assistant/evaluate.ts"
   },
   "dependencies": {
     "@alexanderolsen/libsamplerate-js": "^2.1.2",
@@ -67,6 +70,7 @@
     "livekit-client": "^2.22.3",
     "livekit-server-sdk": "^2.19.1",
     "lucide-react": "^0.562.0",
+    "mammoth": "^1.13.0",
     "next": "16.1.1",
     "nodemailer": "^8.0.4",
     "papaparse": "^5.5.3",
@@ -85,6 +89,7 @@
     "serwist": "^9.5.6",
     "sharp": "^0.34.5",
     "tailwind-merge": "^3.4.0",
+    "unpdf": "^1.9.1",
     "web-push": "^3.6.7",
     "xlsx": "^0.18.5",
     "zod": "^4.3.4"
@@ -102,6 +107,7 @@
     "playwright": "^1.62.1",
     "react-test-renderer": "^19.2.3",
     "tailwindcss": "^4",
+    "tsx": "^4.23.15",
     "typescript": "^5"
   }
 }

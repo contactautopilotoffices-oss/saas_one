@@ -16,14 +16,20 @@ export interface ExecIO {
     /** ONE grouped "task completed" notice to each giver for tasks completed quietly (optional: without it, each completion
      *  notifies on its own). */
     notifyCompleted?(actorId: string, taskIds: string[]): Promise<void>;
-    assign(actorId: string, input: { targetUserId: string; title: string; description?: string; date: string; notify?: boolean }): Promise<void>;
+    assign(actorId: string, input: { targetUserId: string; title: string; description?: string; date: string; notify?: boolean; /** Owner 2026-10-21: saved as a "Remark:" line and shown in the alert. */ note?: string }): Promise<void>;
     /** ONE "new task" WhatsApp alert for several tasks created together for the same person (optional: without it, each
      *  assign sends its own alert). */
     alertAssigned?(actorId: string, targetUserId: string, titles: string[], date: string): Promise<void>;
-    handOver(actorId: string, taskId: string, toId: string): Promise<{ toName: string }>;
+    handOver(actorId: string, taskId: string, toId: string, note?: string): Promise<{ toName: string }>;
     /** Delete / rename one of the actor's tasks (the same checked functions as the Tasks tab). Optional: absent → "not available". */
     deleteTask?(actorId: string, taskId: string): Promise<void>;
     renameTask?(actorId: string, taskId: string, title: string): Promise<void>;
+    /** Owner 2026-10-20: add a "Remark: …" line to a task (own, or one they gave; checked again by the server). Optional. */
+    addNote?(actorId: string, taskId: string, note: string): Promise<void>;
+    /** Owner 2026-10-20: remind the people doing tasks the actor gave (checked again by the server). Optional. */
+    remindTasks?(actorId: string, taskIds: string[]): Promise<{ reminded: Array<{ name: string; count: number }>; skipped: Array<{ title: string; why: string }> }>;
+    /** Owner 2026-10-20: lock / unlock one of the actor's own tasks (same checked function as the Tasks tab). Optional. */
+    setLocked?(actorId: string, taskId: string, locked: boolean): Promise<void>;
     /** Another person's tasks as text, or null when the actor may not see them. */
     readPerson(actorId: string, personId: string): Promise<string | null>;
     /** Phase 4 "Team reports": today's progress of the people this person may give work to, as text (null = not available). */
@@ -43,6 +49,9 @@ export interface ExecOptions {
     /** Titles of the tasks in that request (they are not on the person's own list). */
     titles?: Record<string, string>;
 }
+
+/** Owner 2026-10-20: notes are saved as a "Remark: …" line (the same wording Task import uses, shown on the card). */
+export const NOTE_PREFIX = 'Remark: ';
 
 const bullets = (lines: string[]) => lines.map(l => `• ${l}`).join('\n');
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
@@ -117,15 +126,19 @@ export async function executeAction(action: Action, ctx: BrainContext, io: ExecI
             const who = nameOf(action.assigneeId);
             // Several tasks for one person → create them quietly, then send ONE alert listing the ones that were really created.
             const group = action.tasks.length > 1 && !!io.alertAssigned;
-            const r = await each(action.tasks, t => io.assign(me, { targetUserId: action.assigneeId, title: t.title, description: t.details ?? undefined, date: action.date, ...(group ? { notify: false } : {}) }), t => t.title);
-            if (group && r.done.length) { try { await io.alertAssigned!(me, action.assigneeId, r.done, action.date); } catch { /* the tasks exist; a failed alert must not fail them */ } }
-            return outcome('Added', 'add', { one: 'task', many: 'tasks' }, r.done, r.failed, who === 'you' ? ' to your list' : ` for ${who}`);
+            const r = await each(action.tasks, t => io.assign(me, { targetUserId: action.assigneeId, title: t.title, ...(t.details ? { note: t.details } : {}), date: action.date, ...(group ? { notify: false } : {}) }), t => t.title);
+            // Owner 2026-10-21: the grouped alert shows each task's note too ("Onboarding (Note: Satish)").
+            const alertTitles = r.done.map(title => { const t = action.tasks.find(x => x.title === title); return t?.details ? `${title} (Note: ${t.details})` : title; });
+            if (group && r.done.length) { try { await io.alertAssigned!(me, action.assigneeId, alertTitles, action.date); } catch { /* the tasks exist; a failed alert must not fail them */ } }
+            // Owner 2026-10-20: the "Added" reply shows each task's note too, the same as the preview did.
+            const shown = r.done.map(title => { const t = action.tasks.find(x => x.title === title); return t?.details ? `${title} (note: ${t.details})` : title; });
+            return outcome('Added', 'add', { one: 'task', many: 'tasks' }, shown, r.failed, who === 'you' ? ' to your list' : ` for ${who}`);
         }
 
         case 'hand_over_task': {
             try {
-                const { toName } = await io.handOver(me, action.taskId, action.toId);
-                return { summary: `Gave the task to ${toName}.`, values: { details: bullets([titleOf(action.taskId)]) } };
+                const { toName } = await io.handOver(me, action.taskId, action.toId, action.note ?? undefined);
+                return { summary: `Gave the task to ${toName}${action.note ? ' with your note' : ''}.`, values: { details: [bullets([titleOf(action.taskId)]), action.note ? `Note: ${action.note}` : ''].filter(Boolean).join('\n') } };
             } catch (err) {
                 return { summary: `I could not give that task to ${nameOf(action.toId)}. ${reason(err)}`, values: { details: bullets([titleOf(action.taskId)]) } };
             }
@@ -172,6 +185,37 @@ export async function executeAction(action: Action, ctx: BrainContext, io: ExecI
             }
         }
 
+        case 'add_note': {
+            if (!io.addNote) return { summary: 'Adding notes from WhatsApp is not available right now.', values: {} };
+            const line = `• ${action.title}${action.ownerName ? ` (${action.ownerName})` : ''}: ${action.note}`;
+            try {
+                await io.addNote(me, action.taskId, action.note);
+                return { summary: 'Added the note.', values: { details: line } };
+            } catch (err) {
+                return { summary: `I could not add the note. ${reason(err)}`, values: { details: line } };
+            }
+        }
+
+        case 'lock_tasks': {
+            if (!io.setLocked) return { summary: 'Locking tasks from WhatsApp is not available right now.', values: {} };
+            const r = await each(action.taskIds, id => io.setLocked!(me, id, action.lock), titleOf);
+            return action.lock
+                ? outcome('Locked', 'lock', { one: 'task (it will come back every working day)', many: 'tasks (they will come back every working day)' }, r.done, r.failed)
+                : outcome('Unlocked', 'unlock', { one: 'task (it will stop repeating)', many: 'tasks (they will stop repeating)' }, r.done, r.failed);
+        }
+
+        case 'remind_tasks': {
+            if (!io.remindTasks) return { summary: 'Sending reminders from WhatsApp is not available right now.', values: {} };
+            try {
+                const r = await io.remindTasks(me, action.taskIds);
+                const sent = r.reminded.map(x => `${x.name} (${x.count})`).join(', ');
+                const lines = [...r.reminded.map(x => `• Reminded ${x.name} about ${x.count} ${plural(x.count, 'task', 'tasks')}`), ...r.skipped.map(x => `• Not sent: ${x.title} (${x.why})`)];
+                return { summary: sent ? `Sent a reminder to ${sent}.` : 'No reminder was sent.', values: { details: lines.join('\n') } };
+            } catch (err) {
+                return { summary: `I could not send the reminder. ${reason(err)}`, values: {} };
+            }
+        }
+
         case 'find_tasks': {
             try {
                 const rows = io.findTasks ? await io.findTasks(me, action.query) : null;
@@ -204,7 +248,7 @@ export async function executeAction(action: Action, ctx: BrainContext, io: ExecI
 
 /** Does this decision's action need executing (as opposed to just a reply built from what is already known)? */
 export const needsExecution = (a: Action): boolean =>
-    !(a.type === 'chat' || (a.type === 'view_tasks' && a.scope === 'self') || a.type === 'answer_pending');
+    !(a.type === 'chat' || (a.type === 'view_tasks' && a.scope === 'self') || a.type === 'answer_pending' || a.type === 'locked_list');
 
 /** The status a "working / part-way" note maps to is "in progress"; shown for tests and the spec. */
 export const NOTE_STATES: ProgressState[] = ['working', 'partly_done', 'blocked'];

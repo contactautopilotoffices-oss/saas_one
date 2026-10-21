@@ -150,7 +150,7 @@ export default function OrgProgressCard({ orgId }: { orgId: string | null }) {
   const measuredLevels = m ? m.levels.filter((l) => l.progress_pct != null).length : 0;
 
   return (
-    <section className="cc-card" style={{ gridColumn: 'span 2', padding: '14px 16px' }}>
+    <section className="cc-card" style={{ padding: '14px 16px' }}>
       <div className="cc-card-head" style={{ marginBottom: 10, gap: 8 }}>
         <span className="cc-chip cc-chip--teal">
           <Gauge />

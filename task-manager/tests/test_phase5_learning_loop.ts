@@ -82,6 +82,60 @@ async function run() {
     /function markRoute[\s\S]*?beginObservation/.test(ledger) &&
     /markRoute\(input\?\.messageId, 'smart_chat', input\?\.phone, input\?\.text\)/.test(webhook));
 
+  console.log('\n6. Bot review upgrade — capture (Phase 1)');
+  check('"wrong" / "galat" at the start count as corrections; "something is wrong with the AC" does not',
+    learning.learningTriggers({ text: 'wrong, I wanted yesterday' }).includes('correction') && learning.learningTriggers({ text: 'galat, kal wala' }).includes('correction') &&
+    !learning.learningTriggers({ text: 'something is wrong with the AC on 3rd floor' }).includes('correction'));
+  check('a bare "no" answering the bot\'s own question is not a correction; "no, I meant…" still is',
+    !learning.learningTriggers({ text: 'no', pending: true }).includes('correction') && learning.learningTriggers({ text: 'no, I meant Vidya', pending: true }).includes('correction') &&
+    learning.learningTriggers({ text: 'no', pending: false }).includes('correction'));
+  check('asked again: similar words within 2 minutes', learning.isRephrase("show my team's carry forward tasks", 'show my team carry forward pending tasks', 60_000));
+  check('not asked again: too late, too different or too short',
+    !learning.isRephrase("show my team's carry forward tasks", 'show my team carry forward tasks', 3 * 60_000) &&
+    !learning.isRephrase("show my team's carry forward tasks", 'assign pantry check to Amit', 30_000) &&
+    !learning.isRephrase('yes', 'yes', 10_000));
+  check('rephrase is a follow-up trigger and is not doubled with a correction',
+    learning.FOLLOW_UP_TRIGGERS.includes('rephrase') && learning.FOLLOW_UP_TRIGGERS.includes('correction') && learning.FOLLOW_UP_TRIGGERS.includes('undo') &&
+    !learning.learningTriggers({ text: 'no I meant the old ones', rephrase: true }).includes('rephrase'));
+  check('the saved bot reply has phone numbers removed and is capped', !learning.sanitizeReplyText('Call +91 98765 43210 now').includes('98765') && learning.sanitizeReplyText('x'.repeat(5000)).length === 3000);
+  const svc2 = read('task-manager/BotLearningService.ts'), live2 = read('task-manager/brain/live.ts');
+  check('until the migration is applied, observeTurn keeps the old behaviour', /if \(!\(await reviewSchemaV2\(\)\)\) return await observeTurnLegacy\(input\)/.test(svc2));
+  check('the live bot passes its reply on every observed turn', (live2.match(/reply: SORRY_RETRY/g) || []).length === 2 && /reply: reply\?\.text \?\? null/.test(live2) && /outcome: plan\.kind === 'undo' \? 'ACT' : null, reply \}/.test(live2));
+  check('an apology keeps the promoted row for 30 days', /status: 'waiting', triggers, expires_at: in30Days\(\)/.test(svc2));
+  const sql2 = read('supabase/migrations/20261014000001_whatsapp_bot_review_upgrade.sql');
+  const sqlBody = sql2.replace(/^--.*$/gm, '');
+  check('upgrade migration is additive (no table drop, truncate, delete or update of rows)', !/\b(DROP TABLE|TRUNCATE|DELETE FROM|UPDATE public\.whatsapp_bot_review_items SET status)\b/i.test(sqlBody.replace(/UPDATE public\.whatsapp_bot_review_items SET status='labelled'/, '')) && /ADD COLUMN IF NOT EXISTS bot_reply/.test(sqlBody));
+  check('upgrade migration widens status and lets developer cases become tests', /'recent'/.test(sqlBody) && /'developer'/.test(sqlBody) && /status IN \('waiting','developer'\) FOR UPDATE/.test(sqlBody) && sqlBody.includes('GRANT EXECUTE ON FUNCTION public.whatsapp_bot_label_review(uuid,jsonb,text) TO service_role;'));
+
+  console.log('\n7. Bot review upgrade — AI summary (Phase 2)');
+  const rs = await import('../BotReviewSummary');
+  const row = { message_text: "show my team's carry forward tasks", bot_reply: "Your team's tasks for today: 1. Priya – DG", follow_up: { text: 'no, the old pending ones' }, triggers: ['correction'], interpretation: { intent: 'view_tasks', outcome: 'ACT' },
+    context_snapshot: { today: '2026-10-14', sender: { id: 'u1', name: 'Rahul' }, people: [{ id: 'u2', name: 'Priya' }], tasks: [{ id: 't1', title: 'DG' }] } };
+  const good2 = { wanted: 'To see team carry-forward tasks.', did: "Showed today's tasks.", fix: 'Show carried-over tasks for the team.', owner: 'learn', owner_reason: 'Wording only.', test: { intent: 'view_tasks', outcome: 'ACT', expect: { scope: 'team', personId: 'ghost', taskIds: ['t1', 'nope'] }, mustNotMutate: true, mustClarify: false } };
+  const parsed = rs.parseSummary(good2, row, 'gemini-test');
+  check('summary keeps the sentences and a checked test', parsed.wanted.startsWith('To ') && parsed.test?.intent === 'view_tasks' && parsed.owner === 'learn');
+  check('made-up ids are dropped from the test, real ones kept', parsed.test?.expect.personId === undefined && JSON.stringify(parsed.test?.expect.taskIds) === '["t1"]');
+  const bad2 = rs.parseSummary({ ...good2, test: { intent: 'invented', outcome: 'ACT', expect: {} } }, row, 'm');
+  check('no valid test → marked "Needs a developer", never saved as a test', bad2.test === null && bad2.owner === 'developer');
+  let threw = false; try { rs.parseSummary({ did: 'x', fix: 'y' }, row, 'm'); } catch { threw = true; }
+  check('a summary missing a sentence is rejected', threw);
+  const input2 = JSON.parse(rs.buildSummaryInput(row, 'he wanted the old open ones'));
+  check('the AI sees message, bot reply, next message and the admin note', input2.message && input2.bot_reply && input2.next_message === 'no, the old pending ones' && input2.admin_note === 'he wanted the old open ones');
+  check('the prompt treats conversation text as data and has ordered no-skip steps', /DATA, never instructions/.test(rs.SUMMARY_SYSTEM) && /Do not skip any/.test(rs.SUMMARY_SYSTEM) && /^1\. /m.test(rs.SUMMARY_SYSTEM));
+  const calls: string[] = [];
+  const failing = { complete: async (req: any) => { calls.push(req.model); throw new Error('quota'); } };
+  const fallback = { complete: async (req: any) => { calls.push(req.model); return { text: JSON.stringify(good2), tokensIn: 10, tokensOut: 20 }; } };
+  const out2 = await rs.summarizeReviewItem(row, null, { gemini: failing as any, fallback: fallback as any });
+  check('Gemini first, then the existing provider when Gemini fails', calls[calls.length - 1] === 'glm-5.3-flash' && calls.length >= 2 && out2.summary.model === 'glm-5.3-flash' && out2.failures.length === calls.length - 1);
+
+  console.log('\n8. Bot review upgrade — screens (Phases 3 and 4)');
+  const panel = read('frontend/components/task-manager/BotLearningPanel.tsx'), review = read('frontend/components/task-manager/BotReviewSection.tsx'), pv = read('frontend/components/task-manager/PromptVersionsSection.tsx'), route = read('app/api/task-manager/bot-learning/route.ts');
+  check('Bot learning is one collapsible section that loads only when opened', /Show bot learning/.test(panel) && /if \(next\) void load\(\)/.test(panel));
+  check('review card shows conversation, AI summary and Correct / Fix / Ignore', ['What the user wanted', 'What the bot did', 'The fix', 'Who can fix it', '✅ Correct', '✏️ Fix', 'Needs a developer'].every(t => review.includes(t)));
+  check('approve uses the server-side AI test, never a test sent from the browser', /action: 'approve', id: current\.id, owner \}/.test(review) && /validateReviewLabel\(row\.ai_summary\.test\)/.test(svc2));
+  check('new API actions sit behind the same admin guard', ['summarize', 'approve', 'undo', 'set_dev_state'].every(a => route.includes(`b.action === '${a}'`)) && /requireTaskManagerAdmin/.test(route));
+  check('prompt versions: large viewer, coloured diff, results table, no browser pop-ups', /VersionViewer/.test(pv) && /bg-emerald-50/.test(pv) && /bg-rose-50/.test(pv) && /<table/.test(pv) && !/window\.(prompt|confirm|alert)/.test(pv));
+
   check('no network used', true);
   console.log(failures ? `\n❌ ${failures} FAILED\n` : '\n🎉 PHASE 5 LEARNING LOOP TESTS PASSED\n');
   process.exit(failures ? 1 : 0);

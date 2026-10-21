@@ -1,20 +1,44 @@
 import { FACILITY_INTENTS, TASK_INTENTS, type BrainContext, type Intent, type Outcome } from './brain/types';
 /* eslint-disable @typescript-eslint/no-explicit-any -- replay snapshots accept legacy/context JSON and validate every retained field */
 
-export type LearningTrigger = 'unknown' | 'repeated_clarify' | 'apology' | 'correction' | 'undo';
+export type LearningTrigger = 'unknown' | 'repeated_clarify' | 'apology' | 'correction' | 'undo' | 'rephrase';
 export interface ReviewLabel { intent: Intent; outcome: Outcome; expect: Record<string, unknown>; mustNotMutate?: boolean; mustClarify?: boolean }
 
-const CORRECTION = /^(?:no\b|nope\b|nah\b|nahi\b|nahin\b|galat\b)|\b(?:i meant|meant to|mera matlab|my mistake)\b/i;
+// "wrong" / "galat" only at the start: "something is wrong with the AC" is a facility request, not a correction.
+const CORRECTION = /^(?:no\b|nope\b|nah\b|nahi\b|nahin\b|galat\b|wrong\b|not this\b|not that\b)|\b(?:i meant|meant to|mera matlab|my mistake)\b/i;
+// While the bot is waiting for an answer, a bare "no" / "nahi" just answers its question. Only these still count then.
+const STRONG_CORRECTION = /^(?:galat\b|wrong\b|not this\b|not that\b)|\b(?:i meant|meant to|mera matlab|my mistake)\b/i;
 
-export function learningTriggers(input: { intent?: string | null; outcome?: string | null; previousOutcome?: string | null; apology?: boolean; text?: string; exact?: string | null }): LearningTrigger[] {
+/** Triggers that say the PREVIOUS answer was wrong: the review item is the earlier message, this one is its follow-up. */
+export const FOLLOW_UP_TRIGGERS: readonly LearningTrigger[] = ['correction', 'undo', 'rephrase'];
+export const REPHRASE_WINDOW_MS = 2 * 60_000;
+/** How long the last answered message is kept so a follow-up can find it. */
+export const RECENT_KEEP_MS = 10 * 60_000;
+
+const words = (s: string) => new Set(s.toLowerCase().normalize('NFKD').replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length >= 2));
+
+/** "Asked again": the same person sends a message within 2 minutes that shares most of its words with the previous one. */
+export function isRephrase(previous: string | null | undefined, text: string, gapMs: number): boolean {
+    if (!previous || !(gapMs >= 0) || gapMs > REPHRASE_WINDOW_MS) return false;
+    const a = words(previous), b = words(text);
+    if (a.size < 2 || b.size < 2) return false;
+    let shared = 0; for (const w of a) if (b.has(w)) shared++;
+    return shared / Math.min(a.size, b.size) >= 0.6;
+}
+
+export function learningTriggers(input: { intent?: string | null; outcome?: string | null; previousOutcome?: string | null; apology?: boolean; text?: string; exact?: string | null; rephrase?: boolean; pending?: boolean }): LearningTrigger[] {
     const out: LearningTrigger[] = [];
     if (input.intent === 'unknown') out.push('unknown');
     if (input.outcome === 'CLARIFY' && input.previousOutcome === 'CLARIFY') out.push('repeated_clarify');
     if (input.apology) out.push('apology');
-    if (input.text && CORRECTION.test(input.text.trim())) out.push('correction');
+    if (input.text && (input.pending ? STRONG_CORRECTION : CORRECTION).test(input.text.trim())) out.push('correction');
     if (input.exact === 'undo') out.push('undo');
+    if (input.rephrase && !out.includes('correction')) out.push('rephrase');
     return out;
 }
+
+/** The bot's reply as shown on the review card: phone numbers removed, length capped. */
+export const sanitizeReplyText = (text: string): string => String(text ?? '').replace(/(?:\+?\d[\s().-]*){10,15}/g, '[phone redacted]').slice(0, 3000);
 
 /** Store only facts the model/code need for replay. Contact details and conversation text outside this turn are excluded. */
 export function sanitizeReplayContext(ctx: Partial<BrainContext> & Record<string, any>): Record<string, unknown> {

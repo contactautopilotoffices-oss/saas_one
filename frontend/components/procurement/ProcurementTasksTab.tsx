@@ -2,8 +2,9 @@
 
 import React, { useMemo, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { AlertTriangle, Bell, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, LayoutGrid, Lock, Plus, RefreshCw, Send, Users, X } from 'lucide-react';
-import { EASE, WTask, longDate, shiftDate, todayIST } from './tasks/types';
+import { AlertTriangle, Bell, CheckCircle2, ClipboardList, LayoutGrid, Lock, Plus, RefreshCw, Send, UserCheck, Users, X } from 'lucide-react';
+import { EASE, WTask, todayIST } from './tasks/types';
+import DateRangePicker, { DateRange } from '@/frontend/components/task-manager/DateRangePicker';
 import { useWorkspace } from './tasks/useWorkspace';
 import StatCards from './tasks/StatCards';
 import Board from './tasks/Board';
@@ -11,6 +12,7 @@ import TeamView from './tasks/TeamView';
 import TaskDialog from './tasks/TaskDialog';
 import NotificationsView from './tasks/NotificationsView';
 import SuperuserPanel from './tasks/SuperuserPanel';
+import AssignedView from './tasks/AssignedView';
 
 /**
  * Procurement "Tasks" tab: a drag-and-drop board and a team view.
@@ -18,7 +20,7 @@ import SuperuserPanel from './tasks/SuperuserPanel';
  * this screen only shows what the server returns and offers the actions it allows.
  */
 
-type View = 'board' | 'team' | 'notifications' | 'superuser';
+type View = 'board' | 'team' | 'assigned' | 'notifications' | 'superuser';
 type Filter = 'all' | 'today' | 'carried';
 
 const FILTERS: ReadonlyArray<{ id: Filter; label: string }> = [
@@ -85,12 +87,14 @@ function LockScreen({ message }: { message: string }) {
 
 export default function ProcurementTasksTab({ departmentName = 'Procurement' }: { departmentName?: string }) {
     const reduce = !!useReducedMotion();
-    const [date, setDate] = useState(todayIST());
+    // Owner 2026-10-15: a date RANGE (at most 31 days). New tasks go on the day shown, or today when several days are shown.
+    const [range, setRange] = useState<DateRange>(() => ({ from: todayIST(), to: todayIST() }));
+    const date = range.from === range.to ? range.from : todayIST();
     const [view, setView] = useState<View>('board');
     const [filter, setFilter] = useState<Filter>('all');
     const [dialog, setDialog] = useState<{ open: boolean; target: string | null }>({ open: false, target: null });
 
-    const { ws, ok, loading, refreshing, error, toasts, dismissToast, reload, moveTask, addTask, giveTask, deleteTask, setLocked } = useWorkspace(date, departmentName);
+    const { ws, ok, loading, refreshing, error, toasts, dismissToast, reload, moveTask, addTask, giveTask, deleteTask, setLocked, flagDependency, editTask, giveMany, addNote } = useWorkspace(range.from, departmentName, range.to);
 
     // The board shows only MY tasks; the Team tab is where other people's tasks live.
     const mine: WTask[] = useMemo(() => (ok ? ok.tasks.filter(t => t.ownerId === ok.actor.userId) : []), [ok]);
@@ -134,11 +138,12 @@ export default function ProcurementTasksTab({ departmentName = 'Procurement' }: 
     const meId = ok.actor.userId;
     // Working with a superuser: this view exists only for a team whose switch is ON and when there is someone to work with.
     const collab = ok.superuserCollab?.enabled && ok.superuserCollab.superusers.length ? ok.superuserCollab : null;
-    const isToday = date === todayIST();
     const openDialog = (target: string | null) => setDialog({ open: true, target });
     const quickAdd = (title: string) => addTask({ targetUserId: meId, title, date });
     // "Give to…": the teammates the server says I may give work to (never myself)
-    const give = { people: ok.assignable.filter(a => !a.isMe), onGive: giveTask };
+    const give = { people: ok.assignable.filter(a => !a.isMe), onGive: giveTask, onGiveMany: giveMany, onAddNote: addNote };
+    // Owner 2026-10-19: "Pending on…" a colleague (they are told; they still cannot see my board).
+    const pending = { people: ok.dependencyPeople || [], onFlag: flagDependency };
 
     return (
         <div className="relative space-y-5">
@@ -170,16 +175,8 @@ export default function ProcurementTasksTab({ departmentName = 'Procurement' }: 
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                    <div className="flex items-center gap-1 rounded-2xl border border-zinc-200 bg-white p-1 dark:border-zinc-800 dark:bg-zinc-900">
-                        <button type="button" onClick={() => setDate(shiftDate(date, -1))} aria-label="Previous day" className="rounded-xl p-2 text-zinc-500 transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800"><ChevronLeft className="h-4 w-4" /></button>
-                        <label className="flex cursor-pointer items-center gap-2 px-1.5 text-xs font-bold text-zinc-800 dark:text-zinc-100">
-                            <CalendarDays className="h-4 w-4 text-zinc-400" />
-                            <span className="hidden min-w-[130px] text-center sm:inline">{longDate(date)}</span>
-                            <input id="tasks-date" type="date" value={date} onChange={e => setDate(e.target.value || todayIST())} className="w-[110px] bg-transparent text-xs font-semibold outline-none sm:sr-only" aria-label="Choose a date" />
-                        </label>
-                        <button type="button" onClick={() => setDate(shiftDate(date, 1))} aria-label="Next day" className="rounded-xl p-2 text-zinc-500 transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800"><ChevronRight className="h-4 w-4" /></button>
-                        {!isToday && <button type="button" onClick={() => setDate(todayIST())} className="mr-1 rounded-lg bg-indigo-50 px-2.5 py-1.5 text-[11px] font-black text-indigo-700 transition-colors hover:bg-indigo-100 dark:bg-indigo-950/60 dark:text-indigo-300">Today</button>}
-                    </div>
+                    {/* Owner 2026-10-15: pick one day or a range (quick picks + from–to, at most 31 days) */}
+                    <DateRangePicker value={range} onChange={setRange} className="rounded-2xl px-3 py-2" />
                     <button type="button" onClick={reload} disabled={refreshing} aria-label="Refresh" className="rounded-2xl border border-zinc-200 bg-white p-2.5 text-zinc-500 transition-colors hover:text-zinc-800 disabled:opacity-60 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:text-zinc-200">
                         <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
                     </button>
@@ -204,6 +201,7 @@ export default function ProcurementTasksTab({ departmentName = 'Procurement' }: 
                     options={[
                         { id: 'board' as View, label: 'Board', icon: <LayoutGrid className="h-3.5 w-3.5" /> },
                         { id: 'team' as View, label: 'Team', icon: <Users className="h-3.5 w-3.5" /> },
+                        ...(ok.features?.assignedTab ? [{ id: 'assigned' as View, label: 'Assigned by me', icon: <UserCheck className="h-3.5 w-3.5" /> }] : []),
                         { id: 'notifications' as View, label: 'Notifications', icon: <Bell className="h-3.5 w-3.5" /> },
                         ...(collab ? [{ id: 'superuser' as View, label: 'Send', icon: <Send className="h-3.5 w-3.5" /> }] : []),
                     ]}
@@ -219,7 +217,8 @@ export default function ProcurementTasksTab({ departmentName = 'Procurement' }: 
             {/* content */}
             <AnimatePresence mode="wait" initial={false}>
                 <motion.div key={view} initial={reduce ? false : { opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={reduce ? undefined : { opacity: 0, y: -6 }} transition={{ duration: 0.3, ease: EASE }}>
-                    {view === 'board' && <Board tasks={filtered} meId={meId} onMove={moveTask} onQuickAdd={quickAdd} onDelete={deleteTask} onLock={setLocked} give={give} />}
+                    {view === 'board' && <Board tasks={filtered} meId={meId} onMove={moveTask} onQuickAdd={quickAdd} onDelete={deleteTask} onLock={setLocked} give={give} pending={pending} />}
+                    {view === 'assigned' && ok.features?.assignedTab && <AssignedView from={range.from} to={range.to} onEdit={editTask} onDelete={deleteTask} />}
                     {view === 'team' && <TeamView members={ok.members} tasks={ok.tasks} assignable={ok.assignable} onAssign={openDialog} />}
                     {view === 'notifications' && <NotificationsView departmentName={departmentName} />}
                     {view === 'superuser' && collab && (

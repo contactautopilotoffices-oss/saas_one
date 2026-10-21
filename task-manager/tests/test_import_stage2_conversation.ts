@@ -139,9 +139,31 @@ async function run() {
     await S.TaskImportService.handleText(PHONE, 'add tasks', w.deps);
     r = await S.TaskImportService.handleText(PHONE, 'hello there', w.deps);
     check('while waiting for a list, a single unrelated line is not swallowed', !r.handled);
+    check('small talk, menu numbers, questions and bot requests are not one task',
+        ['ok', '1', 'thanks', '😂', 'show my tasks', 'book a meeting room', 'done 1', 'what is pending?', 'Good morning team'].every(t => !S.looksLikeOneTask(t)));
+    w = world();
+    await S.TaskImportService.handleText(PHONE, 'add tasks', w.deps);
+    r = await S.TaskImportService.handleText(PHONE, 'Complete AOP RECONSILATION', w.deps);
+    await r.background?.();
+    check('"add tasks" then ONE line → that line, word for word, previewed for YES (no AI call)',
+        r.handled && w.ctx?.type === 'IMPORT_PREVIEW' && w.ctx.data.tasks.length === 1 && w.ctx.data.tasks[0].title === 'Complete AOP RECONSILATION' && w.ctx.data.structuredBy === 'rules' && /Reply YES/.test(w.replies[w.replies.length - 1]), w.replies);
+    w = world();
+    let cl0 = await I.claimTaskImport(text('Complete AOP RECONSILATION'), w.io);
+    check('the same line WITHOUT "add tasks" first → not claimed by Task Import, no settings/employee read', !cl0.handled && w.reads.config === 0 && w.reads.employee === 0);
+    await S.TaskImportService.handleText(PHONE, 'add tasks', w.deps);
+    cl0 = await I.claimTaskImport(text('Complete AOP RECONSILATION', 'wamid.one'), w.io);
+    check('webhook: after "add tasks", the one line IS claimed', cl0.handled && !!cl0.background);
+
+    // Owner 2026-10-19: "add task: <one line>" is ONE task, word for word (it used to be read as a list, find nothing and
+    // reply "I could not find any tasks").
+    w = world(); w.llmStructure = [];
+    await S.TaskImportService.handleText(PHONE, 'add task: Autopilot amplify payment', w.deps).then(c => c.background!());
+    check('"add task: <one line>" → that one task, word for word, previewed for YES, no "up to a minute"',
+        w.ctx?.type === 'IMPORT_PREVIEW' && w.ctx.data.tasks.length === 1 && w.ctx.data.tasks[0].title === 'Autopilot amplify payment'
+        && /Got your task/.test(w.replies[0]) && !/up to a minute/.test(w.replies[0]), w.replies);
 
     w = world(); w.llmStructure = [];
-    await S.TaskImportService.handleText(PHONE, 'add tasks: please do the thing that is vague', w.deps).then(c => c.background!());
+    await S.TaskImportService.handleText(PHONE, 'add tasks:\nwhat\nok?', w.deps).then(c => c.background!());
     check('nothing found → friendly message, state cleared, no preview', w.ctx === null && /could not find any tasks/.test(w.replies[w.replies.length - 1]) && w.audits.includes('task_import_failed'), w.replies);
     w = world();
     const failing = { ...w.deps, parse: async () => { throw new Error('boom'); } };
@@ -317,6 +339,28 @@ async function run() {
     w = photoWorld();
     cl = await I.claimTaskImport(image('AC is leaking on floor 2', 'wamid.P7'), w.io);
     check('a caption about something else → the facility assistant, exactly as before', !cl.handled && w.replies.length === 0);
+    console.log('\nOwner 2026-10-19: typed tasks go to the AI (Smart chat) when the team has it ON');
+    const smartWorld = () => { const x = world(); x.io.getSmartChatDepartments = async () => new Set(['d1']); return x; };
+    w = smartWorld();
+    cl = await I.claimTaskImport(text('add task : Autopilot amplify payment', 'wamid.S1'), w.io);
+    check('Smart chat ON → "add task : <one line>" is left for the AI (no import, no "reading your list")', !cl.handled && w.replies.length === 0 && w.ctx === null);
+    w = smartWorld();
+    cl = await I.claimTaskImport(text('add tasks:\n1. Call vendor\n2. Send PO', 'wamid.S2'), w.io);
+    check('Smart chat ON → a typed list is left for the AI too', !cl.handled && w.replies.length === 0);
+    w = smartWorld(); w.ctx = { type: 'IMPORT_AWAITING', data: {} };
+    cl = await I.claimTaskImport(text('Check payroll', 'wamid.S3'), w.io);
+    check('Smart chat ON → an old "send me your list" wait is dropped so the AI answers', !cl.handled && w.ctx === null);
+    w = smartWorld(); w.ctx = { type: 'IMPORT_PREVIEW', data: { tasks: [{ title: 'A', status: 'pending' }], date: TODAY } };
+    cl = await I.claimTaskImport(text('yes', 'wamid.S4'), w.io);
+    check('Smart chat ON → a preview already on screen (from an image / Excel) still takes its YES', cl.handled);
+    w = smartWorld();
+    cl = await I.claimTaskImport(image('my tasks for today', 'wamid.S5'), w.io);
+    check('Smart chat ON → an image with a task caption is still read by Task import', cl.handled && /Reading your tasks/.test(w.replies[0] || ''));
+    w = world();
+    cl = await I.claimTaskImport(text('add task : Autopilot amplify payment', 'wamid.S6'), w.io);
+    await cl.background?.();
+    check('Smart chat OFF → "add task : <one line>" becomes ONE task (no "could not find any tasks")', cl.handled && w.ctx?.type === 'IMPORT_PREVIEW' && w.ctx.data.tasks[0]?.title === 'Autopilot amplify payment', w.replies);
+
     const hook = fs.readFileSync(path.resolve(__dirname, '../../app/api/webhooks/aisensy/route.ts'), 'utf8');
     check('the webhook carries on with the handed-back photo (so the facility flow sees it as just arrived)', /if \(taskImport\.rewrite\) \{ body = taskImport\.rewrite; input = normalizeInbound\(body\); \}/.test(hook));
 

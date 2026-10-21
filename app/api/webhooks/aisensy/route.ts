@@ -43,6 +43,8 @@ export async function GET() {
         routingVersion: 'ticket-photo-submit-v1' });
 }
 
+const STALE_INBOUND_MS = 15 * 60_000;
+
 export async function POST(req: NextRequest) {
     const receivedAt = new Date().toISOString(); // conversation memory orders the person's message by when it ARRIVED
     const enabled = process.env.AISENSY_ASSISTANT_ENABLED === 'true';
@@ -54,6 +56,14 @@ export async function POST(req: NextRequest) {
     // The same write spots a RE-DELIVERY of a message already received (same WhatsApp id, even hours later): it is
     // dropped here, before voice / routing, so nobody gets a second reply or a repeated action.
     const arrived = normalizeInbound(body);
+    // A message SENT more than 15 minutes ago is a late re-delivery (2026-10-15: two of Saturday's messages arrived again
+    // five days later and were answered as new). Ignored before the ledger, so the watchdog never apologises for it.
+    // No send time in the payload → handled as before. The age is logged, never the content.
+    const ageMs = arrived?.inboundAt ? Date.now() - Date.parse(arrived.inboundAt) : NaN;
+    if (ageMs > STALE_INBOUND_MS) {
+        console.info('[AiSensyWebhook] Stale delivery ignored', JSON.stringify({ ageMinutes: Math.round(ageMs / 60_000), type: messageKind(arrived!) }));
+        return NextResponse.json({ success: true, ignored: 'stale' });
+    }
     const seen = await recordInbound(arrived?.messageId, arrived?.phone, arrived && messageKind(arrived));
     if (seen === 'duplicate') {
         console.info('[AiSensyWebhook] Duplicate delivery ignored', JSON.stringify({ type: arrived && messageKind(arrived) }));

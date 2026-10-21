@@ -55,7 +55,38 @@ function evalSummary(rows: StoredEval[]) { const s = summarize(rows.map(r => r.s
  * decision 2026-10-12), each model in order, then falls back to the existing provider (glm-5.3-flash), so the loop never
  * stops because Gemini is unavailable (no key, quota, depleted credits). The model that wrote it is recorded.
  */
-export async function draftCandidate(current: PromptSections, labels: any[], state: EvalState, llm: BrainLlm, gemini: BrainLlm | null = geminiLlm()): Promise<{ sections: PromptSections; changeSummary: string; model: string }> {
+/**
+ * Owner 2026-10-20: apply the AI's small edits to a COPY of the current sections. At most 4 edits, each one line of at most
+ * 600 characters, on an existing line number. Anything odd throws, which rejects the draft (the current text is untouched).
+ */
+export const MAX_PROMPT_EDITS = 4;
+export function applyPromptEdits(current: PromptSections, edits: unknown[]): PromptSections {
+    if (!edits.length) throw new Error('no edits');
+    if (edits.length > MAX_PROMPT_EDITS) throw new Error(`too many edits (${edits.length})`);
+    const out: PromptSections = { steps: [...current.steps], examples: [...current.examples] };
+    // Later lines first, so an earlier edit never shifts the line numbers of the next one.
+    const list = edits.map(e => (e && typeof e === 'object' ? e as Record<string, unknown> : {}));
+    list.sort((a, b) => Number(b.index) - Number(a.index));
+    for (const e of list) {
+        const section = e.section === 'steps' || e.section === 'examples' ? e.section : null;
+        const op = e.op === 'replace' || e.op === 'insert_after' || e.op === 'delete' ? e.op : null;
+        const index = Number(e.index);
+        if (!section || !op || !Number.isInteger(index)) throw new Error('bad edit');
+        const lines = out[section];
+        const text = typeof e.text === 'string' ? e.text.replace(/\s+/g, ' ').trim() : '';
+        if (op !== 'delete' && (!text || text.length > 600)) throw new Error('bad edit text');
+        if (op === 'insert_after') {
+            if (index < -1 || index >= lines.length) throw new Error('edit line out of range');
+            lines.splice(index + 1, 0, text);
+        } else {
+            if (index < 0 || index >= lines.length) throw new Error('edit line out of range');
+            if (op === 'replace') lines[index] = text; else lines.splice(index, 1);
+        }
+    }
+    return out;
+}
+
+export async function draftCandidate(current: PromptSections, labels: any[], state: EvalState, llm: BrainLlm = engyBrainLlm({ thinking: 'off', timeoutMs: 90_000 }), gemini: BrainLlm | null = geminiLlm()): Promise<{ sections: PromptSections; changeSummary: string; model: string }> {
     const user = JSON.stringify({ current, labelled_cases: labels.map(x => ({ message: String(x.message_text).slice(0, 800), context: x.context_snapshot, correct: x.expectation })) });
     const system = [
         'You improve only the tunable task-understanding steps and examples.',
@@ -63,10 +94,11 @@ export async function draftCandidate(current: PromptSections, labels: any[], sta
         'Follow these steps in order. Do not skip any.',
         '1. Read the current steps and examples.',
         '2. Read the labelled cases only as evidence of desired classifications.',
-        '3. Make the smallest wording or example change that helps those cases.',
+        '3. Make the smallest wording or example change that helps those cases: at most 4 edits.',
         '4. Do not add or alter intents, schemas, permissions, confirmation rules, safety rules or execution rules.',
-        '5. Return JSON only: {"steps":string[],"examples":string[],"change_summary":string}.',
-        'Example output: {"steps":["1. Read the context."],"examples":["Example. Message: tasks → view_tasks."],"change_summary":"Clarify short task-list requests."}',
+        '5. Return ONLY the edits, never the whole text. Each edit: {"section":"steps"|"examples","op":"replace"|"insert_after"|"delete","index":int,"text":string}. "index" is the 0-based line number in the current section; "insert_after" with index -1 inserts at the top; "text" is the new line (omit it for "delete").',
+        '6. Return JSON only: {"edits":[...],"change_summary":string}.',
+        'Example output: {"edits":[{"section":"examples","op":"insert_after","index":2,"text":"Example. Message: tasks → view_tasks."}],"change_summary":"Clarify short task-list requests."}',
     ].join('\n');
     const baseChars = current.steps.concat(current.examples).join('\n').length;
     const attempts: Array<[BrainLlm, string]> = [...(gemini ? geminiDraftModels().map(m => [gemini, m] as [BrainLlm, string]) : []), [llm, 'glm-5.3-flash']];
@@ -74,7 +106,9 @@ export async function draftCandidate(current: PromptSections, labels: any[], sta
     for (const [client, model] of attempts) {
         try {
             const res = await budgeted(client, state).complete({ model, system, user, json: true, maxTokens: MAX_DRAFT_TOKENS }); const raw: any = extractJson(res.text);
-            const checked = validatePromptSections({ steps: raw.steps, examples: raw.examples }, { maxChars: 12000, maxBaseChars: baseChars });
+            // Owner 2026-10-20: the AI sends a few edits; code applies them to the current text (a full rewrite is still accepted).
+            const next = Array.isArray(raw?.edits) ? applyPromptEdits(current, raw.edits) : { steps: raw.steps, examples: raw.examples };
+            const checked = validatePromptSections(next, { maxChars: 12000, maxBaseChars: baseChars });
             if (!checked.ok) throw new Error(checked.error);
             state.draftModel = model;
             return { sections: checked.value, changeSummary: String(raw.change_summary || 'Improve handling of newly labelled messages.').slice(0, 240), model };
@@ -109,10 +143,15 @@ async function evaluateBatch(row: any, state: EvalState, current: PromptSections
     const before = evalSummary(state.before), after = evalSummary(state.after); return { done: true as const, before, after, verdict: candidatePasses(before, after) };
 }
 
-export async function runNightlyAutoTune(now = new Date(), rawLlm: BrainLlm = engyBrainLlm({ thinking: 'off' })) {
+/**
+ * Owner 2026-10-20: `draft: false` (the 15-minute housekeeping) only continues testing a version already written; writing a
+ * new version (the slow step) runs in its own nightly job with up to 5 minutes (/api/cron/bot-autotune).
+ */
+export async function runNightlyAutoTune(now = new Date(), rawLlm: BrainLlm = engyBrainLlm({ thinking: 'off', timeoutMs: 90_000 }), opts: { draft?: boolean } = {}) {
     if (!(await botSwitchOn('nightlyAutoTune'))) return { status: 'off' as const, calls: 0 };
     const { data: evaluating } = await supabaseAdmin.from(tables.PROMPTS).select('*').eq('prompt_key', 'task_brain_understand').eq('status', 'evaluating').order('created_at', { ascending: false }).limit(1).maybeSingle();
     let row: any = evaluating;
+    if (!row && opts.draft === false) return { status: 'quiet' as const, calls: 0 };
     if (!row) {
         const [{ data: newest }, { data: last }] = await Promise.all([supabaseAdmin.from(tables.CASES).select('created_at').order('created_at', { ascending: false }).limit(1).maybeSingle(), supabaseAdmin.from(tables.PROMPTS).select('source_label_at,run_date').order('created_at', { ascending: false }).limit(1).maybeSingle()]);
         const newestLabelAt = newest?.created_at || null;
@@ -152,7 +191,8 @@ export async function runPhase5Housekeeping(now = new Date()) {
     const out: any = { reviewPurged: null, autoTune: null, alerts: null };
     let learningOn = false;
     try { learningOn = await botSwitchOn('learningLoop'); if (learningOn) out.reviewPurged = await purgeReviewItems(now); } catch (e) { console.warn('[Phase5] review purge skipped', e); }
-    try { out.autoTune = await runNightlyAutoTune(now); } catch (e) { console.warn('[Phase5] auto-tune skipped', e); }
+    // Owner 2026-10-20: here only the quick testing step; a new version is written by /api/cron/bot-autotune (own 5-minute slot).
+    try { out.autoTune = await runNightlyAutoTune(now, undefined, { draft: false }); } catch (e) { console.warn('[Phase5] auto-tune skipped', e); }
     try { if (learningOn) out.alerts = await sendHealthAlerts(now); } catch (e) { console.warn('[Phase5] health alert skipped', e); }
     return out;
 }

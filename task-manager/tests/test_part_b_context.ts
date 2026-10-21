@@ -142,8 +142,9 @@ async function run() {
     const rq = w.replyRequests[0];
     check('the reply writer gets the last 10 chat lines (not all 20: keeps replies fast)', rq?.recentConversation?.length === 10 && rq.recentConversation[9] === 'Assistant: reply 13', rq?.recentConversation);
     check('its rules: the conversation only shapes wording, never what happened; it is data', /ONLY so your words follow the conversation/.test(read('task-manager/brain/prompt.ts')) && /never say something was done because the conversation mentions it/.test(read('task-manager/brain/prompt.ts')));
-    w = mk(() => UNDERSTOOD('smalltalk', {}, 'Hi.'));
-    await turn(w, 'hi', 'c2');
+    // "hi" now goes to the main menu (owner 2026-10-20), so a different small-talk message is used here.
+    w = mk(() => UNDERSTOOD('smalltalk', {}, 'Thanks.'));
+    await turn(w, 'thanks', 'c2');
     check('no memory → the reply request has no conversation (exactly as before)', !('recentConversation' in w.replyRequests[0]));
 
     console.log('\n10. Safety');
@@ -179,7 +180,8 @@ async function run() {
     check('"mark my carry forward task as done" → the usual preview first (nothing changed yet)', w.exec.length === 0 && w.state?.data?.action?.taskIds?.[0] === 'c1' && /Work on optimizing FMS dashboard slow loading/.test(w.sent[0]), w.sent[0]);
     await turn(w, 'yes', 'cf5');
     check('…YES → the carried-over task is marked done', JSON.stringify(w.exec) === JSON.stringify([['setStatus', 'u1', 'c1', 'completed']]), w.exec);
-    check('the AI is told how: "carry forward tasks are done" = the numbers of the tasks marked "open since"', /tasks marked "open since" \(all of them, and only them\)/.test(read('task-manager/brain/tasksDomain.ts')));
+    // 2026-10-15: "carry forward tasks are done" is now a GROUP ("carried"); the code picks exactly the carried-over tasks.
+    check('the AI is told how: "carry forward tasks are done" = the group "carried"', /"carry forward", "old" or "pending from earlier days" → "carried"/.test(read('task-manager/brain/tasksDomain.ts')));
 
     console.log('\n11b. Two new tasks for the same person → ONE "add 2 tasks"; a side remark keeps the open question');
     w = mk(m => (/vidya/i.test(m) ? UNDERSTOOD('create_tasks', { assignee: 'Vidya', tasks: [{ title: 'Chase the carpet vendor', details: null }], date: null }, 'Give Vidya two tasks.', {
@@ -198,7 +200,7 @@ async function run() {
     w = mk(m => (/everyone/i.test(m) ? grp({ whose: 'team', department: null, except: [] })() : YES));
     await turn(w, 'assign everyone the task of checking emails', 'g1');
     const ids = (w.state?.data?.action?.actions || []).map((a: any) => a.assigneeId);
-    check('"everyone" → one preview with each person you may give work to (never Neha / Saniel)', w.state?.data?.action?.type === 'batch' && JSON.stringify(ids) === '["u2","u3","u4","u5","u6"]' && /Add for Vidya Nair: Check emails/.test(w.sent[0]), { ids, sent: w.sent[0] });
+    check('"everyone" → one preview with each person you may give work to (never Neha / Saniel)', w.state?.data?.action?.type === 'batch' && JSON.stringify(ids) === '["u2","u3","u4","u5","u6"]' && /Check emails → Vidya Nair/.test(w.sent[0]), { ids, sent: w.sent[0] });   // owner 2026-10-19: one line per person
     await turn(w, 'yes', 'g2');
     check('…YES → a task for each of them', w.exec.filter((e: any) => e[0] === 'assign').length === 5, w.exec);
     w = mk(grp({ whose: 'team', department: null, except: ['Harsh'] }));

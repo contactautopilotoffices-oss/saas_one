@@ -19,23 +19,26 @@ import SignOutModal from '@/frontend/components/ui/SignOutModal';
 import NotificationBell from './NotificationBell';
 import Image from 'next/image';
 import Skeleton from '@/frontend/components/ui/Skeleton';
-import VendorExportModal from '@/frontend/components/vendor/VendorExportModal';
 import { Toast } from '@/frontend/components/ui/Toast';
-import TicketCreateModal from '@/frontend/components/tickets/TicketCreateModal';
 import { useTheme } from '@/frontend/context/ThemeContext';
 import { Sun, Moon } from 'lucide-react';
-import AddMemberModal from './InviteMemberModal';
-import StockMovementModal from '@/frontend/components/stock/StockMovementModal';
 import { assetCaps } from '@/frontend/lib/assets/roles';
 import type { QRScanResult } from '@/frontend/components/shared/UniversalQRScannerModal';
-import ClientQRGeneratorModal from '@/frontend/components/vms/ClientQRGeneratorModal';
 
-import VendorManagementModal from '@/frontend/components/vendor/VendorManagementModal';
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
 import dynamic from 'next/dynamic';
 import { usePreloadTabs } from '@/frontend/lib/dashboard/preloadTabs';
 import TabLoading from './TabLoading';
 
+// Pop-ups stay mounted exactly as before (they open via isOpen); only their code moves out of this file, so the
+// dashboard itself downloads sooner and they arrive right after it, before anyone clicks (performance plan Phase 8).
+// FeedbackModal stays a normal import: the always-loaded sidebar uses it too, so moving it would save nothing.
+const VendorExportModal = dynamic(() => import('@/frontend/components/vendor/VendorExportModal'), { loading: () => null });
+const TicketCreateModal = dynamic(() => import('@/frontend/components/tickets/TicketCreateModal'), { loading: () => null });
+const AddMemberModal = dynamic(() => import('./InviteMemberModal'), { loading: () => null });
+const StockMovementModal = dynamic(() => import('@/frontend/components/stock/StockMovementModal'), { loading: () => null });
+const ClientQRGeneratorModal = dynamic(() => import('@/frontend/components/vms/ClientQRGeneratorModal'), { loading: () => null });
+const VendorManagementModal = dynamic(() => import('@/frontend/components/vendor/VendorManagementModal'), { loading: () => null });
 const HRTicketsContent = dynamic(() => import('@/frontend/components/hr/HRTicketsContent'), { loading: TabLoading });
 const UserDirectory = dynamic(() => import('./UserDirectory'), { loading: TabLoading });
 const DieselAnalyticsDashboard = dynamic(() => import('@/frontend/components/diesel/DieselAnalyticsDashboard'), { loading: TabLoading });
@@ -1552,24 +1555,9 @@ const OverviewTab = memo(function OverviewTab({
                     slaBreachedQuery = slaBreachedQuery.gte('created_at', monthStart);
                 }
 
-                const validationFeaturePromise = propertyId === 'all'
-                    ? Promise.resolve({ data: { is_enabled: true }, error: null })
-                    : supabase.from('property_features').select('is_enabled').eq('property_id', propertyId).eq('feature_key', 'ticket_validation').maybeSingle();
-
-                const [openRes, waitlistRes, inProgressRes, resolvedRes, totalRes, recentsRes, pendingValRes, urgentOpenRes, slaBreachedRes, validationFeatureRes] = await Promise.all([
-                    openQuery,
-                    waitlistQuery,
-                    inProgressQuery,
-                    resolvedQuery,
-                    totalQuery,
-                    recentsQuery,
-                    pendingValQuery,
-                    urgentOpenQuery,
-                    slaBreachedQuery,
-                    validationFeaturePromise,
-                ]);
-
-                // --- Electricity, VMS, Vendors (all in parallel via APIs) ---
+                // --- Electricity, VMS, Vendors, checklist (all in parallel via APIs) ---
+                // None of these use the ticket results below, so they start now, together with the tickets, instead
+                // of waiting for them. Their answers are still read after the tickets, as before (performance plan Phase 4).
                 const today = new Date().toISOString().split('T')[0];
                 const apiPeriod = timePeriod; // 'today' | 'month' | 'all'
 
@@ -1586,7 +1574,7 @@ const OverviewTab = memo(function OverviewTab({
                 } else if (timePeriod === 'month') {
                     electricityQuery = electricityQuery.gte('reading_date', monthStart);
                 }
-                
+
                 let dieselQuery = supabase.from('diesel_readings').select('computed_consumed_litres, closing_kwh, opening_kwh, reading_date');
                 if (propertyId !== 'all') {
                     dieselQuery = dieselQuery.eq('property_id', propertyId);
@@ -1599,7 +1587,7 @@ const OverviewTab = memo(function OverviewTab({
                 } else if (timePeriod === 'month') {
                     dieselQuery = dieselQuery.gte('reading_date', monthStart);
                 }
-                
+
                 // Checklist progress
                 const todayForChecklist = new Date().toISOString().split('T')[0];
                 const monthStartForChecklist = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
@@ -1617,13 +1605,34 @@ const OverviewTab = memo(function OverviewTab({
                     checklistQuery = checklistQuery.gte('completion_date', monthStartForChecklist);
                 }
 
-                const [electricityRes, dieselRes, vmsApiRes, vendorApiRes, checklistRes] = await Promise.all([
+                const secondBatchRequest = Promise.all([
                     electricityQuery,
                     dieselQuery,
                     fetch(`/api/properties/${propertyId}/vms-summary?period=${apiPeriod}`),
                     fetch(`/api/properties/${propertyId}/vendor-summary?period=${apiPeriod}`),
                     checklistQuery
                 ]);
+                secondBatchRequest.catch(() => { /* handled when awaited below */ });
+
+                const validationFeaturePromise = propertyId === 'all'
+                    ? Promise.resolve({ data: { is_enabled: true }, error: null })
+                    : supabase.from('property_features').select('is_enabled').eq('property_id', propertyId).eq('feature_key', 'ticket_validation').maybeSingle();
+
+                const [openRes, waitlistRes, inProgressRes, resolvedRes, totalRes, recentsRes, pendingValRes, urgentOpenRes, slaBreachedRes, validationFeatureRes] = await Promise.all([
+                    openQuery,
+                    waitlistQuery,
+                    inProgressQuery,
+                    resolvedQuery,
+                    totalQuery,
+                    recentsQuery,
+                    pendingValQuery,
+                    urgentOpenQuery,
+                    slaBreachedQuery,
+                    validationFeaturePromise,
+                ]);
+
+                // --- Electricity, VMS, Vendors, checklist (started above, together with the tickets) ---
+                const [electricityRes, dieselRes, vmsApiRes, vendorApiRes, checklistRes] = await secondBatchRequest;
 
                 // Process checklist stats
                 const checklistData = checklistRes.data || [];

@@ -69,11 +69,30 @@ async function actorIn(io: PingIO, actorId: string): Promise<{ actor: Employee; 
     return { actor, collab };
 }
 
-/** The superusers this team can work with (unlocked ones). */
+/**
+ * True when `managerId` is anywhere above `personId` in the reporting chain. Same rule as OrgHierarchy.isAbove (active
+ * people only, loop-safe), worked out from the list already loaded so no extra read is needed.
+ */
+export function isAboveIn(all: Employee[], managerId: string, personId: string): boolean {
+    if (managerId === personId) return false;
+    const byId = new Map(all.filter(e => e.active).map(e => [e.id, e]));
+    const seen = new Set<string>([personId]);
+    let next = byId.get(personId)?.reporting_manager_id ?? null;
+    while (next && !seen.has(next)) {
+        if (next === managerId) return byId.has(next);
+        seen.add(next);
+        next = byId.get(next)?.reporting_manager_id ?? null;
+    }
+    return false;
+}
+
+/** The superusers this team can work with: unlocked ones ABOVE the person in the reporting chain (owner 2026-10-15). */
 async function superusersFor(io: PingIO, actor: Employee): Promise<Employee[]> {
     const all = await io.allEmployees();
     const out: Employee[] = [];
-    for (const e of all.filter(x => x.role === 'superuser' && x.id !== actor.id && x.active)) if ((await io.access(e)).allowed) out.push(e);
+    for (const e of all.filter(x => x.role === 'superuser' && x.id !== actor.id && x.active && isAboveIn(all, x.id, actor.id))) {
+        if ((await io.access(e)).allowed) out.push(e);
+    }
     return out;
 }
 

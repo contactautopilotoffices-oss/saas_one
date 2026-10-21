@@ -27,7 +27,8 @@ export async function GET(
             .select(`
                 *,
                 template:sop_templates(title, frequency),
-                user:users(id, full_name),
+                user:users!completed_by(id, full_name),
+                approver:users!approver_id(id, full_name),
                 items:sop_completion_items(*)
             `)
             .eq('property_id', propertyId)
