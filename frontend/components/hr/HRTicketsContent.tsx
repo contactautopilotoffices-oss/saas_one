@@ -978,7 +978,10 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                 designation: t.assigned_to_details?.employee_role || emp?.designation || 'Designated Authority',
                 email: t.assigned_to_details?.email || t.assigned_to?.email || emp?.email || 'N/A',
                 phone: t.assigned_to_details?.phone || t.assigned_to?.phone || emp?.phone || 'N/A',
-                photo_url: t.assigned_to_details?.photo_url || emp?.user_photo_url || emp?.photo_url || emp?.avatar_url || t.assigned_to?.raw_user_meta_data?.user_photo_url || null
+                photo_url: t.assigned_to_details?.photo_url || emp?.user_photo_url || emp?.photo_url || emp?.avatar_url || t.assigned_to?.raw_user_meta_data?.user_photo_url || null,
+                // Full roster for this level, so a level owned by several users shows each
+                // of their emails rather than only the primary assignee's
+                level_users: Array.isArray(t.assigned_level_users) ? t.assigned_level_users : []
             }
         });
     };
