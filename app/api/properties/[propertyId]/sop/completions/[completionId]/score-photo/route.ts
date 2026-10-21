@@ -339,6 +339,7 @@ ${hasParameters ? `CHECKPOINTS TO OBSERVE IF IN-FRAME:\n${stepParams.map(p => `-
 CORE AUDIT RULES:
 1. CLASSIFY & MATCH PHOTOS TO BENCHMARKS:
    - For each Clean Benchmark Standard, inspect the Field Photos to see which Field Photo corresponds to that specific area (e.g. Washbasin matches Washbasin photo, Commode/Toilet matches Commode photo, Floor matches Floor photo).
+   - ZOOM & FOV TOLERANCE: Clean benchmark standards are often captured in ultra-wide (0.5x) zoom to capture entire rooms, while staff field photos may be taken in standard 1x zoom or closer framing. NEVER penalize or fail a photo for zoom level, tighter framing, or focal length differences. If the visible area is clean, tidy, and matches the benchmark standard, score it high (85-95).
    - If a Clean Benchmark Standard has NO matching Field Photo taken by staff:
      * "status": "missing"
      * "matched_photo_url": null
@@ -416,6 +417,7 @@ Image 2 is the field photo taken after staff execution.
 CORE AUDIT RULES:
 1. OVERALL CLEANLINESS COMPARISON (SCENE vs. BENCHMARK):
    - "overall_score" (0 to 100) MUST evaluate the overall visual cleanliness, neatness, tidiness, and absence of clutter/trash by directly comparing Image 2 against the clean standard in Image 1.
+   - ZOOM & FOV TOLERANCE: Image 1 (benchmark) may be captured in ultra-wide (0.5x) zoom, while Image 2 (field photo) may be in standard 1x zoom or closer crop. NEVER penalize or fail Image 2 for zoom differences, narrower framing, or focal length differences. If the visible space shown in Image 2 is clean, cleared, and tidy, award a high visual score (80-95).
    - If Image 2 is clean, cleared, and tidy matching Image 1, award a high visual score (80-95).
    - If the main space is visibly dirty, littered, or cluttered with left-behind items (e.g. laptops, bags, wires on table), score accordingly (25-50).
    - STALE IMAGE VETO: If "is_stale_image" is true (missing watermark, wrong date, or gallery re-upload), the audit MUST FAIL (overall_score capped at 15-20, pass: false).
@@ -478,6 +480,7 @@ Image 2 is the field photo taken after staff execution.
 CORE AUDIT RULES:
 1. OVERALL CLEANLINESS COMPARISON (SCENE vs. BENCHMARK):
    - "overall_score" (0 to 100) MUST evaluate visual cleanliness, neatness, tidiness, and absence of clutter/trash by directly comparing Image 2 against the clean standard in Image 1.
+   - ZOOM & FOV TOLERANCE: Image 1 may be captured in 0.5x ultra-wide zoom, while Image 2 may be in 1x standard zoom or closer crop. NEVER penalize or fail for zoom or framing differences.
    - If Image 2 is clean, cleared, and tidy matching Image 1, award a high score (80-95).
    - If the main space is visibly dirty, littered, or cluttered with left-behind items (e.g. laptops, bags, wires on table), score accordingly (25-50).
    - STALE IMAGE VETO: If "is_stale_image" is true (missing watermark, wrong date, or gallery re-upload), the audit MUST FAIL (overall_score capped at 15-20, pass: false).
