@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Camera, CheckCircle2, ChevronRight, Loader2, X, Paperclip, Circle, Eye, Video, Play, ArrowLeft, MoreVertical, Lock, Calendar, Clock, Repeat, Upload, AlertCircle, RefreshCw, MapPin, Plus } from 'lucide-react';
+import { Camera, CheckCircle2, ChevronLeft, ChevronRight, Loader2, X, Paperclip, Circle, Eye, Video, Play, ArrowLeft, MoreVertical, Lock, Calendar, Clock, Repeat, Upload, AlertCircle, RefreshCw, MapPin, Plus, Trash2, Maximize2 } from 'lucide-react';
 
 
 import { motion, AnimatePresence } from 'framer-motion';
@@ -66,6 +66,42 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
 
     // CAD overlay visibility
     const [showCADOverlay, setShowCADOverlay] = useState(false);
+
+    // Active photo index per checklist item for mobile carousel and thumbnail switching
+    const [activePhotoIndices, setActivePhotoIndices] = useState<Record<string, number>>({});
+    const touchStartX = useRef<number | null>(null);
+    const touchEndX = useRef<number | null>(null);
+
+    const handleTouchStart = (e: React.TouchEvent) => {
+        touchStartX.current = e.targetTouches[0].clientX;
+    };
+
+    const handleTouchMove = (e: React.TouchEvent) => {
+        touchEndX.current = e.targetTouches[0].clientX;
+    };
+
+    const handleTouchEnd = (itemId: string, maxPhotos: number) => {
+        if (touchStartX.current === null || touchEndX.current === null) return;
+        const diff = touchStartX.current - touchEndX.current;
+        const minSwipeDistance = 35;
+        if (Math.abs(diff) > minSwipeDistance) {
+            if (diff > 0) {
+                // Swiped left -> next photo
+                setActivePhotoIndices(prev => {
+                    const current = prev[itemId] ?? 0;
+                    return { ...prev, [itemId]: Math.min(maxPhotos - 1, current + 1) };
+                });
+            } else {
+                // Swiped right -> previous photo
+                setActivePhotoIndices(prev => {
+                    const current = prev[itemId] ?? 0;
+                    return { ...prev, [itemId]: Math.max(0, current - 1) };
+                });
+            }
+        }
+        touchStartX.current = null;
+        touchEndX.current = null;
+    };
 
     // Store pending files for retry functionality
     const pendingFiles = useRef<Record<string, { file: File; type: 'photo' | 'video'; itemId: string }>>({});
@@ -660,6 +696,9 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
                         ),
                     } : prev);
 
+                    // Select the newly uploaded photo in the viewer
+                    setActivePhotoIndices(prev => ({ ...prev, [targetItemId]: updatedPhotos.length - 1 }));
+
                     setShowCameraModal(false);
                     setActiveCameraItemId(null);
                     setToast({ message: updatedPhotos.length > 1 ? `Photo #${updatedPhotos.length} added successfully` : 'Photo uploaded successfully', type: 'success' });
@@ -854,8 +893,15 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
                 ),
             }));
             setToast({ message: `${type === 'photo' ? 'Photo' : 'Video'} removed`, type: 'success' });
-            if (type === 'photo' && updatePayload.photo_url) {
-                triggerAIScoring(String(item.id));
+            if (type === 'photo') {
+                setActivePhotoIndices(prev => {
+                    const current = prev[itemId] ?? 0;
+                    const nextMax = Math.max(0, (updatePayload.photos?.length || 1) - 1);
+                    return { ...prev, [itemId]: Math.min(current, nextMax) };
+                });
+                if (updatePayload.photo_url) {
+                    triggerAIScoring(String(item.id));
+                }
             }
         } catch (err: any) {
             setToast({ message: err.message || 'Error removing media', type: 'error' });
@@ -1238,7 +1284,7 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
                             </div>
                             <div className="pb-2" />
 
-                            {/* Photo preview — filmstrip + full width preview with upload progress */}
+                            {/* Photo preview — Mobile-First Interactive Gallery & Carousel */}
                             {(() => {
                                 const itemPhotos: Array<{ id?: string; url: string }> = Array.isArray(completionItem?.photos) && completionItem.photos.length > 0
                                     ? completionItem.photos
@@ -1250,72 +1296,47 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
                                 const isUploading = uploadState && uploadState.progress < 100 && !uploadState.compressing;
                                 const isCompressing = uploadState?.compressing;
                                 const hasError = uploadState?.error;
-                                const displayPhotoUrl = itemPhotos[itemPhotos.length - 1]?.url || completionItem?.photo_url;
+
+                                const activeIdx = Math.min(Math.max(0, activePhotoIndices[item.id] ?? 0), itemPhotos.length - 1);
+                                const currentPhoto = itemPhotos[activeIdx] || itemPhotos[0];
+                                const displayPhotoUrl = currentPhoto?.url || completionItem?.photo_url;
+                                const hasMultiplePhotos = itemPhotos.length > 1;
+
+                                // Target reference benchmark if configured
+                                const benchmarks = Array.isArray(item.reference_photos) ? item.reference_photos : [];
+                                const currentBenchmark = benchmarks[activeIdx];
 
                                 return (
                                     <div className="space-y-2 mb-3">
-                                        {/* Multi-Photo Filmstrip if multiple photos or staff added more */}
-                                        {itemPhotos.length > 0 && (
-                                            <div className="mx-4 flex items-center gap-2 overflow-x-auto pb-1.5 scrollbar-thin">
-                                                {itemPhotos.map((p, pIdx) => (
-                                                    <div key={p.id || pIdx} className="relative w-16 h-16 rounded-xl overflow-hidden flex-shrink-0 border-2 border-slate-200 group bg-slate-900 shadow-2xs">
-                                                        <img
-                                                            src={p.url}
-                                                            alt={`Photo ${pIdx + 1}`}
-                                                            className="w-full h-full object-cover cursor-pointer hover:opacity-90 transition-opacity"
-                                                            onClick={() => setPreviewImageUrl(p.url)}
-                                                        />
-                                                        {!itemDisabled && !completionItem?._isLocalPreview && (
-                                                            <button
-                                                                type="button"
-                                                                onClick={(e) => { e.stopPropagation(); handleRemoveMedia(item.id, 'photo', pIdx); }}
-                                                                className="absolute top-1 right-1 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center hover:bg-rose-500 transition-colors z-10"
-                                                                title="Delete photo"
-                                                            >
-                                                                <X size={10} />
-                                                            </button>
-                                                        )}
-                                                        <span className="absolute bottom-1 left-1 px-1 py-0.2 bg-black/70 rounded text-[7px] font-black text-white">
-                                                            #{pIdx + 1}
-                                                        </span>
-                                                    </div>
-                                                ))}
-
-                                                {/* Inline + Add Photo Button in Filmstrip */}
-                                                {!itemDisabled && (
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => { setActiveCameraItemId(item.id); setShowCameraModal(true); }}
-                                                        className="w-16 h-16 rounded-xl border-2 border-dashed border-primary/40 bg-primary/5 flex flex-col items-center justify-center text-primary flex-shrink-0 hover:border-primary transition-all"
-                                                        title="Add another photo"
-                                                    >
-                                                        <Plus size={16} />
-                                                        <span className="text-[8px] font-black uppercase tracking-wider mt-0.5">Add</span>
-                                                    </button>
-                                                )}
-                                            </div>
-                                        )}
-
-                                        {/* Main Photo Preview */}
-                                        <div className="mx-4 rounded-2xl overflow-hidden relative group">
+                                        {/* Main Photo Interactive Carousel Card */}
+                                        <div
+                                            className="mx-4 relative rounded-2xl overflow-hidden shadow-xs border border-slate-200/90 bg-slate-900 aspect-[16/10] sm:aspect-video max-h-64 select-none group"
+                                            onTouchStart={handleTouchStart}
+                                            onTouchMove={handleTouchMove}
+                                            onTouchEnd={() => handleTouchEnd(item.id, itemPhotos.length)}
+                                        >
                                             <div
-                                                className={`cursor-pointer ${hasError ? 'opacity-70' : ''}`}
+                                                className={`w-full h-full cursor-pointer ${hasError ? 'opacity-70' : ''}`}
                                                 onClick={() => !isUploading && !isCompressing && !hasError && setPreviewImageUrl(displayPhotoUrl)}
                                             >
-                                                <img src={displayPhotoUrl} alt="Proof" className="w-full h-48 object-cover" />
+                                                <img
+                                                    src={displayPhotoUrl}
+                                                    alt={`Work proof ${activeIdx + 1}`}
+                                                    className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.01]"
+                                                />
 
                                                 {/* Compressing overlay */}
                                                 {isCompressing && (
-                                                    <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center">
+                                                    <div className="absolute inset-0 bg-black/60 backdrop-blur-xs flex flex-col items-center justify-center z-30">
                                                         <Loader2 size={24} className="text-white animate-spin mb-2" />
-                                                        <span className="text-xs font-bold text-white">Processing...</span>
+                                                        <span className="text-xs font-bold text-white">Processing photo...</span>
                                                     </div>
                                                 )}
 
                                                 {/* Upload progress overlay */}
                                                 {isUploading && (
-                                                    <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center">
-                                                        <div className="w-3/4 bg-white/20 rounded-full h-2 overflow-hidden mb-2">
+                                                    <div className="absolute inset-0 bg-black/60 backdrop-blur-xs flex flex-col items-center justify-center z-30">
+                                                        <div className="w-3/4 max-w-xs bg-white/20 rounded-full h-2 overflow-hidden mb-2">
                                                             <motion.div
                                                                 className="bg-white h-full rounded-full"
                                                                 initial={{ width: 0 }}
@@ -1334,46 +1355,173 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
 
                                                 {/* Upload error overlay */}
                                                 {hasError && (
-                                                    <div className="absolute inset-0 bg-rose-900/70 flex flex-col items-center justify-center">
+                                                    <div className="absolute inset-0 bg-rose-900/80 backdrop-blur-xs flex flex-col items-center justify-center z-30">
                                                         <AlertCircle size={28} className="text-white mb-2" />
                                                         <span className="text-xs font-bold text-white text-center px-4">{hasError}</span>
                                                         <span className="text-[10px] text-white/70 mt-1">Tap retry to try again</span>
                                                     </div>
                                                 )}
-
-                                                {/* Success/Preview overlay */}
-                                                {!isUploading && !isCompressing && !hasError && (
-                                                    <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center">
-                                                        <Eye size={28} className="text-white" />
-                                                    </div>
-                                                )}
                                             </div>
 
-                                            {/* Delete / Retry button for single photo */}
-                                            {itemPhotos.length === 1 && !isUploading && !isCompressing && (
-                                                hasError ? (
+                                            {/* Top Floating Badge Bar */}
+                                            <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between pointer-events-none z-20">
+                                                {/* Photo index & Benchmark area tag */}
+                                                <div className="flex items-center gap-1.5 pointer-events-auto">
+                                                    <span className="px-2.5 py-1 rounded-full bg-black/65 backdrop-blur-md text-white text-[9px] font-black uppercase tracking-wider flex items-center gap-1 shadow-sm">
+                                                        <span>Photo {activeIdx + 1} of {itemPhotos.length}</span>
+                                                        {currentBenchmark?.label && (
+                                                            <span className="text-slate-300 font-semibold lowercase">· {currentBenchmark.label}</span>
+                                                        )}
+                                                    </span>
+                                                </div>
+
+                                                {/* Quick Action Buttons (Fullscreen Zoom & Delete/Retry) */}
+                                                <div className="flex items-center gap-1.5 pointer-events-auto">
+                                                    {hasError ? (
+                                                        <button
+                                                            type="button"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                const stored = pendingFiles.current[`${completionItem?.id}-photo`];
+                                                                if (stored) {
+                                                                    handlePhotoCapture(stored.file, item.id);
+                                                                }
+                                                            }}
+                                                            className="w-7 h-7 rounded-full bg-amber-500 hover:bg-amber-600 text-white flex items-center justify-center backdrop-blur-md shadow-sm transition-all"
+                                                            title="Retry upload"
+                                                        >
+                                                            <RefreshCw size={13} />
+                                                        </button>
+                                                    ) : (
+                                                        <>
+                                                            {!isUploading && !isCompressing && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        setPreviewImageUrl(displayPhotoUrl);
+                                                                    }}
+                                                                    className="w-7 h-7 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center backdrop-blur-md transition-all shadow-sm cursor-pointer"
+                                                                    title="View full screen"
+                                                                >
+                                                                    <Maximize2 size={13} />
+                                                                </button>
+                                                            )}
+
+                                                            {!itemDisabled && !completionItem?._isLocalPreview && !isUploading && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        handleRemoveMedia(item.id, 'photo', activeIdx);
+                                                                    }}
+                                                                    className="w-7 h-7 rounded-full bg-black/60 hover:bg-rose-600 text-white flex items-center justify-center backdrop-blur-md transition-all shadow-sm cursor-pointer"
+                                                                    title="Delete this photo"
+                                                                >
+                                                                    <Trash2 size={13} />
+                                                                </button>
+                                                            )}
+                                                        </>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            {/* Left Arrow (Previous Photo) */}
+                                            {hasMultiplePhotos && activeIdx > 0 && (
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setActivePhotoIndices(prev => ({ ...prev, [item.id]: activeIdx - 1 }));
+                                                    }}
+                                                    className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/55 hover:bg-black/85 active:scale-95 text-white flex items-center justify-center backdrop-blur-md shadow-md transition-all z-20 cursor-pointer"
+                                                    title="Previous photo"
+                                                    aria-label="Previous photo"
+                                                >
+                                                    <ChevronLeft size={18} />
+                                                </button>
+                                            )}
+
+                                            {/* Right Arrow (Next Photo) */}
+                                            {hasMultiplePhotos && activeIdx < itemPhotos.length - 1 && (
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setActivePhotoIndices(prev => ({ ...prev, [item.id]: activeIdx + 1 }));
+                                                    }}
+                                                    className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/55 hover:bg-black/85 active:scale-95 text-white flex items-center justify-center backdrop-blur-md shadow-md transition-all z-20 cursor-pointer"
+                                                    title="Next photo"
+                                                    aria-label="Next photo"
+                                                >
+                                                    <ChevronRight size={18} />
+                                                </button>
+                                            )}
+
+                                            {/* Bottom Pagination Dots */}
+                                            {hasMultiplePhotos && (
+                                                <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/60 backdrop-blur-md z-20 pointer-events-auto">
+                                                    {itemPhotos.map((_, pIdx) => (
+                                                        <button
+                                                            key={pIdx}
+                                                            type="button"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setActivePhotoIndices(prev => ({ ...prev, [item.id]: pIdx }));
+                                                            }}
+                                                            className={`transition-all rounded-full cursor-pointer ${
+                                                                activeIdx === pIdx
+                                                                    ? 'w-4 h-1.5 bg-white'
+                                                                    : 'w-1.5 h-1.5 bg-white/50 hover:bg-white/90'
+                                                            }`}
+                                                            title={`View photo ${pIdx + 1}`}
+                                                        />
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {/* Multi-Photo Strip & Quick Add under the preview */}
+                                        <div className="mx-4 flex items-center gap-2 overflow-x-auto pb-1 scrollbar-thin pt-0.5">
+                                            {itemPhotos.map((p, pIdx) => {
+                                                const isCurrent = activeIdx === pIdx;
+                                                return (
                                                     <button
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            const stored = pendingFiles.current[`${completionItem?.id}-photo`];
-                                                            if (stored) {
-                                                                handlePhotoCapture(stored.file, item.id);
-                                                            }
-                                                        }}
-                                                        className="absolute top-3 right-3 w-8 h-8 bg-amber-500 backdrop-blur-md rounded-full flex items-center justify-center text-white hover:bg-amber-600 transition-all z-10"
-                                                        title="Retry upload"
+                                                        key={p.id || pIdx}
+                                                        type="button"
+                                                        onClick={() => setActivePhotoIndices(prev => ({ ...prev, [item.id]: pIdx }))}
+                                                        className={`relative w-14 h-14 rounded-xl overflow-hidden flex-shrink-0 transition-all cursor-pointer bg-slate-900 ${
+                                                            isCurrent
+                                                                ? 'ring-2 ring-primary ring-offset-2 border border-primary shadow-xs scale-102'
+                                                                : 'opacity-65 hover:opacity-100 border border-slate-200'
+                                                        }`}
+                                                        title={`Switch to photo ${pIdx + 1}`}
                                                     >
-                                                        <RefreshCw size={16} />
+                                                        <img
+                                                            src={p.url}
+                                                            alt={`Thumbnail ${pIdx + 1}`}
+                                                            className="w-full h-full object-cover"
+                                                        />
+                                                        <span className={`absolute bottom-0.5 left-0.5 px-1 py-0.2 rounded text-[7px] font-black ${
+                                                            isCurrent ? 'bg-primary text-white' : 'bg-black/70 text-white'
+                                                        }`}>
+                                                            #{pIdx + 1}
+                                                        </span>
                                                     </button>
-                                                ) : !completionItem?._isLocalPreview && (
-                                                    <button
-                                                        onClick={(e) => { e.stopPropagation(); handleRemoveMedia(item.id, 'photo'); }}
-                                                        className="absolute top-3 right-3 w-8 h-8 bg-black/50 backdrop-blur-md rounded-full flex items-center justify-center text-white hover:bg-rose-500 transition-all z-10"
-                                                        title="Delete photo"
-                                                    >
-                                                        <X size={16} />
-                                                    </button>
-                                                )
+                                                );
+                                            })}
+
+                                            {/* Quick + Add Photo Button */}
+                                            {!itemDisabled && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => { setActiveCameraItemId(item.id); setShowCameraModal(true); }}
+                                                    className="h-14 px-3 rounded-xl border-2 border-dashed border-primary/35 bg-primary/5 hover:bg-primary/10 flex items-center gap-1.5 text-primary flex-shrink-0 transition-all cursor-pointer"
+                                                    title="Add another photo"
+                                                >
+                                                    <Plus size={15} />
+                                                    <span className="text-[9px] font-black uppercase tracking-wider">Add Photo</span>
+                                                </button>
                                             )}
                                         </div>
                                     </div>
