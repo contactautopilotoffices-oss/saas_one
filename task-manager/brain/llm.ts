@@ -27,12 +27,14 @@ const DEFAULT_INTERPRET_MODELS: readonly string[] = ['glm-5.3-flash', 'qwen3.8-2
 
 /**
  * Step 5 (owner 2026-10-21): the bot's own settings live HERE in code, not in .env (owner: "no separate configs").
- *   STRONGER_UNDERSTAND_MODEL  the model tried FIRST for understanding (Groq, low thinking). The usual models stay after it
+ *   STRONGER_UNDERSTAND_MODEL  the model tried FIRST for understanding ("anthropic:" = Claude, "groq:" = Groq). The usual models stay after it
  *                              as backups, so a Groq outage, rate limit or missing key never stops the bot. '' = off.
  *   TWO_STEP_READING           step 3 (kind first, then details). Flip to true only after run_eval.ts --two-step wins.
  * Replies are NOT affected: they stay on the cheap models.
  */
-export const STRONGER_UNDERSTAND_MODEL = 'groq:openai/gpt-oss-120b';
+// Owner 2026-10-21: Groq's free plan allowed ~1 message a minute per key (every key answered 429 in the first test), so the
+// understanding step uses Claude Haiku instead. The Groq code stays, for a paid Groq plan later.
+export const STRONGER_UNDERSTAND_MODEL = 'anthropic:claude-haiku-5-5';
 export const TWO_STEP_READING = false;
 
 export function interpretModelsWith(first: string): readonly string[] {
@@ -56,6 +58,7 @@ export function engyBrainLlm(options: { thinking?: 'off' | 'default'; timeoutMs?
     return {
         async complete(req) {
             if (req.model.startsWith(GROQ_PREFIX)) return groqComplete(req, timeoutMs);
+            if (req.model.startsWith(ANTHROPIC_PREFIX)) return anthropicComplete(req, timeoutMs);
             const { resolveProvider } = await import('@/backend/lib/council/llm');
             const { provider, spec, apiKey } = resolveProvider();
             if (!apiKey) throw new Error('no AI key is configured');
@@ -139,6 +142,54 @@ export async function groqComplete(req: LlmRequest, timeoutMs = TIMEOUT_MS): Pro
         return { text, tokensIn: j?.usage?.prompt_tokens ?? 0, tokensOut: j?.usage?.completion_tokens ?? 0, finishReason };
     }
     throw new Error(`every WhatsApp bot Groq key failed (${problems.join('; ')})`);
+}
+
+export const ANTHROPIC_PREFIX = 'anthropic:';
+const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
+
+/**
+ * The WhatsApp task bot's OWN Claude keys (owner 2026-10-21), never shared with other features:
+ *   WHATSAPP_BOT_ANTHROPIC_API_KEY, WHATSAPP_BOT_ANTHROPIC_API_KEY_2, … up to _5
+ * Tried in order: a rate limit (429), a bad key (401/403), an overload (529) or server error (5xx), or a timeout moves on
+ * to the next key; when every key fails, the usual models answer. Keys are never logged or printed.
+ */
+export const BOT_ANTHROPIC_KEY_NAMES = ['WHATSAPP_BOT_ANTHROPIC_API_KEY', ...[2, 3, 4, 5].map(n => `WHATSAPP_BOT_ANTHROPIC_API_KEY_${n}`)];
+export function botAnthropicKeys(env: Record<string, string | undefined> = process.env): string[] {
+    return BOT_ANTHROPIC_KEY_NAMES.map(n => String(env[n] ?? '').trim()).filter(Boolean);
+}
+
+/** One call to Claude (Messages API). The prompts already ask for JSON only; extractJson tolerates a little text around it. */
+export async function anthropicComplete(req: LlmRequest, timeoutMs = TIMEOUT_MS): Promise<LlmResponse> {
+    const keys = botAnthropicKeys();
+    if (!keys.length) throw new Error('no WhatsApp bot Claude key is configured');
+    const body = JSON.stringify({
+        model: req.model.slice(ANTHROPIC_PREFIX.length),
+        max_tokens: req.maxTokens ?? 1200,
+        temperature: 0,
+        system: req.system,
+        messages: [{ role: 'user', content: req.user }],
+    });
+    const problems: string[] = [];
+    for (let k = 0; k < keys.length; k++) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        let res: Response;
+        try {
+            res = await fetch(ANTHROPIC_URL, { method: 'POST', headers: { 'x-api-key': keys[k], 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }, body, signal: controller.signal });
+        } catch (err) {
+            clearTimeout(timer);
+            problems.push(`key ${k + 1}: ${err instanceof Error && err.name === 'AbortError' ? 'timeout' : 'network error'}`);
+            continue;
+        }
+        clearTimeout(timer);
+        if (res.status === 429 || res.status === 401 || res.status === 403 || res.status >= 500) { problems.push(`key ${k + 1}: HTTP ${res.status}`); continue; }
+        if (!res.ok) throw new Error(`Claude HTTP ${res.status}`); // a bad request: another key would not help
+        const j = await res.json() as { content?: Array<{ type?: string; text?: string }>; stop_reason?: string; usage?: { input_tokens?: number; output_tokens?: number } };
+        const text = (j?.content ?? []).filter(b => b?.type === 'text').map(b => b.text ?? '').join('');
+        if (!text.trim()) throw new Error(`Claude returned nothing (stop_reason=${j?.stop_reason ?? 'unknown'})`);
+        return { text, tokensIn: j?.usage?.input_tokens ?? 0, tokensOut: j?.usage?.output_tokens ?? 0, finishReason: j?.stop_reason };
+    }
+    throw new Error(`every WhatsApp bot Claude key failed (${problems.join('; ')})`);
 }
 
 /** Pull one JSON object out of a model reply (tolerates code fences and a little prose around it). */

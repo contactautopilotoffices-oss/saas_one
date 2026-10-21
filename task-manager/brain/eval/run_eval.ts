@@ -3,7 +3,7 @@
  *
  *   npx tsx task-manager/brain/eval/run_eval.ts --models qwen3.8-27b,glm-5.3-flash --out <folder> [--concurrency 6] [--only group] [--limit 20]
  *     [--set base|hinglish|team|real]   real = the chats that went wrong (Sher, Sanil); --two-step = step 3's reading
- *     Step 5 example: --models groq:openai/gpt-oss-120b,glm-5.3-flash --reply-model qwen3.8-27b (needs WHATSAPP_BOT_GROQ_API_KEY in .env)   (Phase 4: base = the original English set, the default; team runs with the Team reports domain)
+ *     Step 5 example: --models groq:openai/gpt-oss-120b,glm-5.3-flash --reply-model qwen3.8-27b (needs WHATSAPP_BOT_GROQ_API_KEY in .env); Claude: --models anthropic:claude-haiku-5-5,glm-5.3-flash (needs WHATSAPP_BOT_ANTHROPIC_API_KEY)   (Phase 4: base = the original English set, the default; team runs with the Team reports domain)
  *
  * MANUAL tool — it calls the AI provider (the key is read from .env and never printed), so it is NOT part of the normal
  * test run. It sends no WhatsApp message and touches no database: every case runs against a fake in-memory world.

@@ -68,7 +68,7 @@ async function run() {
     check('the row holds the brain\'s drafted reply, with the real task list in it', /1\. Carpet Installation PO \(Pending\)/.test(row.replyText) && row.replySource === 'ai', row.replyText);
     check('PRIVACY: the original words are NOT in the row (only their length)', !JSON.stringify(row).includes('whats pending today') && row.messageChars === 'whats pending today'.length);
     check('the phone number is masked', row.phoneMasked === '****9199' && !JSON.stringify(row).includes('8433649199'));
-    check('the row records models, speed and tokens for the evaluation', typeof row.ms === 'number' && row.tokensIn === 15 && row.tokensOut === 13 && row.models.understand === 'groq:openai/gpt-oss-120b');
+    check('the row records models, speed and tokens for the evaluation', typeof row.ms === 'number' && row.tokensIn === 15 && row.tokensOut === 13 && row.models.understand === 'anthropic:claude-haiku-5-5');
     check('the audit row is attributed to the sender', w.audits[0].e.id === 'u1');
 
     console.log('\n4. When it must do nothing at all');

@@ -105,7 +105,7 @@ async function run() {
     }
 
     console.log('\n5. Switching the understand model');
-    check('the setting lives in code: Groq gpt-oss-120b first, the usual models kept as backups', LLM.STRONGER_UNDERSTAND_MODEL === 'groq:openai/gpt-oss-120b' && JSON.stringify(LLM.BRAIN_INTERPRET_MODELS) === JSON.stringify(['groq:openai/gpt-oss-120b', 'glm-5.3-flash', 'qwen3.8-27b']));
+    check('the setting lives in code: Claude Haiku first, the usual models kept as backups', LLM.STRONGER_UNDERSTAND_MODEL === 'anthropic:claude-haiku-5-5' && JSON.stringify(LLM.BRAIN_INTERPRET_MODELS) === JSON.stringify(['anthropic:claude-haiku-5-5', 'glm-5.3-flash', 'qwen3.8-27b']));
     check('empty setting -> only the usual models', JSON.stringify(LLM.interpretModelsWith('')) === JSON.stringify(['glm-5.3-flash', 'qwen3.8-27b']));
     check('two-step reading is a code setting, off for now', LLM.TWO_STEP_READING === false);
     check('replies are untouched (cheap models)', JSON.stringify(LLM.BRAIN_REPLY_MODELS) === JSON.stringify(['qwen3.8-27b', 'glm-5.3-flash']));
@@ -140,6 +140,36 @@ async function run() {
         (globalThis as any).fetch = async (u: any) => { net.push(String(u)); throw new Error('network must not be used'); };
     }
     restoreEnv(before);
+    {
+        const saved = Object.fromEntries(['ANTHROPIC_API_KEY', ...LLM.BOT_ANTHROPIC_KEY_NAMES].map(n => [n, process.env[n]]));
+        for (const n of Object.keys(saved)) delete process.env[n];
+        check('Claude: only the bot\'s OWN keys, in order, never a shared ANTHROPIC_API_KEY',
+            JSON.stringify(LLM.botAnthropicKeys({ ANTHROPIC_API_KEY: 'shared', WHATSAPP_BOT_ANTHROPIC_API_KEY: 'a', WHATSAPP_BOT_ANTHROPIC_API_KEY_2: 'b' })) === JSON.stringify(['a', 'b'])
+            && LLM.botAnthropicKeys({ ANTHROPIC_API_KEY: 'shared' }).length === 0);
+        process.env.ANTHROPIC_API_KEY = 'shared-key-must-not-be-used';
+        let err = ''; try { await LLM.anthropicComplete({ model: 'anthropic:claude-haiku-5-5', system: 's', user: 'u' }); } catch (e) { err = String((e as Error).message); }
+        check('Claude: no bot key -> a clear error at once (backup model answers), nothing sent', /no WhatsApp bot Claude key/.test(err) && net.length === 0, err);
+        delete process.env.ANTHROPIC_API_KEY;
+        process.env.WHATSAPP_BOT_ANTHROPIC_API_KEY = 'c-1'; process.env.WHATSAPP_BOT_ANTHROPIC_API_KEY_2 = 'c-2';
+        const sent: any[] = [];
+        (globalThis as any).fetch = async (u: any, init: any) => {
+            const key = init.headers['x-api-key']; sent.push({ u: String(u), key, h: init.headers, body: JSON.parse(init.body) });
+            if (key === 'c-1') return { ok: false, status: 529, json: async () => ({}) };   // overloaded
+            return { ok: true, status: 200, json: async () => ({ content: [{ type: 'text', text: '{"a":1}' }], stop_reason: 'end_turn', usage: { input_tokens: 5, output_tokens: 2 } }) };
+        };
+        const r = await LLM.engyBrainLlm().complete({ model: 'anthropic:claude-haiku-5-5', system: 'rules', user: 'msg', json: true });
+        check('"anthropic:" models go to Claude (Messages API, system kept separate)', sent[1]?.u === 'https://api.anthropic.com/v1/messages' && sent[1]?.body.model === 'claude-haiku-5-5' && sent[1]?.body.system === 'rules' && sent[1]?.body.messages[0].content === 'msg' && sent[1]?.h['anthropic-version'] && r.text === '{"a":1}' && r.tokensIn === 5, sent[1]);
+        check('Claude key 1 overloaded -> key 2 answers', sent.map(x => x.key).join() === 'c-1,c-2');
+        (globalThis as any).fetch = async (u: any) => { net.push(String(u)); throw new Error('network must not be used'); };
+        for (const [n, v] of Object.entries(saved)) { if (v === undefined) delete process.env[n]; else process.env[n] = v; }
+        delete process.env.WHATSAPP_BOT_ANTHROPIC_API_KEY; delete process.env.WHATSAPP_BOT_ANTHROPIC_API_KEY_2;
+    }
+    {
+        const { tasksDomain: TD } = await import('../brain/tasksDomain');
+        const spec = TD.intents.find(i => i.name === 'create_tasks')!.slots;
+        check('add-task rule: no person named -> the sender\'s own list, no question (Sher)', /NO PERSON NAMED/.test(spec) && /"assignee":"me", no ambiguity, never a question/.test(spec));
+        check('add-task rule: a word not in the people list stays in the title (Sanil)', /Sailee rest FNF/.test(spec) && /never a person and never an ambiguity/.test(spec));
+    }
 
     console.log('\n6. The real chats that went wrong');
     check('Sher\'s and Sanil\'s messages are in the set', REAL_CASES.some(c => c.message === 'add task follow up regarding Checklist') && REAL_CASES.some(c => c.message === 'Task.\n\nAdd Sailee rest FNF'));
