@@ -6,7 +6,7 @@ import {
     Settings, List, ShoppingCart, 
     FileText, FileSpreadsheet,
     DollarSign, IndianRupee, Layers,
-    Sparkles, RefreshCw, ClipboardList
+    Sparkles, RefreshCw, ClipboardList, FileCheck2
 } from 'lucide-react';
 import ProcurementAdminSettings from './ProcurementAdminSettings';
 import ProcurementRequestList from './ProcurementRequestList';
@@ -20,9 +20,10 @@ import ProcurementFeedbackTab from './ProcurementFeedbackTab';
 import ProcurementTasksTab from './ProcurementTasksTab';
 import { SHOW_LEGACY_PER_PROPERTY_CONTROLS } from './procurementFeatureFlags';
 import FinanceOverview from '../accounts/FinanceOverview';
+import InvoiceControl from '../invoices/InvoiceControl';
 import { useAuth } from '@/frontend/context/AuthContext';
 
-type TabType = 'orders' | 'tasks' | 'urgency-tracker' | 'payment-tracker' | 'requisitions' | 'monthly-feedback' | 'site-budgets' | 'site-pricing' | 'catalog' | 'po-generator' | 'settings';
+type TabType = 'orders' | 'tasks' | 'urgency-tracker' | 'payment-tracker' | 'invoices' | 'requisitions' | 'monthly-feedback' | 'site-budgets' | 'site-pricing' | 'catalog' | 'po-generator' | 'settings';
 
 function ProcurementModuleSkeleton() {
     return (
@@ -166,7 +167,7 @@ export default function ProcurementModule({
             const urlParams = new URLSearchParams(window.location.search);
             let tabParam = urlParams.get('procurement_tab') || urlParams.get('subtab') || urlParams.get('tab');
             if (tabParam === 'monthly-requisitions') tabParam = 'requisitions';
-            const linkableTabs = ['orders', 'tasks', 'urgency-tracker', 'payment-tracker', 'requisitions', 'monthly-feedback', 'catalog', 'po-generator', 'settings'];
+            const linkableTabs = ['orders', 'tasks', 'urgency-tracker', 'payment-tracker', 'invoices', 'requisitions', 'monthly-feedback', 'catalog', 'po-generator', 'settings'];
             if (SHOW_LEGACY_PER_PROPERTY_CONTROLS) linkableTabs.push('site-budgets', 'site-pricing');
             if (tabParam && linkableTabs.includes(tabParam)) {
                 setActiveTab(tabParam as TabType);
@@ -179,6 +180,7 @@ export default function ProcurementModule({
         { id: 'tasks', label: 'Tasks', icon: ClipboardList, show: true, count: 0 },
         { id: 'urgency-tracker', label: 'Urgency Tracker (P1-P3)', icon: Layers, show: canViewUrgencyTracker, count: 0 },
         { id: 'payment-tracker', label: 'Payment Tracker', icon: IndianRupee, show: canViewPaymentTracker, count: 0 },
+        { id: 'invoices', label: 'Invoice Control', icon: FileCheck2, show: canViewPaymentTracker, count: 0 },
         { id: 'requisitions', label: 'Monthly Requisitions', icon: FileSpreadsheet, show: true, count: 0 },
         { id: 'monthly-feedback', label: 'Monthly Feedback', icon: FileText, show: true, count: 0 },
         // Per-property budgets & rates — superseded by the standard item master (see procurementFeatureFlags)
@@ -258,6 +260,10 @@ export default function ProcurementModule({
 
                 {activeTab === 'payment-tracker' && canViewPaymentTracker && (
                     <FinanceOverview />
+                )}
+
+                {activeTab === 'invoices' && canViewPaymentTracker && orgId && (
+                    <InvoiceControl orgId={orgId} mode="procurement" />
                 )}
 
                 {activeTab === 'requisitions' && (

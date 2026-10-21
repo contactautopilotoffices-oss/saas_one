@@ -1,3 +1,274 @@
+## 2026-10-20 — Saas.one: PO payment plan (payment terms turned into clickable milestones)
+
+**Each PO's payment terms are now read into a plan of milestones that Purchase confirms, records progress against, and clicks when a payment falls due. Built and tested in code; the database change is written but not applied.**
+
+- **Why:** Payments were being lined up as soon as a PO existed, with no view of what was actually agreed. Zoho's own "payment terms" field is unreliable: DL-PO-26/27-0086 is labelled "100% Advance" while its terms say 30%, 20%, 20% and 30% at four stages, and 676 of the first 1,000 POs are just "Custom". The real terms sit in free text.
+- **Structural decisions:**
+  - **Read from the text, by plain rules, not by a model.** It costs nothing, behaves the same every time, and can be tested. On a live sample of 400 POs, 93% read cleanly, 6.5% are flagged for a person, and 0.5% have no terms.
+  - **A reading is only a proposal.** The percentages must add to 100 and any amount printed in the terms must match the percentage. Anything doubtful is flagged. Purchase confirms before anything counts. You chose this.
+  - **Clicking a milestone marks it due and emails Accounts. It never creates a payment.** Accounts still raises and aligns it in the Payment Tracker. You chose this.
+  - **Percentages are on the basic value (before GST), with GST as its own milestone,** because that is what these POs say. Where a PO is silent on GST, the percentage applies to the whole PO value and the screen says so.
+- **What works now (once applied):**
+  - A "Plan" button on each PO in Invoice Control shows the milestones as a timeline: percentage, amount, what makes it payable, and the date it was reached.
+  - Purchase records "25% done on 12 Oct" or "material delivered", and each milestone waits for that evidence.
+  - Purchase confirms, edits, or builds the plan from standard presets where the PO says nothing.
+  - Marking a milestone due before its stage is recorded is allowed only with a written reason, and Accounts sees it flagged "marked early".
+  - Accounts has a "Milestones due" list.
+  - All five MVP POs read correctly. DL-0086 is flagged because one line names two triggers (delivery and 50% completion).
+- **Left undone:**
+  - **The database change is not applied** (`supabase/migrations/20261020000002_po_payment_schedule.sql`).
+  - **Not opened in a browser signed in.** Parser, rules and tables were tested; the screens were type-checked and linted only.
+  - **GST-portal status and "other" triggers are not tracked,** so those milestones show "not tracked automatically" and rely on Purchase's note.
+  - **Site in-charge cannot record progress yet;** only Purchase can.
+  - **The Payment Tracker does not yet show the milestone** against each tranche, and Accounts is told by email and a list, not inside the tracker row.
+  - **A PO with history cannot be hard-deleted** (the logs are append-only). Nothing in the app deletes POs, so this only affects manual database deletes. I added a comment saying so to the already-applied invoice migration; the SQL is unchanged.
+- **Open questions for the founder:**
+  - For the 6.5% of POs the reader flags (for example "20% on delivery and 50% completion"), who decides: Purchase alone, or Purchase with the approver?
+  - Should "payable within 30 days" count from the milestone date or from the invoice date?
+
+## 2026-10-20 — Saas.one: Invoice Control (vendor invoice collection, PO matching, urgent-payment approval)
+
+**Built end to end, tested in code, not yet switched on: one place to collect each vendor invoice, check it against the PO, and approve urgent payments that cannot wait for the invoice.**
+
+- **Why:** Invoices arrive by mail and WhatsApp, are chased by hand, and are never compared to the PO line by line, so payments get lined up on trust. Urgent payments with no invoice had no controlled route.
+- **Structural decisions:**
+  - **Three separate tracks, never one status.** The invoice (read, matched, accepted), the payment exception (asked, approved, aligned), and the invoice chase (pending to reconciled). A payment can be aligned while its invoice is still missing, and approving one never marks the other done. The alternative, one status column, was rejected because it lets a missing invoice quietly turn into a verified one.
+  - **Built inside the existing app, not as the separate service the PRD described.** The PRD asked for Supabase Edge Functions. The app already runs its own server routes with a tested access check, so the module reuses those. Nothing new to deploy or secure.
+  - **Reuses what exists.** POs and PO lines come from the Zoho tables, vendor GSTIN from vendor profiles, and the actual payment still goes through the Payment Tracker. No second vendor or PO list.
+  - **The system checks; people decide.** A model only reads the invoice. A plain rules engine decides if it matches, and a person must click Accept. A value that cannot be read counts as unknown, never as zero or a pass.
+- **What works now (once the database change is applied):**
+  - Purchase creates a one-time upload link for a PO, shares it by WhatsApp, and can revoke it. The vendor needs no account and sees only the PO number and an upload box.
+  - Staff can attach an invoice that arrived another way. It is recorded as an internal upload by that person.
+  - Each invoice is checked against the PO: vendor, quantity, rate, tax, totals, remaining PO value (so two part-invoices cannot overbill), duplicates, and extra charges. A person can correct a misread value or resolve an issue with a written reason. The original result is kept.
+  - Purchase asks for a fast-track payment with a reason and evidence. Someone else approves it (never the requester, and only up to a limit unless a super admin). Accounts then aligns it in the Payment Tracker. The invoice stays on a chase list with a deadline, shown as overdue if missed.
+  - Screens: Procurement tab "Invoice Control", Accounts tab "Invoices & Exceptions", and an Invoice Control link in the org admin sidebar. Super admins set the approval limit, who may approve, tolerances and deadlines.
+- **Left undone:**
+  - **The database change is written but not applied** (`supabase/migrations/20261020000001_invoice_control.sql`). Nothing works until a person runs it once.
+  - **The invoice reader has never read a real invoice.** The reading model and prompt are untested on this company's invoices. Before trusting it, run about 30 real invoices and compare with a person.
+  - **The signed-in screens have not been opened in a browser.** Only the vendor page, the public/blocked responses and the code checks were run.
+  - **No reminders or email alerts yet.** Overdue invoices show on screen; nothing is sent. Reminders need a scheduled job, which means a change to the production schedule, so it was left for the founder to approve.
+  - **Goods-received and credit notes are not used in matching,** and mail or WhatsApp intake was out of scope, as in the PRD.
+  - **Link throttling is per server instance** (the real protection is the 256-bit link and the single use). A scanned-image invoice with many pages reads only the first 4 pages.
+- **Open questions for the founder:**
+  - Who counts as an approver, and what is the limit? The default is Accounts, org super admins and master admins, up to ₹1,00,000, with super admins above that. This is a setting in the Policy tab.
+  - How many days should a vendor get to send the invoice after an urgent payment? Default 7.
+  - Should reminders go by email, WhatsApp, or both, and to whom?
+  - Is it acceptable that a super admin can waive a missing invoice by policy, with a written reason on record?
+
+## 2026-10-16 — Saas.one: From wiki to organisational brain — stress test, five-lens review, explainer video
+
+**The new wiki was tested with 11 hard questions and scored about 3 out of 12. A review from five angles (product, data, AI, operations, governance) agreed on what turns it into an organisational brain, and a 2-minute narrated video explains it.**
+
+- **Why:** The founder asked for "an organization brain, not something I plumb every day", and asked to understand what exists today and what would unlock real intelligence.
+- **What the test showed:**
+  - 6 of 11 answers came back "not in the wiki".
+  - One answer was confidently wrong: asked for "the most complex system", search pulled pages about key chains and face masks.
+  - A question about the purchase team in September missed the September page, because that page says "2026-09".
+- **Why it falls short:**
+  - It searches words, not meaning.
+  - It reads 4 sources out of about 230 tables, and ignores who raised and approved each PO, which is already synced for 5,761 POs.
+  - It only answers when asked.
+  - It has no memory of decisions.
+- **Why it feels like plumbing:** every failure so far was found by the founder, never by an alarm. The purchase mail sync was dead for 57 days while reporting success.
+- **The five unlocks agreed on:**
+  1. **Push:** a price verdict on every new PO in Ira's daily mail.
+  2. **Memory:** a record of decisions (what, who, why), with proposed versus verified.
+  3. **Smarter reading:** sort questions by type, and read the whole journal for broad ones.
+  4. **See more:** approvals, bills, tickets, energy, budgets and full mail.
+  5. **Watches itself:** each source shows when its data last arrived, and a stale source alerts a named person within a day.
+- **Proposed order:**
+  - Week 1: watching itself, plus PO price verdicts.
+  - Week 2: smarter reading and a test set.
+  - Week 3: the decision memory.
+- **What works now:** the video is at `~/Downloads/Org-Brain-Explained.mp4` (project in `~/Downloads/org-brain-video/`).
+- **Left undone:** none of the five unlocks is built yet; this was diagnosis and planning only. The review also found risks that must be fixed before the brain is widened beyond super admins:
+  - the leaked database key;
+  - a chatbot database function that any signed-in user may be able to call;
+  - PO notes that contain vendor bank details.
+- **Open questions for the founder:**
+  - Who owns applying database changes and shipping weekly?
+  - Who receives alerts?
+  - What should the staff notice and consent for the three archived mailboxes say?
+  - Should Zoho bills and payments be readable?
+  - When should the key be rotated?
+  - Do your answers to open questions become binding facts in the brain?
+
+## 2026-10-16 — Saas.one: An org wiki you can ask questions — purchase orders, mail and how FMS was built
+
+**A new Wiki tab turns 5,764 purchase orders, 26,196 line items, the purchase@ digest and the development journal into about 2,200 linked pages, and answers questions from them with the source page cited on every claim.**
+
+- **Why:** The founder asked for a "baseline to compare against" built from all purchase emails and POs (first raised 11 September and never built), and then for a wiki that can be asked questions directly. Until now every Ira scan re-read 5,000 POs and nothing kept what was learned.
+- **Structural decisions:**
+  - **Pages are compiled by code, not written by AI.** One page per vendor (801), site (34), item bought three or more times (1,300), month of POs (40), month of purchase@ mail (4) and journal entry (30), plus an overview (the index) and a red-flags page. A rebuild costs nothing and takes about 15 seconds. The alternative, having a model write each page (as in Karpathy's "LLM wiki" pattern this follows), lost because the pages are mostly figures that must be exact, and the founder asked that the weekly refresh burn no tokens.
+  - **AI is used only to answer.** Search picks the six best pages, and one model call answers from them alone. If the answer is not in the pages, it says so instead of guessing.
+  - **Good answers can be saved back as notes**, so the wiki grows from the questions people ask. A rebuild never touches notes.
+  - **Item matching uses the same rules as Meera's rate checker**, so the two never disagree on what "the same item" is. A median needs at least three purchases (the floor proposed on 11 September).
+  - **Super admins only.** The journal records security findings and the mail pages carry purchase@ snippets.
+  - **Rebuilds every Monday at 06:00 IST**, plus a Rebuild button. The schedule line was added to `vercel.json` with the founder's approval.
+- **What works now (once the migration is applied and deployed):** A super admin opens Wiki in the org dashboard and can:
+  - ask "what did we last pay for TASKI R2" or "how much went to Metro Airconditioner this year" and get a short answer with links to the pages behind it;
+  - browse vendors, sites, items, months, mail and journal entries;
+  - see red flags: 123 POs pending approval worth ₹1.77 crore, drafts older than 30 days, same-amount POs to one vendor within a month, items up or down 25% year on year, and data gaps.
+- **Tested:**
+  - The compiler ran on the live data without saving anything: 2,211 pages, no broken links, 12 seconds.
+  - The answer step was run live on real pages. "What did we pay BVG at SS Plaza" came back as ₹39,20,561 across 4 POs, with every figure linked; "which POs have waited longest for approval" came back as PO-26/27-0211 (Metro Airconditioner, 157 days); an off-topic question came back "not in the wiki".
+  - Answers use a fast model: about 3 seconds and $0.0003 each. The default council model took 95 to 379 seconds for the same answer.
+  - Found along the way: PO totals include tax while line items do not (BVG's ₹39.2 lakh in POs is ₹33.2 lakh before tax). Every page now says which figures include tax.
+  - Type check and lint are clean.
+- **Left undone:**
+  - The migration `supabase/migrations/20261016000001_org_wiki.sql` is not applied, so the tab shows "not set up" until it is. The database search function has therefore never run.
+  - Nobody has opened the tab in a signed-in browser.
+  - Answers are not yet graded for quality (the doctrine's rubric step; see `backend/lib/wiki/AGENT_SPEC.md`).
+  - The full mail archive is not included. Its migration is still unapplied, so mail pages carry subjects and opening lines only.
+  - Bills, payments and approver names are not synced, so the wiki cannot answer questions about them.
+  - Nothing committed.
+- **Open questions for the founder:**
+  - Should the purchase team get read access to the purchase pages only (vendors, items, sites), without the journal and mail?
+  - Should the daily Ira scan start comparing each new PO against these item pages? That was the original "baseline" idea.
+
+## 2026-10-16 — Saas.one: August costing filled to 84% automatically; September corrected
+
+**The August tab of the costing sheet was filled from WorkDrive bills and from Zoho purchase orders that quote a vendor invoice. It reaches 84% of July's rupee total and 68% of July's line-by-site entries. September was corrected using what August taught us.**
+
+- **Why:** The founder pointed out that September invoices only arrive in October, so September was a poor test. August is the fair one.
+- **Structural decisions:**
+  - **We learned the sheet's month rule from July instead of guessing.** July's figures match, to the rupee, the invoices dated in the first days of August. Examples: SS Plaza manpower ₹16,71,745 = BVG (4 Aug) + Salvus (6 Aug); Delhi ₹56,690 = Attollent + Perfection. So a month's cost is the invoices dated early the following month, and August = invoices dated early September.
+  - **Purchase orders count only when they quote the vendor's invoice number.** Quotations and project orders were ignored. These figures are marked blue so they are not confused with bills (green) and estimates (amber).
+  - **One workbook, both months.** `Costing For Sept'26n - AUTO-FILLED draft.xlsx` in Downloads holds both months, with a "sources" sheet for each that lists every figure and every gap. The original file is untouched.
+- **What works now:**
+  - August: 78 cells filled (₹1.05 crore).
+  - Covered: manpower for 13 of 15 sites, electricity for 11, housekeeping material for 13, mineral water for all 13 that July had, plus pest control, tea and coffee, and vending.
+  - September: 61 cells. Fixes made there:
+    - "HO 1st/2nd floor" pest bills placed in D Wing and C Wing.
+    - Bangalore material, diesel and Padcare moved to August.
+    - The missing second Rabale 7th-floor meter flagged.
+- **Left undone:** these are the lines with no source anywhere.
+  - Petty cash (₹1.7 lakh a month).
+  - Repairs.
+  - AMCs.
+  - The SS Plaza water tanker (₹1.7 lakh).
+  - Rabale 2nd and 7th floor manpower (₹10 lakh).
+  - Electricity for Delhi, Noida, Kolkata and B Wing.
+  - Nothing was loaded into the AOP. Nothing committed.
+- **Problems found in the bills:**
+  - Noida pays two security vendors (ABN and Perfection).
+  - D Wing security was billed 36 days in a 31-day month.
+  - One worker appears on two sites' attendance at the same time.
+  - Perfection's GST split is wrong, putting input credit at risk.
+  - The SS Plaza electricity bill covers the whole building.
+  - Several Mahir "change" invoices dated 6 August look like re-issued July bills.
+- **Open questions for the founder:**
+  - Who supplies Rabale's manpower, and where are those bills?
+  - Is petty cash tracked anywhere?
+  - Should the sheet be before or after GST?
+  - Is the "FCB Kinnect" space at Mafatlal A Wing part of the C Wing column?
+
+## 2026-10-15 — Saas.one: September costing sheet filled automatically from WorkDrive bills (draft)
+
+**About 62 of the 465 cells in the September costing tab were filled from the purchase team's own WorkDrive bills, with a source note on every figure. The rest are listed with the reason they could not be filled.**
+
+- **Why:** The founder asked us to try filling the monthly costing sheet without the site teams, and to show where an automatic fill gets stuck.
+- **Structural decisions:**
+  - **Bills first, purchase orders only when the invoice is dated September.** The purchase team files every bill under `My Folders / All Opex Bills / <category> / <month>` in WorkDrive. That folder is the source. Purchase orders raised in September turned out to be mostly for August invoices, so they were not used as September costs. The alternative, filling from POs, would have put August's Bangalore manpower into September.
+  - **Amounts before GST.** Earlier tabs mix with-GST and without-GST figures. July's values match the before-GST amounts on the bills, so the fill uses before-GST throughout.
+  - **Electricity is current-month charges only.** Arrears, security-deposit instalments and late fees are left out and noted.
+  - **The original file is untouched.** The fill is a separate copy in Downloads: `Costing For Sept'26n - AUTO-FILLED draft.xlsx`. It has a "Fill sources" sheet with every figure, its bill, and every gap.
+- **What works now:**
+  - 55 cells come straight from bills (₹75.6 lakh) and 7 are marked as estimates (₹4.3 lakh, amber).
+  - Covered: manpower for 10 sites, electricity for 10 sites, housekeeping material for 13, plus pest control, water, tea/coffee and vending.
+  - The WorkDrive download now uses the endpoint the read-only token is allowed to use.
+- **Problems found in the bills** (for the purchase team):
+  - ETPL billed for 5 aroma-oil bottles more than its delivery note shows.
+  - One C-wing housekeeping invoice is filed twice.
+  - Noida has two security vendors in the same month, possibly overlapping.
+  - ETPL electricity carries ₹12.6 lakh of unpaid arrears. Mafatlal D-wing has a disconnection notice expiring 17 October.
+  - The ETPL drinking-water bill (₹83,050) has odd addresses and no delivery note.
+- **Left undone:**
+  - Manpower for SS Plaza, Delhi, Rabale (both floors) and ETPL. Their September invoices are not in WorkDrive yet.
+  - Electricity for Delhi, Noida, Rupa and Kolkata.
+  - All the AMC, repair, petty-cash and water-tanker lines. There are no September bills for these, and the app holds no petty-cash data.
+  - Reading Zoho Books vendor bills, which needs a wider Zoho permission.
+  - Nothing was loaded into the AOP. The dry run shows September would still be blocked by the missing budget and the Delhi mapping.
+- **Open questions for the founder:**
+  - How to split the shared Mafatlal A+B electricity bill.
+  - Which site the "HO 1st/2nd floor" pest bills and the "FCB Connect" water bill belong to.
+  - Whether the costing sheet should be before or after GST.
+  - Whether to allow a Zoho Books "bills" read permission.
+
+## 2026-10-15 — Saas.one: Ira listens only, Teams-style meeting room, LiveKit fixed
+
+**Meetings now connect, Ira joins as a silent note-taker instead of a speaker, and the meeting room looks like a Teams call.**
+
+- **Why:** Joining a meeting failed with "invalid token", Ira never joined, and the founder wants Ira to stop talking: people run the meeting, she only listens and writes things down.
+- **Structural decisions:**
+  - The LiveKit secret in the local settings did not belong to its key. A new key pair replaced it. The old settings file is backed up as `.env.bak.livekit`.
+  - Ira has two modes. "Listen" is the new default: no voice and no spoken notice. She transcribes everyone, follows which PO is being discussed, and writes proposed decisions. "Speak" is the old behaviour where she chairs the meeting aloud, and it stays available. The alternative, deleting her voice, lost because a chaired meeting may still be wanted later.
+  - Ira can now jump to whichever PO the room is discussing, instead of only following the agenda in order. An item skipped without a decision goes back into the queue rather than being marked parked.
+  - The meeting room was rebuilt in three screens:
+    - a lobby showing the transcription notice
+    - a call screen: people as tiles, Ira as a "Listening · taking notes" tile, captions, a control dock, and a side panel with the agenda, Ira's notes and the transcript
+    - a decision sheet once the meeting ends
+- **What works now:** Joining a room works (LiveKit accepts the keys). Ira's worker runs on this laptop, is registered with LiveKit Cloud, and FMS accepts her key.
+- **Left undone:**
+  - No real meeting has been held with the new screen or listen mode. Nobody tested in a signed-in browser, and Ira's silent decision-taking has not been checked on real speech.
+  - Ira runs only while this laptop's worker is running. For always-on use, deploy her to LiveKit Cloud (`agents/meeting-agent/README.md`).
+  - The live Vercel site still needs the new LiveKit key and secret.
+- **Open questions for the founder:**
+  - The new LiveKit secret was pasted into chat. Rotate it once Ira is deployed?
+  - Without the read-back, a misheard decision is caught only when an approver confirms the sheet. Is that acceptable?
+
+## 2026-10-15 — Saas.one: Purchase team's Zoho WorkDrive — connection ready, waiting on one Zoho login
+
+**The app can now list and download files from the purchase@worksquare.in WorkDrive as soon as that account approves read-only access.**
+
+- **Why:** The founder wants to read the purchase team's WorkDrive files (costing sheets, AOP and purchase workbooks) before deciding the next steps for the AOP feed.
+- **Structural decisions:**
+  - **Same Zoho client as Mail and Books.** We confirmed that the existing Zoho client already signs in as purchase@worksquare.in (it reads that mailbox). WorkDrive gets its own token from the same client, read-only, and the Mail and Books connections are untouched. The alternative, a new Zoho app, would add three more secret values for no gain.
+  - **Read-only scopes only.** The four scopes are for users, team, team folders and files, all READ. The app cannot create, change or delete anything in WorkDrive.
+- **What works now:** `scripts/workdrive-browse.mjs` prints the full folder tree the purchase account can see (team folders and My Folders), with file names, sizes, last modified time and who modified it. `scripts/workdrive-fetch.mjs` downloads one chosen file for the AOP dry run.
+- **Left undone:**
+  - The token itself. It needs someone signed in to Zoho as purchase@ to approve access (steps given to the founder).
+  - The browse script has not run against WorkDrive yet, so the exact API responses are unverified until the token exists.
+  - Nothing committed.
+- **Open questions for the founder:** Which WorkDrive folder is the official home of the monthly costing and AOP files?
+
+## 2026-10-15 — Saas.one: Meetings moved into the main dashboard, simpler screen
+
+**Meetings with Ira is now a tab of the org admin dashboard instead of a separate page, and the screen asks for one click instead of a form.**
+
+- **Why:** The founder opened Meetings and found it outside the main dashboard, with a form that had to be read before anything could be done.
+- **Structural decisions:** Meetings is a dashboard tab for org admins, like Document Bank. The old address still works: org admins are redirected into the tab, and other roles (property admin, procurement) keep the standalone page, since their dashboards have no such tab. The meeting room itself stays full-screen.
+- **What works now:** One "Start review" button with sensible defaults (POs waiting 30+ days, up to 15). The settings sit under "Options". Live meetings show at the top with "Join now". Each meeting has a "Copy link" button for sharing. A three-step note explains the flow.
+- **Left undone:** Not checked on screen yet, because the browser used for testing was signed out. Property admin and procurement dashboards still open Meetings as a separate page. The meeting agent worker was not started.
+- **Open questions for the founder:** Should property admins and the procurement team also get Meetings inside their own dashboards?
+
+## 2026-10-14 — Saas.one: AOP costing feed — WorkDrive connection prepared and first dry run
+
+**The site teams' costing workbook was run through the planned AOP approval flow without writing anything, and the Zoho WorkDrive connection is ready apart from one login step.**
+
+- **Why:** The AOP Budget-vs-Actual screen still stops at June. The site teams' monthly costing sheet (`Costing For Sept'26n.xlsx`) is the obvious feed for July onward. Before building the feed, the founder wanted to see where that sheet would break the planned checks and approvals.
+- **Structural decisions:**
+  - **Simulation before build.** A dry-run script (`scripts/aop_costing_dryrun.js`) reads the workbook and the live AOP tables, applies the planned rules and reports each finding as BLOCK, REVIEW, ROUTE or PASS, with an owner. It never writes. The same parsing will sit behind the real feed. The alternative, building the upload screen first, would have hidden these problems until data was already in.
+  - **WorkDrive file is pinned by its id, not found by searching a folder.** Renamed or moved files still work, and copies like "Costing (1).xlsx" can never be picked up by mistake. Downloaded copies are named `AOP-costing-*.xlsx`, which git already ignores, so finance data cannot be committed by accident.
+  - **WorkDrive reuses the existing Zoho Books login client.** One Zoho "Self Client" can issue a second token limited to reading WorkDrive files. The Books connection is not touched. The alternative was a separate Zoho app with three more secret values to manage.
+- **What works now:**
+  - Anyone can run the dry run on a costing workbook and get a report of where it would be blocked, which figures need review, and what the dashboards would show if it were loaded.
+  - Once the WorkDrive login step is done, `scripts/workdrive-fetch.mjs` downloads the pinned workbook ready for the dry run.
+- **What the dry run found (14 Oct file):**
+  - Only July has figures for a month that is still open. June, August and September tabs are empty.
+  - July cannot be submitted. The Mahindra Delhi column and the "Ceiling tiles" line have no AOP equivalent yet.
+  - July cannot be closed. There is no July budget, and Mafatlal A Wing and Delhi sent nothing.
+  - Loading July as it stands would make every dashboard show about ₹1.24 crore of false overspend across 14 sites, because July becomes the headline month with no budget. This confirms that the month-close gate is needed.
+  - Eight figures need a second look, including Noida July manpower at 9× its earlier level, and SS Plaza May, where Excel's own total misses ₹14.7 lakh because some numbers were typed as text.
+  - ETPL Tea & Coffee at ₹820 (budget ₹1.03 lakh) slipped past the outlier rule because of its ₹50,000 floor. The rule needs a budget-based check as well.
+- **Left undone:**
+  - The WorkDrive token. It needs a Zoho login and a grant code that only the founder or an admin can generate.
+  - The real feed: the upload screen, approvals and month close. It waits on the ten open decisions in the plan.
+  - Nothing was committed or pushed, per the repo rules.
+- **Open questions for the founder:**
+  - The ten decisions in the plan are still open. The most urgent are: where July–September budgets come from, whether Geebee and Mahindra are one Delhi site, and what to do with "Ceiling tiles" and "Mahindra Car Parking".
+  - This office's internet provider (DNS 103.14.232.100) no longer resolves `*.supabase.co`, the app's database address. The dry run worked around it by asking public DNS. If customers or staff are on the same provider, the live app may fail for them too. This needs checking.
+
 ## 2026-10-14 — Saas.one: Grievance module explainer videos, AOP decision-layer video, and a reusable video-making skill
 
 **Five short videos now exist: four explaining the HR grievance module, one for each lens (Employee, Manager, HR, Director), and one motion-graphics video of the AOP costing review. The method behind them is saved as a reusable skill called `motion-reel`.**

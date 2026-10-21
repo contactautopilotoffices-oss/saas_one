@@ -1,31 +1,32 @@
 'use client';
 
 /**
- * MEETING ROOM — join, talk, and watch the agenda move.
+ * MEETING ROOM — a Teams-shaped call screen: lobby → call → decision sheet.
  *
  * Audio runs through LiveKit; everything else on this page (agenda progress,
- * the transcript, Ira's decisions) is read from FMS every few seconds, so what
- * people see is exactly what was saved. After the meeting the same page is the
- * decision sheet: an approver confirms or rejects each proposed decision.
- * Confirming records agreement; acting on it in Zoho stays a person's job.
+ * the transcript, Ira's notes) is read from FMS every few seconds, so what
+ * people see is exactly what was saved. Ira is LISTEN-ONLY: she never speaks,
+ * she transcribes everyone and writes down proposed decisions. After the
+ * meeting the same page is the decision sheet: an approver confirms or rejects
+ * each proposal. Confirming records agreement; acting on it in Zoho stays a
+ * person's job.
+ *
+ * Visual language is the Agent Council call (AgentCall / AgentPresence) — see
+ * MeetingRoomParts.tsx for the token provenance.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import Link from 'next/link';
-import { LiveKitRoom, RoomAudioRenderer, useIsSpeaking, useLocalParticipant, useParticipants } from '@livekit/components-react';
-import type { Participant } from 'livekit-client';
-import { AlertTriangle, ArrowLeft, Bot, Check, Loader2, LogOut, Mic, MicOff, PhoneOff, ShieldAlert, X } from 'lucide-react';
+import { LiveKitRoom, RoomAudioRenderer, useLocalParticipant, useParticipants } from '@livekit/components-react';
+import {
+    AlertTriangle, ArrowLeft, Captions, Loader2, Mic, MicOff, PanelRight, PhoneOff, ShieldAlert, X,
+} from 'lucide-react';
+import {
+    AgendaList, Banner, CallButton, CaptionStrip, DecisionCard, ELEV_5, Elapsed, INK1, INK2, INK3, IRA_INK,
+    IraAvatar, IraTile, LiveDot, NotesList, PersonTile, RuleCard, SheetMotion, Tabs, Transcript, WELL,
+    type Decision, type Item, type Line,
+} from './MeetingRoomParts';
 
-interface Facts {
-    vendor?: string; property?: string | null; amount_spoken?: string; days_waiting?: number; po_date?: string;
-}
-interface Item { id: string; position: number; label: string; facts: Facts; status: 'pending' | 'current' | 'discussed' | 'parked'; parked_reason: string | null }
-interface Decision {
-    id: string; item_id: string | null; kind: 'item' | 'rule'; decision: string | null; owner_name: string | null;
-    due_text: string | null; note: string | null; said_by: string | null;
-    state: 'proposed' | 'confirmed' | 'rejected' | 'superseded'; created_at: string;
-}
-interface Line { id: number; speaker_name: string | null; is_agent: boolean; text: string; spoken_at: string }
 interface Meeting {
     id: string; title: string; status: 'scheduled' | 'live' | 'ended'; agent_slug: string;
     host_name: string | null; started_at: string | null; ended_at: string | null; agent_joined_at: string | null;
@@ -35,15 +36,34 @@ interface Payload {
     viewer: { can_host: boolean; name: string }; livekit_ready: boolean; setup: string[];
 }
 
-const DECISION_LABEL: Record<string, string> = {
-    approve: 'Approve', cancel: 'Cancel', needs_info: 'Needs info', hold: 'Hold', reassign: 'Reassign',
+type PanelTab = 'agenda' | 'notes' | 'transcript';
+
+/* The dashboard layout wraps pages in: a 56px mobile header (below lg) or a
+   56px ContextBar (lg+), and <main> py-4 / lg:py-6. The room fills the rest. */
+const FILL_H = 'h-[calc(100dvh-88px)] lg:h-[calc(100dvh-104px)] min-h-[540px]';
+const FILL_MIN_H = 'min-h-[calc(100dvh-88px)] lg:min-h-[calc(100dvh-104px)]';
+
+/* .council-page canvas recipe (primary 10% top-left, secondary 7% bottom-right),
+   on the locked #FAFBFC canvas so the room is light in every theme, like the
+   council's own surfaces. Shell radius: vercel rounded.xl 16. */
+const SHELL: CSSProperties = {
+    fontFamily: 'var(--font-body)',
+    color: INK1,
+    borderRadius: 16,
+    boxShadow: 'var(--council-elev-2)',
+    background:
+        'radial-gradient(1100px 720px at 12% -12%, color-mix(in srgb, var(--primary) 10%, transparent), transparent 62%),' +
+        'radial-gradient(900px 640px at 94% 106%, color-mix(in srgb, var(--secondary) 7%, transparent), transparent 58%),' +
+        '#FAFBFC',
 };
-const ITEM_STATE = {
-    pending: 'text-text-tertiary',
-    current: 'text-primary',
-    discussed: 'text-emerald-700',
-    parked: 'text-amber-800',
-} as const;
+
+/** Red action with text on it: --council-p0-fill (white on it 5.21:1; raw --error is 3.76:1). */
+const END_BTN: CSSProperties = {
+    height: 34, borderRadius: 999, border: 'none', cursor: 'pointer', flex: 'none',
+    display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700,
+    color: '#fff', background: 'var(--council-p0-fill)',
+    boxShadow: '0 6px 16px -6px rgba(239, 68, 68, 0.55)',
+};
 
 export default function MeetingRoom({ orgId, meetingId }: { orgId: string; meetingId: string }) {
     const [data, setData] = useState<Payload | null>(null);
@@ -107,213 +127,399 @@ export default function MeetingRoom({ orgId, meetingId }: { orgId: string; meeti
     const rules = (data?.decisions ?? []).filter((d) => d.kind === 'rule' && d.state !== 'superseded');
 
     if (!data) {
-        return error
-            ? <div className="p-6 text-sm text-red-700">{error}</div>
-            : <div className="flex items-center gap-2 p-6 text-sm text-text-secondary"><Loader2 className="h-4 w-4 animate-spin" /> Loading the meeting…</div>;
+        return (
+            <div className={`flex items-center justify-center p-[24px] ${FILL_MIN_H}`} style={SHELL}>
+                {error
+                    ? <div className="max-w-md"><Banner tone="error">{error}</Banner></div>
+                    : <div className="flex items-center gap-[8px] text-sm" style={{ color: INK2 }}><Loader2 className="h-4 w-4 animate-spin" /> Loading the meeting…</div>}
+            </div>
+        );
     }
     const { meeting, items, viewer } = data;
     const decided = items.filter((i) => i.status === 'discussed').length;
     const parked = items.filter((i) => i.status === 'parked').length;
+    const iraPending = meeting.status === 'live' && !meeting.agent_joined_at;
+    const review = (action: 'confirm' | 'reject', id: string) => void patch({ action, decision_id: id }, id);
+    const endForAll = () => void patch({ action: 'end' }, 'end');
+
+    const banners = (
+        <>
+            {error && <Banner tone="error">{error}</Banner>}
+            {data.setup.length > 0 && !ended && (
+                <Banner tone="setup">
+                    <AlertTriangle className="mr-1.5 inline h-3.5 w-3.5" /><b>The meeting service is not set up yet.</b>
+                    <ul className="mt-1 space-y-1">{data.setup.map((s) => <li key={s}>· {s}</li>)}</ul>
+                </Banner>
+            )}
+        </>
+    );
+
+    /* ------------------------------------------------------------- ended */
+    if (ended) {
+        return (
+            <DecisionSheet orgId={orgId} meeting={meeting} items={items} lines={lines} byItem={byItem} rules={rules}
+                decided={decided} parked={parked} canHost={viewer.can_host} busy={busy} onReview={review} banners={banners} />
+        );
+    }
+
+    /* ----------------------------------------------------------- in call */
+    if (conn) {
+        return (
+            <LiveKitRoom serverUrl={conn.url} token={conn.token} connect audio video={false}
+                onDisconnected={() => setConn(null)}
+                onError={(e) => setError(`Meeting connection: ${e.message}`)}>
+                <RoomAudioRenderer />
+                <InCall orgId={orgId} meeting={meeting} items={items} lines={lines} byItem={byItem} rules={rules}
+                    decided={decided} parked={parked} canHost={viewer.can_host} busy={busy} iraPending={iraPending}
+                    onReview={review} onEnd={endForAll} onLeave={() => setConn(null)} banners={banners} />
+            </LiveKitRoom>
+        );
+    }
+
+    /* ------------------------------------------------------------- lobby */
+    const statusLabel = meeting.status === 'live' ? 'Live now' : 'Not started';
+    return (
+        <div className={`flex items-center justify-center px-4 py-8 ${FILL_MIN_H}`} style={SHELL}>
+            <div className="w-full max-w-[460px] p-[20px] sm:p-[24px]" style={{ borderRadius: 16, background: 'var(--council-surface-1)', boxShadow: 'var(--council-elev-4)' }}>
+                <div className="flex items-center gap-[8px]">
+                    <Link href={`/${orgId}/meetings`} aria-label="All meetings"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-full"
+                        style={{ color: INK2, boxShadow: 'var(--council-ring)' }}>
+                        <ArrowLeft className="h-4 w-4" />
+                    </Link>
+                    <span className="flex items-center gap-1.5">
+                        <LiveDot tone={meeting.status === 'live' ? 'live' : 'waiting'} />
+                        <span className="council-eyebrow">{statusLabel}</span>
+                    </span>
+                </div>
+
+                <div role="heading" aria-level={1} className="mt-4 [overflow-wrap:anywhere]" style={{ fontFamily: 'var(--font-display)', fontSize: 21, fontWeight: 600, lineHeight: 1.3, letterSpacing: '-0.01em', color: INK1 }}>
+                    {meeting.title}
+                </div>
+                <p className="mt-1" style={{ fontSize: 12.5, color: INK2, fontVariantNumeric: 'tabular-nums' }}>
+                    {meeting.host_name && <>Host {meeting.host_name} · </>}
+                    {items.length} {items.length === 1 ? 'item' : 'items'} on the agenda
+                    {meeting.status === 'live' && <> · {decided} decided · {parked} parked</>}
+                </p>
+
+                <div className="mt-4 flex items-center gap-[12px] rounded-[12px] px-3 py-2.5" style={WELL}>
+                    <IraAvatar size={36} />
+                    <div className="min-w-0">
+                        <div style={{ fontSize: 12.5, fontWeight: 700, color: INK1 }}>Ira · AI notetaker</div>
+                        <div style={{ fontSize: 11.5, color: iraPending ? 'var(--council-p1-ink)' : IRA_INK }}>
+                            {iraPending ? "Ira hasn't joined yet" : 'Listens and takes notes — never speaks'}
+                        </div>
+                    </div>
+                </div>
+
+                <p className="mt-3 flex items-start gap-[8px]" style={{ fontSize: 12.5, lineHeight: 1.55, color: INK2 }}>
+                    <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" style={{ color: 'var(--council-p1-ink)' }} />
+                    <span>
+                        This meeting is <b style={{ color: INK1 }}>transcribed</b>. Ira listens and takes notes — she doesn&apos;t
+                        speak. Decisions she writes down are only proposals until an approver confirms them.
+                    </span>
+                </p>
+
+                {(error || data.setup.length > 0) && <div className="mt-3 space-y-2">{banners}</div>}
+
+                <button type="button" onClick={() => void join()} disabled={busy === 'join' || !data.livekit_ready}
+                    className="cc-btn mt-5 w-full disabled:pointer-events-none disabled:opacity-50"
+                    style={{ height: 44, fontSize: 13 }}>
+                    {busy === 'join' ? <Loader2 className="animate-spin" style={{ width: 15, height: 15 }} /> : <Mic style={{ width: 15, height: 15 }} />}
+                    Join meeting
+                </button>
+                <p className="mt-2 text-center" style={{ fontSize: 11.5, color: INK3 }}>
+                    {data.livekit_ready ? 'Join from one device per room to avoid echo.' : 'Audio is not set up yet, so joining is off.'}
+                </p>
+
+                {viewer.can_host && (
+                    <div className="mt-4 flex justify-center pt-3" style={{ borderTop: '1px solid var(--council-hairline)' }}>
+                        <button type="button" onClick={endForAll} disabled={busy === 'end'}
+                            className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 hover:bg-red-500/8 disabled:opacity-50"
+                            style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--council-danger-ink)', border: 'none', background: 'transparent', cursor: 'pointer' }}>
+                            {busy === 'end' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PhoneOff className="h-3.5 w-3.5" />} End for everyone
+                        </button>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
+/* ====================================================================== */
+/* In call                                                                */
+/* ====================================================================== */
+
+interface RoomProps {
+    orgId: string; meeting: Meeting; items: Item[]; lines: Line[]; byItem: Map<string, Decision>; rules: Decision[];
+    decided: number; parked: number; canHost: boolean; busy: string | null;
+    onReview: (action: 'confirm' | 'reject', id: string) => void; banners: ReactNode;
+}
+
+/** Tile grid columns by head-count, against the STAGE width (container query), not the viewport. */
+function gridCols(n: number): string {
+    if (n <= 1) return 'grid-cols-1';
+    if (n === 2) return 'grid-cols-1 @md:grid-cols-2';
+    if (n <= 4) return 'grid-cols-2';
+    if (n <= 6) return 'grid-cols-2 @2xl:grid-cols-3';
+    return 'grid-cols-2 @2xl:grid-cols-3 @4xl:grid-cols-4';
+}
+const avatarFor = (n: number) => (n <= 2 ? 84 : n <= 4 ? 68 : 52);
+
+function InCall(props: RoomProps & { iraPending: boolean; onEnd: () => void; onLeave: () => void }) {
+    const { orgId, meeting, items, lines, byItem, rules, decided, parked, canHost, busy, iraPending, onReview, onEnd, onLeave, banners } = props;
+    const participants = useParticipants();
+    const { localParticipant, isMicrophoneEnabled } = useLocalParticipant();
+    const [captions, setCaptions] = useState(true);
+    // Mounted only after Join (client-side), so reading the viewport here is safe.
+    const [panel, setPanel] = useState(() => typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches);
+    const [tab, setTab] = useState<PanelTab>('agenda');
+
+    const people = participants.filter((p) => !p.isAgent);
+    const agents = participants.filter((p) => p.isAgent);
+    const showIraPending = iraPending && agents.length === 0;
+    const tileCount = participants.length + (showIraPending ? 1 : 0);
+    const avatar = avatarFor(tileCount);
+    const toConfirm = [...byItem.values(), ...rules].filter((d) => d.state === 'proposed').length;
+
+    const tabs: { id: PanelTab; label: string; count?: number }[] = [
+        { id: 'agenda', label: 'Agenda', count: items.length },
+        { id: 'notes', label: 'Notes', count: byItem.size + rules.length },
+        { id: 'transcript', label: 'Transcript' },
+    ];
+
+    const panelBody = (
+        <>
+            <Tabs value={tab} onChange={setTab} tabs={tabs} />
+            {tab === 'notes' && (
+                <p className="mt-3" style={{ fontSize: 11.5, lineHeight: 1.5, color: INK3 }}>
+                    Ira writes these down as she hears them. Each is a proposal until an approver confirms it
+                    {toConfirm > 0 && <> · <b style={{ color: INK2, fontVariantNumeric: 'tabular-nums' }}>{toConfirm} to confirm</b></>}.
+                </p>
+            )}
+            {tab === 'transcript'
+                ? <Transcript lines={lines} className="mt-3 min-h-0 flex-1" />
+                : (
+                    <div className={`mt-3 min-h-0 flex-1 overflow-y-auto ${tab === 'agenda' ? 'px-3' : 'px-1 pb-1'}`}>
+                        {tab === 'agenda' && <AgendaList items={items} />}
+                        {tab === 'notes' && <NotesList items={items} byItem={byItem} rules={rules} canHost={canHost} busy={busy} onReview={onReview} />}
+                    </div>
+                )}
+        </>
+    );
 
     return (
-        <div className="mx-auto flex max-w-6xl flex-col gap-4 p-4 md:p-6">
-            <header className="flex flex-wrap items-start gap-3">
-                <Link href={`/${orgId}/meetings`} className="mt-1 text-text-tertiary hover:text-foreground" aria-label="All meetings"><ArrowLeft className="h-4 w-4" /></Link>
+        <div className={`flex flex-col overflow-hidden ${FILL_H}`} style={SHELL}>
+            {/* ------------------------------------------------------ top bar */}
+            <header className="flex items-center gap-2.5 px-3 py-2.5 sm:gap-[12px] sm:px-4"
+                style={{ background: 'var(--council-surface-1)', borderBottom: '1px solid var(--council-hairline)' }}>
+                <Link href={`/${orgId}/meetings`} aria-label="All meetings"
+                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
+                    style={{ color: INK2, boxShadow: 'var(--council-ring)' }}>
+                    <ArrowLeft className="h-4 w-4" />
+                </Link>
                 <div className="min-w-0 flex-1">
-                    <h1 className="text-lg font-bold text-foreground">{meeting.title}</h1>
-                    <p className="text-[12px] text-text-secondary">
-                        {meeting.status === 'ended' ? 'Ended' : meeting.status === 'live' ? 'Live' : 'Not started'}
-                        {meeting.host_name && <> · host {meeting.host_name}</>}
-                        {' · '}{decided} decided · {parked} parked · {items.length - decided - parked} to go
-                        {meeting.status === 'live' && !meeting.agent_joined_at && <> · <span className="text-amber-800">Ira has not joined yet</span></>}
-                    </p>
+                    <div role="heading" aria-level={1} className="truncate" style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 600, letterSpacing: '-0.01em', color: INK1 }}>
+                        {meeting.title}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5" style={{ fontSize: 11.5, fontWeight: 500, color: INK2, fontVariantNumeric: 'tabular-nums' }}>
+                        <span className="inline-flex items-center gap-1.5">
+                            <LiveDot tone={meeting.status === 'live' ? 'live' : 'waiting'} />
+                            <span className="council-eyebrow" style={{ color: INK1 }}>{meeting.status === 'live' ? 'Live' : 'Waiting to start'}</span>
+                            {meeting.status === 'live' && <span style={{ fontWeight: 700 }}><Elapsed since={meeting.started_at} /></span>}
+                        </span>
+                        <span aria-hidden style={{ color: 'var(--council-ink-4)' }}>·</span>
+                        <span>{decided} of {items.length} decided{parked > 0 && <> · {parked} parked</>}</span>
+                        {iraPending && (
+                            <span className="council-sev" style={{ color: 'var(--council-p1-ink)', background: 'color-mix(in srgb, var(--warning) 15%, transparent)', boxShadow: 'inset 0 0 0 1px color-mix(in srgb, var(--warning) 55%, transparent)' }}>
+                                Ira hasn&apos;t joined yet
+                            </span>
+                        )}
+                    </div>
                 </div>
-                {viewer.can_host && !ended && (
-                    <button type="button" onClick={() => void patch({ action: 'end' }, 'end')} disabled={busy === 'end'}
-                        className="inline-flex items-center gap-1.5 rounded-xl border border-red-500/30 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-500/8 disabled:opacity-50">
-                        {busy === 'end' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PhoneOff className="h-3.5 w-3.5" />} End for everyone
+                {canHost && (
+                    <button type="button" onClick={onEnd} disabled={busy === 'end'} aria-label="End for everyone" title="End for everyone"
+                        className="w-[34px] justify-center disabled:opacity-50 sm:w-auto sm:px-3.5" style={END_BTN}>
+                        {busy === 'end' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PhoneOff className="h-3.5 w-3.5" />}
+                        <span className="hidden sm:inline">End for everyone</span>
                     </button>
                 )}
             </header>
 
-            {error && <div className="rounded-xl border border-red-500/30 bg-red-500/8 px-3 py-2 text-[12px] text-red-700">{error}</div>}
-            {data.setup.length > 0 && !ended && (
-                <div className="rounded-xl border border-amber-500/30 bg-amber-500/8 px-3.5 py-3 text-[12px] text-amber-900">
-                    <AlertTriangle className="mr-1.5 inline h-3.5 w-3.5" /><b>The meeting service is not set up yet.</b>
-                    <ul className="mt-1 space-y-1">{data.setup.map((s) => <li key={s}>· {s}</li>)}</ul>
+            <div className="space-y-2 px-3 pt-3 empty:hidden sm:px-4">{banners}</div>
+
+            {/* -------------------------------------------- stage + panel */}
+            <div className="flex min-h-0 flex-1 gap-[12px] p-[12px] sm:p-[16px]">
+                <section aria-label="Participants" className="flex min-w-0 flex-1 flex-col gap-[12px]">
+                    <div className="@container min-h-0 flex-1 overflow-y-auto">
+                        <div className={`grid h-full gap-2.5 ${gridCols(tileCount)}`} style={{ gridAutoRows: 'minmax(132px, 1fr)' }}>
+                            {people.map((p) => <PersonTile key={p.identity} p={p} avatar={avatar} />)}
+                            {agents.map((p) => <IraTile key={p.identity} avatar={avatar} />)}
+                            {showIraPending && <IraTile avatar={avatar} pending />}
+                        </div>
+                    </div>
+
+                    {captions && <CaptionStrip lines={lines} iraPending={iraPending} />}
+
+                    {/* control dock — floating pill, vercel Level 5 */}
+                    <div className="flex justify-center">
+                        <div className="inline-flex items-center gap-2.5 rounded-full p-[8px]" style={{ background: 'var(--council-surface-1)', boxShadow: ELEV_5 }}>
+                            <CallButton onClick={() => void localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled)} active={isMicrophoneEnabled}
+                                title={isMicrophoneEnabled ? 'Mute microphone' : 'Unmute microphone'}>
+                                {isMicrophoneEnabled ? <Mic size={19} /> : <MicOff size={19} style={{ color: 'var(--council-danger-ink)' }} />}
+                            </CallButton>
+                            <CallButton onClick={() => setCaptions((v) => !v)} active={captions} title={captions ? 'Hide captions' : 'Show captions'}>
+                                <Captions size={19} />
+                            </CallButton>
+                            <CallButton onClick={() => setPanel((v) => !v)} active={panel} title={panel ? 'Hide agenda and notes' : 'Show agenda and notes'}>
+                                <PanelRight size={19} />
+                            </CallButton>
+                            <CallButton onClick={onLeave} danger title="Leave meeting">
+                                <PhoneOff size={19} />
+                            </CallButton>
+                        </div>
+                    </div>
+                </section>
+
+                {/* side panel — desktop column */}
+                {panel && (
+                    <aside aria-label="Agenda and notes" className="hidden w-[340px] shrink-0 flex-col p-[12px] lg:flex xl:w-[380px]"
+                        style={{ borderRadius: 12, background: 'var(--council-surface-1)', boxShadow: 'var(--council-elev-3)' }}>
+                        {panelBody}
+                    </aside>
+                )}
+            </div>
+
+            {/* side panel — bottom sheet below lg */}
+            {panel && (
+                <div className="fixed inset-0 z-[60] lg:hidden" role="dialog" aria-modal="true" aria-label="Agenda and notes">
+                    <button type="button" aria-label="Close panel" onClick={() => setPanel(false)}
+                        className="absolute inset-0 h-full w-full" style={{ background: 'rgba(20, 28, 32, 0.42)', border: 'none' }} />
+                    <SheetMotion className="absolute inset-x-0 bottom-0 flex max-h-[78dvh] flex-col px-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-2"
+                        style={{ borderRadius: '16px 16px 0 0', background: 'var(--council-surface-1)', boxShadow: ELEV_5, fontFamily: 'var(--font-body)', color: INK1, height: '78dvh' }}>
+                        <div className="mb-2 flex items-center">
+                            <span aria-hidden className="mx-auto h-1 w-10 rounded-full" style={{ background: 'var(--council-hairline-strong)' }} />
+                        </div>
+                        <div className="mb-2 flex items-center justify-between">
+                            <span className="council-eyebrow">{meeting.title}</span>
+                            <button type="button" onClick={() => setPanel(false)} aria-label="Close panel"
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-full" style={{ color: INK2, boxShadow: 'var(--council-ring)', border: 'none', background: 'transparent' }}>
+                                <X className="h-4 w-4" />
+                            </button>
+                        </div>
+                        {panelBody}
+                    </SheetMotion>
                 </div>
             )}
+        </div>
+    );
+}
 
-            {!ended && (conn ? (
-                <LiveKitRoom serverUrl={conn.url} token={conn.token} connect audio video={false}
-                    onDisconnected={() => setConn(null)}
-                    onError={(e) => setError(`Meeting connection: ${e.message}`)}>
-                    <RoomAudioRenderer />
-                    <InRoomBar onLeave={() => setConn(null)} />
-                </LiveKitRoom>
-            ) : (
-                <section className="rounded-[14px] border border-border bg-card p-4">
-                    <p className="flex items-start gap-2 text-[12.5px] leading-relaxed text-text-secondary">
-                        <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
-                        <span>
-                            This meeting is <b>transcribed</b>. Ira, our procurement agent, is in the room: she reads each
-                            purchase order, asks what should happen, and writes the decision down under the name of the
-                            person who said it. Nothing is approved or cancelled until an approver confirms it afterwards.
-                        </span>
+/* ====================================================================== */
+/* Ended — the decision sheet                                             */
+/* ====================================================================== */
+
+function Stat({ label, value, tone }: { label: string; value: number; tone?: string }) {
+    return (
+        <div className="rounded-[12px] px-3.5 py-3" style={{ background: 'var(--council-surface-2)', boxShadow: 'var(--council-elev-2)' }}>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600, lineHeight: 1.2, color: tone ?? INK1, fontVariantNumeric: 'tabular-nums' }}>
+                {value.toLocaleString('en-IN')}
+            </div>
+            <div className="council-eyebrow mt-1">{label}</div>
+        </div>
+    );
+}
+
+function DecisionSheet(props: RoomProps) {
+    const { orgId, meeting, items, lines, byItem, rules, decided, parked, canHost, busy, onReview, banners } = props;
+    const withDecision = items.filter((i) => byItem.has(i.id));
+    const parkedItems = items.filter((i) => i.status === 'parked');
+    const toConfirm = [...byItem.values(), ...rules].filter((d) => d.state === 'proposed').length;
+    const ranFor = meeting.started_at && meeting.ended_at
+        ? Math.round((new Date(meeting.ended_at).getTime() - new Date(meeting.started_at).getTime()) / 60000)
+        : null;
+    const endedOn = meeting.ended_at
+        ? new Date(meeting.ended_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+        : null;
+    const card: CSSProperties = { borderRadius: 12, background: 'var(--council-surface-1)', boxShadow: 'var(--council-elev-3)' };
+
+    return (
+        <div className={`px-3 py-4 sm:px-6 sm:py-6 ${FILL_MIN_H}`} style={SHELL}>
+            <div className="mx-auto flex max-w-4xl flex-col gap-[16px]">
+                <header className="flex items-start gap-[12px]">
+                    <Link href={`/${orgId}/meetings`} aria-label="All meetings"
+                        className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
+                        style={{ color: INK2, boxShadow: 'var(--council-ring)', background: 'var(--council-surface-1)' }}>
+                        <ArrowLeft className="h-4 w-4" />
+                    </Link>
+                    <div className="min-w-0 flex-1">
+                        <div className="council-eyebrow">Decision sheet</div>
+                        <div role="heading" aria-level={1} className="[overflow-wrap:anywhere]" style={{ fontFamily: 'var(--font-display)', fontSize: 21, fontWeight: 600, lineHeight: 1.3, letterSpacing: '-0.01em', color: INK1 }}>
+                            {meeting.title}
+                        </div>
+                        <p style={{ fontSize: 12, color: INK2, fontVariantNumeric: 'tabular-nums' }}>
+                            Ended{endedOn && <> {endedOn}</>}
+                            {ranFor !== null && <> · ran {ranFor} min</>}
+                            {meeting.host_name && <> · host {meeting.host_name}</>}
+                        </p>
+                    </div>
+                </header>
+
+                {banners}
+
+                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+                    <Stat label="Decided" value={decided} />
+                    <Stat label="Parked" value={parked} tone={parked ? 'var(--council-p1-ink)' : undefined} />
+                    <Stat label="Not reached" value={items.length - decided - parked} />
+                    <Stat label="To confirm" value={toConfirm} />
+                </div>
+
+                <section className="p-[16px]" style={card}>
+                    <div role="heading" aria-level={2} className="council-eyebrow">Ira&apos;s notes</div>
+                    <p className="mb-3 mt-1" style={{ fontSize: 11.5, lineHeight: 1.5, color: INK3 }}>
+                        Ira listened and wrote these down. Each is a proposal until an approver confirms it; acting on it in Zoho stays a person&apos;s job.
                     </p>
-                    <button type="button" onClick={() => void join()} disabled={busy === 'join' || !data.livekit_ready}
-                        className="mt-3 inline-flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-white hover:opacity-90 disabled:opacity-50">
-                        {busy === 'join' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mic className="h-3.5 w-3.5" />} Join with microphone
-                    </button>
-                    <span className="ml-2 text-[11px] text-text-tertiary">Several people in one room: join from one device only, to avoid echo.</span>
-                </section>
-            ))}
-
-            <div className="grid gap-4 lg:grid-cols-[1fr_1.2fr_1fr]">
-                <section className="rounded-[14px] border border-border bg-card p-4">
-                    <h2 className="mb-3 text-[12px] font-semibold uppercase tracking-wide text-text-tertiary">Agenda · largest first</h2>
-                    <ol className="space-y-2">
-                        {items.map((i) => (
-                            <li key={i.id} className={`rounded-xl border px-3 py-2.5 ${i.status === 'current' ? 'border-primary/40 bg-primary/5' : 'border-border bg-card-tint'}`}>
-                                <div className="flex items-center gap-2">
-                                    <span className="text-[12.5px] font-semibold text-foreground">{i.position}. {i.label}</span>
-                                    <span className={`ml-auto text-[10.5px] font-bold uppercase ${ITEM_STATE[i.status]}`}>{i.status === 'discussed' ? 'decided' : i.status}</span>
-                                </div>
-                                <div className="mt-1 text-[11.5px] leading-relaxed text-text-secondary">
-                                    {i.facts.vendor} · {i.facts.property ?? 'property not recorded'} · <b>{i.facts.amount_spoken}</b> · {i.facts.days_waiting} days waiting
-                                </div>
-                                {i.status === 'parked' && i.parked_reason && <div className="mt-1 text-[11px] text-amber-800">Parked: {i.parked_reason}</div>}
-                            </li>
-                        ))}
-                    </ol>
-                </section>
-
-                <Transcript lines={lines} />
-
-                <section className="rounded-[14px] border border-border bg-card p-4">
-                    <h2 className="mb-3 text-[12px] font-semibold uppercase tracking-wide text-text-tertiary">
-                        {ended ? 'Decision sheet' : 'Decisions so far'}
-                    </h2>
                     <ul className="space-y-2">
-                        {items.filter((i) => byItem.has(i.id)).map((i) => {
+                        {withDecision.map((i) => {
                             const d = byItem.get(i.id)!;
-                            return (
-                                <li key={d.id} className="rounded-xl border border-border bg-card-tint px-3 py-2.5">
-                                    <div className="flex flex-wrap items-center gap-2">
-                                        <span className="text-[12.5px] font-semibold text-foreground">{i.label}</span>
-                                        <span className="rounded-full border border-border px-2 py-0.5 text-[10.5px] font-bold text-foreground">{DECISION_LABEL[d.decision ?? ''] ?? d.decision}</span>
-                                        <StateTag state={d.state} />
-                                    </div>
-                                    <div className="mt-1 text-[11.5px] leading-relaxed text-text-secondary">
-                                        {d.owner_name && <>Owner <b>{d.owner_name}</b></>}{d.due_text && <> · by {d.due_text}</>}
-                                        {d.note && <div>{d.note}</div>}
-                                        {d.said_by && <div className="text-text-tertiary">Said by {d.said_by}</div>}
-                                    </div>
-                                    {viewer.can_host && d.state === 'proposed' && (
-                                        <ReviewButtons busy={busy === d.id}
-                                            onConfirm={() => void patch({ action: 'confirm', decision_id: d.id }, d.id)}
-                                            onReject={() => void patch({ action: 'reject', decision_id: d.id }, d.id)} />
-                                    )}
-                                </li>
-                            );
+                            return <DecisionCard key={d.id} label={i.label} d={d} canHost={canHost} busy={busy === d.id} onReview={(a) => onReview(a, d.id)} />;
                         })}
-                        {byItem.size === 0 && <li className="text-[12px] text-text-tertiary">No decisions yet.</li>}
+                        {withDecision.length === 0 && <li style={{ fontSize: 12, color: INK3 }}>No decisions were written down.</li>}
                     </ul>
 
-                    {rules.length > 0 && (
+                    {parkedItems.length > 0 && (
                         <>
-                            <h3 className="mb-2 mt-4 text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Rules heard</h3>
-                            <ul className="space-y-2">
-                                {rules.map((r) => (
-                                    <li key={r.id} className="rounded-xl border border-border bg-card-tint px-3 py-2.5 text-[11.5px] text-text-secondary">
-                                        <div className="flex items-center gap-2"><span className="text-foreground">{r.note}</span><StateTag state={r.state} /></div>
-                                        {r.said_by && <div className="text-text-tertiary">Said by {r.said_by}</div>}
-                                        {viewer.can_host && r.state === 'proposed' && (
-                                            <ReviewButtons busy={busy === r.id}
-                                                onConfirm={() => void patch({ action: 'confirm', decision_id: r.id }, r.id)}
-                                                onReject={() => void patch({ action: 'reject', decision_id: r.id }, r.id)} />
-                                        )}
+                            <div role="heading" aria-level={3} className="council-eyebrow mb-2 mt-5">Parked</div>
+                            <ul className="space-y-1.5">
+                                {parkedItems.map((i) => (
+                                    <li key={i.id} className="[overflow-wrap:anywhere]" style={{ fontSize: 12, lineHeight: 1.5, color: INK2 }}>
+                                        <b style={{ color: INK1 }}>{i.label}</b>{i.parked_reason && <> — <span style={{ color: 'var(--council-p1-ink)' }}>{i.parked_reason}</span></>}
                                     </li>
                                 ))}
                             </ul>
                         </>
                     )}
+
+                    {rules.length > 0 && (
+                        <>
+                            <div role="heading" aria-level={3} className="council-eyebrow mb-2 mt-5">Rules heard</div>
+                            <ul className="space-y-2">
+                                {rules.map((r) => <RuleCard key={r.id} r={r} canHost={canHost} busy={busy === r.id} onReview={(a) => onReview(a, r.id)} />)}
+                            </ul>
+                        </>
+                    )}
                 </section>
+
+                <details className="group p-[16px]" style={card}>
+                    <summary className="flex cursor-pointer list-none items-center justify-between gap-[8px]">
+                        <span className="council-eyebrow">Full transcript</span>
+                        <span style={{ fontSize: 11.5, color: INK3, fontVariantNumeric: 'tabular-nums' }}>
+                            {lines.length.toLocaleString('en-IN')} lines · <span className="group-open:hidden">show</span><span className="hidden group-open:inline">hide</span>
+                        </span>
+                    </summary>
+                    <Transcript lines={lines} className="mt-3 max-h-[60vh]" />
+                </details>
             </div>
         </div>
-    );
-}
-
-function StateTag({ state }: { state: Decision['state'] }) {
-    const cls = state === 'confirmed' ? 'text-emerald-700' : state === 'rejected' ? 'text-red-700' : 'text-text-tertiary';
-    return <span className={`text-[10.5px] font-bold uppercase ${cls}`}>{state === 'proposed' ? 'to confirm' : state}</span>;
-}
-
-function ReviewButtons({ busy, onConfirm, onReject }: { busy: boolean; onConfirm: () => void; onReject: () => void }) {
-    return (
-        <div className="mt-2 flex gap-2">
-            <button type="button" onClick={onConfirm} disabled={busy}
-                className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/40 px-2 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-500/8 disabled:opacity-50">
-                {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />} Confirm
-            </button>
-            <button type="button" onClick={onReject} disabled={busy}
-                className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[11px] font-semibold text-text-secondary hover:text-red-700 disabled:opacity-50">
-                <X className="h-3 w-3" /> Reject
-            </button>
-        </div>
-    );
-}
-
-function Transcript({ lines }: { lines: Line[] }) {
-    const box = useRef<HTMLDivElement>(null);
-    useEffect(() => {
-        const el = box.current;
-        // Follow the conversation, unless someone scrolled up to read.
-        if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 120) el.scrollTop = el.scrollHeight;
-    }, [lines.length]);
-    return (
-        <section className="flex max-h-[70vh] flex-col rounded-[14px] border border-border bg-card p-4">
-            <h2 className="mb-3 text-[12px] font-semibold uppercase tracking-wide text-text-tertiary">Transcript</h2>
-            <div ref={box} className="flex-1 space-y-2 overflow-y-auto pr-1">
-                {lines.map((l) => (
-                    <div key={l.id} className="text-[12.5px] leading-relaxed">
-                        <span className={`mr-1.5 font-semibold ${l.is_agent ? 'text-primary' : 'text-foreground'}`}>{l.speaker_name ?? 'Someone'}:</span>
-                        <span className="text-text-secondary">{l.text}</span>
-                    </div>
-                ))}
-                {!lines.length && <p className="text-[12px] text-text-tertiary">Nothing said yet.</p>}
-            </div>
-        </section>
-    );
-}
-
-function InRoomBar({ onLeave }: { onLeave: () => void }) {
-    const participants = useParticipants();
-    const { localParticipant, isMicrophoneEnabled } = useLocalParticipant();
-    return (
-        <section className="flex flex-wrap items-center gap-2 rounded-[14px] border border-border bg-card p-3">
-            {participants.map((p) => <Person key={p.identity} p={p} />)}
-            <div className="ml-auto flex gap-2">
-                <button type="button" onClick={() => void localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled)}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-border px-3 py-2 text-xs font-bold text-text-secondary hover:text-foreground">
-                    {isMicrophoneEnabled ? <Mic className="h-3.5 w-3.5" /> : <MicOff className="h-3.5 w-3.5 text-red-700" />}
-                    {isMicrophoneEnabled ? 'Mute' : 'Unmute'}
-                </button>
-                <button type="button" onClick={onLeave}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-border px-3 py-2 text-xs font-bold text-text-secondary hover:text-red-700">
-                    <LogOut className="h-3.5 w-3.5" /> Leave
-                </button>
-            </div>
-        </section>
-    );
-}
-
-function Person({ p }: { p: Participant }) {
-    const speaking = useIsSpeaking(p);
-    return (
-        <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px] font-semibold transition-colors ${speaking ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-800' : 'border-border text-text-secondary'}`}>
-            {p.isAgent ? <Bot className="h-3.5 w-3.5" /> : <Mic className="h-3 w-3" />}
-            {p.name || p.identity}{p.isLocal && ' (you)'}
-        </span>
     );
 }

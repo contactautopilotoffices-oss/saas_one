@@ -4,8 +4,46 @@
     {
       "name": "next-dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
       "port": 3000,
+      "autoPort": false
+    },
+    {
+      "name": "next-dev-local-agent",
+      "runtimeExecutable": "/bin/sh",
+      "runtimeArgs": [
+        "-c",
+        "MEETING_AGENT_NAME=fms-meeting-agent-local npm run dev"
+      ],
+      "port": 3000,
+      "autoPort": false
+    },
+    {
+      "name": "proctor-branch-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "/private/tmp/claude-501/-Users-lohit-Downloads-Saas-one/573b1d55-5e3c-42c0-8450-2601c6ff27ac/scratchpad/wt-proctor",
+        "run",
+        "dev"
+      ],
+      "port": 3000,
+      "autoPort": false
+    },
+    {
+      "name": "te-landing",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8765",
+        "--directory",
+        "/Users/lohit/Downloads/TE-Landing"
+      ],
+      "port": 8765,
       "autoPort": false
     }
   ]

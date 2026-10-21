@@ -9,7 +9,7 @@ import {
     Search, Plus, Filter, LogOut, ChevronRight, MapPin, Edit, Trash2, X, Check, UsersRound,
     Coffee, IndianRupee, PhoneCall, FileDown, ChevronDown, Fuel, Menu, Upload, FileBarChart, Zap, Package, ClipboardCheck, Scan, Key,
     AlertCircle, CheckCircle2, Clock, GitBranch, DoorOpen, MessageCircle, Send, Loader2, CalendarDays, Calendar, Wrench, ShoppingCart, Sun, Moon, Droplets, TrendingUp, Smartphone,
-    MessageSquarePlus, Bot, Gauge, Cpu, FolderLock, Layers, ShieldCheck, Mic, ClipboardList, FlaskConical
+    MessageSquarePlus, Bot, Gauge, Cpu, FolderLock, Layers, ShieldCheck, Mic, ClipboardList, FlaskConical, BookOpen, FileCheck2
 } from 'lucide-react';
 import SatejConsole from '@/frontend/components/satej/SatejConsole';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -53,6 +53,8 @@ const AdminRoomManager = dynamic(() => import('@/frontend/components/meeting-roo
 const PPMModule = dynamic(() => import('@/frontend/components/ppm/PPMModule'), { loading: TabLoading });
 const AssetsModule = dynamic(() => import('@/frontend/components/assets/AssetsModule'), { loading: TabLoading });
 const DocumentBank = dynamic(() => import('@/frontend/components/audit/DocumentBank'), { loading: TabLoading });
+const MeetingsHome = dynamic(() => import('@/frontend/components/meetings/MeetingsHome'), { loading: TabLoading });
+const WikiHome = dynamic(() => import('@/frontend/components/wiki/WikiHome'), { loading: TabLoading });
 const VendorManagement = dynamic(() => import('@/frontend/components/vendors/VendorManagement'), { loading: TabLoading });
 const TicketFlowMap = dynamic(() => import('../ops/TicketFlowMap'), { loading: TabLoading });
 const ProcurementModule = dynamic(() => import('../procurement/ProcurementModule'), { loading: TabLoading });
@@ -1031,7 +1033,7 @@ const OrgAdminDashboard = () => {
     };
 
     const handleTabChange = (tab: Tab, filter: string = 'all', dateFrom?: string, dateTo?: string, procurementTab?: string) => {
-        const effectiveTab = (isOpsSuperAdmin && (tab === 'org_progress' || tab === 'org_efficiency' || tab === 'agent_console')) ? 'overview' : tab;
+        const effectiveTab = (isOpsSuperAdmin && (tab === 'org_progress' || tab === 'org_efficiency' || tab === 'agent_console' || tab === 'wiki')) ? 'overview' : tab;
         setPendingStatusFilter(filter);
         setSidebarOpen(false);
         const params = new URLSearchParams(window.location.search);
@@ -1217,6 +1219,16 @@ const OrgAdminDashboard = () => {
                                     >
                                         <Cpu className="w-4 h-4" />
                                         Agent Console
+                                    </button>
+                                    <button
+                                        onClick={() => handleTabChange('wiki')}
+                                        className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'wiki'
+                                            ? 'bg-primary text-text-inverse shadow-sm'
+                                            : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                            }`}
+                                    >
+                                        <BookOpen className="w-4 h-4" />
+                                        Wiki
                                     </button>
                                 </>
                             )}
@@ -1412,6 +1424,16 @@ const OrgAdminDashboard = () => {
                                 Payment Tracker
                             </button>
                             <button
+                                onClick={() => handleTabChange('procurement', 'all', undefined, undefined, 'invoices')}
+                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'procurement' && searchParams.get('procurement_tab') === 'invoices'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                    }`}
+                            >
+                                <FileCheck2 className="w-4 h-4" />
+                                Invoice Control
+                            </button>
+                            <button
                                 onClick={() => handleTabChange('procurement', 'all', undefined, undefined, 'vendor-discovery')}
                                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'procurement' && searchParams.get('procurement_tab') === 'vendor-discovery'
                                     ? 'bg-primary text-text-inverse shadow-sm'
@@ -1423,8 +1445,11 @@ const OrgAdminDashboard = () => {
                             </button>
                             {org && (
                                 <button
-                                    onClick={() => router.push(`/${org.id}/meetings`)}
-                                    className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
+                                    onClick={() => handleTabChange('meetings')}
+                                    className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'meetings'
+                                        ? 'bg-primary text-text-inverse shadow-sm'
+                                        : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                        }`}
                                 >
                                     <Mic className="w-4 h-4" />
                                     Meetings (Ira)
@@ -1835,6 +1860,11 @@ const OrgAdminDashboard = () => {
                             Registry, sandbox, live activity, uptime, reliability profile, reinforcement
                             and credentials all live behind it. */}
                         {!isOpsSuperAdmin && activeTab === 'agent_console' && <AgentConsole key="agent-console-tab" orgId={org?.id ?? ''} />}
+                        {!isOpsSuperAdmin && activeTab === 'wiki' && org && (
+                            <div className="w-full min-h-screen bg-white">
+                                <WikiHome orgId={org.id} />
+                            </div>
+                        )}
                         {activeTab === 'ai_tickets' && <AITicketsDashboard propertyId={selectedPropertyId === 'all' ? undefined : selectedPropertyId} />}
                         {activeTab === 'tasks' && <TaskManagerSuperuserDashboard orgId={org?.id || ''} />}
                         {activeTab === 'task_testing' && <TaskManagerTestingDashboard orgId={org?.id || ''} />}
@@ -2068,6 +2098,12 @@ const OrgAdminDashboard = () => {
                                     organizationId={org.id}
                                     propertyId={selectedPropertyId !== 'all' ? selectedPropertyId : ''}
                                 />
+                            </div>
+                        )}
+
+                        {activeTab === 'meetings' && org && (
+                            <div className="w-full min-h-screen bg-white">
+                                <MeetingsHome orgId={org.id} embedded />
                             </div>
                         )}
 

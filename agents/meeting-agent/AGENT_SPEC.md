@@ -11,6 +11,16 @@ afterwards. Nothing in Zoho changes because of anything Ira does.
 - Schema: `supabase/migrations/20261006000003_meetings.sql`
 - Speech and model: Sarvam end to end — Saaras v3 (codemix) listening, `sarvam-105b-conversations` thinking, Bulbul v3 "kavya" speaking
 
+## Listen-only mode (default since 2026-10-15)
+
+The founder asked that Ira not talk. `MEETING_AGENT_MODE=listen` (the default) gives her no voice and no text output in the room: people run the meeting themselves with the agenda on screen, and Ira silently transcribes, follows which PO is being discussed, and writes proposed decisions. `MEETING_AGENT_MODE=speak` restores the chaired meeting described below.
+
+What changes against the spec below:
+- **3. False positive** `[BAA p.112]`: there is no spoken read-back ("सही है?"), so a misheard decision is no longer corrected in the room by default. It still lands only as a *proposal*; the room sees it appear live on the meeting page and can say a correction, and an approver confirms or rejects each one afterwards. Cost stays **medium**.
+- **4. Tools** `[BAA pp.93, 107]`: one tool added, `focus_item(position)`: switch to the PO the room moved to. When-not-to-use is in its description (not for the item already current). The argument is checked against the agenda; an item left without a decision goes back to `pending` (FMS's agent endpoint now accepts `pending`), never silently `parked`. Errors come back as text.
+- **5. Prompt** `[BAA pp.105, 114]`: its own five ordered steps with a no-skip clause and "when unsure, stay_quiet". There is no tone example, because nothing she writes is heard or shown.
+- **8. Tool interaction** `[BAA p.95]`: expected per message: `focus_item`? → `record_decision` | `park_item` | `note_rule` | `stay_quiet`, with `next_item` after a decided item. **Not yet tested** in listen mode; the 2026-10-06 tests cover speak mode only. This is a known gap under L5.
+
 ## Agent Spec — Ira (meeting rooms, PO approvals topic)
 
 **1. Workflow or agent?** Agent. `[BAA p.115]`
@@ -33,6 +43,7 @@ afterwards. Nothing in Zoho changes because of anything Ira does.
 | `park_item` | yes — not when a decision was given | yes | reason clipped to 500 chars by FMS | no |
 | `note_rule` | yes — only for a rule beyond this PO | yes | stored as a proposal for an approver; clipped by FMS | no |
 | `stay_quiet` | yes — not when asked something directly | n/a (returns nothing, so nothing is said) | no arguments | no |
+| `focus_item` | yes — not for the item already current | yes — "There is no item N" | position checked against the agenda; FMS re-checks the item | no |
 
 **5. Prompt** `[BAA pp.105, 114]`
    Numbered ordered steps: yes, eight. Explicit no-skip clause: "Follow these steps, in order, for every item. Do not skip a step."

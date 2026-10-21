@@ -51,7 +51,10 @@ export default function PaymentTrackerTable({ orgId }: Props) {
         try {
             const p = new URLSearchParams({ org_id: orgId });
             if (status) p.set('status', status);
-            if (vendor) p.set('vendor', vendor);
+            // The box says "Vendor / PO#", but the API's `vendor` param is an EXACT vendor-name
+            // match, so a PO number or half a name never found anything. `search` is the
+            // partial match over PO number, vendor name and UTR.
+            if (vendor.trim()) p.set('search', vendor.trim());
             if (dateFrom) p.set('date_from', dateFrom);
             if (dateTo) p.set('date_to', dateTo);
             const res = await fetch(`/api/accounts/tracker?${p}`);

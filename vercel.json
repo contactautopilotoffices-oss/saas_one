@@ -141,6 +141,10 @@
       "schedule": "30 2 1,11,21,31 * *"
     },
     {
+      "path": "/api/cron/wiki-compile",
+      "schedule": "30 0 * * 1"
+    },
+    {
       "path": "/api/cron/whatsapp-assistant",
       "schedule": "* * * * *"
     },

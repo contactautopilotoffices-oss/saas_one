@@ -15,8 +15,9 @@ import AddPoModal from './AddPoModal';
 import ZohoConfigModal from './ZohoConfigModal';
 import ElectricityPaymentQueue from './ElectricityPaymentQueue';
 import PaymentTrackerTable from './PaymentTrackerTable';
+import InvoiceControl from '../invoices/InvoiceControl';
 
-type Tab = 'to_align' | 'aligned' | 'completed' | 'electricity-payments' | 'live_sheet';
+type Tab = 'to_align' | 'aligned' | 'completed' | 'electricity-payments' | 'live_sheet' | 'invoices';
 
 const PAGE_SIZE = 50;
 
@@ -53,7 +54,7 @@ export default function AccountsDashboard() {
     const fetchData = useCallback(async () => {
         // The electricity queue and the live sheet each own their own fetch cycle; the
         // PO/payment endpoints below know nothing about either.
-        if (tab === 'electricity-payments' || tab === 'live_sheet') { setLoading(false); return; }
+        if (tab === 'electricity-payments' || tab === 'live_sheet' || tab === 'invoices') { setLoading(false); return; }
         setLoading(true);
         try {
             if (tab === 'to_align') {
@@ -110,7 +111,7 @@ export default function AccountsDashboard() {
     const searchParams = useSearchParams();
     useEffect(() => {
         const t = searchParams.get('tab');
-        if (t === 'to_align' || t === 'aligned' || t === 'completed' || t === 'electricity-payments' || t === 'live_sheet') setTab(t);
+        if (t === 'to_align' || t === 'aligned' || t === 'completed' || t === 'electricity-payments' || t === 'live_sheet' || t === 'invoices') setTab(t);
         const f = searchParams.get('focus');
         if (f) setSearch(f);
     }, [searchParams]);
@@ -220,6 +221,7 @@ export default function AccountsDashboard() {
         { key: 'aligned', label: 'Aligned · With Accounts' },
         { key: 'completed', label: 'Completed' },
         { key: 'electricity-payments', label: 'Electricity' },
+        { key: 'invoices', label: 'Invoices & Exceptions' },
     ];
 
     return (
@@ -268,7 +270,7 @@ export default function AccountsDashboard() {
             </div>
 
             {/* Filters — the live sheet has its own filter row (status/vendor/date range). */}
-            {tab !== 'electricity-payments' && tab !== 'live_sheet' && (
+            {tab !== 'electricity-payments' && tab !== 'live_sheet' && tab !== 'invoices' && (
             <div className="flex items-center gap-2 flex-wrap">
                 <div className="relative flex-1 min-w-[220px] max-w-sm">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-tertiary" />
@@ -303,13 +305,16 @@ export default function AccountsDashboard() {
                 accounts and super admin, updating in place as anyone touches a row. */}
             {tab === 'live_sheet' && <PaymentTrackerTable orgId={orgId} />}
 
+            {/* Invoice collection, PO matching and fast-track exceptions (deep-linkable via ?tab=invoices) */}
+            {tab === 'invoices' && orgId && <InvoiceControl orgId={orgId} mode="accounts" />}
+
             {/* Electricity payment queue (deep-linkable via ?tab=electricity-payments) */}
             {tab === 'electricity-payments' && (
                 <ElectricityPaymentQueue orgId={orgId} canMarkPaid={caps.canComplete} />
             )}
 
             {/* Table */}
-            {tab !== 'electricity-payments' && tab !== 'live_sheet' && (
+            {tab !== 'electricity-payments' && tab !== 'live_sheet' && tab !== 'invoices' && (
             <div className="bg-surface rounded-xl border border-border overflow-hidden">
                 <div className="overflow-x-auto">
                     <table className="w-full">

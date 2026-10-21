@@ -366,3 +366,44 @@ export async function notifyPaymentAfterEmailAction(orgId: string, paymentId: st
         });
     }
 }
+
+export interface MilestoneDue {
+    organization_id: string;
+    po_number?: string | null;
+    vendor_name?: string | null;
+    label: string;
+    percent: number;
+    amount: number;
+    marked_by_name?: string | null;
+    note?: string | null;
+    /** Purchase marked it due before the work was recorded as reaching that stage. */
+    early?: boolean;
+}
+
+// A payment milestone on a PO has fallen due: tell finance. It creates no payment; they
+// raise and align the tranche in the tracker as usual.
+export async function notifyMilestoneDue(p: MilestoneDue): Promise<void> {
+    try {
+        const to = await orgRoleEmails(p.organization_id, FINANCE_ROLES);
+        if (!to.length) return;
+        const link = APP_URL ? `${APP_URL}/${p.organization_id}/accounts` : '';
+        const subject = `Payment milestone due · ${p.po_number || 'PO'} · ${inr(p.amount)}`;
+        const html = `
+            <div style="font-family:system-ui,sans-serif;max-width:540px;margin:auto">
+                <h2 style="color:#0f172a;font-size:18px">Payment milestone is due</h2>
+                ${p.early ? '<p style="color:#b45309;font-size:13px;margin:0 0 10px">Marked due before the work was recorded as reaching this stage. Check with Purchase before paying.</p>' : ''}
+                <table style="font-size:14px;color:#334155;border-collapse:collapse">
+                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">PO</td><td style="padding:4px 0"><b>${p.po_number || '—'}</b></td></tr>
+                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">Vendor</td><td style="padding:4px 0">${p.vendor_name || '—'}</td></tr>
+                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">Milestone</td><td style="padding:4px 0">${p.label} (${p.percent}%)</td></tr>
+                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">Amount</td><td style="padding:4px 0"><b>${inr(p.amount)}</b></td></tr>
+                    ${p.marked_by_name ? `<tr><td style="padding:4px 12px 4px 0;color:#64748b">Marked by</td><td style="padding:4px 0">${p.marked_by_name}</td></tr>` : ''}
+                    ${p.note ? `<tr><td style="padding:4px 12px 4px 0;color:#64748b">Note</td><td style="padding:4px 0">${p.note}</td></tr>` : ''}
+                </table>
+                ${link ? `<p style="margin-top:16px"><a href="${link}" style="background:#f97316;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:bold">Open Payment Tracker</a></p>` : ''}
+            </div>`;
+        await EmailService.sendEmail({ to, subject, html });
+    } catch (e) {
+        console.error('[accounts notify milestone due] failed:', e);
+    }
+}

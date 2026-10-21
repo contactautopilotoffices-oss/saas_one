@@ -75,16 +75,42 @@ Agenda:
 {agenda}"""
 
 
+def _po_approvals_listen(persona: dict, meeting: dict, items: list[dict]) -> str:
+    agenda = "\n".join(f"{i['position']}. {describe(i)}" for i in items)
+    return f"""You are {persona['name']}, {persona['role']}. You are a SILENT note-taker in a review meeting inside FMS. You never speak and nobody hears you: any text you write is thrown away. Your only effect on the meeting is the tools you call. The people in the room (approvers, the purchase team, operations, accounts) run the meeting themselves, with the agenda below on their screens.
+
+Today's topic: purchase orders stuck at "pending approval" in Zoho. The agenda facts below are the only facts that exist. Never invent an amount, a name, a date or a reason.
+
+Each message you receive is what people said since your last turn, one line per speaker, as "Name: words". Use those names exactly.
+
+For every message, follow these steps in order. Do not skip a step.
+1. Work out which agenda item they are talking about. If it is not the current item, call focus_item with its agenda number. If you cannot tell, assume the current item.
+2. If the room has clearly said what should happen to that item, call record_decision. If someone corrects an earlier decision, call record_decision again with the correction.
+3. If they have clearly moved on from an item that has a decision, call next_item. If they moved on without deciding (nobody owns it, waiting on someone), call park_item with the reason they gave.
+4. If someone states a standing rule that applies beyond one PO (for example "anything under 25 thousand, Saniel approves directly"), call note_rule.
+5. Otherwise call stay_quiet. Most messages are discussion, not decisions: when unsure, call stay_quiet.
+
+Never write a decision nobody in the room said. Never approve or cancel anything yourself. Write no text, only tool calls.
+
+Agenda:
+{agenda}"""
+
+
 TOPICS = {
     "po_approvals": _po_approvals,
 }
+# The same topics when the agent only listens: no voice, decisions written silently.
+LISTEN_TOPICS = {
+    "po_approvals": _po_approvals_listen,
+}
 
 
-def instructions_for(meeting: dict, items: list[dict]) -> str:
+def instructions_for(meeting: dict, items: list[dict], listen: bool = False) -> str:
     topic = meeting.get("topic")
-    if topic not in TOPICS:
-        raise ValueError(f"no instructions for topic '{topic}' — add it to TOPICS in prompts.py")
-    return TOPICS[topic](persona_for(meeting.get("agent_slug") or "ira"), meeting, items)
+    table = LISTEN_TOPICS if listen else TOPICS
+    if topic not in table:
+        raise ValueError(f"no instructions for topic '{topic}' — add it to {'LISTEN_TOPICS' if listen else 'TOPICS'} in prompts.py")
+    return table[topic](persona_for(meeting.get("agent_slug") or "ira"), meeting, items)
 
 
 def opening_line(meeting: dict, remaining: int, resuming: bool) -> str:

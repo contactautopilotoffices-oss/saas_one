@@ -5,12 +5,12 @@ export const ORG_DASHBOARD_TABS = [
     'stock_reports', 'checklist', 'super_tenants', 'escalation', 'rooms', 'ppm',
     'vendors', 'procurement', 'roster', 'water_logger', 'water', 'guest_experience',
     'ai_tickets', 'org_progress', 'org_efficiency', 'agent_console', 'document_bank',
-    'grievance', 'assets',
+    'grievance', 'assets', 'meetings', 'wiki',
 ] as const;
 export type OrgDashboardTab = typeof ORG_DASHBOARD_TABS[number];
 export function resolveOrgDashboardTab(value: string | null, isOpsSuperAdmin = false): OrgDashboardTab {
     if (!ORG_DASHBOARD_TABS.includes(value as OrgDashboardTab)) return 'overview';
-    if (isOpsSuperAdmin && ['org_progress', 'org_efficiency', 'agent_console'].includes(value!)) return 'overview';
+    if (isOpsSuperAdmin && ['org_progress', 'org_efficiency', 'agent_console', 'wiki'].includes(value!)) return 'overview';
     return value as OrgDashboardTab;
 }
 

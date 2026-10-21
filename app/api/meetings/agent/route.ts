@@ -23,7 +23,7 @@ import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 export const dynamic = 'force-dynamic';
 
 const DECISIONS = new Set(['approve', 'cancel', 'needs_info', 'hold', 'reassign']);
-const ITEM_STATES = new Set(['current', 'discussed', 'parked']);
+const ITEM_STATES = new Set(['pending', 'current', 'discussed', 'parked']);
 const clip = (v: unknown, n: number) => {
     const s = String(v ?? '').trim();
     return s ? s.slice(0, n) : null;
@@ -120,7 +120,7 @@ export async function POST(request: NextRequest) {
         const itemId = await itemOf(body.item_id);
         if (!itemId) return bad('item_id is not on this meeting\'s agenda');
         const status = String(body.status ?? '');
-        if (!ITEM_STATES.has(status)) return bad('status must be current, discussed or parked');
+        if (!ITEM_STATES.has(status)) return bad('status must be pending, current, discussed or parked');
         const { error } = await supabaseAdmin.from('meeting_agenda_items')
             .update({ status, parked_reason: status === 'parked' ? clip(body.reason, 500) : null })
             .eq('id', itemId);

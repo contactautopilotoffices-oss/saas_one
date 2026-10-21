@@ -14,6 +14,7 @@ for what it does and why; this file is how to run it.
 | `MEETING_AGENT_SECRET` | Shared with FMS (Vercel). Must be the same string in both places. |
 | `MEETING_AGENT_NAME` | Optional. Default `fms-meeting-agent`; must match FMS's `MEETING_AGENT_NAME`. |
 | `MEETING_AGENT_LLM_BASE_URL`, `MEETING_AGENT_LLM_MODEL`, `MEETING_AGENT_LLM_API_KEY` | Optional. Swap the model for any OpenAI-compatible one. Default: Sarvam `sarvam-105b-conversations`. |
+| `MEETING_AGENT_MODE` | Optional. `listen` (default): Ira never speaks, only transcribes and writes decisions. `speak`: she chairs the meeting aloud. |
 | `MEETING_AGENT_SILENCE_S` | Optional. How long the room must be quiet before the agent speaks. Default 1.2 s. |
 
 ## Deploy to LiveKit Cloud (once)

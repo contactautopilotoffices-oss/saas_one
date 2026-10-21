@@ -12,7 +12,8 @@ How a room works
    LiveKit's built-in voice session listens to one person; a meeting has many,
    so the session's own audio input is switched off and this file does the
    listening.
-4. The agent speaks only when the room has gone quiet for a moment, or when it
+4. By default (MEETING_AGENT_MODE=listen) the agent never speaks: it writes
+   decisions silently. In "speak" mode it speaks only when the room has gone quiet for a moment, or when it
    is spoken over it stops. It may also decide to stay quiet.
 5. Decisions, item progress, stated rules and the transcript are sent to FMS
    (POST /api/meetings/agent). Nothing here writes to the database directly
@@ -48,6 +49,9 @@ AGENT_SECRET = os.environ.get("MEETING_AGENT_SECRET", "")
 SILENCE_S = float(os.environ.get("MEETING_AGENT_SILENCE_S", "1.2"))
 # Words of someone else's speech that make the agent stop talking.
 INTERRUPT_WORDS = int(os.environ.get("MEETING_AGENT_INTERRUPT_WORDS", "3"))
+# "listen" (default): the agent never speaks — it transcribes and writes decisions
+# silently while people run the meeting themselves. "speak": it chairs the meeting aloud.
+LISTEN_ONLY = os.environ.get("MEETING_AGENT_MODE", "listen").strip().lower() != "speak"
 
 # Sarvam end to end — ears (Saaras), brain and voice (Bulbul) — the stack Meera
 # already runs on, with Hinglish built in and one key. Any OpenAI-compatible
@@ -155,7 +159,7 @@ class MeetingAgent(Agent):
         self.parked = {i["id"] for i in items if i.get("status") == "parked"}
         done = self.decided | self.parked
         self.idx = next((n for n, i in enumerate(items) if i["id"] not in done), len(items))
-        super().__init__(instructions=instructions_for(meeting, items))
+        super().__init__(instructions=instructions_for(meeting, items, listen=LISTEN_ONLY))
 
     def current(self) -> dict | None:
         return self.items[self.idx] if self.idx < len(self.items) else None
@@ -167,9 +171,13 @@ class MeetingAgent(Agent):
         self.idx += 1
         item = self.current()
         if not item:
+            if LISTEN_ONLY:
+                return f"Agenda finished: {len(self.decided)} decided, {len(self.parked)} parked. Call stay_quiet from now on."
             return (f"Agenda finished: {len(self.decided)} decided, {len(self.parked)} parked. "
                     "Thank everyone, say those two numbers, say the host will confirm the decision sheet, then stay quiet.")
         await self.fms.post({"type": "item", "item_id": item["id"], "status": "current"})
+        if LISTEN_ONLY:
+            return f"Current item is now {item['position']} of {len(self.items)}: {describe(item)}. Write nothing."
         return f"Next is item {item['position']} of {len(self.items)}: {describe(item)}. Present it and ask your one question."
 
     @function_tool
@@ -207,6 +215,8 @@ class MeetingAgent(Agent):
             return f"Not saved ({r['error']}). Tell the room it could not be saved, then carry on."
         self.decided.add(item["id"])
         self.parked.discard(item["id"])
+        if LISTEN_ONLY:
+            return f"Saved for {item['label']}. Write nothing."
         # The model often reads the decision back in the same breath as this call;
         # asking it to read back again here is what made it say "सही है?" twice.
         return (f"Saved for {item['label']}. If you have not read it back yet, do it now in one short "
@@ -257,16 +267,46 @@ class MeetingAgent(Agent):
         r = await self.fms.post({"type": "rule", "note": rule, "said_by": said_by})
         if r.get("error"):
             return f"Not saved ({r['error']}). Say so in a few words and carry on."
+        if LISTEN_ONLY:
+            return "Noted. Write nothing."
         return "Noted. Acknowledge in three words or fewer and carry on with the current item."
 
     @function_tool
-    async def stay_quiet(self) -> None:
+    async def focus_item(self, position: int) -> str:
+        """Switch to the agenda item the room is now talking about, by its agenda number.
+
+        Use only when people have clearly moved to a different PO than the current one, for
+        example by naming its PO number or vendor. Do not use it for the item already current.
+
+        Args:
+            position: the item's number on the agenda (1, 2, 3 …).
+        """
+        target = next((n for n, i in enumerate(self.items) if i["position"] == position), None)
+        if target is None:
+            return f"There is no item {position} on the agenda."
+        if target == self.idx:
+            return "That item is already current."
+        old = self.current()
+        # An item left without a decision goes back to the queue; one with a decision is done.
+        if old and old["id"] not in self.decided and old["id"] not in self.parked:
+            await self.fms.post({"type": "item", "item_id": old["id"], "status": "pending"})
+        elif old and old["id"] in self.decided:
+            await self.fms.post({"type": "item", "item_id": old["id"], "status": "discussed"})
+        self.idx = target
+        item = self.items[target]
+        await self.fms.post({"type": "item", "item_id": item["id"], "status": "current"})
+        return f"Current item is now {describe(item)}." + (" Write nothing." if LISTEN_ONLY else "")
+
+    @function_tool
+    async def stay_quiet(self) -> str:
         """Say nothing this turn.
 
         Use when people are talking among themselves, thinking aloud, or have not answered
         yet. Do not use it when someone has asked you something directly.
         """
-        return None
+        # The model API rejects a tool result with zero characters, so this returns a
+        # short acknowledgement rather than None.
+        return "Stayed quiet."
 
 
 def _llm() -> openai.LLM:
@@ -295,7 +335,8 @@ async def entrypoint(ctx: JobContext) -> None:
     floor = Floor()
     ctx.add_shutdown_callback(transcript.flush)
 
-    session = AgentSession(
+    # Listen-only: no voice at all, and nothing the model writes reaches the room.
+    session = AgentSession(llm=_llm()) if LISTEN_ONLY else AgentSession(
         llm=_llm(),
         tts=sarvam.TTS(target_language_code="hi-IN", model="bulbul:v3", speaker=persona["voice"], enable_preprocessing=True),
     )
@@ -303,6 +344,8 @@ async def entrypoint(ctx: JobContext) -> None:
     @session.on("conversation_item_added")
     def _said(ev) -> None:  # the agent's own words, for the transcript
         item = ev.item
+        if LISTEN_ONLY:
+            return  # it said nothing; its text is discarded
         if getattr(item, "role", None) == "assistant" and getattr(item, "text_content", None):
             transcript.add("agent", persona["name"], item.text_content, True)
 
@@ -310,7 +353,10 @@ async def entrypoint(ctx: JobContext) -> None:
     await session.start(
         agent=agent,
         room=ctx.room,
-        room_options=room_io.RoomOptions(audio_input=False, text_input=False, close_on_disconnect=False),
+        room_options=room_io.RoomOptions(
+            audio_input=False, text_input=False, close_on_disconnect=False,
+            audio_output=not LISTEN_ONLY, text_output=not LISTEN_ONLY,
+        ),
     )
     await fms.post({"type": "joined"})
 
@@ -336,7 +382,7 @@ async def entrypoint(ctx: JobContext) -> None:
                 elif ev.type == lkstt.SpeechEventType.INTERIM_TRANSCRIPT:
                     floor.touch()
                     # Being talked over: stop and let them finish.
-                    if session.agent_state == "speaking" and len(words.split()) >= INTERRUPT_WORDS:
+                    if not LISTEN_ONLY and session.agent_state == "speaking" and len(words.split()) >= INTERRUPT_WORDS:
                         session.interrupt()
                 elif ev.type == lkstt.SpeechEventType.FINAL_TRANSCRIPT and words:
                     floor.heard(name, words)
@@ -403,6 +449,11 @@ async def entrypoint(ctx: JobContext) -> None:
     await ctx.wait_for_participant()
     first = agent.current()
     resuming = len(agent.decided | agent.parked) > 0
+    if LISTEN_ONLY:
+        # No spoken notice: the meeting page tells everyone it is transcribed before they join.
+        if first:
+            await fms.post({"type": "item", "item_id": first["id"], "status": "current"})
+        return
     if first:
         await fms.post({"type": "item", "item_id": first["id"], "status": "current"})
         session.say(opening_line(meeting, agent.remaining(), resuming), allow_interruptions=False)
