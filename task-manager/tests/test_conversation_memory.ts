@@ -95,7 +95,7 @@ async function run() {
         reply: async (_p: string, t: string) => { store.push({ who: 'bot', text: t, at: at(++clock) }); },
         audit: async () => {}, seenBefore: () => false, markSeen: () => {},
     };
-    const said = ['hi', 'show my tasks', 'thanks', 'show my tasks again', 'ok', 'show tasks', 'cool', 'show tasks please', 'nice', 'show my tasks one more time'];
+    const said = ['hey there', 'show my tasks', 'thanks', 'show my tasks again', 'ok', 'show tasks', 'cool', 'show tasks please', 'nice', 'show my tasks one more time'];
     for (let i = 0; i < said.length; i++) {
         const receivedAt = at(++clock);
         const claim = await L.claimSmartChat(body(said[i], `m${i}`), io);
@@ -108,7 +108,7 @@ async function run() {
     check('the AI never sees the CURRENT message inside the conversation (no double)', seenByAI.every((s, i) => !(s.conversation || []).includes(`Person: ${said[i]}`)), seenByAI.map(s => s.conversation?.slice(-1)));
     const fifth = seenByAI[4].conversation || [];
     check('by the 5th message the AI sees the earlier chat, in order: person, bot, person, bot…',
-        fifth[0] === 'Person: hi' && fifth[1].startsWith('Assistant:') && fifth[2] === 'Person: show my tasks' && fifth.length === 8, fifth);
+        fifth[0] === 'Person: hey there' && fifth[1].startsWith('Assistant:') && fifth[2] === 'Person: show my tasks' && fifth.length === 8, fifth);
     check('after 10 exchanges the memory still holds at most 20 messages', M.toTranscript(store).length === 20 && (seenByAI[9].conversation || []).length === 18, seenByAI[9].conversation?.length);
     readFails = true; const n = seenByAI.length;
     await L.claimSmartChat(body('show my tasks', 'm99'), io);

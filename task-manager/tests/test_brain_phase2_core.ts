@@ -358,7 +358,7 @@ async function run() {
     let b = brainLlm({ intent: 'complete_tasks', slots: { which: { all: false, numbers: [2], hints: [] } } }, 'Mark this as done?\n[[tasks]]');
     let out = await runBrain('i finished the lift amc', mkCtx(), { llm: b.llm });
     check('understand → decide → reply: a change is proposed (CONFIRM) and phrased with the real title', out.status === 'ok' && out.decision?.outcome === 'CONFIRM' && out.reply?.source === 'ai' && /\?\n• Kone Lift AMC Renewal$/.test(out.reply.text), out);
-    check('exactly two AI calls: one to understand, one to reply', b.calls.length === 2 && out.trace.interpretModel === 'glm-5.3-flash');
+    check('exactly two AI calls: one to understand, one to reply', b.calls.length === 2 && out.trace.interpretModel === 'groq:openai/gpt-oss-120b');
     check('the trace records models, tokens and timing', out.trace.tokensIn === 20 && out.trace.tokensOut === 10 && out.trace.interpretMs >= 0 && out.trace.fastPath === false);
 
     const confirmCtx = mkCtx({ pending: { kind: 'confirm', summary: 'Add 2 tasks for Lohit' } as any });
@@ -386,7 +386,7 @@ async function run() {
     check('an AI that returns garbage is treated the same way', out.status === 'ai_unavailable');
     const flaky = scripted((_r, n) => (n === 1 ? new Error('HTTP 500') : /Reply with JSON only: \{"text"/.test(_r.system) ? JSON.stringify({ text: 'Here you go: [[list]]' }) : interpJson({ intent: 'view_tasks', slots: { scope: 'self', person: null, department: null } })));
     out = await runBrain("show my tasks", mkCtx(), { llm: flaky.llm });
-    check('the first model fails, the second succeeds → still answered, failure recorded', out.status === 'ok' && out.trace.interpretModel === 'qwen3.8-27b' && out.trace.failures.length === 1 && /1\. Carpet Installation PO \(Pending\)/.test(out.reply!.text), out.trace);
+    check('the first model fails, the second succeeds → still answered, failure recorded', out.status === 'ok' && out.trace.interpretModel === 'glm-5.3-flash' && out.trace.failures.length === 1 && /1\. Carpet Installation PO \(Pending\)/.test(out.reply!.text), out.trace);
 
     console.log('\n15. Prompts and the plug-in boundary');
     const sys = interpretSystemPrompt([tasksDomain, facilityDomain]);

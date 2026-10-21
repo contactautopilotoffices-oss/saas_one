@@ -35,16 +35,20 @@ export function knownWordsFrom(strings: Array<string | undefined | null>): Set<s
 export function checkReply(text: unknown, facts: ReplyFacts, known: ReadonlySet<string> = new Set()): string[] {
     if (typeof text !== 'string' || !text.trim()) return ['empty reply'];
     const problems: string[] = [];
-    if (text.length > 500) problems.push('too long');
+    if (text.length > (facts.free ? 800 : 500)) problems.push('too long');
 
     const used = [...text.matchAll(PLACEHOLDER)].map(m => m[1]);
     for (const u of used) if (!(u in facts.values)) problems.push(`unknown placeholder [[${u}]]`);
     for (const need of facts.required) if (!used.includes(need)) problems.push(`missing required [[${need}]]`);
 
     const bare = text.replace(PLACEHOLDER, ' ');
-    if (/\d/.test(bare)) problems.push('wrote a number by hand');
+    // Step 4 (owner 2026-10-21): when nothing changes, a number is fine if it is one the AI was given (in a value, the
+    // message or the chat). An invented number is still rejected.
+    const givenNumbers = new Set([...Object.values(facts.values), ...known].join(' ').match(/\d+/g) ?? []);
+    const handNumbers = bare.match(/\d+/g) ?? [];
+    if (facts.free ? handNumbers.some(n => !givenNumbers.has(n)) : handNumbers.length > 0) problems.push('wrote a number by hand');
     if (PRONOUNS.test(bare)) problems.push('used a gendered pronoun');
-    if ((bare.match(EMOJI) || []).length > 1) problems.push('too many emoji');
+    if ((bare.match(EMOJI) || []).length > (facts.free ? 2 : 1)) problems.push('too many emoji');
     if (/^#{1,6}\s/m.test(bare) || /```|\*\*/.test(bare)) problems.push('formatting not allowed');
     if (facts.claimsNothingDone && claimsDone(bare)) problems.push('claims something already happened');
     if (facts.asksQuestion && (bare.match(/\?/g) || []).length !== 1) problems.push('must contain exactly one question');
@@ -116,7 +120,7 @@ export async function composeReply(p: {
     let tokensIn = 0, tokensOut = 0;
     try {
         const { value, trace } = await withModelFallback(p.models, async model => {
-            const res = await p.llm.complete({ model, system: replySystemPrompt(), user: replyUserPrompt(p.facts, p.userMessage, p.conversation), json: true, maxTokens: 800 });
+            const res = await p.llm.complete({ model, system: replySystemPrompt(p.facts.free === true), user: replyUserPrompt(p.facts, p.userMessage, p.conversation), json: true, maxTokens: 800 });
             tokensIn += res.tokensIn; tokensOut += res.tokensOut;
             const text = (extractJson(res.text) as { text?: unknown })?.text;
             const found = checkReply(text, p.facts, p.known);

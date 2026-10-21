@@ -23,7 +23,22 @@ export interface BrainLlm { complete(req: LlmRequest): Promise<LlmResponse> }
  * the model at the step where a wrong guess is costly (understanding what the person means) is the most careful one;
  * the step the checker already protects (writing the reply) uses the faster, cheaper one. Each falls back to the other.
  */
-export const BRAIN_INTERPRET_MODELS: readonly string[] = ['glm-5.3-flash', 'qwen3.8-27b'];
+const DEFAULT_INTERPRET_MODELS: readonly string[] = ['glm-5.3-flash', 'qwen3.8-27b'];
+
+/**
+ * Step 5 (owner 2026-10-21): the bot's own settings live HERE in code, not in .env (owner: "no separate configs").
+ *   STRONGER_UNDERSTAND_MODEL  the model tried FIRST for understanding (Groq, low thinking). The usual models stay after it
+ *                              as backups, so a Groq outage, rate limit or missing key never stops the bot. '' = off.
+ *   TWO_STEP_READING           step 3 (kind first, then details). Flip to true only after run_eval.ts --two-step wins.
+ * Replies are NOT affected: they stay on the cheap models.
+ */
+export const STRONGER_UNDERSTAND_MODEL = 'groq:openai/gpt-oss-120b';
+export const TWO_STEP_READING = false;
+
+export function interpretModelsWith(first: string): readonly string[] {
+    return first ? [first, ...DEFAULT_INTERPRET_MODELS.filter(m => m !== first)] : DEFAULT_INTERPRET_MODELS;
+}
+export const BRAIN_INTERPRET_MODELS: readonly string[] = interpretModelsWith(STRONGER_UNDERSTAND_MODEL);
 export const BRAIN_REPLY_MODELS: readonly string[] = ['qwen3.8-27b', 'glm-5.3-flash'];
 
 // Measured: the slower model answers in about 4 s (p90 6 s) but the provider occasionally stalls. 30 s made a stall feel like
@@ -40,6 +55,7 @@ export function engyBrainLlm(options: { thinking?: 'off' | 'default'; timeoutMs?
     const timeoutMs = options.timeoutMs ?? TIMEOUT_MS;
     return {
         async complete(req) {
+            if (req.model.startsWith(GROQ_PREFIX)) return groqComplete(req, timeoutMs);
             const { resolveProvider } = await import('@/backend/lib/council/llm');
             const { provider, spec, apiKey } = resolveProvider();
             if (!apiKey) throw new Error('no AI key is configured');
@@ -71,6 +87,58 @@ export function engyBrainLlm(options: { thinking?: 'off' | 'default'; timeoutMs?
             }
         },
     };
+}
+
+export const GROQ_PREFIX = 'groq:';
+const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
+
+/**
+ * The WhatsApp task bot's OWN Groq keys (owner 2026-10-21): never the shared GROQ_API_KEY, which other features use.
+ * Put one or more in .env (several Groq accounts = backups):
+ *   WHATSAPP_BOT_GROQ_API_KEY, WHATSAPP_BOT_GROQ_API_KEY_2, WHATSAPP_BOT_GROQ_API_KEY_3, … up to _5
+ * Keys are tried in that order: a rate limit (429), a bad or disabled key (401/403), a Groq server error (5xx) or a
+ * timeout moves on to the next key. Keys are never logged or printed.
+ */
+export const BOT_GROQ_KEY_NAMES = ['WHATSAPP_BOT_GROQ_API_KEY', ...[2, 3, 4, 5].map(n => `WHATSAPP_BOT_GROQ_API_KEY_${n}`)];
+export function botGroqKeys(env: Record<string, string | undefined> = process.env): string[] {
+    return BOT_GROQ_KEY_NAMES.map(n => String(env[n] ?? '').trim()).filter(Boolean);
+}
+
+/** Step 5: one call to Groq (OpenAI-compatible) with the bot's own keys. gpt-oss models get reasoning_effort "low". */
+export async function groqComplete(req: LlmRequest, timeoutMs = TIMEOUT_MS): Promise<LlmResponse> {
+    const keys = botGroqKeys();
+    if (!keys.length) throw new Error('no WhatsApp bot Groq key is configured');
+    const model = req.model.slice(GROQ_PREFIX.length);
+    const body = JSON.stringify({
+        model,
+        max_completion_tokens: (req.maxTokens ?? 1200) + 600, // room for the low thinking before the answer
+        temperature: 0,
+        messages: [{ role: 'system', content: req.system }, { role: 'user', content: req.user }],
+        ...(req.json ? { response_format: { type: 'json_object' } } : {}),
+        ...(/gpt-oss/.test(model) ? { reasoning_effort: 'low' } : {}),
+    });
+    const problems: string[] = [];
+    for (let k = 0; k < keys.length; k++) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        let res: Response;
+        try {
+            res = await fetch(GROQ_URL, { method: 'POST', headers: { Authorization: `Bearer ${keys[k]}`, 'Content-Type': 'application/json' }, body, signal: controller.signal });
+        } catch (err) {
+            clearTimeout(timer);
+            problems.push(`key ${k + 1}: ${err instanceof Error && err.name === 'AbortError' ? 'timeout' : 'network error'}`);
+            continue; // try the next account
+        }
+        clearTimeout(timer);
+        if (res.status === 429 || res.status === 401 || res.status === 403 || res.status >= 500) { problems.push(`key ${k + 1}: HTTP ${res.status}`); continue; }
+        if (!res.ok) throw new Error(`Groq HTTP ${res.status}`); // a bad request: another key would not help
+        const j = await res.json() as { choices?: Array<{ message?: { content?: unknown }; finish_reason?: string }>; usage?: { prompt_tokens?: number; completion_tokens?: number } };
+        const text = j?.choices?.[0]?.message?.content;
+        const finishReason: string | undefined = j?.choices?.[0]?.finish_reason;
+        if (typeof text !== 'string' || !text.trim()) throw new Error(`Groq returned nothing (finish_reason=${finishReason ?? 'unknown'})`);
+        return { text, tokensIn: j?.usage?.prompt_tokens ?? 0, tokensOut: j?.usage?.completion_tokens ?? 0, finishReason };
+    }
+    throw new Error(`every WhatsApp bot Groq key failed (${problems.join('; ')})`);
 }
 
 /** Pull one JSON object out of a model reply (tolerates code fences and a little prose around it). */
