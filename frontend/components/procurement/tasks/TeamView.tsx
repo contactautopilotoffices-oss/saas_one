@@ -119,7 +119,7 @@ export default function TeamView({ members, tasks, assignable, onAssign }: {
     return (
         <>
             <motion.div
-                className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
+                className="grid grid-cols-1 gap-4 @xl:grid-cols-2 @4xl:grid-cols-3 @6xl:grid-cols-4"
                 initial={reduce ? false : 'hidden'}
                 animate="show"
                 variants={{ show: { transition: { staggerChildren: 0.08 } } }}

@@ -61,10 +61,10 @@ function Segmented<T extends string>({ id, value, options, onChange, size = 'md'
 function Skeleton() {
     const bar = 'animate-pulse rounded-2xl bg-zinc-200/70 dark:bg-zinc-800/70';
     return (
-        <div className="space-y-5" aria-busy="true" aria-label="Loading tasks">
+        <div className="@container space-y-5" aria-busy="true" aria-label="Loading tasks">
             <div className={`${bar} h-12 w-64`} />
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">{[0, 1, 2, 3, 4].map(i => <div key={i} className={`${bar} h-24`} />)}</div>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">{[0, 1, 2].map(i => <div key={i} className={`${bar} h-72`} />)}</div>
+            <div className="grid grid-cols-2 gap-3 @2xl:grid-cols-4 @5xl:grid-cols-5">{[0, 1, 2, 3, 4].map(i => <div key={i} className={`${bar} h-24`} />)}</div>
+            <div className="grid grid-cols-1 gap-4 @4xl:grid-cols-3">{[0, 1, 2].map(i => <div key={i} className={`${bar} h-72`} />)}</div>
         </div>
     );
 }
@@ -145,8 +145,10 @@ export default function ProcurementTasksTab({ departmentName = 'Procurement' }: 
     // Owner 2026-10-19: "Pending on…" a colleague (they are told; they still cannot see my board).
     const pending = { people: ok.dependencyPeople || [], onFlag: flagDependency };
 
+    // Owner 2026-10-22: `@container` — the board lays itself out by the space it actually has (sidebar or not, any
+    // screen, any console), not by the browser window, so it looks the same at 100% everywhere.
     return (
-        <div className="relative space-y-5">
+        <div className="@container relative space-y-5">
             {/* refresh indicator */}
             <AnimatePresence>
                 {refreshing && (
@@ -158,7 +160,7 @@ export default function ProcurementTasksTab({ departmentName = 'Procurement' }: 
 
             {/* header */}
             <motion.div
-                className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between"
+                className="flex flex-col gap-3 @3xl:flex-row @3xl:items-center @3xl:justify-between"
                 initial={reduce ? false : { opacity: 0, y: -16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.7, ease: EASE }}
             >
                 <div className="flex min-w-0 items-center gap-3">

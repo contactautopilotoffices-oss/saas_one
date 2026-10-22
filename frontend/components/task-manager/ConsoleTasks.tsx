@@ -208,7 +208,8 @@ export function ConsoleTasksView({ c }: { c: ConsoleState }) {
     const groups = DEPT_ORDER(given);
 
     return (
-        <div className="space-y-4">
+        // `@container`: the shared Board lays out by this space, the same as on every department's Tasks tab
+        <div className="@container space-y-4">
             {/* Owner 2026-10-22: the same controls as Assign & monitor */}
             <div className="flex flex-wrap items-end gap-2">
                 <div role="tablist" aria-label="Whose tasks" className="flex max-w-full gap-1 overflow-x-auto rounded-xl bg-zinc-100 p-1 [scrollbar-width:none] dark:bg-zinc-800 [&::-webkit-scrollbar]:hidden">
