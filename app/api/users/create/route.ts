@@ -4,6 +4,7 @@ import { createAdminClient } from '@/frontend/utils/supabase/admin'
 import { isOrganizationUserManager, isOrganizationWideUserRole } from '@/backend/lib/users/managementRoles'
 import { WhatsAppService } from '@/backend/services/WhatsAppService'
 import { buildWelcomeMessage } from '@/backend/lib/whatsapp/welcomeMessage'
+import { ensureEmployeeProfile } from '@/backend/lib/users/employeeProfile';
 
 interface CreateUserRequest {
     email: string
@@ -348,35 +349,14 @@ export async function POST(request: NextRequest) {
             .eq('id', userData.user.id);
 
         // For internal employee/HR roles, ensure employee_profiles record exists
-        if (['hr', 'hr_head', 'staff', 'property_admin', 'org_super_admin'].includes(role)) {
-            const nameParts = full_name.split(' ');
-            const firstName = nameParts[0] || 'Employee';
-            const lastName = nameParts.slice(1).join(' ') || '';
-            const ecode = `E${Math.floor(100 + Math.random() * 900)}`;
-
-            try {
-                await adminClient
-                    .from('employee_profiles')
-                    .upsert({
-                        organization_id: organization_id || null,
-                        property_id: property_id || null,
-                        user_id: userData.user.id,
-                        employee_code: ecode,
-                        first_name: firstName,
-                        last_name: lastName,
-                        full_name,
-                        email,
-                        contact_number: phone || null,
-                        department: role.includes('hr') ? 'Human Resources' : 'Operations',
-                        designation: role === 'hr_head' ? 'HR Head' : (role === 'hr' ? 'HR Executive' : 'Executive'),
-                        is_hr_authority: role === 'hr' || role === 'hr_head',
-                        reconciliation_status: 'linked',
-                        is_active: true
-                    }, { onConflict: 'organization_id,employee_code' });
-            } catch {
-                /* ignore duplicate */
-            }
-        }
+        const employeeProfile = await ensureEmployeeProfile(adminClient, {
+            organizationId: organization_id || null,
+            userId: userData.user.id,
+            email,
+            fullName: full_name,
+            phone: phone || null,
+            appRole: role
+        });
 
         // Send welcome WhatsApp message to new user (best-effort, non-blocking)
         const welcomePhone = phone || null;
@@ -402,6 +382,9 @@ export async function POST(request: NextRequest) {
             // Security: Never return passwords in API responses
             // If no password was provided, user should reset via email
             requiresPasswordReset: !password,
+            // Surfaced rather than swallowed: creation still succeeds, but a failure here
+            // leaves the user without an employee code and must be visible to the caller.
+            employeeProfile,
         })
     } catch (error) {
         console.error('Create user API error:', error)
