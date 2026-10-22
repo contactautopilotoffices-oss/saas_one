@@ -426,7 +426,10 @@ export class WorkspaceService {
         const mine = mineRows.map(r => view(r, 'mine')).sort(newestFirst);
         const given = givenRows.map(r => view(r, 'given')).sort(newestFirst);
 
-        const departments = Array.from(new Set(pool.map(e => e.department_name).filter((n): n is string => !!n))).sort((a, b) => a.localeCompare(b));
+        // Owner 2026-10-22: the department filter lists only departments with the Task Manager switched ON (Control Center)
+        const active = await TaskAccessService.activeDepartmentIds();
+        const departments = Array.from(new Set(pool.filter(e => e.department_id && active.has(e.department_id)).map(e => e.department_name)
+            .filter((n): n is string => !!n))).sort((a, b) => a.localeCompare(b));
         return { actor: { userId: actor.id, name: actor.name }, departments, mine, given };
     }
 
