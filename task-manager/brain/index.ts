@@ -1,8 +1,9 @@
 import { parseConfirmAnswer, parsePick } from '../TaskGateway';
 import type { DomainHandler, ExecutionResult } from './domain';
 import { facilityDomain } from './facilityDomain';
-import { interpretMessage } from './interpret';
-import { BRAIN_INTERPRET_MODELS, BRAIN_REPLY_MODELS, BrainLlm } from './llm';
+import { interpretMessage, interpretMessageTwoStep } from './interpret';
+import { rewriteMessage } from './rewrite';
+import { BRAIN_INTERPRET_MODELS, BRAIN_REPLY_MODELS, BrainLlm, TWO_STEP_READING } from './llm';
 import { composeReply, ComposedReply, knownWordsFrom } from './respond';
 import { tasksDomain } from './tasksDomain';
 import { BrainContext, ConfirmPolicy, DEFAULT_CONFIRM_POLICY, Decision, Interpretation } from './types';
@@ -30,6 +31,14 @@ export interface BrainDeps {
     skipReply?: boolean;
     /** Phase 5: resolved tunable understand sections. Safety/intent/schema text remains locked in prompt.ts. */
     promptSections?: PromptSections;
+    /** Owner 2026-10-21 (Otto's rewrite step): models for the rewrite (default: the cheap reply models). */
+    rewriteModels?: readonly string[];
+    /** Turn the rewrite step off (default on; it only ever runs when there is an earlier chat). */
+    rewrite?: boolean;
+    /** Natural replies for everything except a preview waiting for a yes (default on; false = the strict rules for every reply). */
+    freeReplies?: boolean;
+    /** Step 3: read the kind first, then that kind's details (default: TWO_STEP_READING in llm.ts). */
+    twoStep?: boolean;
 }
 
 export interface BrainTrace {
@@ -41,6 +50,11 @@ export interface BrainTrace {
     tokensIn: number;
     tokensOut: number;
     failures: string[];
+    /** Otto's rewrite step: the full request the follow-up was rewritten to (absent = not used), and how long it took. */
+    rewritten?: string;
+    rewriteMs?: number;
+    /** Step 3: the kind the first reading picked (null = it failed and the one-step reading ran). */
+    kind?: string | null;
 }
 
 export interface BrainResult {
@@ -84,7 +98,14 @@ export async function runBrain(message: string, ctx: BrainContext, deps: BrainDe
         trace.fastPath = true;
     } else {
         try {
-            const r = await interpretMessage({ llm: deps.llm, models: deps.interpretModels ?? BRAIN_INTERPRET_MODELS, message: text, ctx, domains, promptSections: deps.promptSections });
+            // Otto's rewrite step: a short follow-up becomes one full request. Never fails the turn (null -> original only).
+            const rw = deps.rewrite === false ? null : await rewriteMessage({ llm: deps.llm, message: text, ctx, models: deps.rewriteModels });
+            if (rw) { trace.tokensIn += rw.tokensIn; trace.tokensOut += rw.tokensOut; trace.rewriteMs = rw.ms; if (rw.rewritten) trace.rewritten = rw.rewritten; if (rw.failure) trace.failures.push(`rewrite: ${rw.failure}`); }
+            const args = { llm: deps.llm, models: deps.interpretModels ?? BRAIN_INTERPRET_MODELS, message: text, rewritten: rw?.rewritten ?? null, ctx, domains, promptSections: deps.promptSections };
+            // Step 3 (owner 2026-10-21): read the kind first, then only that kind's details. Off unless switched on.
+            const twoStep = deps.twoStep ?? TWO_STEP_READING;
+            const r = twoStep ? await interpretMessageTwoStep(args) : await interpretMessage(args);
+            if (twoStep && 'kind' in r) trace.kind = (r as { kind: string | null }).kind;
             interpretation = r.interpretation;
             trace.interpretModel = r.trace.model; trace.interpretMs = r.ms; trace.tokensIn += r.tokensIn; trace.tokensOut += r.tokensOut;
             trace.failures.push(...r.trace.failures.map(f => `understand ${f.model}: ${f.error}`));
@@ -110,6 +131,14 @@ export async function runBrain(message: string, ctx: BrainContext, deps: BrainDe
  * Step 5 on its own: write the reply for a decision. `result` is what really happened (so the reply can say it was done);
  * without it the reply may only ask or explain. Returns null when the decision has no reply (a hand-off).
  */
+/** Read-only actions: showing or finding tasks, a chat, the list of repeating tasks. Everything else may change something. */
+const READ_ONLY_ACTIONS = new Set(['view_tasks', 'find_tasks', 'chat', 'locked_list']);
+export function changesNothing(d: Decision): boolean {
+    if (d.outcome === 'REFUSE') return true;
+    if (d.outcome !== 'ACT') return false; // CONFIRM (a preview), CLARIFY (a question on the way to a change), HANDOFF
+    return READ_ONLY_ACTIONS.has((d.action as { type: string }).type);
+}
+
 export async function composeBrainReply(p: {
     text: string; ctx: BrainContext; interpretation: Interpretation; decision: Decision; deps: BrainDeps; result?: ExecutionResult;
 }): Promise<ComposedReply | null> {
@@ -120,7 +149,11 @@ export async function composeBrainReply(p: {
     if (!raw) return null;
     // Part B1: only a CONFIRM leaves a yes waiting. Every other reply must not ask "should I…?" (a domain may say otherwise
     // explicitly, e.g. an unclear answer to a question that still stands).
-    const facts = raw.noYesNoQuestion === undefined && p.decision.outcome !== 'CONFIRM' ? { ...raw, noYesNoQuestion: true } : raw;
+    const strictFacts = raw.noYesNoQuestion === undefined && p.decision.outcome !== 'CONFIRM' ? { ...raw, noYesNoQuestion: true } : raw;
+    // Owner 2026-10-22 (learned from Otto): strict ONLY at the moment of change, i.e. a preview / "should I…?" that waits for a
+    // yes (CONFIRM). Everything else (chats, answers, lists, a question on the way to a request, what was just done) is
+    // written freely and naturally. The facts still come only from `facts`, and the checker still rejects wrong facts.
+    const facts = p.decision.outcome !== 'CONFIRM' && p.deps.freeReplies !== false ? { ...strictFacts, free: true } : strictFacts;
     const ctx = p.ctx;
     // Part B5: the reply writer also sees the latest chat lines, so its words follow the conversation; their words count as
     // "given" (it may quote them). What HAPPENED still comes only from `facts`, and the checker still guards every claim.
