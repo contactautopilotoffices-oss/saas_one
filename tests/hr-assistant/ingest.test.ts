@@ -209,7 +209,16 @@ describe("resolveHrAccess", () => {
     assert.deepEqual(resolveHrAccess(facts([])), { canUse: false, isAdmin: false });
   });
 
-  it("lets someone with both an external and a staff role chat", () => {
-    assert.deepEqual(resolveHrAccess(facts([], ["tenant", "staff"])), { canUse: true, isAdmin: false });
+  it("keeps anyone holding a tenant, super tenant or vendor role out, even with a staff role too (owner 2026-10-22)", () => {
+    assert.deepEqual(resolveHrAccess(facts([], ["tenant", "staff"])), { canUse: false, isAdmin: false });
+    assert.deepEqual(resolveHrAccess(facts(["staff"], ["super_tenant"])), { canUse: false, isAdmin: false });
+    for (const role of ["food_vendor", "pantry_vendor", "cafeteria_vendor", "external_vendor", "tenant_admin"]) {
+      assert.deepEqual(resolveHrAccess(facts(["member"], [role])), { canUse: false, isAdmin: false }, role);
+    }
+  });
+
+  it("still lets a client or resident who is also staff chat, and HR admins always", () => {
+    assert.deepEqual(resolveHrAccess(facts([], ["client", "staff"])), { canUse: true, isAdmin: false });
+    assert.deepEqual(resolveHrAccess(facts(["hr"], ["tenant"])), { canUse: true, isAdmin: true });
   });
 });
