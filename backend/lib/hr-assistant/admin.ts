@@ -31,10 +31,18 @@ function isExternalRole(role: string): boolean {
   return role.startsWith("tenant") || EXTERNAL_ROLES.includes(role);
 }
 
+/** Tenants, super tenants and every kind of vendor (food_vendor, pantry_vendor, ...), the same test the sidebar uses. */
+function isTenantOrVendor(role: string): boolean {
+  return role.includes("tenant") || role.includes("vendor");
+}
+
 /** Pure decision, so it can be unit-tested. HR admin rights come from org-level roles only. */
 export function resolveHrAccess({ isMasterAdmin, orgRoles, propertyRoles }: HrRoleFacts): HrAccess {
   const isAdmin = isMasterAdmin || orgRoles.some((role) => HR_ADMIN_ROLES.includes(role));
-  const canUse = isAdmin || [...orgRoles, ...propertyRoles].some((role) => !isExternalRole(role));
+  const roles = [...orgRoles, ...propertyRoles];
+  // Owner 2026-10-22: Otto is for employees only. Anyone holding a tenant, super tenant or vendor role gets no access,
+  // even with another role alongside it (HR admins and master admins excepted).
+  const canUse = isAdmin || (!roles.some(isTenantOrVendor) && roles.some((role) => !isExternalRole(role)));
   return { canUse, isAdmin };
 }
 
