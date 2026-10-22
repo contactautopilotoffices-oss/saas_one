@@ -1529,7 +1529,7 @@ const OrgAdminDashboard = () => {
                             and credentials all live behind it. */}
                         {!isOpsSuperAdmin && activeTab === 'agent_console' && <AgentConsole key="agent-console-tab" orgId={org?.id ?? ''} />}
                         {activeTab === 'ai_tickets' && <AITicketsDashboard propertyId={selectedPropertyId === 'all' ? undefined : selectedPropertyId} />}
-                        {activeTab === 'tasks' && <TaskManagerSuperuserDashboard orgId={org?.id || ''} />}
+                        {activeTab === 'tasks' && <TaskManagerSuperuserDashboard orgId={org?.id || ''} underFixedHeader />}
                         {activeTab === 'task_testing' && <TaskManagerTestingDashboard orgId={org?.id || ''} />}
                         {activeTab === 'revenue' && <RevenueTab key="revenue-tab" properties={properties} selectedPropertyId={selectedPropertyId} />}
                         {activeTab === 'properties' && (
