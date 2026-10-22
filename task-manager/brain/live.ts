@@ -704,6 +704,7 @@ export async function defaultLiveIO(): Promise<LiveIO> {
         async readPerson(actorId, personId) {
             const [actor, target] = await Promise.all([TaskDatabaseService.getEmployeeById(actorId), TaskDatabaseService.getEmployeeById(personId)]);
             if (!actor || !target) return null;
+            if (PermissionService.hiddenFrom(actor, target)) return null; // superusers never see each other's tasks
             const allowed = actor.role === 'superuser' || target.id === actor.id || (await PermissionService.visibleAndAssignable(actor, [target])).length === 1;
             if (!allowed) return null;
             const rows = await TaskDatabaseService.getDailyAssignments({ employeeId: personId, date: todayIST() });
@@ -716,7 +717,7 @@ export async function defaultLiveIO(): Promise<LiveIO> {
             // Only departments where the Task Manager is switched ON (owner 2026-10-12): a superuser no longer sees all 86 people.
             const [pool, active] = await Promise.all([TaskDatabaseService.getAllEmployees(), TaskAccessService.activeDepartmentIds()]);
             const team = (await PermissionService.visibleAndAssignable(actor, pool))
-                .filter(e => e.id !== actor.id && e.active !== false && !!e.department_id && active.has(e.department_id)).slice(0, 40);
+                .filter(e => e.id !== actor.id && e.active !== false && !!e.department_id && active.has(e.department_id) && !PermissionService.hiddenFrom(actor, e)).slice(0, 40);
             if (!team.length) return null;
             const date = todayIST();
             // Owner 2026-10-21: each person's numbered list (today + carried forward, the same list they see), not today's only.
@@ -733,7 +734,7 @@ export async function defaultLiveIO(): Promise<LiveIO> {
             const actor = await TaskDatabaseService.getEmployeeById(actorId);
             if (!actor) return null;
             const [pool, active] = await Promise.all([TaskDatabaseService.getAllEmployees(), TaskAccessService.activeDepartmentIds()]);
-            const inActive = (e: Employee) => !!e.department_id && active.has(e.department_id);
+            const inActive = (e: Employee) => !!e.department_id && active.has(e.department_id) && !PermissionService.hiddenFrom(actor, e);
             const seeable = actor.role === 'superuser' ? pool.filter(inActive) : (await PermissionService.visibleAndAssignable(actor, pool)).filter(inActive);
             const allowed = new Set([actor.id, ...seeable.map(e => e.id)]);
             const ids = q.employeeIds.filter(id => allowed.has(id));

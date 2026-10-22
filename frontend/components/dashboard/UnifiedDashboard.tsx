@@ -34,6 +34,7 @@ const MstDashboard = dynamic(() => import('./MstDashboard'), { loading: RoleLoad
 const SecurityDashboard = dynamic(() => import('./SecurityDashboard'), { loading: RoleLoading });
 const PropertyAdminDashboard = dynamic(() => import('./PropertyAdminDashboard'), { loading: RoleLoading });
 const OrgAdminDashboard = dynamic(() => import('./OrgAdminDashboard'), { loading: RoleLoading });
+const TechDashboard = dynamic(() => import('./TechDashboard'), { loading: RoleLoading });
 const MasterAdminDashboard = dynamic(() => import('./MasterAdminDashboard'), { loading: RoleLoading });
 const SoftServiceManagerDashboard = dynamic(() => import('./SoftServiceManagerDashboard'), { loading: RoleLoading });
 const SuperTenantDashboard = dynamic(() => import('./SuperTenantDashboard'), { loading: RoleLoading });
@@ -219,6 +220,12 @@ const UnifiedDashboard = () => {
     if (role === 'org_super_admin' || role === 'org_admin') {
         // OrgAdminDashboard includes BDQuickStats card — fetches its own CRM data
         return <OrgAdminDashboard />;
+    }
+
+    // Tech team console (owner 2026-10-22): its own copy of the Super Admin tabs that work without super-admin rights,
+    // plus the Task Manager Control Centre
+    if (role === 'tech') {
+        return <TechDashboard />;
     }
 
     // Ops Super Admin — operations management dashboard with all property access & pending validation card

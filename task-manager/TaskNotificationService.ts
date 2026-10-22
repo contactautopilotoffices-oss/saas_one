@@ -278,6 +278,10 @@ export class TaskNotificationService {
             }
             return carriedByDept.get(departmentId)!;
         };
+        // Owner 2026-10-22: the team lists and "Total Members" show only people whose employee kickoff was sent. If the access
+        // settings are missing or cannot be read, everyone is listed as before rather than sending an empty summary.
+        const access = await TaskAccessService.getSnapshot();
+        const kickedOff = (userId: string) => !access.readable || !access.provisioned || access.onboarded.has(userId);
         // Someone who messaged the bot in the last 24 hours gets the normal message with headings (same switch as the rules).
         const chatOpen = process.env.TASK_RULES_CHAT_WHEN_OPEN === 'false' ? new Set<string>() : await openChatWindows(managers.map(e => e.phone_number));
         let sent = 0;
@@ -287,23 +291,26 @@ export class TaskNotificationService {
             if (m.role === 'superuser') {
                 // Only departments where the Task Manager is switched ON (owner 2026-10-12).
                 org = org ?? await TaskProgressService.getOrganisationProgress(date);
-                active = active ?? await TaskAccessService.activeDepartmentIds();
-                const live = org.departmentProgress.filter(d => active!.has(d.departmentId));
+                active = active ?? await TaskAccessService.activeDepartmentIds(access);
+                // Owner 2026-10-22: the Management department is never mentioned in a superuser's summary (it holds the
+                // superusers themselves, whose tasks stay private from each other) — not as a line, not in the totals.
+                const live = org.departmentProgress.filter(d => active!.has(d.departmentId) && d.departmentName.trim().toLowerCase() !== 'management');
                 const sum = (f: (d: typeof live[number]) => number) => live.reduce((a, d) => a + f(d), 0);
                 const rows = await Promise.all(live.map(async d => {
                     const c = await carriedFor(d.departmentId, d.employeeProgress.map(p => p.employeeId));
                     const total = (k: 'done' | 'pending') => [...c.values()].reduce((a, x) => a + x[k], 0);
                     return { label: d.departmentName, done: d.completed, total: d.total, carriedDone: total('done'), carriedPending: total('pending') };
                 }));
-                input = { recipientName: m.name, scope: 'All Active Departments', date, members: sum(d => d.activeEmployeeCount), completed: sum(d => d.completed), pending: Math.max(0, sum(d => d.total) - sum(d => d.completed)),
+                input = { recipientName: m.name, scope: 'All Active Departments', date, members: sum(d => d.employeeProgress.filter(p => kickedOff(p.employeeId)).length), completed: sum(d => d.completed), pending: Math.max(0, sum(d => d.total) - sum(d => d.completed)),
                     rows, rowsArePeople: false };
             } else {
                 if (!m.department_id) continue;
                 const d = depts.get(m.department_id) ?? await TaskProgressService.getDepartmentProgress(m.department_id, date);
                 depts.set(m.department_id, d);
                 const c = await carriedFor(m.department_id, d.employeeProgress.map(p => p.employeeId));
-                input = { recipientName: m.name, scope: `${d.departmentName} Department`, date, members: d.activeEmployeeCount, completed: d.completed, pending: Math.max(0, d.total - d.completed),
-                    rows: d.employeeProgress.map(p => ({ label: p.employeeName, done: p.completed, total: p.total, carriedDone: c.get(p.employeeId)?.done ?? 0, carriedPending: c.get(p.employeeId)?.pending ?? 0 })),
+                const team = d.employeeProgress.filter(p => kickedOff(p.employeeId));
+                input = { recipientName: m.name, scope: `${d.departmentName} Department`, date, members: team.length, completed: d.completed, pending: Math.max(0, d.total - d.completed),
+                    rows: team.map(p => ({ label: p.employeeName, done: p.completed, total: p.total, carriedDone: c.get(p.employeeId)?.done ?? 0, carriedPending: c.get(p.employeeId)?.pending ?? 0 })),
                     rowsArePeople: true };
             }
             // Midday: only when something in that scope is still pending (owner decision 2026-10-12) — today's tasks or,

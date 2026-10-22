@@ -514,7 +514,7 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
             }
 
             // For cross-level changes (property ↔ org), refetch all users
-            const ORG_LEVEL_ROLES = ['org_super_admin', 'ops_super_admin', 'procurement', 'accounts', 'hr', 'hr_head'];
+            const ORG_LEVEL_ROLES = ['org_super_admin', 'ops_super_admin', 'procurement', 'accounts', 'hr', 'hr_head', 'tech'];
             const wasPropertyLevel = !!user?.propertyRole && !user?.orgRole;
             const wasOrgLevel = !!user?.orgRole;
             const isNowOrgLevel = ORG_LEVEL_ROLES.includes(newRole);
@@ -599,6 +599,7 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
             'soft_service_supervisor',
             'procurement',
             'accounts',
+            'tech',
             'sales',
             'bd_rep',
             'vendor',
@@ -621,6 +622,7 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
         if (lower === 'staff') return 'Staff';
         if (lower === 'procurement' || lower === 'procurement_user') return 'Procurement';
         if (lower === 'finance' || lower === 'accounts') return 'Finance / Accounts';
+        if (lower === 'tech') return 'Tech';
         if (lower === 'sales' || lower === 'sales_executive') return 'Sales / CRM';
         if (lower === 'bd_rep' || lower === 'bd_admin' || lower === 'bd_super_admin') return 'Business Development';
         if (lower === 'security') return 'Security / Front Desk';
