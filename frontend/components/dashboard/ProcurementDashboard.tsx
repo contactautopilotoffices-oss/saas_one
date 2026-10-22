@@ -71,6 +71,19 @@ interface MaterialRequest {
 
 type Tab = 'overview' | 'tasks' | 'payment-tracker' | 'requests' | 'vendor_tickets' | 'monthly-requisitions' | 'monthly-feedback' | 'site-pricing' | 'history' | 'manage-items' | 'po-generator' | 'settings' | 'profile' | 'grievance';
 
+// Shared by the Active Orders status pills and their counts so both read a request the same way.
+const matchesStatusTab = (r: { status?: string }, filter: string) => {
+    if (filter === 'all') return true;
+    if (filter === 'pending') return r.status?.toLowerCase() === 'approved' || r.status?.toLowerCase().includes('pending');
+    return r.status?.toLowerCase() === filter.toLowerCase();
+};
+
+const getInitials = (name?: string | null) => {
+    const parts = (name || '').trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return '?';
+    return parts.slice(0, 2).map(p => p[0]).join('').toUpperCase();
+};
+
 export default function ProcurementDashboard() {
     const { dashboardContent, navigateDashboard } = useDashboardContent();
     const supabase = createClient();
@@ -115,8 +128,12 @@ export default function ProcurementDashboard() {
         return requests.filter(r => ['completed', 'delivered'].includes(r.status)).length;
     }, [requests]);
 
-    const [statusFilter, setStatusFilter] = useState('all');
+    // Active Orders opens on Pending by default: that is the queue procurement actually works from.
+    const [statusFilter, setStatusFilter] = useState('pending');
     const [propertyFilter, setPropertyFilter] = useState('all');
+    const [assigneeFilter, setAssigneeFilter] = useState('all');
+    const [dateFrom, setDateFrom] = useState('');
+    const [dateTo, setDateTo] = useState('');
     const [timeRange, setTimeRange] = useState<'today' | 'month' | 'all'>('all');
     const [searchQuery, setSearchQuery] = useState('');
     const [isLoading, setIsLoading] = useState(true);
@@ -480,28 +497,41 @@ export default function ProcurementDashboard() {
         });
     }, [activities, timeRange, propertyFilter]);
 
+    // Active Orders-only filters (procurement owner + raised-on date range). Kept out of
+    // baseRequests so the Overview stats keep reporting the whole property/search scope.
+    const ordersScope = useMemo(() => {
+        const fromTs = dateFrom ? new Date(`${dateFrom}T00:00:00`).getTime() : null;
+        const toTs = dateTo ? new Date(`${dateTo}T23:59:59.999`).getTime() : null;
+
+        return baseRequests.filter(r => {
+            if (assigneeFilter === 'unassigned') {
+                if (r.assignee_uid) return false;
+            } else if (assigneeFilter !== 'all' && r.assignee_uid !== assigneeFilter) {
+                return false;
+            }
+
+            if (fromTs !== null || toTs !== null) {
+                const createdTs = new Date(r.created_at).getTime();
+                if (fromTs !== null && createdTs < fromTs) return false;
+                if (toTs !== null && createdTs > toTs) return false;
+            }
+
+            return true;
+        });
+    }, [baseRequests, assigneeFilter, dateFrom, dateTo]);
+
     const tabCounts = useMemo(() => {
-        const matchesStatusTab = (r: MaterialRequest, filter: string) => {
-            if (filter === 'all') return true;
-            if (filter === 'pending') return r.status?.toLowerCase() === 'approved' || r.status?.toLowerCase().includes('pending');
-            return r.status?.toLowerCase() === filter.toLowerCase();
-        };
         return {
-            all: baseRequests.length,
-            pending: baseRequests.filter(r => matchesStatusTab(r, 'pending')).length,
-            ordered: baseRequests.filter(r => matchesStatusTab(r, 'ordered')).length,
-            delivered: baseRequests.filter(r => matchesStatusTab(r, 'delivered')).length,
+            all: ordersScope.length,
+            pending: ordersScope.filter(r => matchesStatusTab(r, 'pending')).length,
+            ordered: ordersScope.filter(r => matchesStatusTab(r, 'ordered')).length,
+            delivered: ordersScope.filter(r => matchesStatusTab(r, 'delivered')).length,
         };
-    }, [baseRequests]);
+    }, [ordersScope]);
 
     const filteredRequests = useMemo(() => {
-        const matchesStatusTab = (r: MaterialRequest, filter: string) => {
-            if (filter === 'all') return true;
-            if (filter === 'pending') return r.status?.toLowerCase() === 'approved' || r.status?.toLowerCase().includes('pending');
-            return r.status?.toLowerCase() === filter.toLowerCase();
-        };
-        return baseRequests.filter(r => matchesStatusTab(r, statusFilter));
-    }, [baseRequests, statusFilter]);
+        return ordersScope.filter(r => matchesStatusTab(r, statusFilter));
+    }, [ordersScope, statusFilter]);
 
     // --- Main Render ---
     return (
@@ -646,7 +676,12 @@ export default function ProcurementDashboard() {
                                 ].map((item: any) => (
                                     <button
                                         key={item.id}
-                                        onClick={() => { if (dashboardContent !== undefined) navigateDashboard(item.id); else setActiveTab(item.id as Tab); setSidebarOpen(false); }}
+                                        onClick={() => {
+                                            // Active Orders always opens on the Pending queue.
+                                            if (item.id === 'requests') setStatusFilter('pending');
+                                            if (dashboardContent !== undefined) navigateDashboard(item.id); else setActiveTab(item.id as Tab);
+                                            setSidebarOpen(false);
+                                        }}
                                         className={`w-full flex items-center justify-between px-4 py-3 rounded-xl font-bold text-sm transition-all ${activeTab === item.id 
                                             ? 'bg-primary text-white shadow-md' 
                                             : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'}`}
@@ -739,7 +774,7 @@ export default function ProcurementDashboard() {
                         </button>
                         <div className="hidden xl:block">
                             <h1 className="text-2xl font-black text-slate-900 leading-none mb-1 capitalize">
-                                {activeTab.replace(/-/g, ' ')}
+                                {activeTab === 'requests' ? 'Active Orders' : activeTab.replace(/-/g, ' ')}
                             </h1>
                             <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">
                                 {activeTab === 'overview' ? 'Operational Overview' :
@@ -747,6 +782,7 @@ export default function ProcurementDashboard() {
                                  activeTab === 'payment-tracker' ? 'PO Compilation, Alignments & Status' :
                                  activeTab === 'manage-items' ? `Catalog · ${stats.total} Items` :
                                  activeTab === 'po-generator' ? 'AI Purchase Order Processor' :
+                                 activeTab === 'requests' ? `${statusFilter === 'all' ? 'All Requests' : statusFilter} · ${filteredRequests.length} Items` :
                                  `Awaiting Fulfillment · ${stats.pending} Items`}
                             </p>
                         </div>
@@ -830,6 +866,15 @@ export default function ProcurementDashboard() {
                                 searchQuery={searchQuery}
                                 setSearchQuery={setSearchQuery}
                                 tabCounts={tabCounts}
+                                propertyFilter={propertyFilter}
+                                setPropertyFilter={setPropertyFilter}
+                                properties={dropdownProperties}
+                                assigneeFilter={assigneeFilter}
+                                setAssigneeFilter={setAssigneeFilter}
+                                dateFrom={dateFrom}
+                                setDateFrom={setDateFrom}
+                                dateTo={dateTo}
+                                setDateTo={setDateTo}
                                 updatingId={updatingId}
                                 reassigningId={reassigningId}
                                 setReassigningId={setReassigningId}
@@ -1089,9 +1134,26 @@ function RequestsTab({
     tabCounts, updatingId, reassigningId, setReassigningId, onUpdateStatus, 
     onReassign, onDeleteRequest, procurementUsers, user, shouldShowPrice,
     statusModalOpen, setStatusModalOpen, selectedRequestId, setSelectedRequestId,
-    handleOpenStatusModal, fetchRequests
+    handleOpenStatusModal, fetchRequests,
+    propertyFilter, setPropertyFilter, properties,
+    assigneeFilter, setAssigneeFilter,
+    dateFrom, setDateFrom, dateTo, setDateTo
 }: any) {
     const [expandedId, setExpandedId] = useState<string | null>(null);
+
+    const hasActiveFilters = Boolean(
+        (propertyFilter && propertyFilter !== 'all') ||
+        (assigneeFilter && assigneeFilter !== 'all') ||
+        dateFrom || dateTo || searchQuery
+    );
+
+    const clearFilters = () => {
+        setPropertyFilter?.('all');
+        setAssigneeFilter?.('all');
+        setDateFrom?.('');
+        setDateTo?.('');
+        setSearchQuery?.('');
+    };
 
     const isProcurementUser = React.useMemo(() => {
         const role = user?.user_metadata?.role?.toLowerCase() || '';
@@ -1112,40 +1174,111 @@ function RequestsTab({
 
     return (
         <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-6">
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 bg-white p-4 rounded-3xl border border-slate-200 shadow-sm">
-                <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
-                    {[
-                        { id: 'all', label: 'All', count: tabCounts.all },
-                        { id: 'pending', label: 'Pending', count: tabCounts.pending },
-                        { id: 'ordered', label: 'Ordered', count: tabCounts.ordered },
-                        { id: 'delivered', label: 'Delivered', count: tabCounts.delivered },
-                    ].map((tab) => (
-                        <button
-                            key={tab.id}
-                            onClick={() => setStatusFilter(tab.id)}
-                            className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 whitespace-nowrap ${statusFilter === tab.id 
-                                ? 'bg-slate-500 text-white shadow-md' 
-                                : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}
-                        >
-                            {tab.label}
-                            <span className={`px-2 py-0.5 rounded-md text-[9px] ${statusFilter === tab.id ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                                {tab.count}
-                            </span>
-                        </button>
-                    ))}
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                {/* Status pills */}
+                <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 p-4">
+                    <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+                        {[
+                            { id: 'pending', label: 'Pending', count: tabCounts.pending, active: 'bg-amber-500 shadow-amber-200' },
+                            { id: 'ordered', label: 'Ordered', count: tabCounts.ordered, active: 'bg-blue-600 shadow-blue-200' },
+                            { id: 'delivered', label: 'Delivered', count: tabCounts.delivered, active: 'bg-emerald-600 shadow-emerald-200' },
+                            { id: 'all', label: 'All', count: tabCounts.all, active: 'bg-slate-700 shadow-slate-200' },
+                        ].map((tab) => (
+                            <button
+                                key={tab.id}
+                                onClick={() => setStatusFilter(tab.id)}
+                                className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 whitespace-nowrap ${statusFilter === tab.id 
+                                    ? `${tab.active} text-white shadow-md` 
+                                    : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}
+                            >
+                                {tab.label}
+                                <span className={`px-2 py-0.5 rounded-md text-[9px] ${statusFilter === tab.id ? 'bg-white/25 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                                    {tab.count}
+                                </span>
+                            </button>
+                        ))}
+                    </div>
+
+                    <div className="flex items-center gap-3 shrink-0">
+                        {hasActiveFilters && (
+                            <button
+                                onClick={clearFilters}
+                                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest text-rose-500 bg-rose-50 hover:bg-rose-100 border border-rose-100 transition-all"
+                            >
+                                <X className="w-3 h-3" /> Clear
+                            </button>
+                        )}
+                        <div className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-widest bg-slate-50 px-4 py-2 rounded-xl border border-slate-100">
+                            <Filter className="w-3 h-3" />
+                            <span>{requests.length} Results</span>
+                        </div>
+                    </div>
                 </div>
 
-                <div className="flex items-center gap-4">
-                    <div className="hidden xl:flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-widest bg-slate-50 px-4 py-2 rounded-xl border border-slate-100">
-                        <Calendar className="w-3 h-3" />
-                        <span>dd-mm-yyyy</span>
-                        <span className="mx-2 text-slate-300">to</span>
-                        <span>dd-mm-yyyy</span>
-                        <Calendar className="w-3 h-3 ml-2" />
+                {/* Filter row: property · procurement owner · raised-on range */}
+                <div className="flex flex-col lg:flex-row lg:items-end gap-3 px-4 pb-4 pt-4 border-t border-slate-100 bg-slate-50/40">
+                    <div className="flex-1 min-w-0">
+                        <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 pl-1">Property</label>
+                        <div className="relative">
+                            <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+                            <select
+                                value={propertyFilter || 'all'}
+                                onChange={(e) => setPropertyFilter?.(e.target.value)}
+                                className="w-full pl-9 pr-8 py-2.5 bg-white border border-slate-200 rounded-xl text-[11px] font-bold text-slate-700 outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary/30 transition-all appearance-none cursor-pointer"
+                            >
+                                <option value="all">All Properties</option>
+                                {(properties || []).map((p: { id: string; name: string }) => (
+                                    <option key={p.id} value={p.id}>{p.name}</option>
+                                ))}
+                            </select>
+                            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400 pointer-events-none" />
+                        </div>
                     </div>
-                    <div className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-widest px-4 py-2 border-l border-slate-100">
-                        <Filter className="w-3 h-3" />
-                        <span>{requests.length} Results</span>
+
+                    <div className="flex-1 min-w-0">
+                        <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 pl-1">Procurement User</label>
+                        <div className="relative">
+                            <UserCircle className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+                            <select
+                                value={assigneeFilter || 'all'}
+                                onChange={(e) => setAssigneeFilter?.(e.target.value)}
+                                className="w-full pl-9 pr-8 py-2.5 bg-white border border-slate-200 rounded-xl text-[11px] font-bold text-slate-700 outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary/30 transition-all appearance-none cursor-pointer"
+                            >
+                                <option value="all">All Procurement Users</option>
+                                <option value="unassigned">Unassigned</option>
+                                {(procurementUsers || []).map((u: { id: string; full_name?: string; email?: string }) => (
+                                    <option key={u.id} value={u.id}>{u.full_name || u.email}</option>
+                                ))}
+                            </select>
+                            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400 pointer-events-none" />
+                        </div>
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                        <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 pl-1">Raised Between</label>
+                        <div className="flex items-center gap-2">
+                            <div className="relative flex-1 min-w-0">
+                                <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+                                <input
+                                    type="date"
+                                    value={dateFrom || ''}
+                                    max={dateTo || undefined}
+                                    onChange={(e) => setDateFrom?.(e.target.value)}
+                                    className="w-full pl-9 pr-3 py-2.5 bg-white border border-slate-200 rounded-xl text-[11px] font-bold text-slate-700 outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary/30 transition-all cursor-pointer"
+                                />
+                            </div>
+                            <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest shrink-0">to</span>
+                            <div className="relative flex-1 min-w-0">
+                                <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+                                <input
+                                    type="date"
+                                    value={dateTo || ''}
+                                    min={dateFrom || undefined}
+                                    onChange={(e) => setDateTo?.(e.target.value)}
+                                    className="w-full pl-9 pr-3 py-2.5 bg-white border border-slate-200 rounded-xl text-[11px] font-bold text-slate-700 outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary/30 transition-all cursor-pointer"
+                                />
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1153,38 +1286,36 @@ function RequestsTab({
             <div className="space-y-2">
                 {requests.length > 0 ? requests.map((req: any) => {
                     const isExpanded = expandedId === req.id;
+                    const status = req.status?.toLowerCase() || '';
+                    const accentClass = status === 'delivered' ? 'bg-emerald-400'
+                        : status === 'ordered' ? 'bg-blue-500'
+                        : 'bg-amber-400';
+                    const assigneeName = req.assignee?.full_name || '';
                     return (
                         <div
                             key={req.id}
-                            className={`bg-white rounded-3xl border ${isExpanded ? 'border-primary ring-2 ring-primary/5' : 'border-slate-100'} p-4 transition-all hover:shadow-md cursor-pointer group relative overflow-hidden`}
+                            className={`bg-white rounded-3xl border ${isExpanded ? 'border-primary ring-2 ring-primary/5' : 'border-slate-100'} p-4 pl-5 transition-all hover:shadow-md hover:border-slate-200 cursor-pointer group relative overflow-hidden`}
                             onClick={() => setExpandedId(isExpanded ? null : req.id)}
                         >
-                            <div className="flex items-center gap-6">
+                            {/* Status accent rail */}
+                            <span className={`absolute left-0 top-4 bottom-4 w-1 rounded-r-full ${accentClass}`} />
+
+                            <div className="flex items-center gap-4 lg:gap-6">
                                 {/* Left Icon */}
                                 <div className="w-10 h-10 rounded-full bg-slate-50 border border-slate-100 flex items-center justify-center shrink-0 group-hover:bg-primary/5 group-hover:border-primary/10 transition-colors">
                                     <Box className="w-5 h-5 text-slate-400 group-hover:text-primary transition-colors" />
                                 </div>
-                                {req.status?.toLowerCase().includes('pending') && (
-                                    <button
-                                        className="ml-2 px-4 py-2 bg-slate-100 text-slate-600 font-bold text-xs rounded-lg hover:bg-slate-200 transition-colors flex items-center gap-2"
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleOpenStatusModal(req.id, req.ticket_id);
-                                        }}
-                                    >
-                                        Update Status
-                                    </button>
-                                )}
+
                                 <div className="flex-1 min-w-0">
                                     {/* Row 1: ID + Status */}
                                     <div className="flex items-center gap-3 mb-1">
                                         <span className="text-[11px] font-black text-slate-900 uppercase tracking-widest">#{req.ticket?.ticket_number}</span>
                                         <div className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest border ${
-                                            req.status?.toLowerCase() === 'delivered' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
-                                            req.status?.toLowerCase() === 'ordered' ? 'bg-blue-50 text-blue-600 border-blue-100' :
-                                            'bg-indigo-50 text-indigo-600 border-indigo-100'
+                                            status === 'delivered' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
+                                            status === 'ordered' ? 'bg-blue-50 text-blue-600 border-blue-100' :
+                                            'bg-amber-50 text-amber-600 border-amber-100'
                                         }`}>
-                                            {req.status?.toLowerCase().includes('pending') ? 'Pending' : req.status?.replace(/_/g, ' ')}
+                                            {status.includes('pending') ? 'Pending' : req.status?.replace(/_/g, ' ')}
                                         </div>
                                     </div>
 
@@ -1192,7 +1323,7 @@ function RequestsTab({
                                     <h4 className="text-sm font-bold text-slate-700 tracking-tight leading-tight mb-1 truncate">{req.ticket?.title}</h4>
 
                                     {/* Row 3: Metadata */}
-                                    <div className="flex flex-wrap items-center gap-4 text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+                                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[10px] text-slate-400 font-bold uppercase tracking-widest">
                                         {req.property?.name && (
                                             <div className="flex items-center gap-1.5">
                                                 <Building2 className="w-3 h-3 opacity-50" />
@@ -1203,7 +1334,12 @@ function RequestsTab({
                                             <Clock className="w-3 h-3 opacity-50" />
                                             <span>{new Date(req.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}, {new Date(req.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }).toLowerCase()}</span>
                                         </div>
-                                        {req.status === 'delivered' && req.delivered_at && (
+                                        {/* Assigned procurement owner, compact form for narrow screens */}
+                                        <div className={`sm:hidden flex items-center gap-1.5 ${assigneeName ? 'text-slate-500' : 'text-amber-500'}`}>
+                                            <UserCircle className="w-3 h-3 opacity-70" />
+                                            <span className="truncate max-w-[150px]">{assigneeName || 'Unassigned'}</span>
+                                        </div>
+                                        {status === 'delivered' && req.delivered_at && (
                                             <div className="flex items-center gap-1.5 text-emerald-600/80">
                                                 <CheckCircle2 className="w-3 h-3" />
                                                 <span>Delivered {new Date(req.delivered_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}, {new Date(req.delivered_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }).toLowerCase()}</span>
@@ -1212,9 +1348,50 @@ function RequestsTab({
                                     </div>
                                 </div>
 
+                                {/* Assigned procurement user */}
+                                <div className="hidden sm:flex items-center gap-2.5 shrink-0 pl-4 lg:pl-6 border-l border-slate-100">
+                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-black shrink-0 border ${
+                                        assigneeName
+                                            ? 'bg-primary/10 text-primary border-primary/15'
+                                            : 'bg-amber-50 text-amber-500 border-amber-100'
+                                    }`}>
+                                        {assigneeName ? getInitials(assigneeName) : '?'}
+                                    </div>
+                                    <div className="min-w-0 hidden md:block">
+                                        <p className="text-[8px] font-black text-slate-300 uppercase tracking-widest leading-none mb-1">Assigned To</p>
+                                        <p className={`text-[11px] font-black leading-none truncate max-w-[130px] ${assigneeName ? 'text-slate-700' : 'text-amber-500'}`}>
+                                            {assigneeName || 'Unassigned'}
+                                        </p>
+                                    </div>
+                                </div>
+
+                                {status.includes('pending') && (
+                                    <button
+                                        className="hidden sm:flex px-4 py-2 bg-slate-100 text-slate-600 font-bold text-[10px] uppercase tracking-widest rounded-xl hover:bg-slate-200 transition-colors items-center gap-2 shrink-0"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleOpenStatusModal(req.id, req.ticket_id);
+                                        }}
+                                    >
+                                        Update Status
+                                    </button>
+                                )}
+
                                 {/* Right Chevron */}
-                                <ChevronDown className={`w-4 h-4 text-slate-200 transition-transform flex-shrink-0 ${isExpanded ? 'rotate-180 text-primary' : ''}`} />
+                                <ChevronDown className={`w-4 h-4 text-slate-300 transition-transform flex-shrink-0 ${isExpanded ? 'rotate-180 text-primary' : ''}`} />
                             </div>
+
+                            {status.includes('pending') && (
+                                <button
+                                    className="sm:hidden mt-3 w-full px-4 py-2.5 bg-slate-100 text-slate-600 font-bold text-[10px] uppercase tracking-widest rounded-xl hover:bg-slate-200 transition-colors"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleOpenStatusModal(req.id, req.ticket_id);
+                                    }}
+                                >
+                                    Update Status
+                                </button>
+                            )}
 
                             {isExpanded && (
                                 <motion.div
@@ -1400,10 +1577,24 @@ function RequestsTab({
                         </div>
                     );
                 }) : (
-                    <div className="py-32 flex flex-col items-center justify-center text-center">
+                    <div className="py-28 flex flex-col items-center justify-center text-center bg-white rounded-3xl border border-slate-100">
                         <PackageSearchIcon className="w-16 h-16 text-slate-200 mb-6" />
-                        <h3 className="text-xl font-black text-slate-900 mb-2 font-display">No requests found</h3>
-                        <p className="text-slate-400 font-medium max-w-xs mx-auto">Try changing your filters or searching for a different ticket ID.</p>
+                        <h3 className="text-xl font-black text-slate-900 mb-2 font-display">
+                            {hasActiveFilters ? 'No requests match these filters' : `No ${statusFilter === 'all' ? '' : statusFilter} requests`}
+                        </h3>
+                        <p className="text-slate-400 font-medium max-w-xs mx-auto">
+                            {hasActiveFilters
+                                ? 'Try a different property, procurement user or date range.'
+                                : 'Nothing is sitting in this queue right now.'}
+                        </p>
+                        {hasActiveFilters && (
+                            <button
+                                onClick={clearFilters}
+                                className="mt-6 flex items-center gap-2 px-5 py-2.5 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-800 transition-all active:scale-95"
+                            >
+                                <X className="w-3.5 h-3.5" /> Clear Filters
+                            </button>
+                        )}
                     </div>
                 )}
             </div>
