@@ -266,7 +266,7 @@ export default function AssignedView({ from, to, onEdit, onDelete }: {
                     No tasks given to anyone for these dates.
                 </div>
             ) : (
-                <ul className="grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-3">
+                <ul className="grid grid-cols-1 gap-2.5 @2xl:grid-cols-2 @5xl:grid-cols-3">
                     <AnimatePresence initial={!reduce}>
                         {shown.map(t => <Row key={t.id} task={t} onEdit={edit} onDelete={remove} onRemind={remind} />)}
                     </AnimatePresence>
