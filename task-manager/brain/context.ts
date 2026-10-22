@@ -28,17 +28,19 @@ export async function buildBrainContext(emp: Employee, phone: string, opts: { pe
     // Owner 2026-10-19: the people this person may GIVE work to (wider than who they may see when "assign to anyone in
     // team" is ON). Reading anyone's tasks is re-checked separately (readPerson / readTeam / findTasks), so this never
     // widens what they can see.
-    const permitted = await PermissionService.assignableTo(emp, pool);
+    // Owner 2026-10-22: a superuser's bot is never told about the other superuser (their tasks stay private).
+    const visiblePool = pool.filter(e => !PermissionService.hiddenFrom(emp, e));
+    const permitted = await PermissionService.assignableTo(emp, visiblePool);
     const isSuper = emp.role === 'superuser';
 
     const people = new Map<string, BrainPerson>();
-    for (const e of isSuper ? pool : [emp, ...permitted, ...pool.filter(x => x.role === 'superuser')]) people.set(e.id, person(e));
+    for (const e of isSuper ? visiblePool : [emp, ...permitted, ...pool.filter(x => x.role === 'superuser')]) people.set(e.id, person(e));
 
     return {
         today,
         sender: person(emp),
         people: [...people.values()],
-        assignableIds: (isSuper ? pool : permitted).map(e => e.id).filter(id => id !== emp.id),
+        assignableIds: (isSuper ? visiblePool : permitted).map(e => e.id).filter(id => id !== emp.id),
         tasks: rows.map(t => ({ n: t.listNumber, id: t.id, title: t.title, status: t.status, ...(t.isCarriedForward ? { from: t.assigned_date } : {}),
             // Owner 2026-10-20: lock state, the same rule as the Tasks tab (own active fixed template = locked; no owner = team fixed).
             ...(t.template && t.template.owner_id === emp.id && t.template.is_active ? { locked: true } : {}),

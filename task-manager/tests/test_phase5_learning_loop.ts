@@ -133,7 +133,7 @@ async function run() {
   check('Bot learning is one collapsible section that loads only when opened', /Show bot learning/.test(panel) && /if \(next\) void load\(\)/.test(panel));
   check('review card shows conversation, AI summary and Correct / Fix / Ignore', ['What the user wanted', 'What the bot did', 'The fix', 'Who can fix it', '✅ Correct', '✏️ Fix', 'Needs a developer'].every(t => review.includes(t)));
   check('approve uses the server-side AI test, never a test sent from the browser', /action: 'approve', id: current\.id, owner \}/.test(review) && /validateReviewLabel\(row\.ai_summary\.test\)/.test(svc2));
-  check('new API actions sit behind the same admin guard', ['summarize', 'approve', 'undo', 'set_dev_state'].every(a => route.includes(`b.action === '${a}'`)) && /requireTaskManagerAdmin/.test(route));
+  check('new API actions sit behind the same admin guard', ['summarize', 'approve', 'undo', 'set_dev_state'].every(a => route.includes(`b.action === '${a}'`)) && /requireControlCentre/.test(route));
   check('prompt versions: large viewer, coloured diff, results table, no browser pop-ups', /VersionViewer/.test(pv) && /bg-emerald-50/.test(pv) && /bg-rose-50/.test(pv) && /<table/.test(pv) && !/window\.(prompt|confirm|alert)/.test(pv));
 
   check('no network used', true);

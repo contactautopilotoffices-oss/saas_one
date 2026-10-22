@@ -1,6 +1,6 @@
 // URL values are the authority for Organization dashboard navigation.
 export const ORG_DASHBOARD_TABS = [
-    'overview', 'tasks', 'task_testing', 'properties', 'requests', 'reports', 'visitors', 'settings', 'profile',
+    'overview', 'tasks', 'properties', 'requests', 'reports', 'visitors', 'settings', 'profile',
     'revenue', 'users', 'diesel_logger', 'diesel', 'electricity_logger', 'electricity',
     'stock_reports', 'checklist', 'super_tenants', 'escalation', 'rooms', 'ppm',
     'vendors', 'procurement', 'roster', 'water_logger', 'water', 'guest_experience',

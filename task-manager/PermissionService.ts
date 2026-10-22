@@ -72,6 +72,14 @@ export class PermissionService {
     }
 
     /**
+     * Owner 2026-10-22: superusers keep their tasks private from each other. True when `target` is ANOTHER superuser and
+     * the viewer is a superuser — the website and the WhatsApp bot both leave such a person out.
+     */
+    static hiddenFrom(viewer: Pick<Employee, 'id' | 'role'>, target: Pick<Employee, 'id' | 'role'>): boolean {
+        return viewer.role === 'superuser' && target.role === 'superuser' && target.id !== viewer.id;
+    }
+
+    /**
      * Resolves the actor's employee profile and task role.
      */
     static async getActor(actorId: string): Promise<Employee> {
