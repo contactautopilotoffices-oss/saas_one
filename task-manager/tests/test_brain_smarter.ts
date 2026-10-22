@@ -99,16 +99,22 @@ async function run() {
         const g = fake({ details: ADD_LOHIT });
         await runBrain('give lohit a task to review the rfid rollout', world('default'), { llm: g.llm });
         check('a preview is written with the strict prompt', g.seen.replySystems[0] === replySystemPrompt(false));
+        // Owner 2026-10-22: strict ONLY for a preview waiting for a yes; a question on the way to a request is natural too.
+        const q = fake({ details: { intent: 'create_tasks', confidence: 0.95, language: 'en', slots: { assignee: 'Zebulon', tasks: [{ title: 'Call the vendor', details: null }], date: null }, ambiguities: ['no Zebulon'], clarify_question: 'Who is Zebulon?', summary: 'Give Zebulon a task' } });
+        const rq = await runBrain('give zebulon a task to call the vendor', world('default'), { llm: q.llm });
+        check('a question on the way to a request (CLARIFY) is written with the natural prompt', rq.decision?.outcome === 'CLARIFY' && q.seen.replySystems[0] === replySystemPrompt(true), rq.decision?.outcome);
         const h = fake({ details: { intent: 'view_tasks', confidence: 0.95, language: 'en', slots: { scope: 'self', person: null, department: null }, ambiguities: [], clarify_question: null, summary: 'Show' } });
         await runBrain('show my tasks', world('default'), { llm: h.llm, freeReplies: false });
         check('freeReplies: false keeps the strict prompt everywhere', h.seen.replySystems[0] === replySystemPrompt(false));
     }
 
     console.log('\n5. Switching the understand model');
-    check('the setting lives in code: Claude Haiku first, the usual models kept as backups', LLM.STRONGER_UNDERSTAND_MODEL === 'anthropic:claude-haiku-5-5' && JSON.stringify(LLM.BRAIN_INTERPRET_MODELS) === JSON.stringify(['anthropic:claude-haiku-5-5', 'glm-5.3-flash', 'qwen3.8-27b']));
+    const HAIKU_THEN_BACKUPS = JSON.stringify(['anthropic:claude-haiku-5-5', 'glm-5.3-flash', 'qwen3.8-27b']);
+    check('the setting lives in code: Claude Haiku first, then GLM, then Qwen (owner 2026-10-22)', LLM.CHATBOT_MODEL === 'anthropic:claude-haiku-5-5' && JSON.stringify(LLM.BRAIN_INTERPRET_MODELS) === HAIKU_THEN_BACKUPS);
     check('empty setting -> only the usual models', JSON.stringify(LLM.interpretModelsWith('')) === JSON.stringify(['glm-5.3-flash', 'qwen3.8-27b']));
     check('two-step reading is a code setting, off for now', LLM.TWO_STEP_READING === false);
-    check('replies are untouched (cheap models)', JSON.stringify(LLM.BRAIN_REPLY_MODELS) === JSON.stringify(['qwen3.8-27b', 'glm-5.3-flash']));
+    check('replies and the rewrite also use Haiku first, then GLM, then Qwen', JSON.stringify(LLM.BRAIN_REPLY_MODELS) === HAIKU_THEN_BACKUPS && JSON.stringify(LLM.BRAIN_REWRITE_MODELS) === HAIKU_THEN_BACKUPS);
+    check('voice-note clean-up is not the chatbot: it keeps its cheap models', JSON.stringify((await import('../voice/VoiceCleanup')).VOICE_CLEANUP_MODELS) === JSON.stringify(['qwen3.8-27b', 'glm-5.3-flash']));
     check('the bot uses its OWN keys, in order, never the shared GROQ_API_KEY',
         JSON.stringify(LLM.botGroqKeys({ GROQ_API_KEY: 'shared', WHATSAPP_BOT_GROQ_API_KEY: 'a', WHATSAPP_BOT_GROQ_API_KEY_3: 'c', WHATSAPP_BOT_GROQ_API_KEY_2: 'b' })) === JSON.stringify(['a', 'b', 'c'])
         && LLM.botGroqKeys({ GROQ_API_KEY: 'shared' }).length === 0);
@@ -143,26 +149,28 @@ async function run() {
     {
         const saved = Object.fromEntries(['ANTHROPIC_API_KEY', ...LLM.BOT_ANTHROPIC_KEY_NAMES].map(n => [n, process.env[n]]));
         for (const n of Object.keys(saved)) delete process.env[n];
-        check('Claude: only the bot\'s OWN keys, in order, never a shared ANTHROPIC_API_KEY',
-            JSON.stringify(LLM.botAnthropicKeys({ ANTHROPIC_API_KEY: 'shared', WHATSAPP_BOT_ANTHROPIC_API_KEY: 'a', WHATSAPP_BOT_ANTHROPIC_API_KEY_2: 'b' })) === JSON.stringify(['a', 'b'])
-            && LLM.botAnthropicKeys({ ANTHROPIC_API_KEY: 'shared' }).length === 0);
+        check('Claude: ONE key named CLAUDE_API_KEY, never a shared ANTHROPIC_API_KEY or the old name',
+            JSON.stringify(LLM.botAnthropicKeys({ ANTHROPIC_API_KEY: 'shared', WHATSAPP_BOT_ANTHROPIC_API_KEY: 'old', CLAUDE_API_KEY: 'a' })) === JSON.stringify(['a'])
+            && LLM.botAnthropicKeys({ ANTHROPIC_API_KEY: 'shared', WHATSAPP_BOT_ANTHROPIC_API_KEY: 'old' }).length === 0);
         process.env.ANTHROPIC_API_KEY = 'shared-key-must-not-be-used';
         let err = ''; try { await LLM.anthropicComplete({ model: 'anthropic:claude-haiku-5-5', system: 's', user: 'u' }); } catch (e) { err = String((e as Error).message); }
-        check('Claude: no bot key -> a clear error at once (backup model answers), nothing sent', /no WhatsApp bot Claude key/.test(err) && net.length === 0, err);
+        check('Claude: no CLAUDE_API_KEY -> a clear error at once (backup model answers), nothing sent', /CLAUDE_API_KEY is not set/.test(err) && net.length === 0, err);
         delete process.env.ANTHROPIC_API_KEY;
-        process.env.WHATSAPP_BOT_ANTHROPIC_API_KEY = 'c-1'; process.env.WHATSAPP_BOT_ANTHROPIC_API_KEY_2 = 'c-2';
+        process.env.CLAUDE_API_KEY = 'c-1';
         const sent: any[] = [];
         (globalThis as any).fetch = async (u: any, init: any) => {
             const key = init.headers['x-api-key']; sent.push({ u: String(u), key, h: init.headers, body: JSON.parse(init.body) });
-            if (key === 'c-1') return { ok: false, status: 529, json: async () => ({}) };   // overloaded
             return { ok: true, status: 200, json: async () => ({ content: [{ type: 'text', text: '{"a":1}' }], stop_reason: 'end_turn', usage: { input_tokens: 5, output_tokens: 2 } }) };
         };
         const r = await LLM.engyBrainLlm().complete({ model: 'anthropic:claude-haiku-5-5', system: 'rules', user: 'msg', json: true });
-        check('"anthropic:" models go to Claude (Messages API, system kept separate)', sent[1]?.u === 'https://api.anthropic.com/v1/messages' && sent[1]?.body.model === 'claude-haiku-5-5' && sent[1]?.body.system === 'rules' && sent[1]?.body.messages[0].content === 'msg' && sent[1]?.h['anthropic-version'] && r.text === '{"a":1}' && r.tokensIn === 5, sent[1]);
-        check('Claude key 1 overloaded -> key 2 answers', sent.map(x => x.key).join() === 'c-1,c-2');
+        check('"anthropic:" models go to Claude (Messages API, system kept separate, no temperature: Claude 5.x rejects it)', sent[0]?.u === 'https://api.anthropic.com/v1/messages' && sent[0]?.key === 'c-1' && sent[0]?.body.model === 'claude-haiku-5-5' && sent[0]?.body.system === 'rules' && sent[0]?.body.messages[0].content === 'msg' && !('temperature' in sent[0]?.body) && sent[0]?.body.max_tokens === 1200 + LLM.CLAUDE_THINKING_ROOM && sent[0]?.h['anthropic-version'] && r.text === '{"a":1}' && r.tokensIn === 5, sent[0]);
+        sent.length = 0;
+        (globalThis as any).fetch = async (u: any, init: any) => { sent.push(init.headers['x-api-key']); return { ok: false, status: 529, json: async () => ({}) }; };
+        err = ''; try { await LLM.anthropicComplete({ model: 'anthropic:claude-haiku-5-5', system: 's', user: 'u' }); } catch (e) { err = String((e as Error).message); }
+        check('Claude overloaded -> a clear error so GLM / Qwen answer (no key in the message)', sent.join() === 'c-1' && /Claude failed/.test(err) && !/c-1/.test(err), err);
         (globalThis as any).fetch = async (u: any) => { net.push(String(u)); throw new Error('network must not be used'); };
         for (const [n, v] of Object.entries(saved)) { if (v === undefined) delete process.env[n]; else process.env[n] = v; }
-        delete process.env.WHATSAPP_BOT_ANTHROPIC_API_KEY; delete process.env.WHATSAPP_BOT_ANTHROPIC_API_KEY_2;
+        delete process.env.CLAUDE_API_KEY;
     }
     {
         const { tasksDomain: TD } = await import('../brain/tasksDomain');

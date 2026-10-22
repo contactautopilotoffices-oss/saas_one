@@ -2,8 +2,11 @@
  * Measures the language brain against real models on the labelled English cases.
  *
  *   npx tsx task-manager/brain/eval/run_eval.ts --models qwen3.8-27b,glm-5.3-flash --out <folder> [--concurrency 6] [--only group] [--limit 20]
- *     [--set base|hinglish|team|real]   real = the chats that went wrong (Sher, Sanil); --two-step = step 3's reading
- *     Step 5 example: --models groq:openai/gpt-oss-120b,glm-5.3-flash --reply-model qwen3.8-27b (needs WHATSAPP_BOT_GROQ_API_KEY in .env); Claude: --models anthropic:claude-haiku-5-5,glm-5.3-flash (needs WHATSAPP_BOT_ANTHROPIC_API_KEY)   (Phase 4: base = the original English set, the default; team runs with the Team reports domain)
+ *     [--set base|real]   base = 15 cases (cases.ts), real = the 5 chats that went wrong (Sher, Sanil, follow-ups); --two-step = step 3's reading
+ *     Step 5 example: --models groq:openai/gpt-oss-120b,glm-5.3-flash --reply-model qwen3.8-27b (needs WHATSAPP_BOT_GROQ_API_KEY in .env); Claude: --models anthropic:claude-haiku-5-5,glm-5.3-flash (needs CLAUDE_API_KEY)
+ *
+ * COST RULE (owner 2026-10-22): every run is paid. The sets were cut to 20 cases in all; still never run more than needed: use --set real or
+ *   --only <group> --limit 10. Ask the owner before anything bigger. See docs/TASK_BRAIN_SPEC.md, "keep paid test runs small".
  *
  * MANUAL tool — it calls the AI provider (the key is read from .env and never printed), so it is NOT part of the normal
  * test run. It sends no WhatsApp message and touches no database: every case runs against a fake in-memory world.
@@ -46,13 +49,9 @@ async function main() {
 
     const set = arg('set', 'base') as string;
     const { EVAL_CASES } = await import('./cases');
-    const { HINGLISH_CASES, TEAM_CASES } = await import('./cases_phase4');
     const { REAL_CASES } = await import('./cases_real');
     const twoStep = process.argv.includes('--two-step');
-    const { tasksDomainWithTeam } = await import('../tasksDomain');
-    const { facilityDomain } = await import('../facilityDomain');
-    const source = set === 'hinglish' ? HINGLISH_CASES : set === 'team' ? TEAM_CASES : set === 'real' ? REAL_CASES : EVAL_CASES;
-    const domains = set === 'team' ? [tasksDomainWithTeam, facilityDomain] : undefined;
+    const source = set === 'real' ? REAL_CASES : EVAL_CASES;
     const { world } = await import('./worlds');
     const { scoreCase, summarize } = await import('./score');
     const { runBrain } = await import('../index');
@@ -101,7 +100,7 @@ async function main() {
                 const waited0 = waitedMs;
                 const warn = console.warn; console.warn = () => undefined;
                 let result;
-                try { result = await runBrain(c.message, ctx, { llm, interpretModels: [model], replyModels: [replyModel || model], twoStep, rewriteModels: [replyModel || model], ...(domains ? { domains } : {}) }); }
+                try { result = await runBrain(c.message, ctx, { llm, interpretModels: [model], replyModels: [replyModel || model], twoStep, rewriteModels: [replyModel || model] }); }
                 catch (err) { result = { status: 'ai_unavailable' as const, interpretation: null, decision: null, reply: null, trace: { fastPath: false, interpretModel: null, replyModel: null, interpretMs: 0, replyMs: 0, tokensIn: 0, tokensOut: 0, failures: [String(err)] } }; }
                 console.warn = warn;
                 const score = scoreCase(c, result as any);

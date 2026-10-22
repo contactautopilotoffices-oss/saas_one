@@ -1,6 +1,7 @@
-import { BrainLlm, BRAIN_REPLY_MODELS, extractJson, withModelFallback } from './llm';
+import { BrainLlm, BRAIN_REWRITE_MODELS, extractJson, withModelFallback } from './llm';
 import type { BrainContext } from './types';
 import { clip } from './text';
+import { CONVERSATION_LINES } from './prompt';
 
 /**
  * The rewrite step (learned from Otto, backend/lib/hr-assistant/planner.ts on main): BEFORE understanding, turn a short or
@@ -14,10 +15,11 @@ import { clip } from './text';
  *  - The understand step sees BOTH: the person's own message (still the "message") and this rewrite as a helper.
  *  - Any failure, slow answer, or doubtful rewrite (a name or number that is not in the chat) -> null, and the bot
  *    carries on with the original message, exactly as today.
- *  - Uses the cheap reply models (doctrine L10: a wrong rewrite is caught downstream, so the cost of a mistake here is low).
+ *  - Owner 2026-10-22: Claude Haiku first, the backup models after it (a wrong rewrite is still caught downstream).
  */
 
-export const REWRITE_CONVERSATION_LINES = 6;
+/** Owner 2026-10-22: the same last 5 messages every step sees (prompt.ts CONVERSATION_LINES). */
+export const REWRITE_CONVERSATION_LINES = CONVERSATION_LINES;
 const MAX_REWRITE_CHARS = 300;
 /** The webhook decides in ~2-3 s; the rewrite may add at most this much before we give up on it. */
 export const REWRITE_TIMEOUT_MS = 4_000;
@@ -68,7 +70,7 @@ export async function rewriteMessage(p: { llm: BrainLlm; message: string; ctx: B
 
     let tokensIn = 0, tokensOut = 0;
     const user = JSON.stringify({ chat: lines, new_message: p.message });
-    const work = withModelFallback(p.models ?? BRAIN_REPLY_MODELS, async model => {
+    const work = withModelFallback(p.models ?? BRAIN_REWRITE_MODELS, async model => {
         const res = await p.llm.complete({ model, system: REWRITE_SYSTEM, user, json: true, maxTokens: 200 });
         tokensIn += res.tokensIn; tokensOut += res.tokensOut;
         const j = extractJson(res.text) as { request?: unknown } | null;

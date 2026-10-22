@@ -19,29 +19,31 @@ export interface LlmResponse { text: string; tokensIn: number; tokensOut: number
 export interface BrainLlm { complete(req: LlmRequest): Promise<LlmResponse> }
 
 /**
- * Chosen by the Phase 2 measurement (140 labelled cases, see docs/TASK_BRAIN_SPEC.md), following doctrine L10:
- * the model at the step where a wrong guess is costly (understanding what the person means) is the most careful one;
- * the step the checker already protects (writing the reply) uses the faster, cheaper one. Each falls back to the other.
+ * The cheaper backup models (Engy: COUNCIL_API_KEY in .env). Owner 2026-10-22: GLM first, then Qwen.
+ * Chosen originally by the Phase 2 measurement (140 labelled cases, see docs/TASK_BRAIN_SPEC.md).
  */
-const DEFAULT_INTERPRET_MODELS: readonly string[] = ['glm-5.3-flash', 'qwen3.8-27b'];
+export const BACKUP_MODELS: readonly string[] = ['glm-5.3-flash', 'qwen3.8-27b'];
 
 /**
- * Step 5 (owner 2026-10-21): the bot's own settings live HERE in code, not in .env (owner: "no separate configs").
- *   STRONGER_UNDERSTAND_MODEL  the model tried FIRST for understanding ("anthropic:" = Claude, "groq:" = Groq). The usual models stay after it
- *                              as backups, so a Groq outage, rate limit or missing key never stops the bot. '' = off.
- *   TWO_STEP_READING           step 3 (kind first, then details). Flip to true only after run_eval.ts --two-step wins.
- * Replies are NOT affected: they stay on the cheap models.
+ * Owner 2026-10-22: the WhatsApp chatbot runs on Claude Haiku for EVERY step (understanding, the rewrite, the reply), with
+ * the backup models after it, so a Claude outage, rate limit, missing key or empty credit never stops the bot.
+ * The bot's own settings live HERE in code, not in .env (owner: "no separate configs"). '' = Claude off (backups only).
+ *   TWO_STEP_READING  step 3 (kind first, then details). Flip to true only after run_eval.ts --two-step wins.
+ * Measured 2026-10-21 (real set, 8 cases): Claude Haiku 7/8 vs glm-5.3-flash 3/8 and Groq gpt-oss-120b 0/8.
  */
-// Owner 2026-10-21: Groq's free plan allowed ~1 message a minute per key (every key answered 429 in the first test), so the
-// understanding step uses Claude Haiku instead. The Groq code stays, for a paid Groq plan later.
-export const STRONGER_UNDERSTAND_MODEL = 'anthropic:claude-haiku-5-5';
+export const CHATBOT_MODEL = 'anthropic:claude-haiku-5-5';
+/** Kept under its old name: the model tried FIRST for understanding. */
+export const STRONGER_UNDERSTAND_MODEL = CHATBOT_MODEL;
 export const TWO_STEP_READING = false;
 
 export function interpretModelsWith(first: string): readonly string[] {
-    return first ? [first, ...DEFAULT_INTERPRET_MODELS.filter(m => m !== first)] : DEFAULT_INTERPRET_MODELS;
+    return first ? [first, ...BACKUP_MODELS.filter(m => m !== first)] : BACKUP_MODELS;
 }
-export const BRAIN_INTERPRET_MODELS: readonly string[] = interpretModelsWith(STRONGER_UNDERSTAND_MODEL);
-export const BRAIN_REPLY_MODELS: readonly string[] = ['qwen3.8-27b', 'glm-5.3-flash'];
+export const BRAIN_INTERPRET_MODELS: readonly string[] = interpretModelsWith(CHATBOT_MODEL);
+export const BRAIN_REPLY_MODELS: readonly string[] = interpretModelsWith(CHATBOT_MODEL);
+export const BRAIN_REWRITE_MODELS: readonly string[] = interpretModelsWith(CHATBOT_MODEL);
+/** Voice-note clean-up is NOT the chatbot: it keeps the cheap models it was measured with (docs/VOICE_NOTE_INTAKE_PLAN.md). */
+export const CHEAP_CLEANUP_MODELS: readonly string[] = ['qwen3.8-27b', 'glm-5.3-flash'];
 
 // Measured: the slower model answers in about 4 s (p90 6 s) but the provider occasionally stalls. 30 s made a stall feel like
 // a dead bot; 15 s lets the other model take over quickly (each model gets one try, then the next).
@@ -148,24 +150,27 @@ export const ANTHROPIC_PREFIX = 'anthropic:';
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 
 /**
- * The WhatsApp task bot's OWN Claude keys (owner 2026-10-21), never shared with other features:
- *   WHATSAPP_BOT_ANTHROPIC_API_KEY, WHATSAPP_BOT_ANTHROPIC_API_KEY_2, … up to _5
- * Tried in order: a rate limit (429), a bad key (401/403), an overload (529) or server error (5xx), or a timeout moves on
- * to the next key; when every key fails, the usual models answer. Keys are never logged or printed.
+ * The WhatsApp chatbot's Claude key (owner 2026-10-22): ONE key, named CLAUDE_API_KEY in .env / .env.local / Vercel.
+ * When it is missing, rate-limited, out of credit or Claude is down, the backup models answer instead.
+ * The key is never logged or printed.
  */
-export const BOT_ANTHROPIC_KEY_NAMES = ['WHATSAPP_BOT_ANTHROPIC_API_KEY', ...[2, 3, 4, 5].map(n => `WHATSAPP_BOT_ANTHROPIC_API_KEY_${n}`)];
+export const BOT_ANTHROPIC_KEY_NAMES = ['CLAUDE_API_KEY'];
 export function botAnthropicKeys(env: Record<string, string | undefined> = process.env): string[] {
     return BOT_ANTHROPIC_KEY_NAMES.map(n => String(env[n] ?? '').trim()).filter(Boolean);
 }
 
+export const CLAUDE_THINKING_ROOM = 1000;
+
 /** One call to Claude (Messages API). The prompts already ask for JSON only; extractJson tolerates a little text around it. */
 export async function anthropicComplete(req: LlmRequest, timeoutMs = TIMEOUT_MS): Promise<LlmResponse> {
     const keys = botAnthropicKeys();
-    if (!keys.length) throw new Error('no WhatsApp bot Claude key is configured');
+    if (!keys.length) throw new Error('CLAUDE_API_KEY is not set');
     const body = JSON.stringify({
         model: req.model.slice(ANTHROPIC_PREFIX.length),
-        max_tokens: req.maxTokens ?? 1200,
-        temperature: 0,
+        // Room for Haiku's short built-in thinking before the answer: it counts against max_tokens, and without the extra room
+        // a small budget (the rewrite asks for 200) could be used up before any answer was written. Only what is used is paid.
+        max_tokens: (req.maxTokens ?? 1200) + CLAUDE_THINKING_ROOM,
+        // No `temperature`: Claude 5.x models reject it with HTTP 400 ("deprecated for this model").
         system: req.system,
         messages: [{ role: 'user', content: req.user }],
     });
@@ -189,7 +194,7 @@ export async function anthropicComplete(req: LlmRequest, timeoutMs = TIMEOUT_MS)
         if (!text.trim()) throw new Error(`Claude returned nothing (stop_reason=${j?.stop_reason ?? 'unknown'})`);
         return { text, tokensIn: j?.usage?.input_tokens ?? 0, tokensOut: j?.usage?.output_tokens ?? 0, finishReason: j?.stop_reason };
     }
-    throw new Error(`every WhatsApp bot Claude key failed (${problems.join('; ')})`);
+    throw new Error(`Claude failed (${problems.join('; ')})`);
 }
 
 /** Pull one JSON object out of a model reply (tolerates code fences and a little prose around it). */

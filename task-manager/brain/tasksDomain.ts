@@ -1005,7 +1005,7 @@ function replyFacts(decision: Decision, ctx: BrainContext, result?: ExecutionRes
         return { kind: 'help', describe: 'Briefly tell the person what you can help with, then show the list.', values: { capabilities: CAPABILITIES }, required: ['capabilities'], asksQuestion: false, claimsNothingDone: false, names: [sender.name], fallback: `Here's what I can do:\n${CAPABILITIES}` };
     }
     if (a.type === 'chat') {
-        return { kind: 'smalltalk', describe: 'Reply in one or two warm, short sentences. If they ask about this conversation ("what did I just ask?"), answer briefly from the recent conversation, without numbers. If it fits, mention you can help with their tasks.', values: {}, required: [], asksQuestion: false, claimsNothingDone: false, names: [sender.name], fallback: 'Happy to help. Ask me about your tasks any time.' };
+        return { kind: 'smalltalk', describe: 'They are chatting; nothing is being changed. Reply naturally to what they said, following the recent conversation: answer a question about the chat ("why did you do that?", "what did I just ask?") from it, react to thanks, greetings, jokes or complaints like a friendly colleague would. Keep it short. Only if it fits, mention you can help with their tasks.', values: {}, required: [], asksQuestion: false, claimsNothingDone: false, names: [sender.name], fallback: 'Happy to help. Ask me about your tasks any time.' };
     }
     if (a.type === 'find_tasks') {
         // Flexible "look up tasks": the answer (with the filters it used) is written by code from the real rows.

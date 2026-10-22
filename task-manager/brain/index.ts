@@ -35,7 +35,7 @@ export interface BrainDeps {
     rewriteModels?: readonly string[];
     /** Turn the rewrite step off (default on; it only ever runs when there is an earlier chat). */
     rewrite?: boolean;
-    /** Step 4: natural replies when nothing changes (default on; false = the strict rules for every reply). */
+    /** Natural replies for everything except a preview waiting for a yes (default on; false = the strict rules for every reply). */
     freeReplies?: boolean;
     /** Step 3: read the kind first, then that kind's details (default: TWO_STEP_READING in llm.ts). */
     twoStep?: boolean;
@@ -150,8 +150,10 @@ export async function composeBrainReply(p: {
     // Part B1: only a CONFIRM leaves a yes waiting. Every other reply must not ask "should I…?" (a domain may say otherwise
     // explicitly, e.g. an unclear answer to a question that still stands).
     const strictFacts = raw.noYesNoQuestion === undefined && p.decision.outcome !== 'CONFIRM' ? { ...raw, noYesNoQuestion: true } : raw;
-    // Step 4 (owner 2026-10-21): nothing changes (an answer, a chat, a list) -> write freely. Previews, questions and changes stay strict.
-    const facts = changesNothing(p.decision) && !strictFacts.asksQuestion && p.deps.freeReplies !== false ? { ...strictFacts, free: true } : strictFacts;
+    // Owner 2026-10-22 (learned from Otto): strict ONLY at the moment of change, i.e. a preview / "should I…?" that waits for a
+    // yes (CONFIRM). Everything else (chats, answers, lists, a question on the way to a request, what was just done) is
+    // written freely and naturally. The facts still come only from `facts`, and the checker still rejects wrong facts.
+    const facts = p.decision.outcome !== 'CONFIRM' && p.deps.freeReplies !== false ? { ...strictFacts, free: true } : strictFacts;
     const ctx = p.ctx;
     // Part B5: the reply writer also sees the latest chat lines, so its words follow the conversation; their words count as
     // "given" (it may quote them). What HAPPENED still comes only from `facts`, and the checker still guards every claim.

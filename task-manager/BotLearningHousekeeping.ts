@@ -39,9 +39,10 @@ export function budgeted(base: BrainLlm, state: Pick<EvalState, 'costUsd'>): Bra
 }
 
 async function allCases(): Promise<Array<{ c: EvalCase; ctx: any; team: boolean }>> {
-    const [{ EVAL_CASES }, { HINGLISH_CASES, TEAM_CASES }, { REAL_CASES }, { world }] = await Promise.all([import('./brain/eval/cases'), import('./brain/eval/cases_phase4'), import('./brain/eval/cases_real'), import('./brain/eval/worlds')]);
-    // Owner 2026-10-21 (step 6): the real chats that went wrong (Sher, Sanil) are part of every nightly test, with their chat lines.
-    const built = [...EVAL_CASES.map(c => ({ c, team: false })), ...HINGLISH_CASES.map(c => ({ c, team: false })), ...TEAM_CASES.map(c => ({ c, team: true })), ...REAL_CASES.map(c => ({ c, team: false }))]
+    const [{ EVAL_CASES }, { REAL_CASES }, { world }] = await Promise.all([import('./brain/eval/cases'), import('./brain/eval/cases_real'), import('./brain/eval/worlds')]);
+    // Owner 2026-10-22: the 20-case set (15 + the 5 real chats that went wrong, with their chat lines). The Hinglish and
+    // team sets were removed to keep every paid run small.
+    const built = [...EVAL_CASES.map(c => ({ c, team: false })), ...REAL_CASES.map(c => ({ c, team: false }))]
         .map(x => ({ ...x, ctx: { ...world(x.c.world || 'default', x.c.pending ?? null), ...(x.c.conversation?.length ? { conversation: x.c.conversation } : {}) } }));
     const { data, error } = await supabaseAdmin.from(tables.CASES).select('case_key,message_text,context_snapshot,expectation').order('created_at', { ascending: true });
     if (error) throw error;
