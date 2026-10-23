@@ -1,3 +1,107 @@
+## 2026-10-23 — FMS CRM: website enquiries from the Total Environment landing page now become CRM leads
+
+**A new public form endpoint turns every site-visit request on the TE Whitefield page into a CRM lead and emails Harshini and Saniel.**
+
+- **Why:** The landing page's booking form only opened the visitor's own email app. A lead was lost every time the visitor did not press Send, and nothing reached the CRM.
+- **Structural decisions:** One new public endpoint for website forms. It reuses the shape the Meta lead-ads webhook already uses: same lead fields, same default status, same round-robin rules and the same new-lead WhatsApp alert. The lead source is the existing "Website" source. The lead is owned by an org admin and belongs to the Autopilot organisation. There is no login, because website visitors have none. Instead the endpoint allows five submissions per minute per visitor, has a hidden trap field for bots, and checks every field. If saving to the CRM fails, the email still goes out with a note saying so, so no enquiry is lost. The alternative, a separate form tool such as a Google Sheet, lost because leads would sit outside the CRM.
+- **What works now:** A visitor fills in name, company, seats, move-in timing and phone, then slides to book. The FMS creates a lead marked "TE Whitefield landing page". Leads wanting to move in immediately are marked High priority. Harshini and Saniel get an email with the details, and CRM admins get the usual new-lead alert. If the FMS cannot be reached, the page falls back to opening an email draft to both of them.
+- **Left undone:** Not deployed. The route is committed on a clean branch, feat/website-lead-intake, but pushing to GitHub was refused because this machine is signed in as an account without write access to the saas_one repository. fms-dev-saas-one.vercel.app does not have the endpoint until someone with access pushes and merges it. No real lead was submitted in testing, because that would write to the live database and email both people. Only the reject, bot-trap and cross-site paths were tested. The landing page is not hosted anywhere public yet.
+- **Open questions for the founder:** Who should own these leads by default? Today they follow the Lead Distribution rules, and stay unassigned if no rule matches "TE Whitefield landing page" or "Bengaluru". Is Saniel's address correct as worksquare.in?
+
+## 2026-10-23 — FMS CRM: Lead Distribution screen could not load reps or rules
+
+**Fixed the server request behind the Lead Distribution screen so rules and the rep picker load again.**
+
+- **Why:** Admins could not create or see lead-routing rules. The screen showed "No distribution rules yet" and an empty "Assign To" list, so incoming Bangalore leads could not be pointed at Harshini. The request that loads rules was failing because the rule-members table is linked to the login table, not the profile table, and the database layer refused to join the two.
+- **Structural decisions:** Kept the database as it is and changed the server code to look up rep names in a second small query instead of a join. The alternative, a migration adding a second link on the members table, would have needed a database change for a display-only problem.
+- **What works now:** Lead Distribution lists existing rules with rep names, the rep picker fills, and Create Rule saves and returns the saved rule. Lead routing itself never used the broken join, so saved rules fire as before.
+- **Left undone:** Not verified in the browser (no dev server running, local database key invalid). The seeded rules still point both "bengaluru" and "bangalore" at Manjunath unless an admin changes them; a rule for "bengaluru" may already have been switched to Harshini by a save attempt made before this fix. Both spellings need checking in the app.
+- **Open questions for the founder:** Should Harshini take both the "bengaluru" and "bangalore" keywords, and should Manjunath's existing open leads also move to her?
+
+## 2026-10-23 — Saas.one: AOP Bounty (first version) and the decision pack for the CEO review
+
+**A new "AOP Bounty" inbox in the org super admin, ops super admin and Purchase logins lists, for the month, every AOP figure still missing, every invoice waiting on a decision, every urgent payment waiting on an approver, and every PO that cannot be filed, each with an owner and a deadline, and asks the owners until it has them. A decision pack with every open question was published for the 24 October review. Written and tested in code; the database change is not applied and the daily job is not deployed.**
+
+- **Why:** The AOP sheet was filled at month end by chasing people over mail and WhatsApp from memory. The facts it needs already arrive in the app one by one; nothing tied "what is still missing" to a person and a clock. The founder asked for a bounty on every line item at every site, in a feed that reads like an inbox rather than a wall of totals.
+- **Structural decisions:**
+  - **A bounty is closed by its fact, never by hand-typing a number.** It closes when the actual lands on the cell, the invoice is decided, the fast-track is approved or rejected, the PO is classified, or the vendor message goes out. The owner may also answer it ("no spend this month", "will be in by the 25th", a note). It never writes an AOP figure itself.
+  - **It waits before it asks.** Each site x line remembers the day the invoice is normally in by and the vendor's billing cadence (for example every 60 days from August). Before that day the bounty sits quiet; after it, the owner is asked at most every two days; past month end it is escalated to Operations once.
+  - **Owners are a role group by default (Purchase, Accounts, Operations, Approver), overridable per line or per site by an admin,** and remembered for future months. Lines fed automatically (electricity, diesel, water, petty cash) never raise a bounty.
+  - **The inbox shows comparisons, not totals:** each row carries the previous two months' figures, how many times it has been asked, and the due date, grouped Today / Yesterday / Last 7 days / Earlier like a mail client.
+  - **Access is the Payment Tracker's rule:** org super admins, ops super admins, accounts and purchase. Property admins are not admitted.
+- **What works now (once applied and deployed):** the AOP Bounty entry in the org-admin sidebar (ops super admins use the same shell) and in the Procurement sidebar; month navigation; Open / Mine / All; ask now, answer, set the vendor's billing pattern, assign an owner; a daily job that refreshes, asks and escalates; bell alerts and emails to the owners.
+- **Left undone:**
+  - **The database change is not applied** (`supabase/migrations/20261023000002_aop_bounty.sql`) and the daily job only runs once deployed with the new `vercel.json` entry.
+  - **Not opened in a browser signed in.** Rules, grouping, cadence and the tables are tested; the screen is type-checked and linted only.
+  - **No site mapping yet:** PO sites (Zoho names) are not yet linked to AOP sites, so a "figure" bounty cannot yet say which POs or invoices belong to it. That is the next piece, after the mapping decisions in the pack.
+  - **WhatsApp pings are not built;** email and the in-app bell only. The template for the ambiguous-invoice question is drafted in the decision pack and needs Meta approval.
+  - **The "actual" feed from paid invoices into the AOP is not built,** so today a figure bounty is closed by the existing manual or imported entry, or by the owner's answer.
+- **Open questions for the founder:** all collected in the decision pack (sections A to E): approval limits, the invoice clock, who is told on an override, waivers, Live vendor messaging, the AOP amount/month/Capex rules, line owners and the roles of Shri and Rushabh, payment cadence policy, the integrations, the Purchase SPOC list, evidence on Align, Managed Ops sites, reminders, booking, bills@, the monthly close day, and the site mapping.
+
+## 2026-10-23 — Saas.one: Live invoice progress and exact reasons on Align
+
+**While an invoice is read and checked, the person who uploaded it now sees simple live steps. When it does not match, every screen that judges it says exactly what is wrong, in words and rupees, instead of check names. Written and tested in code; not yet seen signed in.**
+
+- **Why:** The Align warning listed "po eligible, po balance check, line item mapping", which tells nobody what to fix. People also had no sign that an upload was being worked on.
+- **Structural decisions:**
+  - **One source of wording.** A single translator turns the stored check results into sentences with the real figures, for example "The invoice total ₹4,96,780 is ₹1,03,250 more than what is left on the PO (₹3,93,530)" and "2 lines on the invoice are not on the PO: "Floor surface grinding…", "Debris collection…"". The Align screen, the invoice screen and the PO's Documents tab all use it, so they cannot disagree. A check with no wording of its own falls back to the engine's own sentence, so nothing is dropped.
+  - **Four plain steps, no detail:** Received, Reading the invoice, Checking against the PO, Done. They are worked out from existing fields, so no database change was needed.
+  - **A misread GSTIN says it may be a misread,** rather than accusing the vendor of being wrong.
+- **What works now:** Align shows the plain reasons and what to do next, waits with a spinner while the invoice is still being checked, and shows "No invoice attached" with the instruction to upload when there is none. The invoice screen shows the steps, then a green "Matches the PO" or an amber box with the reasons. A live line appears under the Tax invoice row on the PO's Documents tab.
+- **Left undone:**
+  - **Aligning despite a mismatch is stored and shown to Accounts only when they mark the payment paid.** It is not shown to super admins, is not in the aligned email, and is not in the PO's activity timeline. See the open questions.
+  - **Older invoices keep their old stored result** until someone clicks Re-check, so an invoice checked before its PO was approved still says "PO not approved".
+  - **Not seen signed in.**
+- **Open questions for the founder:**
+  - When Purchase aligns a payment against an invoice that does not match, who must be told, and where: super admins, Accounts, or both? (Today: nobody, until Accounts opens Mark paid.)
+  - Should an aligned-without-invoice payment appear as a list for the founder to review?
+
+## 2026-10-23 — Saas.one: Approval watcher, vendor WhatsApp on real approval, invoices uploaded on the PO page now checked
+
+**When the founder approves a PO in Zoho, the system now notices within 10 minutes and WhatsApps the vendor the approved PO. Invoices uploaded on a PO's own page now go through the same reader and matcher, so the Align screen can judge them. Written and tested in code; the database change is not applied, the new job is not deployed, and nothing has been sent.**
+
+- **Why:** Purchase raises POs, the founder approves them in Zoho, and the vendor should hear the moment that happens. Before this, only a test button did it. Separately, an invoice uploaded in the PO's own page was invisible to Invoice Control, so the Align screen said "no invoice" for a PO that had one, and a dummy file passed unchecked.
+- **Structural decisions:**
+  - **A 10-minute check, not a new service.** One small Vercel job asks Zoho which POs are waiting for approval and which were approved since the last look, then sends. With the switch off it does one database read and stops; with it on it makes at most three read-only Zoho calls. It was chosen as the cheapest way that does not need Zoho admin work. A Zoho webhook can be added later for instant delivery; the receiving endpoint is built and safe to run alongside the check.
+  - **A watch list, not "every approved PO".** 3,455 POs are already approved. Only a PO the job saw waiting for approval, or one created after the switch was turned on, can ever be messaged. A test proves old approved POs are untouched.
+  - **One automatic message per PO, ever,** enforced by the database, plus a claim before sending so two overlapping runs cannot both send.
+  - **A three-position switch: Off, Test, Live,** set by a super admin in the Policy tab. It starts Off. Test sends real approvals to the test number; Live sends to the vendor's own number. You asked for real vendors straight away, so Live exists, but nothing is sent until someone chooses it.
+  - **A vendor with no WhatsApp number is flagged on the PO row** ("Vendor has no WhatsApp number. Add it in Zoho, then click Send WhatsApp") and is not retried automatically. Only 345 of 851 vendors have a number in the app; the job also looks at the Zoho contact before giving up.
+  - **Invoices uploaded on the PO page are copied into Invoice Control and read there.** The original document is untouched. A file that is not a PDF, JPEG or PNG is registered anyway and shows as "could not read", so it cannot slip through.
+- **What works now (once applied and deployed):** real approvals trigger the vendor message with the PO PDF; the 48-hour invoice clock starts at approval and shows on the PO row; the row shows sent, no number, or failed; Purchase can resend once a number is added; the Policy tab shows the switch and the last check.
+- **Left undone:**
+  - **The database change is not applied** (`supabase/migrations/20261023000001_po_approval_watch.sql`), and the job only runs once deployed with the new `vercel.json` entry.
+  - **Nothing has been sent.** The AiSensy campaign for the template must exist and be active.
+  - **The Zoho webhook is not set up;** it needs a secret and a rule in Zoho.
+  - **A PO raised and approved inside the same 10 minutes is only caught if it was created after the switch was turned on.**
+  - **The Align prompt was built in a parallel piece of work** and is not changed here. It asks for a written reason when the invoice is missing or does not agree; it does not block.
+  - **The 48-hour clock only shows on screen;** there is no reminder.
+- **Open questions for the founder:**
+  - When Live is switched on, any PO still waiting for approval at that moment will message its real vendor the moment it is approved, including POs raised weeks ago. Is that wanted, or should old waiting POs be excluded?
+  - Should Purchase be able to add a missing vendor number inside the app, rather than only in Zoho?
+
+## 2026-10-22 — Saas.one: Simulated PO approval and approved-PO WhatsApp
+
+**A super admin can now simulate a PO's approval inside the app and send the approved-PO WhatsApp, with the PO as a PDF, to a test number. Written and tested in code; the database change is not applied and nothing has been sent yet.**
+
+- **Why:** The five MVP POs cannot be approved in Zoho right now, but the whole flow (invoice upload, matching, payment milestones) waits for "approved". The WhatsApp template `po_approved_vendor_notification` is now approved by Meta and is the first message a vendor should get.
+- **Structural decisions:**
+  - **Simulation lives in this app only.** It is recorded in a new table and shown as SIMULATED. Zoho is never written to, and a real approval in Zoho takes over on the next sync. The alternative, editing the PO status in our copy of the data, was rejected because the Zoho sync overwrites it every two hours and nothing would record that it was simulated.
+  - **The WhatsApp goes only to a test number a super admin sets.** There is no code path that reads a vendor's own phone number, and a test asserts that.
+  - **The PO PDF is fetched from Zoho (read-only) and kept as our own private copy,** then shared with the WhatsApp provider through a link that works for one day.
+  - **The value in the message is the tax-inclusive PO total, formatted in Indian grouping** (for example 1,47,500), with the rupee sign kept in the template text.
+- **What works now (once applied):** a "Simulate approval" button on each PO waiting for approval (super admins only). It shows the exact message first, records the approval, starts a 48-hour invoice clock shown on the PO row, treats the PO as approved for invoices and the payment plan, and sends the WhatsApp. A failed send is recorded with its error and can be resent.
+- **Left undone:**
+  - **The database change is not applied** (`supabase/migrations/20261022000001_po_approval_simulation.sql`).
+  - **Nothing has been sent.** The WhatsApp provider's campaign for this template must exist and be active in the provider dashboard; Meta approval alone is not enough. The first send will show whether it does.
+  - **Real approvals do not trigger the message yet.** Only the simulate button does. Sending automatically when Zoho approves a PO is not built.
+  - **Sending to real vendors is not built,** deliberately.
+  - **The invoice-upload link is not in the message.** The approved template has none; the founder will add a template for that.
+  - **The 48-hour clock only shows on screen.** There is no reminder, and it is a different clock from the 3-days-after-payment rule discussed on the call.
+- **Open questions for the founder:**
+  - Should the 48-hour invoice clock and the 3-days-after-payment rule be one rule or two?
+  - When real vendors are switched on, who owns the vendor phone number: the Zoho vendor record, or the vendor profile in the app?
+
 ## 2026-10-20 — Saas.one: PO payment plan (payment terms turned into clickable milestones)
 
 **Each PO's payment terms are now read into a plan of milestones that Purchase confirms, records progress against, and clicks when a payment falls due. Built and tested in code; the database change is written but not applied.**
