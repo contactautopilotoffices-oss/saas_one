@@ -147,6 +147,7 @@ export async function POST(
                 end_time: item.end_time || null,
                 parameters: sanitizeParams(item.parameters),
                 reference_photo_url: item.reference_photo_url || null,
+                reference_photos: Array.isArray(item.reference_photos) ? item.reference_photos : [],
                 reference_photo_source: item.reference_photo_source || null,
                 cad_area_id: item.cad_area_id || null,
             }));

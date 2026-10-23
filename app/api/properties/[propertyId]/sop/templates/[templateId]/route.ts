@@ -108,7 +108,7 @@ export async function PUT(
             const toInsert: any[] = [];
 
             items.forEach((item: any, index: number) => {
-                const itemData = {
+                const itemData: any = {
                     template_id: templateId,
                     title: item.title,
                     description: item.description || '',
@@ -126,9 +126,14 @@ export async function PUT(
                     cad_area_id: item.cad_area_id || null,
                 };
 
+                if (Array.isArray(item.reference_photos)) {
+                    itemData.reference_photos = item.reference_photos;
+                }
+
                 if (item.id && existingIds.has(item.id)) {
                     toUpdate.push({ id: item.id, ...itemData });
                 } else {
+                    if (!itemData.reference_photos) itemData.reference_photos = [];
                     toInsert.push(itemData);
                 }
             });

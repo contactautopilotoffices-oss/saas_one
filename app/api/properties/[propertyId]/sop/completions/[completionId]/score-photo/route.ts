@@ -79,10 +79,10 @@ export async function POST(
             });
         }
 
-        // Load the completion item (field photo + checked_at capture timestamp)
+        // Load the completion item (field photos + checked_at capture timestamp)
         const { data: completionItem, error: itemError } = await supabaseAdmin
             .from('sop_completion_items')
-            .select('id, photo_url, checklist_item_id, checked_at, ai_cleanliness_score, ai_cleanliness_reason, ai_parameter_scores, ai_reference_used, ai_analyzed_at')
+            .select('id, photo_url, photos, ai_photo_matches, checklist_item_id, checked_at, ai_cleanliness_score, ai_cleanliness_reason, ai_parameter_scores, ai_reference_used, ai_analyzed_at')
             .eq('id', completionItemId)
             .eq('completion_id', completionId)
             .maybeSingle();
@@ -91,7 +91,17 @@ export async function POST(
             return NextResponse.json({ error: 'Completion item not found' }, { status: 404 });
         }
 
-        if (!completionItem.photo_url) {
+        // Gather field photos: support photos JSONB array with fallback to photo_url
+        const rawFieldPhotos: Array<{ id: string; url: string; captured_at?: string }> =
+            Array.isArray(completionItem.photos) && completionItem.photos.length > 0
+                ? completionItem.photos.map((p: any, idx: number) => ({
+                    id: p.id || `photo_${idx + 1}`,
+                    url: typeof p === 'string' ? p : p.url,
+                    captured_at: p.captured_at || completionItem.checked_at,
+                }))
+                : (completionItem.photo_url ? [{ id: 'photo_1', url: completionItem.photo_url, captured_at: completionItem.checked_at }] : []);
+
+        if (rawFieldPhotos.length === 0) {
             return NextResponse.json({ error: 'No photo uploaded for this step yet' }, { status: 400 });
         }
 
@@ -110,14 +120,15 @@ export async function POST(
                 pass: completionItem.ai_cleanliness_score >= 70,
                 parameters: completionItem.ai_parameter_scores || [],
                 parameterScores: completionItem.ai_parameter_scores || [],
+                matches: completionItem.ai_photo_matches || [],
                 referenceUsed: completionItem.ai_reference_used,
             });
         }
 
-        // Load the checklist item (reference config & sub-parameters)
+        // Load the checklist item (reference benchmarks & sub-parameters)
         const { data: checklistItem, error: checklistError } = await supabaseAdmin
             .from('sop_checklist_items')
-            .select('id, title, reference_photo_url, reference_photo_source, cad_area_id, parameters')
+            .select('id, title, reference_photo_url, reference_photos, reference_photo_source, cad_area_id, parameters')
             .eq('id', completionItem.checklist_item_id)
             .maybeSingle();
 
@@ -125,23 +136,26 @@ export async function POST(
             return NextResponse.json({ error: 'Checklist item not found' }, { status: 404 });
         }
 
-        // Determine the reference image (Clean reference photo has highest priority over CAD 2D floor plan crop)
-        let referenceBuffer: Buffer | null = null;
-        let referenceUsed: 'cad' | 'uploaded' | null = null;
-
-        if (checklistItem.reference_photo_url) {
-            try {
-                const refResponse = await fetch(checklistItem.reference_photo_url);
-                if (refResponse.ok) {
-                    referenceBuffer = Buffer.from(await refResponse.arrayBuffer());
-                    referenceUsed = 'uploaded';
-                }
-            } catch (refErr) {
-                console.error('[AI Score] Reference photo fetch failed:', refErr);
-            }
+        // Gather clean benchmark standards: support reference_photos JSONB array with fallback to reference_photo_url
+        let rawBenchmarks: Array<{ id: string; label: string; url: string; source: 'uploaded' | 'cad' }> = [];
+        if (Array.isArray(checklistItem.reference_photos) && checklistItem.reference_photos.length > 0) {
+            rawBenchmarks = checklistItem.reference_photos.map((r: any, idx: number) => ({
+                id: r.id || `ref_${idx + 1}`,
+                label: r.label || `Clean Standard ${idx + 1}`,
+                url: r.url,
+                source: 'uploaded' as const,
+            }));
+        } else if (checklistItem.reference_photo_url) {
+            rawBenchmarks = [{
+                id: 'ref_1',
+                label: 'Clean Standard Benchmark',
+                url: checklistItem.reference_photo_url,
+                source: 'uploaded' as const,
+            }];
         }
 
-        if (!referenceBuffer && checklistItem.cad_area_id) {
+        let cadFallbackBuffer: Buffer | null = null;
+        if (rawBenchmarks.length === 0 && checklistItem.cad_area_id) {
             // Fallback to CAD area crop if no clean photo uploaded
             const { data: template } = await supabaseAdmin
                 .from('sop_templates')
@@ -160,17 +174,15 @@ export async function POST(
                             const imgW = meta.width || 0;
                             const imgH = meta.height || 0;
 
-                            // Clamp crop region to image bounds
                             const left = Math.max(0, Math.min(Math.round(area.coordinates.x), imgW - 1));
                             const top = Math.max(0, Math.min(Math.round(area.coordinates.y), imgH - 1));
                             const width = Math.max(1, Math.min(Math.round(area.coordinates.width), imgW - left));
                             const height = Math.max(1, Math.min(Math.round(area.coordinates.height), imgH - top));
 
-                            referenceBuffer = await sharp(cadBuffer)
+                            cadFallbackBuffer = await sharp(cadBuffer)
                                 .extract({ left, top, width, height })
                                 .png()
                                 .toBuffer();
-                            referenceUsed = 'cad';
                         }
                     } catch (cropErr) {
                         console.error('[AI Score] CAD crop failed:', cropErr);
@@ -179,7 +191,7 @@ export async function POST(
             }
         }
 
-        if (!referenceBuffer || !referenceUsed) {
+        if (rawBenchmarks.length === 0 && !cadFallbackBuffer) {
             return NextResponse.json({
                 success: true,
                 skipped: true,
@@ -187,32 +199,85 @@ export async function POST(
             });
         }
 
-        // Fetch the field photo
-        let fieldBuffer: Buffer;
-        try {
-            const fieldResponse = await fetch(completionItem.photo_url);
-            if (!fieldResponse.ok) throw new Error(`Photo fetch failed: ${fieldResponse.status}`);
-            fieldBuffer = Buffer.from(await fieldResponse.arrayBuffer());
-        } catch (photoErr: any) {
+        // Fetch and optimize benchmarks (up to 5 benchmarks max)
+        const benchmarkItems: Array<{ id: string; label: string; url: string | null; base64: string; buffer: Buffer; hash: string }> = [];
+        let referenceUsed: 'cad' | 'uploaded' = 'uploaded';
+
+        if (cadFallbackBuffer) {
+            referenceUsed = 'cad';
+            const cadPng = await sharp(cadFallbackBuffer).resize({ width: 640, withoutEnlargement: true }).png().toBuffer();
+            const hash = crypto.createHash('sha256').update(cadFallbackBuffer).digest('hex');
+            benchmarkItems.push({
+                id: 'cad_ref',
+                label: 'CAD Floor Plan Blueprint',
+                url: null,
+                buffer: cadFallbackBuffer,
+                base64: `data:image/png;base64,${cadPng.toString('base64')}`,
+                hash,
+            });
+        } else {
+            for (const b of rawBenchmarks.slice(0, 5)) {
+                try {
+                    const res = await fetch(b.url);
+                    if (res.ok) {
+                        const buf = Buffer.from(await res.arrayBuffer());
+                        const png = await sharp(buf).resize({ width: 640, withoutEnlargement: true }).png().toBuffer();
+                        const hash = crypto.createHash('sha256').update(buf).digest('hex');
+                        benchmarkItems.push({
+                            id: b.id,
+                            label: b.label,
+                            url: b.url,
+                            buffer: buf,
+                            base64: `data:image/png;base64,${png.toString('base64')}`,
+                            hash,
+                        });
+                    }
+                } catch (bErr) {
+                    console.error(`[AI Score] Benchmark fetch failed for ${b.label}:`, bErr);
+                }
+            }
+        }
+
+        if (benchmarkItems.length === 0) {
+            return NextResponse.json({
+                success: true,
+                skipped: true,
+                reason: 'Unable to load benchmark images for comparison',
+            });
+        }
+
+        // Fetch and optimize field photos (up to 5 photos max)
+        const fieldPhotoItems: Array<{ id: string; url: string; captured_at?: string; base64: string; buffer: Buffer; hash: string }> = [];
+        for (const p of rawFieldPhotos.slice(0, 5)) {
+            try {
+                const res = await fetch(p.url);
+                if (res.ok) {
+                    const buf = Buffer.from(await res.arrayBuffer());
+                    const png = await sharp(buf).resize({ width: 640, withoutEnlargement: true }).png().toBuffer();
+                    const hash = crypto.createHash('sha256').update(buf).digest('hex');
+                    fieldPhotoItems.push({
+                        id: p.id,
+                        url: p.url,
+                        captured_at: p.captured_at,
+                        buffer: buf,
+                        base64: `data:image/png;base64,${png.toString('base64')}`,
+                        hash,
+                    });
+                }
+            } catch (pErr) {
+                console.error(`[AI Score] Field photo fetch failed for ${p.url}:`, pErr);
+            }
+        }
+
+        if (fieldPhotoItems.length === 0) {
             return NextResponse.json(
-                { error: `Could not load the uploaded photo: ${photoErr.message}` },
+                { error: 'Could not load any of the uploaded photos' },
                 { status: 500 }
             );
         }
 
-        // Normalize both images for vision models (resized to 640px width for optimal balance of detail & latency)
-        const [fieldPng, referencePng] = await Promise.all([
-            sharp(fieldBuffer).resize({ width: 640, withoutEnlargement: true }).png().toBuffer(),
-            sharp(referenceBuffer).resize({ width: 640, withoutEnlargement: true }).png().toBuffer(),
-        ]);
-
-        const fieldBase64 = `data:image/png;base64,${fieldPng.toString('base64')}`;
-        const referenceBase64 = `data:image/png;base64,${referencePng.toString('base64')}`;
-
-        // Anti-Cheating Check: Detect if user directly re-uploaded the template's clean benchmark reference photo
-        const refHash = crypto.createHash('sha256').update(referenceBuffer).digest('hex');
-        const fieldHash = crypto.createHash('sha256').update(fieldBuffer).digest('hex');
-        const isDuplicateOfBenchmark = refHash === fieldHash;
+        // Anti-Cheating Check: Detect if user directly re-uploaded any benchmark reference photo
+        const isDuplicateOfBenchmark = fieldPhotoItems.some(fp => benchmarkItems.some(bm => bm.hash === fp.hash));
 
         // Compute expected inspection date & shift window for watermark verification (DD/MM/YYYY)
         const completionDateVal = completion.completion_date || (completion.created_at ? completion.created_at.slice(0, 10) : new Date().toISOString().slice(0, 10));
@@ -252,97 +317,203 @@ export async function POST(
         const stepParams: any[] = Array.isArray(checklistItem.parameters) ? checklistItem.parameters : [];
         const hasParameters = stepParams.length > 0;
 
+        const isMulti = benchmarkItems.length > 1 || fieldPhotoItems.length > 1;
         let promptText = '';
-        if (hasParameters) {
-            const paramList = stepParams.map(p => `- ${p.name || p.title}`).join('\n');
+        let imageContents: any[] = [];
+
+        if (isMulti) {
+            const bmDescriptions = benchmarkItems.map((b, idx) => `Benchmark #${idx + 1} ("${b.label}") -> Image ${idx + 1}`).join('\n');
+            const fpDescriptions = fieldPhotoItems.map((p, idx) => `Field Photo #${idx + 1} -> Image ${benchmarkItems.length + idx + 1}`).join('\n');
+
             promptText = `You are an expert commercial facilities cleanliness, housekeeping, and compliance auditor.
+Checklist Step: "${checklistItem.title}"
+Scheduled Inspection: ${expectedDateStr} ${expectedSlotStr} (${shiftDescription})
+
+CLEAN BENCHMARK STANDARDS (How each sub-area must look when cleaned):
+${bmDescriptions}
+
+STAFF FIELD PHOTOS SUBMITTED:
+${fpDescriptions}
+
+${hasParameters ? `CHECKPOINTS TO OBSERVE IF IN-FRAME:\n${stepParams.map(p => `- ${p.name || p.title}`).join('\n')}\n` : ''}
+CORE AUDIT RULES:
+1. CLASSIFY & MATCH PHOTOS TO BENCHMARKS:
+   - For each Clean Benchmark Standard, inspect the Field Photos to see which Field Photo corresponds to that specific area (e.g. Washbasin matches Washbasin photo, Commode/Toilet matches Commode photo, Floor matches Floor photo).
+   - ZOOM & FOV TOLERANCE: Clean benchmark standards are often captured in ultra-wide (0.5x) zoom to capture entire rooms, while staff field photos may be taken in standard 1x zoom or closer framing. NEVER penalize or fail a photo for zoom level, tighter framing, or focal length differences. If the visible area is clean, tidy, and matches the benchmark standard, score it high (85-95).
+   - If a Clean Benchmark Standard has NO matching Field Photo taken by staff:
+     * "status": "missing"
+     * "matched_photo_url": null
+     * "cleanliness_score": 0
+     * "reason": "Missing required photo of the cleaned [Benchmark Name]."
+   - If a Field Photo matches a Benchmark Standard:
+     * "status": "matched"
+     * "cleanliness_score": (0 to 100) based on direct visual comparison against that benchmark standard.
+     * "reason": Concise 1-sentence note of visual cleanliness.
+
+2. OVERALL CLEANLINESS & COMPLETION:
+   - "overall_score" (0 to 100):
+     * If all benchmarks have matching clean photos, award high score (80-95).
+     * If any required benchmark photo is MISSING, overall score must be capped (max 60) and pass MUST be false.
+     * STALE IMAGE VETO: If any photo has an invalid watermark or is an old gallery upload, overall_score capped at 15-20, pass: false.
+   - "pass": true ONLY if ALL benchmarks have a matched photo AND every matched area is clean (cleanliness_score >= 70) AND no stale images.
+
+3. PARAMETERS AS ADVISORY (DO NOT PENALIZE UNSEEN ITEMS):
+   - Some parameters (QR codes, light bulbs, switches, etc.) cannot be seen from every angle.
+   - If not clearly assessable from the camera angles: "is_assessable": false, "status": "not_in_frame", "score": null.
+   - "not_in_frame" parameters MUST NEVER reduce overall_score!
+
+4. TIMESTAMP & WATERMARK:
+   - Check bottom-right corner of field photos for timestamp watermark.
+
+5. CONSTRUCTIVE EXPLANATION:
+   - "overall_reason": Clear, friendly summary for on-site staff. If any photo is missing, explicitly state: "Missing photo for: [Benchmark Name]. Please tap '+ Add Photo' to capture it."
+
+Respond ONLY with raw JSON:
+{
+  "overall_score": <number 0..100>,
+  "overall_reason": "<friendly summary>",
+  "pass": <boolean>,
+  "is_stale_image": <boolean>,
+  "timestamp_detected": "<string or null>",
+  "parameters": [
+    {
+      "name": "<param name>",
+      "is_assessable": <boolean>,
+      "score": <number or null>,
+      "status": "pass" | "needs_attention" | "fail" | "not_in_frame",
+      "reason": "<observation>"
+    }
+  ],
+  "matches": [
+    {
+      "benchmark_id": "<id>",
+      "benchmark_label": "<label>",
+      "matched_photo_url": "<url or null>",
+      "status": "matched" | "missing",
+      "cleanliness_score": <number 0..100>,
+      "reason": "<observation>"
+    }
+  ]
+}`;
+
+            imageContents = [
+                { type: 'text', text: promptText },
+                ...benchmarkItems.map(bm => ({ type: 'image_url', image_url: { url: bm.base64 } })),
+                ...fieldPhotoItems.map(fp => ({ type: 'image_url', image_url: { url: fp.base64 } })),
+            ];
+        } else {
+            const primaryBenchmark = benchmarkItems[0];
+            const primaryField = fieldPhotoItems[0];
+
+            if (hasParameters) {
+                const paramList = stepParams.map(p => `- ${p.name || p.title}`).join('\n');
+                promptText = `You are an expert commercial facilities cleanliness, housekeeping, and compliance auditor.
 Checklist Step: "${checklistItem.title}"
 Scheduled Inspection: ${expectedDateStr} ${expectedSlotStr} (${shiftDescription})
 
 Image 1 is the clean standard benchmark photo / CAD area (how the space must look when cleaned: completely cleared surfaces, tidy, ready for use).
 Image 2 is the field photo taken after staff execution.
 
-Inspect Image 2 against the clean standard in Image 1 for EACH of the following configured parameters:
-${paramList}
+CORE AUDIT RULES:
+1. OVERALL CLEANLINESS COMPARISON (SCENE vs. BENCHMARK):
+   - "overall_score" (0 to 100) MUST evaluate the overall visual cleanliness, neatness, tidiness, and absence of clutter/trash by directly comparing Image 2 against the clean standard in Image 1.
+   - ZOOM & FOV TOLERANCE: Image 1 (benchmark) may be captured in ultra-wide (0.5x) zoom, while Image 2 (field photo) may be in standard 1x zoom or closer crop. NEVER penalize or fail Image 2 for zoom differences, narrower framing, or focal length differences. If the visible space shown in Image 2 is clean, cleared, and tidy, award a high visual score (80-95).
+   - If Image 2 is clean, cleared, and tidy matching Image 1, award a high visual score (80-95).
+   - If the main space is visibly dirty, littered, or cluttered with left-behind items (e.g. laptops, bags, wires on table), score accordingly (25-50).
+   - STALE IMAGE VETO: If "is_stale_image" is true (missing watermark, wrong date, or gallery re-upload), the audit MUST FAIL (overall_score capped at 15-20, pass: false).
 
-CRITICAL FACILITY AUDIT & TIMESTAMP VERIFICATION RULES:
-1. TIMESTAMP & ANTI-SPOOFING VERIFICATION:
+2. PARAMETERS AS ADVISORY INSPECTION CHECKPOINTS (DO NOT PENALIZE UNSEEN ITEMS):
+   - You are also given these specific checklist checkpoints to observe:
+${paramList}
+   - REAL-WORLD CAMERA REALITY: Some parameters (such as ceiling lights, QR code stickers, small badges, switches, or items outside this camera angle) CANNOT be verified in a single room photo.
+   - If a parameter is NOT clearly visible or cannot be judged with certainty from this angle:
+     * "is_assessable": false
+     * "status": "not_in_frame"
+     * "score": null
+     * "reason": "Not clearly visible in this camera angle; manual check required."
+     * CRITICAL: "not_in_frame" parameters MUST NEVER reduce or drag down the "overall_score"!
+   - If a parameter IS clearly visible:
+     * If clean/conforming: "status": "pass", "score": 85-100.
+     * If slight attention needed: "status": "needs_attention", "score": 60-75.
+     * If actively dirty/cluttered: "status": "fail", "score": 25-40.
+     * "reason": Concise 1-sentence observation.
+
+3. TIMESTAMP & ANTI-SPOOFING VERIFICATION:
    - Check the bottom-right corner of Image 2 for the stamped verification watermark (format: DD/MM/YYYY HH:mm:ss or LIVE AUDIT: DD/MM/YYYY HH:mm:ss).
    - "timestamp_detected": The exact watermark string read from the bottom-right corner (or "missing" if not visible).
    - "is_stale_image": Set to true if:
      * The watermark date does NOT match any of the allowed shift dates: [${allowedDates.join(', ')}], OR
      * The watermark timestamp is missing, cut off, or illegible, OR
      * The image appears to be an old photo, gallery re-upload, or a photo taken of a computer screen.
-   - STALE IMAGE VETO: If "is_stale_image" is true, the audit MUST FAIL IMMEDIATELY (score capped at 15-20, "pass": false). State in "overall_reason" that an outdated or unverified photo was uploaded.
-2. CLUTTER / UN-CLEARED SURFACES IS AN IMMEDIATE AUDIT FAILURE:
-   In commercial office, conference, and meeting room cleaning, leaving surfaces un-cleared with laptops, notebooks, chargers, cables, bags, papers, bottles, or personal clutter when Image 1 is completely empty and cleared is a direct operational failure.
-   DO NOT award passing scores (>=70) to a surface just because "the tabletop underneath has no dirt". If items, cables, or clutter are left behind, that parameter MUST score in the 15-35 range (FAIL).
-3. For EACH parameter:
-   - "is_assessable": true if visible in the camera view, false if hidden behind walls or out of frame.
-   - If visible, score 0 to 100:
-     * 90-100: Pristine / Spotless (completely cleared, spotless, perfectly matches Image 1).
-     * 70-89: Acceptable (cleared of clutter, minor misalignment or faint dust).
-     * 40-69: Needs Attention (minor debris/fingerprints, slight dusting needed).
-     * 0-39: Poor / Critical Fail (cluttered with left-behind laptops/cables/items, dirty, or un-serviced).
-   - "status": "pass" (>=70), "needs_attention" (40-69), or "fail" (<40).
-   - "reason": A concise, clear 1-sentence visual observation explaining what you see.
-4. FAIL VETO & HELPFUL EXPLANATION:
-   - If ANY visible parameter has status "fail" (score < 40) OR if "is_stale_image" is true, the overall area CANNOT pass! Cap "overall_score" at maximum 20-35, and set "pass": false.
-   - You must NOT hide an un-cleared messy table or stale photo by simply averaging it with clean chairs.
+
+4. HELPFUL REASONING:
    - "overall_reason": Write a friendly, constructive explanation for on-site staff.
-     1) Explain plainly what was noticed (e.g., 'The table still has 2 laptops, a notebook, and charging cables left on it.').
-     2) Give a clear action step (e.g., 'Please clear all devices and cables from the table surface and tap "Retake".').
-     Do NOT output robotic codes or harsh jargon. Explain like a supportive supervisor.
+     1) Explain plainly what was noticed in the visual comparison.
+     2) If any issue was found, give a clear action step (e.g., 'Please clear the items from the tabletop and tap "Retake".').
+     Do NOT output robotic codes or harsh jargon.
 
 Respond ONLY with raw JSON:
 {
   "overall_score": <number 0..100>,
-  "overall_reason": "<1-2 sentence summary>",
+  "overall_reason": "<1-2 sentence summary of overall cleanliness>",
   "pass": <boolean>,
   "is_stale_image": <boolean>,
   "timestamp_detected": "<string or null>",
   "parameters": [
     {
       "name": "<parameter name>",
-      "is_assessable": true,
-      "score": <number>,
-      "status": "pass" | "needs_attention" | "fail",
-      "reason": "<1-sentence visual reason>"
+      "is_assessable": <boolean>,
+      "score": <number or null>,
+      "status": "pass" | "needs_attention" | "fail" | "not_in_frame",
+      "reason": "<1-sentence visual observation>"
     }
   ]
 }`;
-        } else {
-            promptText = `You are an expert commercial facilities cleanliness, housekeeping, and compliance auditor.
+            } else {
+                promptText = `You are an expert commercial facilities cleanliness, housekeeping, and compliance auditor.
 Checklist Step: "${checklistItem.title}"
-Scheduled Inspection Date: ${expectedDateStr} ${expectedSlotStr}
+Scheduled Inspection: ${expectedDateStr} ${expectedSlotStr} (${shiftDescription})
 
-Image 1: Clean standard benchmark reference (completely cleared, tidy, spotless).
-Image 2: Field completion photo submitted by staff.
+Image 1 is the clean standard benchmark photo / CAD area (how the space must look when cleaned: completely cleared surfaces, tidy, ready for use).
+Image 2 is the field photo taken after staff execution.
 
-Compare Image 2 directly against Image 1.
-CRITICAL RULES:
-1. TIMESTAMP & ANTI-SPOOFING VERIFICATION:
-   - Inspect the bottom-right corner of Image 2 for the stamped verification watermark (format: DD/MM/YYYY HH:mm:ss or LIVE AUDIT: DD/MM/YYYY HH:mm:ss).
+CORE AUDIT RULES:
+1. OVERALL CLEANLINESS COMPARISON (SCENE vs. BENCHMARK):
+   - "overall_score" (0 to 100) MUST evaluate visual cleanliness, neatness, tidiness, and absence of clutter/trash by directly comparing Image 2 against the clean standard in Image 1.
+   - ZOOM & FOV TOLERANCE: Image 1 may be captured in 0.5x ultra-wide zoom, while Image 2 may be in 1x standard zoom or closer crop. NEVER penalize or fail for zoom or framing differences.
+   - If Image 2 is clean, cleared, and tidy matching Image 1, award a high score (80-95).
+   - If the main space is visibly dirty, littered, or cluttered with left-behind items (e.g. laptops, bags, wires on table), score accordingly (25-50).
+   - STALE IMAGE VETO: If "is_stale_image" is true (missing watermark, wrong date, or gallery re-upload), the audit MUST FAIL (overall_score capped at 15-20, pass: false).
+
+2. TIMESTAMP & ANTI-SPOOFING VERIFICATION:
+   - Check the bottom-right corner of Image 2 for the stamped verification watermark (format: DD/MM/YYYY HH:mm:ss or LIVE AUDIT: DD/MM/YYYY HH:mm:ss).
    - "timestamp_detected": The exact watermark string read from the bottom-right corner (or "missing" if not visible).
-   - "is_stale_image": Set to true if watermark date does NOT match any of the valid shift dates: [${allowedDates.join(', ')}], or if timestamp is missing/tampered.
-   - If "is_stale_image" is true, score MUST be capped at 15-20, "pass": false.
-2. CLEANLINESS:
-   - Leaving tables/desks un-cleared with laptops, cables, papers, or clutter when Image 1 is cleared is an immediate FAILURE (score 20-35, pass: false).
-   - 90-100: Pristine / Spotless (cleared, spotless, matches benchmark).
-   - 70-89: Good / Acceptable (cleared, minor misalignment).
-   - 40-69: Needs Attention (minor fingerprints or dust).
-   - 0-39: Poor / Fail (cluttered, dirty, or uncleaned).
-3. HELPFUL REASON:
-   - "reason": Explain plainly what is seen and give an actionable fix (e.g. 'Tabletop still has electronics on it. Please clear the table and tap Retake.').
+   - "is_stale_image": Set to true if:
+     * The watermark date does NOT match any of the allowed shift dates: [${allowedDates.join(', ')}], OR
+     * The watermark timestamp is missing, cut off, or illegible, OR
+     * The image appears to be an old photo, gallery re-upload, or a photo taken of a computer screen.
 
-Return ONLY valid raw JSON:
+3. HELPFUL REASONING:
+   - "overall_reason": Write a friendly, constructive explanation for on-site staff.
+     1) Explain plainly what was noticed in the visual comparison.
+     2) If any issue was found, give a clear action step (e.g., 'Please clear the items from the tabletop and tap "Retake".').
+     Do NOT output robotic codes or harsh jargon.
+
+Respond ONLY with raw JSON:
 {
-  "score": <integer 0..100>,
-  "reason": "<1-2 sentence detailed visual assessment explaining clutter, timestamp, and how to fix>",
+  "overall_score": <number 0..100>,
+  "overall_reason": "<1-2 sentence summary of overall cleanliness>",
   "pass": <boolean>,
   "is_stale_image": <boolean>,
   "timestamp_detected": "<string or null>"
 }`;
+            }
+
+            imageContents = [
+                { type: 'text', text: promptText },
+                { type: 'image_url', image_url: { url: primaryBenchmark.base64 } },
+                { type: 'image_url', image_url: { url: primaryField.base64 } },
+            ];
         }
 
         // Try engy.ai first (OpenAI-compatible endpoint with Qwen 3.8 27B Vision), then fallback to Groq
@@ -369,11 +540,7 @@ Return ONLY valid raw JSON:
                             },
                             {
                                 role: 'user',
-                                content: [
-                                    { type: 'text', text: promptText },
-                                    { type: 'image_url', image_url: { url: referenceBase64 } },
-                                    { type: 'image_url', image_url: { url: fieldBase64 } },
-                                ],
+                                content: imageContents,
                             },
                         ],
                         max_tokens: 4096,
@@ -418,11 +585,7 @@ Return ONLY valid raw JSON:
                             },
                             {
                                 role: 'user',
-                                content: [
-                                    { type: 'text', text: promptText },
-                                    { type: 'image_url', image_url: { url: referenceBase64 } },
-                                    { type: 'image_url', image_url: { url: fieldBase64 } },
-                                ],
+                                content: imageContents,
                             },
                         ],
                         max_tokens: 2048,
@@ -498,10 +661,12 @@ Return ONLY valid raw JSON:
         let rawScore = Math.max(0, Math.min(100, Math.round(scoreVal)));
 
         // Timestamp & Anti-Spoofing Evaluation: Extract actual image timestamp from filename, checked_at, or EXIF
-        const filenameFromUrl = decodeURIComponent((completionItem.photo_url || '').split('/').pop() || '');
+        const primaryFieldPhoto = fieldPhotoItems[0];
+        const fieldBuffer = primaryFieldPhoto?.buffer || Buffer.from([]);
+        const filenameFromUrl = decodeURIComponent((primaryFieldPhoto?.url || completionItem.photo_url || '').split('/').pop() || '');
         const actualImageInfo = extractActualImageTimestamp({
             filename: filenameFromUrl,
-            lastModified: completionItem.checked_at,
+            lastModified: primaryFieldPhoto?.captured_at || completionItem.checked_at,
             buffer: fieldBuffer,
         });
 
@@ -523,7 +688,7 @@ Return ONLY valid raw JSON:
         if (isDuplicateOfBenchmark) {
             isStale = true;
             detectedWatermark = 'Duplicate Benchmark Reference';
-            staleReasonMessage = 'Sample benchmark photo re-uploaded. Audits must show your actual on-site work. Please tap "Retake" to snap a live photo of the cleaned space.';
+            staleReasonMessage = 'Duplicate benchmark reference photo uploaded · Live capture required';
         } else if (isLiveVerified) {
             isStale = false;
             detectedWatermark = rawWatermark;
@@ -532,16 +697,71 @@ Return ONLY valid raw JSON:
             isStale = true;
             if (actualImageInfo?.timestampStr) {
                 detectedWatermark = `${actualImageInfo.timestampStr} (Gallery Upload)`;
-                staleReasonMessage = `Old photo / Gallery upload detected (Actual image timestamp: "${actualImageInfo.timestampStr}", uploaded from gallery). Audits require a live camera capture with verified watermark. Please tap "Retake" to capture a fresh live photo.`;
+                staleReasonMessage = `Gallery upload (Taken: ${actualImageInfo.timestampStr}) · Live camera capture required`;
             } else if (isProgrammaticallyStale) {
                 detectedWatermark = 'Outdated Capture Metadata';
-                staleReasonMessage = `Old photo detected (${programmaticStaleReason}). Audits require live verification — please tap "Retake" to snap a fresh photo now.`;
+                staleReasonMessage = `Old photo (${programmaticStaleReason}) · Live camera capture required`;
             } else if (hasVisibleWatermark) {
                 detectedWatermark = `${rawWatermark} (Outdated)`;
-                staleReasonMessage = `Old photo detected (Watermark timestamp shows "${rawWatermark}", but scheduled shift dates are "${allowedDates.join(' or ')}"). Please tap "Retake" to capture a fresh photo now.`;
+                staleReasonMessage = `Outdated watermark (${rawWatermark}) · Scheduled: ${allowedDates.join(', ')}`;
             } else {
                 detectedWatermark = 'Gallery Upload (No Live Watermark)';
-                staleReasonMessage = 'Gallery upload detected with missing verification watermark. Audits require a live camera capture with verified timestamp watermark. Please tap "Retake" to capture a fresh photo now.';
+                staleReasonMessage = 'Gallery upload without live watermark · Live camera capture required';
+            }
+        }
+
+        // Process Benchmark-to-Field Photo Matches & Detect Missing Areas
+        let photoMatches: any[] = [];
+        if (Array.isArray(parsed?.matches) && parsed.matches.length > 0) {
+            photoMatches = parsed.matches.map((m: any, idx: number) => {
+                const matchedBm = benchmarkItems.find(b => b.id === m.benchmark_id || b.label.toLowerCase() === (m.benchmark_label || '').toLowerCase()) || benchmarkItems[idx];
+                return {
+                    benchmark_id: matchedBm?.id || m.benchmark_id || `ref_${idx + 1}`,
+                    benchmark_label: matchedBm?.label || m.benchmark_label || `Standard ${idx + 1}`,
+                    benchmark_url: matchedBm?.url || null,
+                    matched_photo_url: m.matched_photo_url || (m.status === 'matched' ? fieldPhotoItems[idx]?.url : null),
+                    status: m.status === 'missing' ? 'missing' : 'matched',
+                    cleanliness_score: typeof m.cleanliness_score === 'number' ? m.cleanliness_score : (m.status === 'missing' ? 0 : rawScore),
+                    reason: m.reason || (m.status === 'missing' ? `Missing photo for ${matchedBm?.label || 'standard'}` : 'Cleanliness verified'),
+                };
+            });
+        } else {
+            const primaryBm = benchmarkItems[0];
+            photoMatches = [{
+                benchmark_id: primaryBm?.id || 'ref_1',
+                benchmark_label: primaryBm?.label || 'Clean Standard',
+                benchmark_url: primaryBm?.url || null,
+                matched_photo_url: primaryFieldPhoto?.url || null,
+                status: 'matched',
+                cleanliness_score: rawScore,
+                reason: reasonVal || 'Cleanliness verified against benchmark.',
+            }];
+        }
+
+        // Ensure every configured benchmark is tracked in photoMatches
+        benchmarkItems.forEach((bm) => {
+            const exists = photoMatches.some(m => m.benchmark_id === bm.id || m.benchmark_label.toLowerCase() === bm.label.toLowerCase());
+            if (!exists) {
+                photoMatches.push({
+                    benchmark_id: bm.id,
+                    benchmark_label: bm.label,
+                    benchmark_url: bm.url,
+                    matched_photo_url: null,
+                    status: 'missing',
+                    cleanliness_score: 0,
+                    reason: `Missing required photo for ${bm.label}.`,
+                });
+            }
+        });
+
+        const missingBenchmarks = photoMatches.filter(m => m.status === 'missing');
+        const hasMissingBenchmark = missingBenchmarks.length > 0;
+
+        if (hasMissingBenchmark) {
+            const missingLabels = missingBenchmarks.map(m => m.benchmark_label).join(', ');
+            rawScore = Math.min(rawScore, 60);
+            if (!reasonVal.toLowerCase().includes('missing')) {
+                reasonVal = `${reasonVal} (Missing required photos: ${missingLabels}).`.trim();
             }
         }
 
@@ -562,37 +782,36 @@ Return ONLY valid raw JSON:
             reason: timestampParamReason,
         });
 
-        // Programmatic Fail Veto Guard: If ANY visible parameter has status === 'fail' or score < 40,
-        // or if image is stale/tampered, the overall score CANNOT pass (capped at max 20-35, pass = false).
-        const hasFailedParameter = parameterScores.some(
-            (p: any) => p.is_assessable !== false && (p.status === 'fail' || (typeof p.score === 'number' && p.score < 40))
-        );
-
         if (isStale) {
             rawScore = Math.min(20, rawScore);
             reasonVal = staleReasonMessage;
-        } else if (hasFailedParameter && rawScore >= 50) {
-            rawScore = Math.min(35, rawScore);
         }
 
         const score = rawScore;
         const reason = reasonVal || 'Cleanliness evaluation completed.';
-        const pass = (hasFailedParameter || isStale) ? false : (typeof parsed?.pass === 'boolean' ? parsed.pass : score >= 70);
+        // Pass requires: not stale, all benchmarks photographed (no missing areas), and score >= 70
+        const pass = !isStale && !hasMissingBenchmark && (typeof parsed?.pass === 'boolean' ? parsed.pass : score >= 70);
 
-        // Persist the score, detailed explanation, and parameter scores
+        // Persist the score, detailed explanation, parameter scores, and photo matches
+        const updatePayload: any = {
+            ai_cleanliness_score: score,
+            ai_cleanliness_reason: reason,
+            ai_parameter_scores: parameterScores,
+            ai_reference_used: referenceUsed,
+            ai_photo_matches: photoMatches,
+            ai_analyzed_at: new Date().toISOString(),
+        };
+
         const { error: updateError } = await supabaseAdmin
             .from('sop_completion_items')
-            .update({
-                ai_cleanliness_score: score,
-                ai_cleanliness_reason: reason,
-                ai_parameter_scores: parameterScores,
-                ai_reference_used: referenceUsed,
-                ai_analyzed_at: new Date().toISOString(),
-            })
+            .update(updatePayload)
             .eq('id', completionItemId);
 
         if (updateError) {
-            return NextResponse.json({ error: updateError.message }, { status: 500 });
+            // Fallback in case ai_photo_matches column is not yet migrated in db
+            console.warn('[AI Score] Retrying update without ai_photo_matches:', updateError.message);
+            delete updatePayload.ai_photo_matches;
+            await supabaseAdmin.from('sop_completion_items').update(updatePayload).eq('id', completionItemId);
         }
 
         return NextResponse.json({
@@ -604,6 +823,8 @@ Return ONLY valid raw JSON:
             timestamp_detected: detectedWatermark,
             parameters: parameterScores,
             parameterScores,
+            matches: photoMatches,
+            missingCount: missingBenchmarks.length,
             referenceUsed,
             modelUsed,
         });

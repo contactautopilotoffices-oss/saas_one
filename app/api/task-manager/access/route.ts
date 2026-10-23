@@ -4,7 +4,7 @@ import { TaskAccessService, AccessNotProvisionedError, TEAM_FEATURES, TeamFeatur
 import { TaskDatabaseService } from '@/task-manager/TaskDatabaseService';
 import { resetBotSwitchCache } from '@/task-manager/BotSwitches';
 import { clearAllMemory } from '@/task-manager/ConversationMemory';
-import { requireTaskManagerAdmin } from '../_shared/adminGuard';
+import { requireControlCentre } from '../_shared/adminGuard';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,7 +19,7 @@ export const dynamic = 'force-dynamic';
 export async function GET(request: NextRequest) {
     try {
         const orgId = request.nextUrl.searchParams.get('orgId') || '';
-        const guard = await requireTaskManagerAdmin(orgId);
+        const guard = await requireControlCentre(orgId);
         if (!guard.ok) return guard.response;
 
         const overview = await TaskAccessService.getOverview();
@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
     try {
         const orgId = request.nextUrl.searchParams.get('orgId') || '';
-        const guard = await requireTaskManagerAdmin(orgId);
+        const guard = await requireControlCentre(orgId);
         if (!guard.ok) return guard.response;
 
         const body = await request.json().catch(() => ({}));

@@ -147,12 +147,16 @@ function RuleCard({ draft, baseline, canEdit, department, endpoint, personal, on
     const toggleDay = (n: number) => set({ daysOfWeek: draft.daysOfWeek.includes(n) ? draft.daysOfWeek.filter(d => d !== n) : [...draft.daysOfWeek, n] });
 
     const cap = 'text-[10px] font-black uppercase tracking-widest text-zinc-500';
+    // Owner 2026-10-22: a superuser's own notifications (personal) get phone-sized cards and tap targets; teams' are unchanged
+    const phone = personal
+        ? { card: 'p-4 sm:p-5', day: 'h-10 w-10 sm:h-9 sm:w-9', actions: 'flex w-full flex-wrap items-center gap-2 sm:w-auto', grow: 'min-h-11 flex-1 justify-center sm:min-h-0 sm:flex-none' }
+        : { card: 'p-5', day: 'h-9 w-9', actions: 'flex items-center gap-2', grow: '' };
 
     return (
         <motion.article
             layout={!reduce}
             initial={reduce ? false : { opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={reduce ? undefined : { opacity: 0, scale: 0.97 }} transition={{ duration: 0.5, ease: EASE }}
-            className={`space-y-4 rounded-3xl border bg-white p-5 shadow-xs dark:bg-zinc-900 ${draft.enabled ? 'border-zinc-200 dark:border-zinc-800' : 'border-dashed border-zinc-300 opacity-80 dark:border-zinc-700'}`}
+            className={`space-y-4 rounded-3xl border bg-white ${phone.card} shadow-xs dark:bg-zinc-900 ${draft.enabled ? 'border-zinc-200 dark:border-zinc-800' : 'border-dashed border-zinc-300 opacity-80 dark:border-zinc-700'}`}
         >
             <header className="flex items-center gap-3">
                 <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-300">{t.icon}</span>
@@ -179,7 +183,7 @@ function RuleCard({ draft, baseline, canEdit, department, endpoint, personal, on
                             const on = draft.daysOfWeek.includes(d.n);
                             return (
                                 <button key={d.n} type="button" disabled={!canEdit} onClick={() => toggleDay(d.n)} aria-pressed={on} aria-label={d.long} title={d.long}
-                                    className={`h-9 w-9 rounded-full text-xs font-black transition-all disabled:opacity-60 ${on ? 'bg-indigo-600 text-white shadow-sm' : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700'}`}>{d.short}</button>
+                                    className={`${phone.day} rounded-full text-xs font-black transition-all disabled:opacity-60 ${on ? 'bg-indigo-600 text-white shadow-sm' : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700'}`}>{d.short}</button>
                             );
                         })}
                     </div>
@@ -227,7 +231,7 @@ function RuleCard({ draft, baseline, canEdit, department, endpoint, personal, on
             <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-100 pt-3 dark:border-zinc-800">
                 <p className="min-w-0 flex-1 truncate text-[11px] text-zinc-400">{draft.lastRunSummary ? `Last run: ${draft.lastRunSummary}` : 'Has not run yet'}</p>
                 {canEdit && (
-                    <div className="flex items-center gap-2">
+                    <div className={phone.actions}>
                         {confirmSend !== null ? (
                             <>
                                 <span className="text-xs font-bold text-zinc-700 dark:text-zinc-200">{confirmSend === 0 ? 'Nobody would get this right now.' : `Send to ${confirmSend} ${confirmSend === 1 ? 'person' : 'people'} now?`}</span>
@@ -244,12 +248,12 @@ function RuleCard({ draft, baseline, canEdit, department, endpoint, personal, on
                             <>
                                 <button type="button" disabled={!draft.id || dirty || sending} onClick={startSend}
                                     title={!draft.id || dirty ? 'Save your changes first, then send' : personal ? 'Send this to me now' : 'Send this to the team now'}
-                                    className="flex items-center gap-1.5 rounded-xl border border-indigo-300 px-3 py-2 text-xs font-black text-indigo-700 transition-colors hover:bg-indigo-50 disabled:opacity-40 dark:border-indigo-700 dark:text-indigo-300 dark:hover:bg-indigo-950/40">
+                                    className={`${phone.grow} flex items-center gap-1.5 rounded-xl border border-indigo-300 px-3 py-2 text-xs font-black text-indigo-700 transition-colors hover:bg-indigo-50 disabled:opacity-40 dark:border-indigo-700 dark:text-indigo-300 dark:hover:bg-indigo-950/40`}>
                                     {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Send now
                                 </button>
                                 <button type="button" onClick={() => (draft.id ? setConfirmDelete(true) : onDelete())} aria-label="Delete notification" className="rounded-lg p-2 text-zinc-400 transition-colors hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/30"><Trash2 className="h-4 w-4" /></button>
                                 <button type="button" disabled={!dirty || saving || draft.daysOfWeek.length === 0} onClick={onSave}
-                                    className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-black text-white shadow-sm transition-all hover:bg-indigo-700 disabled:opacity-40">
+                                    className={`${phone.grow} flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-black text-white shadow-sm transition-all hover:bg-indigo-700 disabled:opacity-40`}>
                                     {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{dirty ? 'Save changes' : 'Saved'}
                                 </button>
                             </>
@@ -459,13 +463,13 @@ export default function NotificationsView({ departmentName = 'Procurement', pers
 
     return (
         <div className="space-y-4">
-            <div className="flex items-start gap-3 rounded-3xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
+            <div className={`flex items-start gap-3 rounded-3xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900 ${personal ? 'p-4 sm:p-5' : 'p-5'}`}>
                 <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-indigo-700 text-white"><Bell className="h-5 w-5" /></span>
                 <div className="min-w-0 space-y-1">
                     <h3 className="text-sm font-black text-zinc-900 dark:text-zinc-100">{personal ? 'Your own WhatsApp notifications' : `WhatsApp notifications for ${meta.departmentName}`}</h3>
                     <p className="text-xs leading-relaxed text-zinc-500">
                         {personal ? 'Choose when you get your own task messages. They go only to you, with the tasks assigned to you.' : 'Choose when your team gets its task messages.'} A message goes out within about 15 minutes of the time you pick.
-                        People who messaged the bot in the last 24 hours get a neat list, one task per line. Everyone else gets WhatsApp&apos;s approved template, so the message still reaches them.
+                        <span className={personal ? 'hidden sm:inline' : undefined}> People who messaged the bot in the last 24 hours get a neat list, one task per line. Everyone else gets WhatsApp&apos;s approved template, so the message still reaches them.</span>
                     </p>
                 </div>
             </div>
@@ -521,7 +525,7 @@ export default function NotificationsView({ departmentName = 'Procurement', pers
                             </motion.div>
                         ) : (
                             <motion.button key="add" type="button" onClick={() => setAdding(true)} initial={false}
-                                className="flex items-center gap-1.5 rounded-2xl border border-dashed border-zinc-300 px-4 py-3 text-xs font-black text-zinc-600 transition-colors hover:border-indigo-400 hover:text-indigo-700 dark:border-zinc-700 dark:text-zinc-300">
+                                className={`flex items-center gap-1.5 rounded-2xl border border-dashed border-zinc-300 px-4 py-3 text-xs font-black text-zinc-600 transition-colors hover:border-indigo-400 hover:text-indigo-700 dark:border-zinc-700 dark:text-zinc-300 ${personal ? 'min-h-12 w-full justify-center sm:min-h-0 sm:w-auto sm:justify-start' : ''}`}>
                                 <Plus className="h-4 w-4" /> Add a notification
                             </motion.button>
                         )}

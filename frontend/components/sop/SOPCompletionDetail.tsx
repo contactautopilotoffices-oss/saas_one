@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { createClient } from '@/frontend/utils/supabase/client';
 import Skeleton from '@/frontend/components/ui/Skeleton';
 import { motion } from 'framer-motion';
-import { ChevronLeft, User, Calendar, CheckCircle2, Circle, Camera, Clock, Eye, Video, Play, ThumbsDown, Minus, ThumbsUp, Paperclip, Loader2, X, MapPin, ShieldCheck, Check, XCircle, MessageSquare } from 'lucide-react';
+import { ChevronLeft, User, Calendar, CheckCircle2, Circle, Camera, Clock, Eye, Video, Play, ThumbsDown, Minus, ThumbsUp, Paperclip, Loader2, X, MapPin, ShieldCheck, Check, XCircle, MessageSquare, Image as ImageIcon, AlertCircle } from 'lucide-react';
 import ImagePreviewModal from '@/frontend/components/shared/ImagePreviewModal';
 import VideoPreviewModal from '@/frontend/components/shared/VideoPreviewModal';
 import CameraCaptureModal from '@/frontend/components/shared/CameraCaptureModal';
@@ -21,6 +21,65 @@ interface SOPCompletionDetailProps {
     isAdmin?: boolean;
     onBack: () => void;
     onResume?: () => void;
+}
+
+// Format verbose AI writing into a direct, concise cause
+export function formatDirectCause(text: string | null | undefined): string {
+    if (!text || typeof text !== 'string') return '';
+    let cleaned = text.trim();
+
+    // 1. Gallery upload with timestamp
+    const timeMatch = cleaned.match(/Actual image timestamp:\s*["']([^"']+)["']/i) ||
+                      cleaned.match(/Actual image timestamp:\s*([^\r\n()]+)/i) ||
+                      cleaned.match(/Taken:\s*["']?([^"')]+)["']?/i) ||
+                      cleaned.match(/timestamp:\s*["']?([^"')]+)["']?/i);
+
+    if (/gallery/i.test(cleaned) && timeMatch) {
+        return `Gallery upload (Taken: ${timeMatch[1].trim()}) · Live camera capture required`;
+    }
+
+    if (/duplicate benchmark/i.test(cleaned) || /sample benchmark photo re-uploaded/i.test(cleaned)) {
+        return 'Duplicate benchmark reference photo uploaded · Live capture required';
+    }
+
+    // 2. Outdated watermark timestamp
+    const watermarkMatch = cleaned.match(/watermark.*?shows\s*["']?([^"']+)["']?/i) ||
+                           cleaned.match(/watermark\s*\(([^)]+)\)/i);
+    const shiftMatch = cleaned.match(/shift dates? (?:are|is)\s*["']?([^"']+)["']?/i) ||
+                       cleaned.match(/scheduled.*?\(([^)]+)\)/i);
+
+    if (watermarkMatch && shiftMatch) {
+        return `Outdated watermark (${watermarkMatch[1].trim()}) · Scheduled: ${shiftMatch[1].trim()}`;
+    }
+
+    if (/gallery upload/i.test(cleaned) && (/missing verification watermark/i.test(cleaned) || /without live/i.test(cleaned))) {
+        return 'Gallery upload without live watermark · Live camera capture required';
+    }
+
+    // 3. Strip verbose AI guidance / boilerplate
+    cleaned = cleaned
+        .replace(/Audits require a live camera capture with verified watermark\.?/gi, '')
+        .replace(/Please tap ["']?Retake["']? to capture a fresh live photo\.?/gi, '')
+        .replace(/Please tap ["']?Retake["']? to capture a fresh photo now\.?/gi, '')
+        .replace(/Please tap ["']?Retake["']? to snap a live photo of the cleaned space\.?/gi, '')
+        .replace(/Audits must show your actual on-site work\.?/gi, '')
+        .replace(/Based on the visual comparison against the reference benchmark,?\s*/gi, '')
+        .replace(/Based on the visual comparison,?\s*/gi, '')
+        .replace(/According to (?:our|the) visual inspection,?\s*/gi, '')
+        .replace(/Upon careful analysis of the provided image,?\s*/gi, '')
+        .replace(/In comparison with the CAD benchmark,?\s*/gi, '')
+        .replace(/In comparison with the reference photo,?\s*/gi, '')
+        .replace(/The photo reveals that\s*/gi, '')
+        .replace(/The inspection indicates that\s*/gi, '')
+        .trim();
+
+    cleaned = cleaned.replace(/^[-–—·.,\s]+|[-–—·.,\s]+$/g, '').trim();
+
+    if (cleaned.length > 0) {
+        cleaned = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+    }
+
+    return cleaned || text;
 }
 
 // Satisfaction rating config
@@ -179,6 +238,10 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
     useEffect(() => {
         if (!isAIEnabled || !completion?.items) return;
 
+        // Skip automatic background evaluation if completion is already completed.
+        // Completed checklists were already scored during submission so reviewers in the Done section see stored results immediately.
+        if (completion.status === 'completed') return;
+
         // One-time evaluation guard: only evaluate if photo exists and it has NOT been evaluated before
         const unscoredItems = completion.items.filter(
             (it: any) =>
@@ -212,7 +275,7 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
         return () => {
             isCancelled = true;
         };
-    }, [isAIEnabled, completion?.items, triggerAIScoring]);
+    }, [isAIEnabled, completion?.status, completion?.items, triggerAIScoring]);
 
     const handleRate = useCallback(async (itemId: string, rating: number) => {
         if (!currentUserId) return;
@@ -771,111 +834,268 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
                                             <Camera size={9} />
                                             Visual Proof
                                         </p>
-                                        {/* Side-by-Side Comparison — admins see clean ref + uploaded; staff see only their uploaded photo */}
-                                        {isAdmin && (item.photo_url || templateItem?.reference_photo_url) && (
-                                            <div className="mb-3 p-3 bg-slate-50 border border-slate-200 rounded-xl">
-                                                <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-2 flex items-center gap-1.5">
-                                                    <Camera size={10} className="text-primary" />
-                                                    Photo Comparison (Standard Clean vs Uploaded Execution)
-                                                </p>
+                                        {/* Side-by-Side Comparison — Clean Benchmark Standard vs Uploaded Execution */}
+                                        {(() => {
+                                            const benchmarkList: Array<{ id: string; label: string; url: string }> =
+                                                Array.isArray(templateItem?.reference_photos) && templateItem.reference_photos.length > 0
+                                                    ? templateItem.reference_photos
+                                                    : (templateItem?.reference_photo_url ? [{ id: 'ref_1', label: 'Clean Standard Photo', url: templateItem.reference_photo_url }] : []);
 
-                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                                    {/* Clean Standard Reference Photo — admin only */}
-                                                    <div className="flex flex-col">
-                                                        <span className="text-[9px] font-black text-emerald-700 uppercase tracking-wider mb-1 flex items-center gap-1">
-                                                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                                                            Clean Standard Photo
-                                                        </span>
-                                                        {templateItem?.reference_photo_url ? (
-                                                            <div
-                                                                className="relative aspect-video rounded-xl overflow-hidden shadow-sm border border-emerald-200 cursor-pointer group bg-slate-900"
-                                                                onClick={() => setPreviewImageUrl(templateItem.reference_photo_url)}
-                                                            >
-                                                                <img
-                                                                    src={templateItem.reference_photo_url}
-                                                                    alt="Clean Standard Reference"
-                                                                    className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                                                                />
-                                                                <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                                                    <Eye size={20} className="text-white" />
-                                                                </div>
-                                                                <div className="absolute bottom-1.5 left-1.5 px-2 py-0.5 bg-emerald-950/80 rounded text-[8px] text-emerald-300 font-bold uppercase tracking-wider">
-                                                                    Standard Clean Ref
-                                                                </div>
-                                                            </div>
-                                                        ) : (
-                                                            <div className="aspect-video rounded-xl border border-dashed border-slate-200 bg-white flex flex-col items-center justify-center text-slate-400 p-2 text-center">
-                                                                <Camera size={18} className="mb-1 opacity-40" />
-                                                                <span className="text-[9px] font-bold">No Clean Standard Photo</span>
-                                                            </div>
-                                                        )}
-                                                    </div>
+                                            const uploadedPhotos: Array<{ id?: string; url: string; captured_at?: string }> =
+                                                Array.isArray(item.photos) && item.photos.length > 0
+                                                    ? item.photos
+                                                    : (item.photo_url ? [{ id: 'p1', url: item.photo_url, captured_at: item.checked_at }] : []);
 
-                                                    {/* Uploaded Execution Photo */}
-                                                    <div className="flex flex-col">
-                                                        <span className="text-[9px] font-black text-blue-700 uppercase tracking-wider mb-1 flex items-center gap-1">
-                                                            <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                                                            Uploaded Execution Photo
-                                                        </span>
-                                                        {item.photo_url ? (
-                                                            <div className="relative aspect-video rounded-xl overflow-hidden shadow-sm border border-blue-200 group bg-slate-900">
-                                                                <div
-                                                                    className="w-full h-full cursor-pointer"
-                                                                    onClick={() => setPreviewImageUrl(item.photo_url)}
-                                                                >
-                                                                    <img src={item.photo_url} alt="Uploaded Execution Proof" className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
-                                                                    <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                                                        <Eye size={20} className="text-white" />
-                                                                    </div>
-                                                                </div>
-                                                                <button
-                                                                    onClick={(e) => { e.stopPropagation(); handleRemoveMedia(item.id, 'photo'); }}
-                                                                    className="absolute top-2 right-2 w-6 h-6 bg-black/60 backdrop-blur-md rounded-full flex items-center justify-center text-white hover:bg-rose-500 transition-all z-10"
-                                                                    title="Delete photo"
-                                                                >
-                                                                    <X size={12} />
-                                                                </button>
-                                                                <div className="absolute bottom-1.5 left-1.5 px-2 py-0.5 bg-blue-950/80 rounded text-[8px] text-blue-300 font-bold uppercase tracking-wider">
-                                                                    Execution Uploaded
-                                                                </div>
-                                                                {item.checked_at && (
-                                                                    <div className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 bg-black/70 rounded text-[7px] text-white font-mono font-bold">
-                                                                        {new Date(item.checked_at).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).replace(',', '')}
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                        ) : (
-                                                            <div className="aspect-video rounded-xl border border-dashed border-slate-200 bg-white flex flex-col items-center justify-center text-slate-400 p-2 text-center">
-                                                                <Camera size={18} className="mb-1 opacity-40" />
-                                                                <span className="text-[9px] font-bold">No Photo Uploaded Yet</span>
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        )}
+                                            const aiMatches: any[] = Array.isArray(item.ai_photo_matches)
+                                                ? item.ai_photo_matches
+                                                : typeof item.ai_photo_matches === 'string'
+                                                    ? (() => { try { return JSON.parse(item.ai_photo_matches); } catch { return []; } })()
+                                                    : [];
 
-                                        {/* Staff (non-admin) photo view: just show uploaded photo, no benchmark */}
-                                        {!isAdmin && item.photo_url && (
-                                            <div className="mb-3">
-                                                <div className="relative aspect-video max-w-xs rounded-xl overflow-hidden shadow-sm border border-slate-200 group bg-slate-900">
-                                                    <div
-                                                        className="w-full h-full cursor-pointer"
-                                                        onClick={() => setPreviewImageUrl(item.photo_url)}
-                                                    >
-                                                        <img src={item.photo_url} alt="Uploaded Photo" className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
-                                                        <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                                            <Eye size={20} className="text-white" />
+                                            // If neither clean benchmarks nor uploaded photos exist, show empty state
+                                            if (benchmarkList.length === 0 && uploadedPhotos.length === 0) {
+                                                return null;
+                                            }
+
+                                            // Case A: Benchmarks are configured (Single or Multi-Clean Standards)
+                                            if (benchmarkList.length > 0) {
+                                                const pairedBenchmarks = benchmarkList.map((bm: any, bIdx: number) => {
+                                                    // Find match by ID or by label
+                                                    const match = aiMatches.find(
+                                                        (m: any) => m.benchmark_id === bm.id || 
+                                                                    (m.benchmark_label && bm.label && m.benchmark_label.toLowerCase() === bm.label.toLowerCase())
+                                                    );
+
+                                                    let execPhotoUrl = match?.matched_photo_url || null;
+                                                    let status = match?.status || (uploadedPhotos[bIdx]?.url ? 'matched' : 'missing');
+                                                    let cleanlinessScore = typeof match?.cleanliness_score === 'number'
+                                                        ? match.cleanliness_score
+                                                        : (status === 'matched' ? (item.ai_cleanliness_score ?? null) : 0);
+                                                    let reason = match?.reason || (status === 'missing' ? `No photo captured for ${bm.label || 'standard'}` : 'Cleanliness verified');
+
+                                                    if (!execPhotoUrl) {
+                                                        if (benchmarkList.length === 1 && uploadedPhotos[0]?.url) {
+                                                            execPhotoUrl = uploadedPhotos[0].url;
+                                                            status = 'matched';
+                                                        } else if (uploadedPhotos[bIdx]?.url) {
+                                                            execPhotoUrl = uploadedPhotos[bIdx].url;
+                                                        }
+                                                    }
+
+                                                    const matchedPhotoObj = uploadedPhotos.find((p: any) => p.url === execPhotoUrl);
+                                                    const capturedAt = matchedPhotoObj?.captured_at || item.checked_at;
+
+                                                    return {
+                                                        id: bm.id || `bm_${bIdx + 1}`,
+                                                        label: bm.label || `Clean Standard #${bIdx + 1}`,
+                                                        cleanUrl: bm.url,
+                                                        execUrl: execPhotoUrl,
+                                                        status,
+                                                        score: cleanlinessScore,
+                                                        reason,
+                                                        capturedAt,
+                                                    };
+                                                });
+
+                                                const matchedUrls = new Set(pairedBenchmarks.map(p => p.execUrl).filter(Boolean));
+                                                const unmatchedPhotos = uploadedPhotos.filter(p => !matchedUrls.has(p.url));
+
+                                                return (
+                                                    <div className="mb-3 space-y-3">
+                                                        <div className="flex items-center justify-between">
+                                                            <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-1.5">
+                                                                <Camera size={10} className="text-primary" />
+                                                                Photo Comparison (Clean Standard vs Uploaded Execution)
+                                                            </p>
+                                                            <span className="text-[8px] font-black uppercase tracking-wider text-slate-400 bg-slate-50 px-2 py-0.5 rounded-full border border-slate-200">
+                                                                {pairedBenchmarks.length} Standard Area{pairedBenchmarks.length > 1 ? 's' : ''}
+                                                            </span>
                                                         </div>
+
+                                                        {pairedBenchmarks.map((pair, pIdx) => {
+                                                            const isMissing = pair.status === 'missing' || !pair.execUrl;
+                                                            const isClean = !isMissing && typeof pair.score === 'number' && pair.score >= 70;
+                                                            const isNeedsAttention = !isMissing && typeof pair.score === 'number' && pair.score < 70;
+
+                                                            return (
+                                                                <div key={pair.id || pIdx} className="p-3 bg-slate-50/80 border border-slate-200 rounded-2xl space-y-2.5">
+                                                                    {/* Header with Benchmark Label & Score Badge */}
+                                                                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                                                                        <div className="flex items-center gap-1.5 min-w-0">
+                                                                            <span className={`w-2 h-2 rounded-full ${isMissing ? 'bg-rose-500' : isClean ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                                                                            <span className="text-xs font-black text-slate-900 tracking-tight truncate">
+                                                                                {pair.label}
+                                                                            </span>
+                                                                            <span className="text-[8px] font-bold text-slate-400 bg-white px-2 py-0.5 rounded-full border border-slate-200">
+                                                                                Area #{pIdx + 1}
+                                                                            </span>
+                                                                        </div>
+
+                                                                        <div className="flex items-center gap-1.5">
+                                                                            {isMissing ? (
+                                                                                <span className="px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider bg-rose-500 text-white flex items-center gap-1 shadow-2xs">
+                                                                                    <AlertCircle size={10} /> Missing Photo
+                                                                                </span>
+                                                                            ) : typeof pair.score === 'number' ? (
+                                                                                <span className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider text-white flex items-center gap-1 shadow-2xs ${
+                                                                                    isClean ? 'bg-emerald-500' : isNeedsAttention ? 'bg-amber-500' : 'bg-rose-500'
+                                                                                }`}>
+                                                                                    <CheckCircle2 size={10} />
+                                                                                    {isClean ? 'Clean' : 'Needs Attention'} ({pair.score}/100)
+                                                                                </span>
+                                                                            ) : (
+                                                                                <span className="px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider bg-blue-500 text-white">
+                                                                                    Captured
+                                                                                </span>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+
+                                                                    {/* Side-by-Side: Clean Standard Photo vs Uploaded Execution Photo */}
+                                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                                        {/* Left: Clean Standard Reference */}
+                                                                        <div className="flex flex-col">
+                                                                            <span className="text-[9px] font-black text-emerald-700 uppercase tracking-wider mb-1 flex items-center gap-1">
+                                                                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                                                                Clean Standard Photo
+                                                                            </span>
+                                                                            {pair.cleanUrl ? (
+                                                                                <div
+                                                                                    className="relative aspect-video rounded-xl overflow-hidden shadow-sm border border-emerald-200 cursor-pointer group bg-slate-900"
+                                                                                    onClick={() => setPreviewImageUrl(pair.cleanUrl)}
+                                                                                >
+                                                                                    <img
+                                                                                        src={pair.cleanUrl}
+                                                                                        alt={`Clean Standard - ${pair.label}`}
+                                                                                        className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                                                                                    />
+                                                                                    <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                                                                        <Eye size={20} className="text-white" />
+                                                                                    </div>
+                                                                                    <div className="absolute bottom-1.5 left-1.5 px-2 py-0.5 bg-emerald-950/80 rounded text-[8px] text-emerald-300 font-bold uppercase tracking-wider">
+                                                                                        Standard Clean Ref
+                                                                                    </div>
+                                                                                </div>
+                                                                            ) : (
+                                                                                <div className="aspect-video rounded-xl border border-dashed border-slate-200 bg-white flex flex-col items-center justify-center text-slate-400 p-2 text-center">
+                                                                                    <Camera size={18} className="mb-1 opacity-40" />
+                                                                                    <span className="text-[9px] font-bold">No Clean Benchmark</span>
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
+
+                                                                        {/* Right: Uploaded Execution Proof */}
+                                                                        <div className="flex flex-col">
+                                                                            <span className="text-[9px] font-black text-blue-700 uppercase tracking-wider mb-1 flex items-center gap-1">
+                                                                                <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                                                                                Uploaded Execution Proof
+                                                                            </span>
+                                                                            {pair.execUrl ? (
+                                                                                <div className="relative aspect-video rounded-xl overflow-hidden shadow-sm border border-blue-200 group bg-slate-900">
+                                                                                    <div
+                                                                                        className="w-full h-full cursor-pointer"
+                                                                                        onClick={() => setPreviewImageUrl(pair.execUrl)}
+                                                                                    >
+                                                                                        <img
+                                                                                            src={pair.execUrl}
+                                                                                            alt={`Executed Work - ${pair.label}`}
+                                                                                            className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                                                                                        />
+                                                                                        <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                                                                            <Eye size={20} className="text-white" />
+                                                                                        </div>
+                                                                                    </div>
+                                                                                    <div className="absolute bottom-1.5 left-1.5 px-2 py-0.5 bg-blue-950/80 rounded text-[8px] text-blue-300 font-bold uppercase tracking-wider">
+                                                                                        Execution Uploaded
+                                                                                    </div>
+                                                                                    {pair.capturedAt && (
+                                                                                        <div className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 bg-black/70 rounded text-[7px] text-white font-mono font-bold">
+                                                                                            {new Date(pair.capturedAt).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).replace(',', '')}
+                                                                                        </div>
+                                                                                    )}
+                                                                                </div>
+                                                                            ) : (
+                                                                                <div className="aspect-video rounded-xl border-2 border-dashed border-rose-200 bg-rose-50/60 flex flex-col items-center justify-center text-rose-600 p-3 text-center">
+                                                                                    <AlertCircle size={22} className="mb-1 text-rose-500" />
+                                                                                    <span className="text-[10px] font-black uppercase tracking-wider">Missing Execution Photo</span>
+                                                                                    <span className="text-[9px] text-rose-500/80 font-medium mt-0.5">No photo uploaded matching this area</span>
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+
+                                                                    {/* AI Evaluation Observation for this Area */}
+                                                                    {pair.reason && (
+                                                                        <div className="bg-white rounded-xl p-2.5 border border-slate-200/70 text-[11px] text-slate-700 font-medium flex items-start gap-2 shadow-2xs">
+                                                                            <span className="text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded flex-shrink-0 mt-0.5">
+                                                                                AI Audit
+                                                                            </span>
+                                                                            <span className="leading-relaxed">{formatDirectCause(pair.reason)}</span>
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            );
+                                                        })}
+
+                                                        {/* Any extra uploaded photos not mapped to specific benchmarks */}
+                                                        {unmatchedPhotos.length > 0 && (
+                                                            <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl">
+                                                                <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-2">
+                                                                    Additional Execution Photos ({unmatchedPhotos.length})
+                                                                </p>
+                                                                <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-thin">
+                                                                    {unmatchedPhotos.map((p: any, uIdx: number) => (
+                                                                        <div
+                                                                            key={p.id || uIdx}
+                                                                            className="relative w-16 h-16 rounded-xl overflow-hidden border border-slate-200 flex-shrink-0 cursor-pointer group bg-slate-900"
+                                                                            onClick={() => setPreviewImageUrl(p.url)}
+                                                                        >
+                                                                            <img src={p.url} alt={`Extra upload ${uIdx + 1}`} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                                                                            <span className="absolute bottom-0.5 left-0.5 px-1 bg-black/70 text-[7px] font-black text-white rounded">
+                                                                                +{uIdx + 1}
+                                                                            </span>
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
+                                                            </div>
+                                                        )}
                                                     </div>
-                                                    {item.checked_at && (
-                                                        <div className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 bg-black/70 rounded text-[7px] text-white font-mono font-bold">
-                                                            {new Date(item.checked_at).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).replace(',', '')}
+                                                );
+                                            }
+
+                                            // Case B: No benchmark reference configured — show uploaded execution photos
+                                            return (
+                                                <div className="mb-3 p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-2">
+                                                    <span className="text-[9px] font-black text-blue-700 uppercase tracking-wider flex items-center gap-1">
+                                                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                                                        Uploaded Execution Photo{uploadedPhotos.length > 1 ? `s (${uploadedPhotos.length})` : ''}
+                                                    </span>
+                                                    <div className="relative aspect-video max-w-sm rounded-xl overflow-hidden shadow-sm border border-blue-200 group bg-slate-900">
+                                                        <div className="w-full h-full cursor-pointer" onClick={() => setPreviewImageUrl(uploadedPhotos[0]?.url)}>
+                                                            <img src={uploadedPhotos[0]?.url} alt="Uploaded Execution Proof" className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                                                            <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                                                <Eye size={20} className="text-white" />
+                                                            </div>
+                                                        </div>
+                                                        {uploadedPhotos[0]?.captured_at && (
+                                                            <div className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 bg-black/70 rounded text-[7px] text-white font-mono font-bold">
+                                                                {new Date(uploadedPhotos[0].captured_at).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).replace(',', '')}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    {uploadedPhotos.length > 1 && (
+                                                        <div className="flex items-center gap-1.5 mt-2 overflow-x-auto pb-1 scrollbar-thin">
+                                                            {uploadedPhotos.map((p: any, pIdx: number) => (
+                                                                <div key={p.id || pIdx} className="relative w-12 h-12 rounded-lg overflow-hidden border border-slate-200 flex-shrink-0 cursor-pointer group" onClick={() => setPreviewImageUrl(p.url)}>
+                                                                    <img src={p.url} alt={`Upload ${pIdx + 1}`} className="w-full h-full object-cover" />
+                                                                    <span className="absolute bottom-0.5 left-0.5 px-1 bg-black/60 text-[7px] font-bold text-white rounded">#{pIdx + 1}</span>
+                                                                </div>
+                                                            ))}
                                                         </div>
                                                     )}
                                                 </div>
-                                            </div>
-                                        )}
+                                            );
+                                        })()}
 
                                         {/* Video Proof if present */}
                                         {item.video_url && (
@@ -965,7 +1185,7 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
                                                                             AI Cleanliness Score{item.ai_reference_used === 'cad' ? ' · vs CAD' : item.ai_reference_used === 'uploaded' ? ' · vs Reference' : ''}
                                                                         </p>
                                                                         {item.ai_cleanliness_reason && (
-                                                                            <p className="text-[10px] text-slate-500 font-medium leading-snug mt-0.5">{item.ai_cleanliness_reason}</p>
+                                                                            <p className="text-[10px] text-slate-500 font-medium leading-snug mt-0.5">{formatDirectCause(item.ai_cleanliness_reason)}</p>
                                                                         )}
                                                                     </div>
                                                                 </div>
@@ -995,6 +1215,8 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
                                             ) : null}
                                         </div>
                                     )}
+
+
 
                                     {/* Parameter by Parameter Cleanliness Breakdown */}
                                     {(() => {
@@ -1042,7 +1264,7 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
                                                             </div>
                                                             {param.reason && (
                                                                 <p className="text-[10px] text-slate-500 font-medium sm:text-right sm:max-w-[50%] leading-tight">
-                                                                    {param.reason}
+                                                                    {formatDirectCause(param.reason)}
                                                                 </p>
                                                             )}
                                                         </div>

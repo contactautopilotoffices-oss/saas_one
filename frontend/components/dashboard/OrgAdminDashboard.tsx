@@ -66,7 +66,6 @@ const VendorManagementModal = dynamic(() => import('@/frontend/components/vendor
 const GuestExperienceDashboard = dynamic(() => import('@/frontend/components/guest-experience/GuestExperienceDashboard'), { loading: TabLoading });
 const AITicketsDashboard = dynamic(() => import('@/frontend/components/ai-tickets/AITicketsDashboard'), { loading: TabLoading });
 const TaskManagerSuperuserDashboard = dynamic(() => import('@/frontend/components/task-manager/TaskManagerSuperuserDashboard'), { loading: TabLoading });
-const TaskManagerTestingDashboard = dynamic(() => import('@/frontend/components/task-manager/TaskManagerTestingDashboard'), { loading: TabLoading });
 const OrgProgressTracker = dynamic(() => import('@/frontend/components/org-efficiency/OrgProgressTracker'), { loading: TabLoading });
 const OrgEfficiencyMeter = dynamic(() => import('@/frontend/components/org-efficiency/OrgEfficiencyMeter'), { loading: TabLoading });
 const AgentConsole = dynamic(() => import('@/frontend/components/agents/AgentConsole'), { loading: TabLoading });
@@ -103,7 +102,6 @@ const TAB_PRELOADS = [
     () => import('@/frontend/components/guest-experience/GuestExperienceDashboard'),
     () => import('@/frontend/components/ai-tickets/AITicketsDashboard'),
     () => import('@/frontend/components/task-manager/TaskManagerSuperuserDashboard'),
-    () => import('@/frontend/components/task-manager/TaskManagerTestingDashboard'),
     () => import('@/frontend/components/org-efficiency/OrgProgressTracker'),
     () => import('@/frontend/components/org-efficiency/OrgEfficiencyMeter'),
     () => import('@/frontend/components/agents/AgentConsole'),
@@ -1302,17 +1300,6 @@ const OrgAdminDashboard = () => {
                                 <span className="flex-1 text-left">Task Manager</span>
                             </button>
                             <button
-                                onClick={() => handleTabChange('task_testing')}
-                                className={`w-full flex items-center gap-3 px-4 py-2 rounded-xl transition-all duration-200 font-bold text-sm group ${activeTab === 'task_testing'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
-                                    : 'text-text-secondary hover:bg-primary/10 hover:text-primary'
-                                    }`}
-                            >
-                                <Building2 className={`w-4 h-4 transition-transform ${activeTab === 'task_testing' ? '' : 'group-hover:scale-110 text-amber-500'}`} />
-                                <span className="flex-1 text-left">Control Center</span>
-                                <span className="text-[10px] uppercase font-extrabold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400">Dept & WA</span>
-                            </button>
-                            <button
                                 onClick={() => handleTabChange('ai_tickets')}
                                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm group ${activeTab === 'ai_tickets'
                                     ? 'bg-primary text-text-inverse shadow-sm'
@@ -1602,8 +1589,7 @@ const OrgAdminDashboard = () => {
                             </div>
                         )}
                         {activeTab === 'ai_tickets' && <AITicketsDashboard propertyId={selectedPropertyId === 'all' ? undefined : selectedPropertyId} />}
-                        {activeTab === 'tasks' && <TaskManagerSuperuserDashboard orgId={org?.id || ''} />}
-                        {activeTab === 'task_testing' && <TaskManagerTestingDashboard orgId={org?.id || ''} />}
+                        {activeTab === 'tasks' && <TaskManagerSuperuserDashboard orgId={org?.id || ''} underFixedHeader />}
                         {activeTab === 'revenue' && <RevenueTab key="revenue-tab" properties={properties} selectedPropertyId={selectedPropertyId} />}
                         {activeTab === 'properties' && (
                             <PropertiesTab

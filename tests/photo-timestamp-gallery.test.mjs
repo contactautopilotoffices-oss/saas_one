@@ -104,13 +104,13 @@ test('Option B Gallery Upload verification logic marks old photo with actual tim
         isStale = true;
         if (actualImageInfo?.timestampStr) {
             detectedWatermark = `${actualImageInfo.timestampStr} (Gallery Upload)`;
-            staleReasonMessage = `Old photo / Gallery upload detected (Actual image timestamp: "${actualImageInfo.timestampStr}", uploaded from gallery). Audits require a live camera capture with verified watermark. Please tap "Retake" to capture a fresh live photo.`;
+            staleReasonMessage = `Gallery upload (Taken: ${actualImageInfo.timestampStr}) · Live camera capture required`;
         }
     }
 
     assert.equal(isStale, true, 'Gallery upload must be marked stale');
     assert.equal(detectedWatermark, '20/10/2026, 12:01:49 PM (Gallery Upload)');
-    assert.ok(staleReasonMessage.includes('Old photo / Gallery upload detected'));
+    assert.ok(staleReasonMessage.includes('Gallery upload'));
     assert.ok(staleReasonMessage.includes('20/10/2026, 12:01:49 PM'));
 });
 

@@ -33,7 +33,8 @@ export interface ExecIO {
     /** Another person's tasks as text, or null when the actor may not see them. */
     readPerson(actorId: string, personId: string): Promise<string | null>;
     /** Phase 4 "Team reports": today's progress of the people this person may give work to, as text (null = not available). */
-    readTeam?(actorId: string): Promise<string | null>;
+    /** `list` (owner 2026-10-21): every task of each person instead of the progress counts. */
+    readTeam?(actorId: string, list?: boolean): Promise<string | null>;
     /** Superuser overviews (department / pending / whole company) as text. */
     readInsight(actorId: string, kind: 'department_progress' | 'pending_tasks' | 'org_overview', subject: string | null): Promise<string>;
     /** Flexible "look up tasks" (read-only): rows matching the form, for people the actor may see — checked AGAIN here
@@ -155,10 +156,10 @@ export async function executeAction(action: Action, ctx: BrainContext, io: ExecI
                 }
                 if (action.scope === 'team') {
                     // Phase 4 "Team reports": only the people this person may already give work to (re-checked by readTeam).
-                    const text = io.readTeam ? await io.readTeam(me) : null;
+                    const text = io.readTeam ? await io.readTeam(me, !!action.list) : null;
                     return text === null
                         ? { summary: 'Team reports are not available.', values: {} }
-                        : { summary: 'How your team is doing today', values: { data: text } };
+                        : { summary: action.list ? 'What your team is working on today' : 'How your team is doing today', values: { data: text } };
                 }
                 const kind = action.scope === 'department' ? 'department_progress' : action.scope === 'pending_overview' ? 'pending_tasks' : 'org_overview';
                 const text = await io.readInsight(me, kind, action.department);

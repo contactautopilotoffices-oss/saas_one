@@ -868,60 +868,79 @@ const SOPTemplateManager: React.FC<SOPTemplateManagerProps> = ({ propertyId, pro
                                                                                     </div>
                                                                                 </div>
 
-                                                                                {/* Reference Photo and Step Parameters */}
-                                                                                {(item.reference_photo_url || params.length > 0) && (
-                                                                                    <div className="mt-2.5 pt-2 border-t border-slate-100 flex flex-col sm:flex-row gap-3 items-start">
-                                                                                        {item.reference_photo_url && (
-                                                                                            <div className="flex items-center gap-2 flex-shrink-0">
-                                                                                                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
-                                                                                                    Benchmark:
-                                                                                                </span>
-                                                                                                <button
-                                                                                                    type="button"
-                                                                                                    onClick={(e) => {
-                                                                                                        e.stopPropagation();
-                                                                                                        setPreviewPhotoUrl(item.reference_photo_url);
-                                                                                                    }}
-                                                                                                    className="group/photo relative w-12 h-12 rounded-lg overflow-hidden border border-slate-200 hover:border-primary transition-all flex-shrink-0 shadow-sm"
-                                                                                                    title="View benchmark photo"
-                                                                                                >
-                                                                                                    <img
-                                                                                                        src={item.reference_photo_url}
-                                                                                                        alt="Reference Benchmark"
-                                                                                                        className="w-full h-full object-cover group-hover/photo:scale-110 transition-transform"
-                                                                                                    />
-                                                                                                    <div className="absolute inset-0 bg-black/25 opacity-0 group-hover/photo:opacity-100 flex items-center justify-center transition-opacity">
-                                                                                                        <Eye size={12} className="text-white" />
-                                                                                                    </div>
-                                                                                                </button>
-                                                                                            </div>
-                                                                                        )}
+                                                                                {/* Reference Photo(s) and Step Parameters */}
+                                                                                {(() => {
+                                                                                    const refPhotos: any[] = Array.isArray(item.reference_photos) && item.reference_photos.length > 0
+                                                                                        ? item.reference_photos
+                                                                                        : (item.reference_photo_url ? [{ id: 'ref_1', label: 'Clean Benchmark', url: item.reference_photo_url }] : []);
 
-                                                                                        {params.length > 0 && (
-                                                                                            <div className="flex-1 min-w-0 w-full bg-slate-50/80 rounded-lg p-2 border border-slate-100">
-                                                                                                <div className="flex items-center gap-1 mb-1.5">
-                                                                                                    <Layers size={10} className="text-slate-500" />
-                                                                                                    <span className="text-[9px] font-black uppercase tracking-wider text-slate-500">
-                                                                                                        Sub-check Parameters ({params.length})
+                                                                                    if (refPhotos.length === 0 && params.length === 0) return null;
+
+                                                                                    return (
+                                                                                        <div className="mt-2.5 pt-2 border-t border-slate-100 flex flex-col sm:flex-row gap-3 items-start">
+                                                                                            {refPhotos.length > 0 && (
+                                                                                                <div className="flex flex-col gap-1.5 flex-shrink-0">
+                                                                                                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                                                                                                        {refPhotos.length > 1 ? `Benchmarks (${refPhotos.length}):` : 'Benchmark:'}
                                                                                                     </span>
+                                                                                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                                                                                        {refPhotos.map((ref: any, rIdx: number) => (
+                                                                                                            <div key={ref.id || rIdx} className="relative group/photo flex-shrink-0">
+                                                                                                                <button
+                                                                                                                    type="button"
+                                                                                                                    onClick={(e) => {
+                                                                                                                        e.stopPropagation();
+                                                                                                                        setPreviewPhotoUrl(ref.url);
+                                                                                                                    }}
+                                                                                                                    className="relative w-12 h-12 rounded-lg overflow-hidden border-2 border-emerald-300 hover:border-emerald-500 transition-all flex-shrink-0 shadow-xs block text-left cursor-zoom-in"
+                                                                                                                    title={`View benchmark: ${ref.label || `Photo ${rIdx + 1}`}`}
+                                                                                                                >
+                                                                                                                    <img
+                                                                                                                        src={ref.url}
+                                                                                                                        alt={ref.label || "Reference Benchmark"}
+                                                                                                                        className="w-full h-full object-cover group-hover/photo:scale-105 transition-transform"
+                                                                                                                    />
+                                                                                                                    <div className="absolute inset-0 bg-black/25 opacity-0 group-hover/photo:opacity-100 flex items-center justify-center transition-opacity">
+                                                                                                                        <Eye size={12} className="text-white drop-shadow" />
+                                                                                                                    </div>
+                                                                                                                    <div className="absolute bottom-0 inset-x-0 bg-black/80 backdrop-blur-xs px-1 py-0.2 text-center">
+                                                                                                                        <p className="text-[7px] font-black text-white truncate max-w-[42px] leading-tight">
+                                                                                                                            {ref.label || `#${rIdx + 1}`}
+                                                                                                                        </p>
+                                                                                                                    </div>
+                                                                                                                </button>
+                                                                                                            </div>
+                                                                                                        ))}
+                                                                                                    </div>
                                                                                                 </div>
-                                                                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                                                                                                    {params.map((p: any, pIdx: number) => (
-                                                                                                        <div
-                                                                                                            key={p.id || pIdx}
-                                                                                                            className="flex items-center justify-between gap-1.5 bg-white px-2 py-1 rounded border border-slate-200/70 text-[11px]"
-                                                                                                        >
-                                                                                                            <span className="font-semibold text-slate-800 truncate">{p.name}</span>
-                                                                                                            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 flex-shrink-0">
-                                                                                                                {p.type === 'yes_no' ? 'Y/N' : p.type}
-                                                                                                            </span>
-                                                                                                        </div>
-                                                                                                    ))}
+                                                                                            )}
+
+                                                                                            {params.length > 0 && (
+                                                                                                <div className="flex-1 min-w-0 w-full bg-slate-50/80 rounded-lg p-2 border border-slate-100">
+                                                                                                    <div className="flex items-center gap-1 mb-1.5">
+                                                                                                        <Layers size={10} className="text-slate-500" />
+                                                                                                        <span className="text-[9px] font-black uppercase tracking-wider text-slate-500">
+                                                                                                            Sub-check Parameters ({params.length})
+                                                                                                        </span>
+                                                                                                    </div>
+                                                                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                                                                                        {params.map((p: any, pIdx: number) => (
+                                                                                                            <div
+                                                                                                                key={p.id || pIdx}
+                                                                                                                className="flex items-center justify-between gap-1.5 bg-white px-2 py-1 rounded border border-slate-200/70 text-[11px]"
+                                                                                                            >
+                                                                                                                <span className="font-semibold text-slate-800 truncate">{p.name}</span>
+                                                                                                                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 flex-shrink-0">
+                                                                                                                    {p.type === 'yes_no' ? 'Y/N' : p.type}
+                                                                                                                </span>
+                                                                                                            </div>
+                                                                                                        ))}
+                                                                                                    </div>
                                                                                                 </div>
-                                                                                            </div>
-                                                                                        )}
-                                                                                    </div>
-                                                                                )}
+                                                                                            )}
+                                                                                        </div>
+                                                                                    );
+                                                                                })()}
                                                                             </div>
                                                                         );
                                                                     })}

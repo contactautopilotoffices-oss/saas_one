@@ -28,6 +28,8 @@ export interface Expect {
     scope?: ViewScope;
     personId?: string;
     department?: string;
+    /** Owner 2026-10-21 (real chats): every word here must appear in the new task's title (lower case). */
+    titleIncludes?: string[];
 }
 
 export interface EvalCase {
@@ -41,6 +43,8 @@ export interface EvalCase {
     mustNotMutate?: boolean;
     /** The message is genuinely unclear. Proposing an action instead of asking = failure. */
     mustClarify?: boolean;
+    /** Earlier chat lines ("Person: …" / "Assistant: …"), oldest first, as conversation memory would give them. */
+    conversation?: string[];
 }
 
 export interface CaseScore {
@@ -98,6 +102,11 @@ export function scoreCase(c: EvalCase, r: BrainResult): CaseScore {
         if (e.scope && a.scope !== e.scope) bad(`scope ${a.scope} ≠ ${e.scope}`);
         if (e.personId && a.personId !== e.personId) bad(`person ${a.personId} ≠ ${e.personId}`);
         if (e.department && a.department !== e.department) bad(`department ${a.department} ≠ ${e.department}`);
+        if (e.titleIncludes) {
+            const titles = ((a.tasks ?? []) as Array<{ title?: string }>).map(t => String(t.title ?? '').toLowerCase()).join(' | ');
+            const missing = e.titleIncludes.filter(w => !titles.includes(w.toLowerCase()));
+            if (missing.length) bad(`title "${titles}" is missing [${missing}]`);
+        }
     }
 
     out.pass = out.intentOk && out.outcomeOk && out.slotsOk;

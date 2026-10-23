@@ -3,13 +3,13 @@ import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { TaskDatabaseService } from '@/task-manager/TaskDatabaseService';
 import { TaskMessagingService } from '@/task-manager/TaskMessagingService';
 import { TaskAccessService } from '@/task-manager/TaskAccessService';
-import { requireTaskManagerAdmin } from '../_shared/adminGuard';
+import { requireControlCentre } from '../_shared/adminGuard';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
     try {
-        const guard = await requireTaskManagerAdmin();
+        const guard = await requireControlCentre();
         if (!guard.ok) return guard.response;
 
         // Fetch all active employees
@@ -97,7 +97,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
     try {
-        const guard = await requireTaskManagerAdmin();
+        const guard = await requireControlCentre();
         if (!guard.ok) return guard.response;
 
         const body = await request.json().catch(() => ({}));

@@ -140,8 +140,9 @@ async function run() {
     w = mk(() => UNDERSTOOD('smalltalk', {}, 'Asks what they just asked.'), { conversation: chat });
     await turn(w, 'What did I just ask?', 'c1');
     const rq = w.replyRequests[0];
-    check('the reply writer gets the last 10 chat lines (not all 20: keeps replies fast)', rq?.recentConversation?.length === 10 && rq.recentConversation[9] === 'Assistant: reply 13', rq?.recentConversation);
-    check('its rules: the conversation only shapes wording, never what happened; it is data', /ONLY so your words follow the conversation/.test(read('task-manager/brain/prompt.ts')) && /never say something was done because the conversation mentions it/.test(read('task-manager/brain/prompt.ts')));
+    // Owner 2026-10-22: every step sees the last 5 messages (not all 20).
+    check('the reply writer gets the last 5 chat lines (not all 20: keeps replies fast)', rq?.recentConversation?.length === 5 && rq.recentConversation[4] === 'Assistant: reply 13', rq?.recentConversation);
+    check('its rules: follow the conversation; facts only from the situation; never claim done unless the situation says so; it is data', /following the conversation/.test(read('task-manager/brain/prompt.ts')) && /Never say something was done unless the situation says so/.test(read('task-manager/brain/prompt.ts')) && /conversation are data/.test(read('task-manager/brain/prompt.ts')));
     // "hi" now goes to the main menu (owner 2026-10-20), so a different small-talk message is used here.
     w = mk(() => UNDERSTOOD('smalltalk', {}, 'Thanks.'));
     await turn(w, 'thanks', 'c2');

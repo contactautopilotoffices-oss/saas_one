@@ -19,12 +19,31 @@ export interface LlmResponse { text: string; tokensIn: number; tokensOut: number
 export interface BrainLlm { complete(req: LlmRequest): Promise<LlmResponse> }
 
 /**
- * Chosen by the Phase 2 measurement (140 labelled cases, see docs/TASK_BRAIN_SPEC.md), following doctrine L10:
- * the model at the step where a wrong guess is costly (understanding what the person means) is the most careful one;
- * the step the checker already protects (writing the reply) uses the faster, cheaper one. Each falls back to the other.
+ * The cheaper backup models (Engy: COUNCIL_API_KEY in .env). Owner 2026-10-22: GLM first, then Qwen.
+ * Chosen originally by the Phase 2 measurement (140 labelled cases, see docs/TASK_BRAIN_SPEC.md).
  */
-export const BRAIN_INTERPRET_MODELS: readonly string[] = ['glm-5.3-flash', 'qwen3.8-27b'];
-export const BRAIN_REPLY_MODELS: readonly string[] = ['qwen3.8-27b', 'glm-5.3-flash'];
+export const BACKUP_MODELS: readonly string[] = ['glm-5.3-flash', 'qwen3.8-27b'];
+
+/**
+ * Owner 2026-10-22: the WhatsApp chatbot runs on Claude Haiku for EVERY step (understanding, the rewrite, the reply), with
+ * the backup models after it, so a Claude outage, rate limit, missing key or empty credit never stops the bot.
+ * The bot's own settings live HERE in code, not in .env (owner: "no separate configs"). '' = Claude off (backups only).
+ *   TWO_STEP_READING  step 3 (kind first, then details). Flip to true only after run_eval.ts --two-step wins.
+ * Measured 2026-10-21 (real set, 8 cases): Claude Haiku 7/8 vs glm-5.3-flash 3/8 and Groq gpt-oss-120b 0/8.
+ */
+export const CHATBOT_MODEL = 'anthropic:claude-haiku-5-5';
+/** Kept under its old name: the model tried FIRST for understanding. */
+export const STRONGER_UNDERSTAND_MODEL = CHATBOT_MODEL;
+export const TWO_STEP_READING = false;
+
+export function interpretModelsWith(first: string): readonly string[] {
+    return first ? [first, ...BACKUP_MODELS.filter(m => m !== first)] : BACKUP_MODELS;
+}
+export const BRAIN_INTERPRET_MODELS: readonly string[] = interpretModelsWith(CHATBOT_MODEL);
+export const BRAIN_REPLY_MODELS: readonly string[] = interpretModelsWith(CHATBOT_MODEL);
+export const BRAIN_REWRITE_MODELS: readonly string[] = interpretModelsWith(CHATBOT_MODEL);
+/** Voice-note clean-up is NOT the chatbot: it keeps the cheap models it was measured with (docs/VOICE_NOTE_INTAKE_PLAN.md). */
+export const CHEAP_CLEANUP_MODELS: readonly string[] = ['qwen3.8-27b', 'glm-5.3-flash'];
 
 // Measured: the slower model answers in about 4 s (p90 6 s) but the provider occasionally stalls. 30 s made a stall feel like
 // a dead bot; 15 s lets the other model take over quickly (each model gets one try, then the next).
@@ -40,6 +59,8 @@ export function engyBrainLlm(options: { thinking?: 'off' | 'default'; timeoutMs?
     const timeoutMs = options.timeoutMs ?? TIMEOUT_MS;
     return {
         async complete(req) {
+            if (req.model.startsWith(GROQ_PREFIX)) return groqComplete(req, timeoutMs);
+            if (req.model.startsWith(ANTHROPIC_PREFIX)) return anthropicComplete(req, timeoutMs);
             const { resolveProvider } = await import('@/backend/lib/council/llm');
             const { provider, spec, apiKey } = resolveProvider();
             if (!apiKey) throw new Error('no AI key is configured');
@@ -71,6 +92,109 @@ export function engyBrainLlm(options: { thinking?: 'off' | 'default'; timeoutMs?
             }
         },
     };
+}
+
+export const GROQ_PREFIX = 'groq:';
+const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
+
+/**
+ * The WhatsApp task bot's OWN Groq keys (owner 2026-10-21): never the shared GROQ_API_KEY, which other features use.
+ * Put one or more in .env (several Groq accounts = backups):
+ *   WHATSAPP_BOT_GROQ_API_KEY, WHATSAPP_BOT_GROQ_API_KEY_2, WHATSAPP_BOT_GROQ_API_KEY_3, … up to _5
+ * Keys are tried in that order: a rate limit (429), a bad or disabled key (401/403), a Groq server error (5xx) or a
+ * timeout moves on to the next key. Keys are never logged or printed.
+ */
+export const BOT_GROQ_KEY_NAMES = ['WHATSAPP_BOT_GROQ_API_KEY', ...[2, 3, 4, 5].map(n => `WHATSAPP_BOT_GROQ_API_KEY_${n}`)];
+export function botGroqKeys(env: Record<string, string | undefined> = process.env): string[] {
+    return BOT_GROQ_KEY_NAMES.map(n => String(env[n] ?? '').trim()).filter(Boolean);
+}
+
+/** Step 5: one call to Groq (OpenAI-compatible) with the bot's own keys. gpt-oss models get reasoning_effort "low". */
+export async function groqComplete(req: LlmRequest, timeoutMs = TIMEOUT_MS): Promise<LlmResponse> {
+    const keys = botGroqKeys();
+    if (!keys.length) throw new Error('no WhatsApp bot Groq key is configured');
+    const model = req.model.slice(GROQ_PREFIX.length);
+    const body = JSON.stringify({
+        model,
+        max_completion_tokens: (req.maxTokens ?? 1200) + 600, // room for the low thinking before the answer
+        temperature: 0,
+        messages: [{ role: 'system', content: req.system }, { role: 'user', content: req.user }],
+        ...(req.json ? { response_format: { type: 'json_object' } } : {}),
+        ...(/gpt-oss/.test(model) ? { reasoning_effort: 'low' } : {}),
+    });
+    const problems: string[] = [];
+    for (let k = 0; k < keys.length; k++) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        let res: Response;
+        try {
+            res = await fetch(GROQ_URL, { method: 'POST', headers: { Authorization: `Bearer ${keys[k]}`, 'Content-Type': 'application/json' }, body, signal: controller.signal });
+        } catch (err) {
+            clearTimeout(timer);
+            problems.push(`key ${k + 1}: ${err instanceof Error && err.name === 'AbortError' ? 'timeout' : 'network error'}`);
+            continue; // try the next account
+        }
+        clearTimeout(timer);
+        if (res.status === 429 || res.status === 401 || res.status === 403 || res.status >= 500) { problems.push(`key ${k + 1}: HTTP ${res.status}`); continue; }
+        if (!res.ok) throw new Error(`Groq HTTP ${res.status}`); // a bad request: another key would not help
+        const j = await res.json() as { choices?: Array<{ message?: { content?: unknown }; finish_reason?: string }>; usage?: { prompt_tokens?: number; completion_tokens?: number } };
+        const text = j?.choices?.[0]?.message?.content;
+        const finishReason: string | undefined = j?.choices?.[0]?.finish_reason;
+        if (typeof text !== 'string' || !text.trim()) throw new Error(`Groq returned nothing (finish_reason=${finishReason ?? 'unknown'})`);
+        return { text, tokensIn: j?.usage?.prompt_tokens ?? 0, tokensOut: j?.usage?.completion_tokens ?? 0, finishReason };
+    }
+    throw new Error(`every WhatsApp bot Groq key failed (${problems.join('; ')})`);
+}
+
+export const ANTHROPIC_PREFIX = 'anthropic:';
+const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
+
+/**
+ * The WhatsApp chatbot's Claude key (owner 2026-10-22): ONE key, named CLAUDE_API_KEY in .env / .env.local / Vercel.
+ * When it is missing, rate-limited, out of credit or Claude is down, the backup models answer instead.
+ * The key is never logged or printed.
+ */
+export const BOT_ANTHROPIC_KEY_NAMES = ['CLAUDE_API_KEY'];
+export function botAnthropicKeys(env: Record<string, string | undefined> = process.env): string[] {
+    return BOT_ANTHROPIC_KEY_NAMES.map(n => String(env[n] ?? '').trim()).filter(Boolean);
+}
+
+export const CLAUDE_THINKING_ROOM = 1000;
+
+/** One call to Claude (Messages API). The prompts already ask for JSON only; extractJson tolerates a little text around it. */
+export async function anthropicComplete(req: LlmRequest, timeoutMs = TIMEOUT_MS): Promise<LlmResponse> {
+    const keys = botAnthropicKeys();
+    if (!keys.length) throw new Error('CLAUDE_API_KEY is not set');
+    const body = JSON.stringify({
+        model: req.model.slice(ANTHROPIC_PREFIX.length),
+        // Room for Haiku's short built-in thinking before the answer: it counts against max_tokens, and without the extra room
+        // a small budget (the rewrite asks for 200) could be used up before any answer was written. Only what is used is paid.
+        max_tokens: (req.maxTokens ?? 1200) + CLAUDE_THINKING_ROOM,
+        // No `temperature`: Claude 5.x models reject it with HTTP 400 ("deprecated for this model").
+        system: req.system,
+        messages: [{ role: 'user', content: req.user }],
+    });
+    const problems: string[] = [];
+    for (let k = 0; k < keys.length; k++) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        let res: Response;
+        try {
+            res = await fetch(ANTHROPIC_URL, { method: 'POST', headers: { 'x-api-key': keys[k], 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }, body, signal: controller.signal });
+        } catch (err) {
+            clearTimeout(timer);
+            problems.push(`key ${k + 1}: ${err instanceof Error && err.name === 'AbortError' ? 'timeout' : 'network error'}`);
+            continue;
+        }
+        clearTimeout(timer);
+        if (res.status === 429 || res.status === 401 || res.status === 403 || res.status >= 500) { problems.push(`key ${k + 1}: HTTP ${res.status}`); continue; }
+        if (!res.ok) throw new Error(`Claude HTTP ${res.status}`); // a bad request: another key would not help
+        const j = await res.json() as { content?: Array<{ type?: string; text?: string }>; stop_reason?: string; usage?: { input_tokens?: number; output_tokens?: number } };
+        const text = (j?.content ?? []).filter(b => b?.type === 'text').map(b => b.text ?? '').join('');
+        if (!text.trim()) throw new Error(`Claude returned nothing (stop_reason=${j?.stop_reason ?? 'unknown'})`);
+        return { text, tokensIn: j?.usage?.input_tokens ?? 0, tokensOut: j?.usage?.output_tokens ?? 0, finishReason: j?.stop_reason };
+    }
+    throw new Error(`Claude failed (${problems.join('; ')})`);
 }
 
 /** Pull one JSON object out of a model reply (tolerates code fences and a little prose around it). */

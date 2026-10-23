@@ -123,51 +123,58 @@ Scheduled Inspection: ${expectedDateStr} (${shiftDescription})
 Image 1 is the clean standard benchmark photo (how the space must look when cleaned: completely cleared surfaces, tidy, ready for use).
 Image 2 is the field test photo to inspect.
 
-Inspect Image 2 against the clean standard in Image 1 for EACH of the following configured parameters:
-${paramList}
+CORE AUDIT RULES:
+1. OVERALL CLEANLINESS COMPARISON (SCENE vs. BENCHMARK):
+   - "overall_score" (0 to 100) MUST evaluate the overall visual cleanliness, neatness, tidiness, and absence of clutter/trash by directly comparing Image 2 against the clean standard in Image 1.
+   - ZOOM & FOV TOLERANCE: Image 1 (benchmark) may be captured in ultra-wide (0.5x) zoom, while Image 2 (field photo) may be in standard 1x zoom or closer crop. NEVER penalize or fail Image 2 for zoom differences, narrower framing, or focal length differences. If the visible space shown in Image 2 is clean, cleared, and tidy, award a high visual score (80-95).
+   - If Image 2 is clean, cleared, and tidy matching Image 1, award a high visual score (80-95).
+   - If the main space is visibly dirty, littered, or cluttered with left-behind items (e.g. laptops, bags, wires on table), score accordingly (25-50).
+   - STALE IMAGE VETO: If "is_stale_image" is true (missing watermark, wrong date, or gallery re-upload), the audit MUST FAIL (overall_score capped at 15-20, pass: false).
 
-CRITICAL FACILITY AUDIT & TIMESTAMP VERIFICATION RULES:
-1. TIMESTAMP & ANTI-SPOOFING VERIFICATION:
+2. PARAMETERS AS ADVISORY INSPECTION CHECKPOINTS (DO NOT PENALIZE UNSEEN ITEMS):
+   - You are also given these specific checklist checkpoints to observe:
+${paramList}
+   - REAL-WORLD CAMERA REALITY: Some parameters (such as ceiling lights, QR code stickers, small badges, switches, or items outside this camera angle) CANNOT be verified in a single room photo.
+   - If a parameter is NOT clearly visible or cannot be judged with certainty from this angle:
+     * "is_assessable": false
+     * "status": "not_in_frame"
+     * "score": null
+     * "reason": "Not clearly visible in this camera angle; manual check required."
+     * CRITICAL: "not_in_frame" parameters MUST NEVER reduce or drag down the "overall_score"!
+   - If a parameter IS clearly visible:
+     * If clean/conforming: "status": "pass", "score": 85-100.
+     * If slight attention needed: "status": "needs_attention", "score": 60-75.
+     * If actively dirty/cluttered: "status": "fail", "score": 25-40.
+     * "reason": Concise 1-sentence observation.
+
+3. TIMESTAMP & ANTI-SPOOFING VERIFICATION:
    - Check the bottom-right corner of Image 2 for the stamped verification watermark (format: DD/MM/YYYY HH:mm:ss or LIVE AUDIT: DD/MM/YYYY HH:mm:ss).
    - "timestamp_detected": The exact watermark string read from the bottom-right corner (or "missing" if not visible).
    - "is_stale_image": Set to true if:
      * The watermark date does NOT match any of the allowed shift dates: [${allowedDates.join(', ')}], OR
      * The watermark timestamp is missing, cut off, or illegible, OR
      * The image appears to be an old photo, gallery re-upload, or a photo taken of a computer screen.
-   - STALE IMAGE VETO: If "is_stale_image" is true, the audit MUST FAIL IMMEDIATELY (score capped at 15-20, "pass": false).
-2. CLUTTER / UN-CLEARED SURFACES IS AN IMMEDIATE AUDIT FAILURE:
-   In commercial office, conference, and meeting room cleaning, leaving surfaces un-cleared with laptops, notebooks, chargers, cables, bags, papers, bottles, or personal clutter when Image 1 is completely empty and cleared is a direct operational failure.
-   DO NOT award passing scores (>=70) to a surface just because "the tabletop underneath has no dirt". If items, cables, or clutter are left behind, that parameter MUST score in the 15-35 range (FAIL).
-3. For EACH parameter:
-   - "is_assessable": true if visible in the camera view, false if hidden behind walls or out of frame.
-   - If visible, score 0 to 100:
-     * 90-100: Pristine / Spotless (completely cleared, spotless, perfectly matches Image 1).
-     * 70-89: Acceptable (cleared of clutter, minor misalignment or faint dust).
-     * 40-69: Needs Attention (minor debris/fingerprints, slight dusting needed).
-     * 0-39: Poor / Critical Fail (cluttered with left-behind laptops/cables/items, dirty, or un-serviced).
-   - "status": "pass" (>=70), "needs_attention" (40-69), or "fail" (<40).
-   - "reason": A concise, clear 1-sentence visual observation explaining what you see.
-4. FAIL VETO & HELPFUL EXPLANATION:
-   - If ANY visible parameter has status "fail" (score < 40) OR if "is_stale_image" is true, the overall area CANNOT pass! Cap "overall_score" at maximum 20-35, and set "pass": false.
+
+4. HELPFUL REASONING:
    - "overall_reason": Write a friendly, constructive explanation for on-site staff.
-     1) Explain plainly what was noticed (e.g., 'The table still has 2 laptops, a notebook, and charging cables left on it.').
-     2) Give a clear action step (e.g., 'Please clear all devices and cables from the table surface and tap "Retake".').
+     1) Explain plainly what was noticed in the visual comparison.
+     2) If any issue was found, give a clear action step (e.g., 'Please clear the items from the tabletop and tap "Retake".').
      Do NOT output robotic codes or harsh jargon.
 
 Respond ONLY with raw JSON:
 {
   "overall_score": <number 0..100>,
-  "overall_reason": "<1-2 sentence summary>",
+  "overall_reason": "<1-2 sentence summary of overall cleanliness>",
   "pass": <boolean>,
   "is_stale_image": <boolean>,
   "timestamp_detected": "<string or null>",
   "parameters": [
     {
       "name": "<parameter name>",
-      "is_assessable": true,
-      "score": <number>,
-      "status": "pass" | "needs_attention" | "fail",
-      "reason": "<1-sentence visual reason>"
+      "is_assessable": <boolean>,
+      "score": <number or null>,
+      "status": "pass" | "needs_attention" | "fail" | "not_in_frame",
+      "reason": "<1-sentence visual observation>"
     }
   ]
 }`;
@@ -359,7 +366,7 @@ Return ONLY valid raw JSON:
         if (isDuplicateOfBenchmark) {
             isStale = true;
             detectedWatermark = 'Duplicate Benchmark Reference';
-            staleReasonMessage = 'Sample benchmark photo re-uploaded. Audits must show your actual on-site work. Please tap "Retake" to snap a live photo of the cleaned space.';
+            staleReasonMessage = 'Duplicate benchmark reference photo uploaded · Live capture required';
         } else if (isLiveVerified) {
             isStale = false;
             detectedWatermark = rawWatermark;
@@ -368,13 +375,13 @@ Return ONLY valid raw JSON:
             isStale = true;
             if (actualImageInfo?.timestampStr) {
                 detectedWatermark = `${actualImageInfo.timestampStr} (Gallery Upload)`;
-                staleReasonMessage = `Old photo / Gallery upload detected (Actual image timestamp: "${actualImageInfo.timestampStr}", uploaded from gallery). Audits require a live camera capture with verified watermark. Please tap "Retake" to capture a fresh live photo.`;
+                staleReasonMessage = `Gallery upload (Taken: ${actualImageInfo.timestampStr}) · Live camera capture required`;
             } else if (hasVisibleWatermark) {
                 detectedWatermark = `${rawWatermark} (Outdated)`;
-                staleReasonMessage = `Old photo detected (Watermark timestamp shows "${rawWatermark}", but scheduled shift dates are "${allowedDates.join(' or ')}"). Please tap "Retake" to capture a fresh photo now.`;
+                staleReasonMessage = `Outdated watermark (${rawWatermark}) · Scheduled: ${allowedDates.join(', ')}`;
             } else {
                 detectedWatermark = 'Gallery Upload (No Live Watermark)';
-                staleReasonMessage = 'Gallery upload detected with missing verification watermark. Audits require a live camera capture with verified timestamp watermark. Please tap "Retake" to capture a fresh photo now.';
+                staleReasonMessage = 'Gallery upload without live watermark · Live camera capture required';
             }
         }
 
@@ -390,20 +397,15 @@ Return ONLY valid raw JSON:
                     : `Verified capture matching inspection date (${expectedDateStr}).`),
         });
 
-        const hasFailedParameter = parameterScores.some(
-            (p: any) => p.is_assessable !== false && (p.status === 'fail' || (typeof p.score === 'number' && p.score < 40))
-        );
-
         if (isStale) {
             rawScore = Math.min(20, rawScore);
             reasonVal = staleReasonMessage;
-        } else if (hasFailedParameter && rawScore >= 50) {
-            rawScore = Math.min(35, rawScore);
         }
 
         const score = rawScore;
         const reason = reasonVal || 'Cleanliness evaluation completed.';
-        const pass = (hasFailedParameter || isStale) ? false : (typeof parsed?.pass === 'boolean' ? parsed.pass : score >= 70);
+        // Pass is determined by overall visual cleanliness comparison (score >= 70) and valid live capture
+        const pass = !isStale && (typeof parsed?.pass === 'boolean' ? parsed.pass : score >= 70);
 
         return NextResponse.json({
             success: true,

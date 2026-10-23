@@ -64,6 +64,13 @@ export async function GET(request: NextRequest) {
             employees = employees.filter(e => e.department_id === targetDepartmentId);
         }
 
+        // Owner 2026-10-22: superusers never see each other's tasks (nor each other in the staff lists)
+        const otherSuperusers = new Set(actor.role === 'superuser'
+            ? (await TaskDatabaseService.getAllEmployees()).filter(e => e.role === 'superuser' && e.id !== actor.id).map(e => e.id)
+            : []);
+        const notOtherSuperuser = (id: string) => !otherSuperusers.has(id);
+        employees = employees.filter(e => notOtherSuperuser(e.id));
+
         // 4. Query Task Assignments with filters (the same people for the range and for carry-forward)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the Supabase query builder type is not exported
         const scoped = (q: any) => {
@@ -122,10 +129,12 @@ export async function GET(request: NextRequest) {
             actor,
             departments: accessibleDepartments,
             employees,
-            tasks: [...carriedTasks, ...(rawTasks || [])],
+            tasks: [...carriedTasks, ...(rawTasks || [])].filter(t => notOtherSuperuser(t.employee_id)),
             // Owner 2026-10-15: everyone the actor may assign to (a superuser: every department), for the Assign window's
             // department filter. The list above stays filtered to the chosen department.
-            assignableEmployees: actor.role === 'superuser' ? await TaskDatabaseService.getAllEmployees() : employees,
+            assignableEmployees: actor.role === 'superuser' ? (await TaskDatabaseService.getAllEmployees()).filter(e => notOtherSuperuser(e.id)) : employees,
+            // Owner 2026-10-22: the departments switched ON in the Control Center (a superuser's screen shows these first)
+            activeDepartmentIds: actor.role === 'superuser' ? [...await TaskAccessService.activeDepartmentIds()] : undefined,
             templates,
             date,
             from,
@@ -303,9 +312,14 @@ export async function POST(request: NextRequest) {
                 return NextResponse.json({ success: false, error: 'Task assignment not found' }, { status: 404 });
             }
 
-            // Enforce RBAC: Manager can only delete in own dept or tasks assigned by them, Superuser anywhere
+            // Enforce RBAC: Manager can only delete in own dept or tasks assigned by them.
+            // Owner 2026-10-22: a superuser only their own tasks or ones they gave; everyone else's are view-only.
             const actor = await PermissionService.getActor(actorId);
-            if (actor.role !== 'superuser') {
+            if (actor.role === 'superuser') {
+                if (taskRow.employee_id !== actorId && taskRow.assigned_by !== actorId) {
+                    return NextResponse.json({ success: false, error: 'You can only delete your own tasks or tasks you gave.' }, { status: 403 });
+                }
+            } else {
                 if (actor.role === 'reporting_manager') {
                     const isAssigner = taskRow.assigned_by === actorId;
                     const targetEmp = await TaskDatabaseService.getEmployeeById(taskRow.employee_id);

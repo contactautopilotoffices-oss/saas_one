@@ -259,12 +259,40 @@ export async function PUT(
             }
 
             if (updates.status === 'completed') {
+                // Non-blocking background evaluation: ensure all completion items with photos are evaluated
+                (async () => {
+                    try {
+                        const { data: compItems } = await supabaseAdmin
+                            .from('sop_completion_items')
+                            .select('id, photo_url, photos, ai_cleanliness_score')
+                            .eq('completion_id', completionId);
+
+                        const unscored = (compItems || []).filter(
+                            (it: any) => (it.photo_url || (Array.isArray(it.photos) && it.photos.length > 0)) &&
+                                         (it.ai_cleanliness_score === null || it.ai_cleanliness_score === undefined)
+                        );
+
+                        if (unscored.length > 0) {
+                            const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+                            const targetPropId = propertyId || existing.property_id;
+                            for (const it of unscored) {
+                                fetch(`${baseUrl}/api/properties/${targetPropId}/sop/completions/${completionId}/score-photo`, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ completionItemId: it.id, force: true }),
+                                }).catch(() => {});
+                            }
+                        }
+                    } catch (bgErr) {
+                        console.warn('[Background AI Score Trigger] Error:', bgErr);
+                    }
+                })();
                 // Notification is handled automatically via DB event_outbox trigger (trg_sop_runs_outbox)
             }
         }
 
         if (item) {
-            const { completionItemId, is_checked, comment, photo_url, video_url, value, parameter_values } = item;
+            const { completionItemId, is_checked, comment, photo_url, video_url, value, parameter_values, photos, checked_at } = item;
 
             if (!completionItemId) {
                 return NextResponse.json({ error: 'completionItemId is required in item payload' }, { status: 400 });
@@ -273,12 +301,20 @@ export async function PUT(
             const itemUpdates: any = {};
             if (is_checked !== undefined) itemUpdates.is_checked = is_checked;
             if (comment !== undefined) itemUpdates.comment = comment;
-            if (photo_url !== undefined) itemUpdates.photo_url = photo_url;
+            if (photos !== undefined) itemUpdates.photos = photos;
+            if (photo_url !== undefined) {
+                itemUpdates.photo_url = photo_url;
+            } else if (Array.isArray(photos)) {
+                itemUpdates.photo_url = photos.length > 0
+                    ? (typeof photos[0] === 'string' ? photos[0] : (photos[0]?.url || null))
+                    : null;
+            }
             if (video_url !== undefined) itemUpdates.video_url = video_url;
             if (value !== undefined) itemUpdates.value = value;
             if (parameter_values !== undefined) itemUpdates.parameter_values = parameter_values;
+            if (checked_at !== undefined) itemUpdates.checked_at = checked_at;
             if (is_checked) {
-                itemUpdates.checked_at = new Date().toISOString();
+                if (!itemUpdates.checked_at) itemUpdates.checked_at = new Date().toISOString();
                 itemUpdates.checked_by = user.id;
             }
 

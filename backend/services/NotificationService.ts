@@ -2787,6 +2787,53 @@ export class NotificationService {
     // ============================================================================
     // HR Tickets & Grievances Notification Methods
     // ============================================================================
+    // Resolves every user who owns an HR ticket at a given escalation level.
+    // hr_tickets.assigned_to_user_id holds only the primary handler, so the HR Admin Config
+    // step assignee roster is read here and all of them are notified, not just the first one.
+    private static async resolveHrLevelRecipients(ticket: any, level: number): Promise<string[]> {
+        const recipients = new Set<string>();
+        if (ticket.assigned_to_user_id) recipients.add(ticket.assigned_to_user_id);
+
+        try {
+            const { data: orgSettings } = await supabaseAdmin
+                .from('organization_settings')
+                .select('hr_escalation_config, notification_matrix')
+                .eq('organization_id', ticket.organization_id)
+                .maybeSingle();
+
+            const configObj = (orgSettings as any)?.notification_matrix?.hr_escalation_config
+                || (orgSettings as any)?.hr_escalation_config
+                || {};
+            let flowAssignees = configObj.flow_assignees || {};
+            while (flowAssignees && flowAssignees.flow_assignees) {
+                flowAssignees = flowAssignees.flow_assignees;
+            }
+
+            const tType = ticket.ticket_type || ticket.category?.ticket_type || 'grievance';
+            const levelAssignees = flowAssignees[tType]?.[String(level)] || flowAssignees[tType]?.[level];
+            if (!Array.isArray(levelAssignees) || levelAssignees.length === 0) {
+                return Array.from(recipients);
+            }
+
+            const filterOr = levelAssignees.map((cid: string) => `id.eq.${cid},user_id.eq.${cid}`).join(',');
+            const { data: profiles } = await supabaseAdmin
+                .from('employee_profiles')
+                .select('id, user_id')
+                .or(filterOr);
+
+            (profiles || []).forEach((prof: any) => {
+                if (prof.user_id) recipients.add(prof.user_id);
+            });
+        } catch (err) {
+            console.error('[NotificationService] resolveHrLevelRecipients error:', err);
+        }
+
+        // The submitter is never notified as a handler of their own ticket
+        if (ticket.raised_by_user_id) recipients.delete(ticket.raised_by_user_id);
+
+        return Array.from(recipients);
+    }
+
     static async afterHrTicketCreated(ticketId: string) {
         try {
             const { data: ticket, error } = await supabaseAdmin
@@ -2813,10 +2860,11 @@ export class NotificationService {
                 });
             }
 
-            // 2. Send Omnichannel Notification to Assigned Level Handler
-            if (ticket.assigned_to_user_id) {
+            // 2. Send Omnichannel Notification to EVERY handler configured at this level
+            const levelRecipients = await this.resolveHrLevelRecipients(ticket, ticket.current_level || 1);
+            for (const recipientId of levelRecipients) {
                 await this.send({
-                    userId: ticket.assigned_to_user_id,
+                    userId: recipientId,
                     organizationId: ticket.organization_id,
                     type: 'HR_TICKET_ASSIGNED',
                     title: `New HR Ticket Assigned #${ticket.ticket_number}`,
@@ -2846,10 +2894,11 @@ export class NotificationService {
             const newAssigneeName = ticket.assigned_to?.full_name || ticket.assigned_to?.email || `Level ${toLevel} Authority`;
             const reason = isSlaBreach ? 'due to SLA timeout' : 'by handler escalation';
 
-            // 1. Notify Newly Assigned Level Owner
-            if (ticket.assigned_to_user_id) {
+            // 1. Notify EVERY level owner configured at the new level, not only the primary assignee
+            const newLevelRecipients = await this.resolveHrLevelRecipients(ticket, toLevel);
+            for (const recipientId of newLevelRecipients) {
                 await this.send({
-                    userId: ticket.assigned_to_user_id,
+                    userId: recipientId,
                     organizationId: ticket.organization_id,
                     type: 'HR_TICKET_ESCALATED',
                     title: `⚠️ HR Ticket Escalated to Level ${toLevel} #${ticket.ticket_number}`,
@@ -2939,9 +2988,10 @@ export class NotificationService {
             // Strictly exclude internal notes from external WhatsApp / Email channels
             if (comment.is_internal) {
                 const recipients = new Set<string>();
-                if (ticket.assigned_to_user_id && ticket.assigned_to_user_id !== comment.sender_user_id) {
-                    recipients.add(ticket.assigned_to_user_id);
-                }
+                const levelOwners = await this.resolveHrLevelRecipients(ticket, ticket.current_level || 1);
+                levelOwners.forEach(uid => {
+                    if (uid !== comment.sender_user_id) recipients.add(uid);
+                });
 
                 if (orgId) {
                     const { data: hrMembers } = await supabaseAdmin
@@ -2975,11 +3025,12 @@ export class NotificationService {
             const isSenderSubmitter = comment.sender_user_id === ticket.raised_by_user_id;
 
             if (isSenderSubmitter) {
-                // Submitter replied -> notify assigned handler and HR authorities
+                // Submitter replied -> notify every handler at the current level and HR authorities
                 const recipients = new Set<string>();
-                if (ticket.assigned_to_user_id && ticket.assigned_to_user_id !== comment.sender_user_id) {
-                    recipients.add(ticket.assigned_to_user_id);
-                }
+                const levelOwners = await this.resolveHrLevelRecipients(ticket, ticket.current_level || 1);
+                levelOwners.forEach(uid => {
+                    if (uid !== comment.sender_user_id) recipients.add(uid);
+                });
                 if ((ticket.current_level >= 2 || !ticket.assigned_to_user_id) && orgId) {
                     const { data: hrMembers } = await supabaseAdmin
                         .from('organization_memberships')

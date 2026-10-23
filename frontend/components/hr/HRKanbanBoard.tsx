@@ -13,7 +13,7 @@ interface HRKanbanBoardProps {
 
 const KANBAN_COLUMNS = [
     { id: 'new', label: 'New', color: 'border-blue-500 bg-blue-50/30 dark:bg-blue-950/20' },
-    { id: 'in_progress', label: 'In Progress', color: 'border-indigo-500 bg-indigo-50/30 dark:bg-indigo-950/20' },
+    { id: 'in_progress', label: 'Acknowledged', color: 'border-indigo-500 bg-indigo-50/30 dark:bg-indigo-950/20' },
     { id: 'awaiting_employee_response', label: 'Awaiting Response', color: 'border-amber-500 bg-amber-50/30 dark:bg-amber-950/20' },
     { id: 'escalated', label: 'Escalated', color: 'border-red-500 bg-red-50/30 dark:bg-red-950/20' },
     { id: 'resolved', label: 'Resolved', color: 'border-emerald-500 bg-emerald-50/30 dark:bg-emerald-950/20' },

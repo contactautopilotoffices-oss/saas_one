@@ -72,6 +72,14 @@ export class PermissionService {
     }
 
     /**
+     * Owner 2026-10-22: superusers keep their tasks private from each other. True when `target` is ANOTHER superuser and
+     * the viewer is a superuser — the website and the WhatsApp bot both leave such a person out.
+     */
+    static hiddenFrom(viewer: Pick<Employee, 'id' | 'role'>, target: Pick<Employee, 'id' | 'role'>): boolean {
+        return viewer.role === 'superuser' && target.role === 'superuser' && target.id !== viewer.id;
+    }
+
+    /**
      * Resolves the actor's employee profile and task role.
      */
     static async getActor(actorId: string): Promise<Employee> {
@@ -114,17 +122,15 @@ export class PermissionService {
      * Validates if the actor is permitted to complete or update status of a task.
      * - Anyone: Can complete their own task
      * - Managers: Can update tasks of everyone below them in the reporting chain
-     * - Superuser: Can update any task
+     * - Superuser: Own tasks only — other people's tasks are view-only for a superuser (owner 2026-10-22)
      */
     static async assertCanCompleteTask(actorId: string, task: TaskAssignment): Promise<void> {
         const actor = await this.getActor(actorId);
 
-        if (actor.role === 'superuser') return;
-
         if (task.employee_id === actor.id) return;
 
-        // Anyone below the actor in the reporting chain (direct or indirect)
-        if (await this.isBelowInChain(actor.id, task.employee_id)) return;
+        // Anyone below the actor in the reporting chain (direct or indirect); a superuser only watches
+        if (actor.role !== 'superuser' && await this.isBelowInChain(actor.id, task.employee_id)) return;
 
         await TaskDatabaseService.logAudit({
             eventType: 'permission_denied',
@@ -139,7 +145,7 @@ export class PermissionService {
 
     /**
      * Validates if the actor is permitted to assign a task to a target employee.
-     * - Superuser: Can assign to any employee across the entire organization
+     * - Superuser: Can assign to any employee across the entire organization, except another superuser
      * - Everyone else: Can assign only to people BELOW them in the reporting chain
      *   (employee_profiles.reporting_manager_id, direct or indirect). No reports = cannot assign.
      */
@@ -152,6 +158,10 @@ export class PermissionService {
         }
 
         if (actor.role === 'superuser') {
+            // Owner 2026-10-22: superusers keep their tasks private from each other, so one never gives the other a task
+            if (target.role === 'superuser' && target.id !== actor.id) {
+                throw new PermissionDeniedError('ASSIGN_TASK', actorId, 'Superusers cannot give tasks to each other.');
+            }
             return { actor, target };
         }
 

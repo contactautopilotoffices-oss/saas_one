@@ -311,7 +311,7 @@ export default function Board({ tasks, meId, onMove, onQuickAdd, onDelete, onLoc
         >
             <LayoutGroup id="procurement-board">
                 <motion.div
-                    className="grid grid-cols-1 gap-4 md:grid-cols-3"
+                    className="grid grid-cols-1 gap-4 @4xl:grid-cols-3"
                     initial={reduce ? false : 'hidden'}
                     animate="show"
                     variants={{ show: { transition: { staggerChildren: 0.09, delayChildren: 0.1 } } }}

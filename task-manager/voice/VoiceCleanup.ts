@@ -1,4 +1,4 @@
-import { BRAIN_REPLY_MODELS, BrainLlm, extractJson, withModelFallback } from '../brain/llm';
+import { CHEAP_CLEANUP_MODELS, BrainLlm, extractJson, withModelFallback } from '../brain/llm';
 import { isGrounded } from '../brain/text';
 
 /**
@@ -12,7 +12,7 @@ import { isGrounded } from '../brain/text';
  * Plan + Agent Spec Block: docs/VOICE_NOTE_INTAKE_PLAN.md
  */
 
-export const VOICE_CLEANUP_MODELS: readonly string[] = BRAIN_REPLY_MODELS;
+export const VOICE_CLEANUP_MODELS: readonly string[] = CHEAP_CLEANUP_MODELS;
 export const MAX_TRANSCRIPT_CHARS = 2000;
 
 export type CleanLanguage = 'en' | 'hinglish' | 'hi' | 'mixed' | 'unknown';

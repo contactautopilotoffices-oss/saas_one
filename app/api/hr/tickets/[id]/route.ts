@@ -330,6 +330,9 @@ export async function GET(
 
         ticket.escalation_flow = escalationFlow;
         ticket.max_level = totalLevelsCount;
+        // A TAT only means something while a further level exists to escalate into.
+        // Flows configured with a single level (e.g. confidential / anonymous feedback) never escalate.
+        ticket.has_next_level = (ticket.current_level || 1) < totalLevelsCount;
         // Admin Config toggle: lets the current handler escalate this ticket type before TAT expires
         const normEscType = tType.includes('query') ? 'hr_query' : tType.includes('grievance') ? 'grievance' : tType;
         ticket.manual_escalation_enabled = Boolean(
@@ -348,17 +351,25 @@ export async function GET(
         // Enrich assigned_to_details with complete location, app_role, employee_role, photo_url
         if (ticket.assigned_to_user_id) {
             try {
+                // Match the handler's employee_profiles row on user_id OR email, and take the first row rather
+                // than maybeSingle(): handlers with an unlinked (user_id NULL) or duplicated profile row used to
+                // fall through to 'N/A' for their employee code, location and department.
+                const handlerEmail = (ticket.assigned_to?.email || '').toLowerCase().trim();
+                const profileFilter = handlerEmail
+                    ? `user_id.eq.${ticket.assigned_to_user_id},email.ilike.${handlerEmail}`
+                    : `user_id.eq.${ticket.assigned_to_user_id}`;
+
                 const [assignedProfileRes, assignedMemRes, userRecordRes] = await Promise.all([
                     supabaseAdmin
                         .from('employee_profiles')
-                        .select('employee_code, first_name, last_name, designation, department, location, phone, email, is_hr_authority, is_hr_manager_authority, is_director_authority')
-                        .eq('user_id', ticket.assigned_to_user_id)
-                        .maybeSingle(),
+                        .select('employee_code, first_name, last_name, designation, department, location, phone, email, user_id, is_hr_authority, is_hr_manager_authority, is_director_authority')
+                        .or(profileFilter)
+                        .limit(5),
                     supabaseAdmin
                         .from('organization_memberships')
                         .select('role')
                         .eq('user_id', ticket.assigned_to_user_id)
-                        .maybeSingle(),
+                        .limit(1),
                     supabaseAdmin
                         .from('users')
                         .select('user_photo_url, role')
@@ -366,8 +377,13 @@ export async function GET(
                         .maybeSingle()
                 ]);
 
-                const assignedProfile = assignedProfileRes.data;
-                const assignedMem = assignedMemRes.data;
+                const profileRows = assignedProfileRes.data || [];
+                // Prefer the row actually linked to this user, else the one matched by email
+                const assignedProfile = profileRows.find((r: any) => r.user_id === ticket.assigned_to_user_id)
+                    || profileRows.find((r: any) => (r.email || '').toLowerCase().trim() === handlerEmail)
+                    || profileRows[0]
+                    || null;
+                const assignedMem = (assignedMemRes.data || [])[0] || null;
                 const userRecord = userRecordRes.data;
 
                 const photoUrl = (userRecord as any)?.user_photo_url || null;
@@ -410,6 +426,51 @@ export async function GET(
             } catch (e) {
                 console.warn('Error fetching assigned user details:', e);
             }
+        }
+
+        // Every user configured at the ticket's CURRENT level in HR Admin Config is a co-owner of it.
+        // hr_tickets.assigned_to_user_id can only hold the primary handler, so the full roster is resolved
+        // here and returned as assigned_level_users for the detail view to render.
+        try {
+            const curLevelAssignees = flowAssigneesConfig[tType]?.[String(ticket.current_level || 1)]
+                || flowAssigneesConfig[tType]?.[ticket.current_level || 1];
+
+            const levelUsers: any[] = [];
+            if (Array.isArray(curLevelAssignees) && curLevelAssignees.length > 0) {
+                const filterOr = curLevelAssignees.map((cid: string) => `id.eq.${cid},user_id.eq.${cid}`).join(',');
+                const { data: levelProfiles } = await supabaseAdmin
+                    .from('employee_profiles')
+                    .select('id, user_id, employee_code, first_name, last_name, email, phone, department, designation, location, user:users!employee_profiles_user_id_fkey(full_name, email, user_photo_url)')
+                    .or(filterOr);
+
+                (levelProfiles || []).forEach((lp: any) => {
+                    const resolvedId = lp.user_id || lp.id;
+                    if (levelUsers.some(lu => lu.id === resolvedId)) return;
+                    levelUsers.push({
+                        id: resolvedId,
+                        profile_id: lp.id,
+                        full_name: lp.user?.full_name || lp.user?.email || `${lp.first_name || ''} ${lp.last_name || ''}`.trim() || 'Assigned User',
+                        email: lp.user?.email || lp.email || '',
+                        phone: lp.phone || '',
+                        photo_url: lp.user?.user_photo_url || null,
+                        employee_code: lp.employee_code || 'N/A',
+                        department: lp.department || 'Operations',
+                        designation: lp.designation || 'Level Owner',
+                        location: lp.location && lp.location.toLowerCase() !== 'hidden' ? lp.location : 'Head Office',
+                        is_primary_handler: resolvedId === ticket.assigned_to_user_id
+                    });
+                });
+            }
+
+            // No custom roster for this level: the single resolved handler is the level owner
+            if (levelUsers.length === 0 && ticket.assigned_to_details) {
+                levelUsers.push({ ...ticket.assigned_to_details, is_primary_handler: true });
+            }
+
+            ticket.assigned_level_users = levelUsers;
+        } catch (e) {
+            console.warn('Could not resolve current level assignee roster:', e);
+            ticket.assigned_level_users = ticket.assigned_to_details ? [{ ...ticket.assigned_to_details, is_primary_handler: true }] : [];
         }
 
         // Enrich resolved_by details

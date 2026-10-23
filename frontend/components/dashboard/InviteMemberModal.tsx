@@ -29,7 +29,7 @@ const AddMemberModal = ({ isOpen, onClose, orgId, orgName, properties, fixedProp
     const [superTenantPropertyIds, setSuperTenantPropertyIds] = useState<string[]>([]);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const isOrgWideRole = ['org_super_admin', 'ops_super_admin', 'super_tenant', 'procurement', 'accounts', 'hr', 'hr_head'].includes(role);
+    const isOrgWideRole = ['org_super_admin', 'ops_super_admin', 'super_tenant', 'procurement', 'accounts', 'hr', 'hr_head', 'tech'].includes(role);
 
     const SKILL_OPTIONS: Record<string, { code: string; label: string; icon: any }[]> = {
         mst: [
@@ -260,6 +260,12 @@ const AddMemberModal = ({ isOpen, onClose, orgId, orgName, properties, fixedProp
                                         <optgroup label="Finance">
                                             <option value="accounts">Accounts / Finance</option>
                                         </optgroup>
+
+                                        {!fixedPropertyId && (
+                                            <optgroup label="Tech">
+                                                <option value="tech">Tech</option>
+                                            </optgroup>
+                                        )}
 
                                         <optgroup label="Human Resources">
                                             <option value="hr">HR Executive</option>
