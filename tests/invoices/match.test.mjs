@@ -92,6 +92,25 @@ test('AT-019: low confidence or a failed read never auto-matches', () => {
     assert.equal(matchInvoice(failed).status, 'needs_review');
 });
 
+test('a part-read document never auto-matches, even when what WAS read adds up', () => {
+    // The dangerous case: pages 5-12 were never seen, so their line items are missing
+    // rather than absent, yet every number on pages 1-4 agrees with the PO.
+    const clean = matchInvoice(base());
+    assert.equal(clean.status, 'matched');
+    assert.equal(find(clean, 'DOCUMENT_TRUNCATED').length, 0);
+
+    const short = base();
+    short.invoice.pages_truncated = true;
+    short.invoice.pages_read = 4;
+    short.invoice.total_pages = 12;
+    const out = matchInvoice(short);
+    const rule = find(out, 'DOCUMENT_TRUNCATED')[0];
+    assert.equal(rule.severity, 'blocking');
+    assert.equal(rule.outcome, 'unknown');
+    assert.match(rule.explanation, /4 of the 12 pages/);
+    assert.notEqual(out.status, 'matched');
+});
+
 test('missing values are UNKNOWN, never zero or a pass', () => {
     const b = base();
     b.invoice.invoice_total = null;
@@ -189,4 +208,60 @@ test('money comparison is integer-safe at the tolerance edge', () => {
     assert.equal(find(matchInvoice(b), 'TOTAL_CHECK', 'pass').length, 1);
     b.invoice.invoice_total = 12981.01;
     assert.equal(find(matchInvoice(b), 'TOTAL_CHECK', 'fail').length, 1);
+});
+
+// --- found by dry-running a real PO (MH-PO-26/27-0882) with a synthetic invoice -----------------
+const chairPo = [
+    { id: 'C1', item_id: null, name: 'Chair', description: null, hsn_or_sac: '9403', unit: 'nos', quantity: 4, rate: 12250, tax_percentage: 18 },
+    { id: 'C2', item_id: null, name: 'Chair', description: null, hsn_or_sac: '9403', unit: 'nos', quantity: 1, rate: 21500, tax_percentage: 18 },
+    { id: 'S1', item_id: null, name: 'Sofa', description: null, hsn_or_sac: '9403', unit: 'nos', quantity: 5, rate: 10900, tax_percentage: 18 },
+];
+const chairInv = (rate2) => {
+    const taxable = 49000 + rate2 + 54500;
+    return base({
+        po: { status: 'approved', amount: 147500, vendor_name: 'RESPECT CHAIRS' }, poLines: chairPo,
+        invoice: { ...base().invoice, taxable_amount: taxable, tax_amount: taxable * 0.18, invoice_total: taxable * 1.18 },
+        lines: [
+            { line_no: 1, description: 'Chair', item_code: null, hsn_or_sac: '9403', quantity: 4, unit: 'nos', unit_rate: 12250, taxable_amount: null, tax_rate: null, tax_amount: null, line_total: null },
+            { line_no: 2, description: 'Chair', item_code: null, hsn_or_sac: '9403', quantity: 1, unit: 'nos', unit_rate: rate2, taxable_amount: null, tax_rate: null, tax_amount: null, line_total: null },
+            { line_no: 3, description: 'Sofa', item_code: null, hsn_or_sac: '9403', quantity: 5, unit: 'nos', unit_rate: 10900, taxable_amount: null, tax_rate: null, tax_amount: null, line_total: null },
+        ],
+    });
+};
+
+test('two PO lines with the same name are told apart by rate, so each invoice line maps to its own', () => {
+    const out = matchInvoice(chairInv(21500));
+    assert.equal(JSON.stringify(out.lineMapping), JSON.stringify({ 1: 'C1', 2: 'C2', 3: 'S1' }));
+    assert.equal(out.status, 'matched');
+});
+
+test('a changed rate on a duplicate-named line still lands on the nearest PO line and is caught', () => {
+    const out = matchInvoice(chairInv(22000));
+    assert.equal(out.lineMapping[2], 'C2', 'nearest rate, not the first Chair');
+    const r = find(out, 'UNIT_RATE_CHECK', 'fail');
+    assert.equal(r.length, 1);
+    assert.equal(r[0].invoice_line_no, 2);
+    assert.equal(r[0].difference, 500);
+    assert.equal(find(out, 'QUANTITY_CHECK', 'fail').length, 0, 'no false over-quantity from mapping two lines to one');
+    assert.equal(out.status, 'mismatched');
+});
+
+test('two lines the invoice describes identically with nothing to tell them apart stay unmapped, not guessed', () => {
+    const b = chairInv(21500);
+    b.lines[0] = { ...b.lines[0], unit_rate: null, quantity: null };
+    b.lines[1] = { ...b.lines[1], unit_rate: null, quantity: null };
+    const out = matchInvoice(b);
+    assert.equal(out.lineMapping[1], null);
+    assert.equal(out.lineMapping[2], null);
+    assert.equal(out.status, 'needs_review');
+});
+
+test('tax shown only at the foot is checked against the PO tax rate', () => {
+    assert.equal(find(matchInvoice(chairInv(21500)), 'TAX_CHECK', 'pass').length, 1);
+    const wrong = chairInv(21500);
+    wrong.invoice.tax_amount = 15000; // 18% of 125,000 is 22,500
+    wrong.invoice.invoice_total = wrong.invoice.taxable_amount + 15000;
+    const out = matchInvoice(wrong);
+    assert.equal(find(out, 'TAX_CHECK', 'fail').length, 1);
+    assert.notEqual(out.status, 'matched');
 });

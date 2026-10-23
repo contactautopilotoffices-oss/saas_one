@@ -18,6 +18,9 @@ import { detectContentType, downloadObject, evidenceObjectPath, isUploadId } fro
  * not payment; payment is whatever the tracker row says (completed + UTR), read on demand.
  */
 
+/** ₹ in Indian grouping, rounded to paise, for messages a person reads. */
+const rupees = (n: number) => `₹${(Math.round(Number(n) * 100) / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+
 export interface Reply { status: number; body: Record<string, unknown> }
 const reply = (status: number, body: Record<string, unknown>): Reply => ({ status, body });
 const money = (v: unknown): number | null => {
@@ -55,7 +58,7 @@ export async function createFastTrack(a: InvoiceAccess, body: Record<string, any
         .eq('organization_id', a.orgId).eq('po_id', poId).not('status', 'in', '(rejected,cancelled)');
     const committed = (others ?? []).reduce((s, r) => s + Number(r.approved_amount ?? r.requested_amount ?? 0), 0);
     if (po.po.po_amount != null && amount + committed > po.po.po_amount + a.settings.amount_tolerance) {
-        return reply(422, { error: `This would take fast-track requests to ${committed + amount} against a PO of ${po.po.po_amount}.` });
+        return reply(422, { error: `This would take urgent-payment requests on this PO to ${rupees(committed + amount)}, more than the PO value of ${rupees(po.po.po_amount)}.` });
     }
 
     const evidence: { storage_path: string; filename: string; purpose: string }[] = [];
@@ -148,7 +151,7 @@ export async function alignFastTrack(a: InvoiceAccess, id: string, body: Record<
     const committed = (prior ?? []).reduce((s, p) => s + Number(p.requested_amount || 0), 0);
     if (body.acknowledge_over_commit !== true && Number(po.po_amount) > 0 && committed + amount > Number(po.po_amount) + 0.5) {
         await revert();
-        return reply(409, { error: 'payment_exceeds_po', message: `${committed} is already lined up against this PO (${po.po_amount}). Aligning ${amount} more would exceed it.`, committed, po_amount: Number(po.po_amount) });
+        return reply(409, { error: 'payment_exceeds_po', message: `${rupees(committed)} is already lined up against this PO (value ${rupees(Number(po.po_amount))}). Aligning ${rupees(amount)} more would exceed it.`, committed, po_amount: Number(po.po_amount) });
     }
 
     // The tracker's own state machine decides what an aligned tranche looks like.

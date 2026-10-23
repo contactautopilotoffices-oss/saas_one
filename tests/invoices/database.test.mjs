@@ -193,3 +193,65 @@ test('schedule tables: one schedule per PO, checks hold, progress log is append-
         assert.equal((await db.query('SELECT count(*)::int n FROM po_payment_milestones')).rows[0].n, 1, 'nothing was half-deleted');
     } finally { await db.close(); }
 });
+
+test('approval simulation tables: one simulation per PO, phone format enforced, RLS on', async () => {
+    const db = await setup();
+    try {
+        await db.exec(await readFile(new URL('../../supabase/migrations/20261022000001_po_approval_simulation.sql', import.meta.url), 'utf8'));
+        await db.query(`INSERT INTO po_simulated_approvals(organization_id, po_id, invoice_due_at) VALUES ('${id(1)}','${id(100)}', NOW() + interval '48 hours')`);
+        await assert.rejects(db.query(`INSERT INTO po_simulated_approvals(organization_id, po_id, invoice_due_at) VALUES ('${id(1)}','${id(100)}', NOW())`), /unique|duplicate/i);
+        await db.query(`INSERT INTO po_notify_settings(organization_id, test_phone) VALUES ('${id(1)}','919812345678')`);
+        await assert.rejects(db.query(`INSERT INTO po_notify_settings(organization_id, test_phone) VALUES ('${id(2)}','12345')`), /check/i);
+        await assert.rejects(db.query(`INSERT INTO po_vendor_notifications(organization_id, po_id, template, status) VALUES ('${id(1)}','${id(100)}','t','pending')`), /check/i);
+        for (const t of ['po_simulated_approvals', 'po_vendor_notifications', 'po_notify_settings']) {
+            assert.equal((await db.query('SELECT relrowsecurity r FROM pg_class WHERE relname=$1', [t])).rows[0].r, true, t);
+        }
+    } finally { await db.close(); }
+});
+
+test('approval watch tables: one automatic message per PO, switch defaults to off, states constrained', async () => {
+    const db = await setup();
+    try {
+        await db.exec(await readFile(new URL('../../supabase/migrations/20261022000001_po_approval_simulation.sql', import.meta.url), 'utf8'));
+        await db.exec(await readFile(new URL('../../supabase/migrations/20261023000001_po_approval_watch.sql', import.meta.url), 'utf8'));
+        await db.query(`INSERT INTO po_notify_settings(organization_id) VALUES ('${id(1)}')`);
+        assert.equal((await db.query('SELECT auto_mode FROM po_notify_settings')).rows[0].auto_mode, 'off', 'nothing is sent until a person turns it on');
+        await assert.rejects(db.query(`UPDATE po_notify_settings SET auto_mode='everything'`), /check/i);
+
+        await db.query(`INSERT INTO po_approval_watch(organization_id, zoho_po_id) VALUES ('${id(1)}','Z1')`);
+        await assert.rejects(db.query(`INSERT INTO po_approval_watch(organization_id, zoho_po_id) VALUES ('${id(1)}','Z1')`), /unique|duplicate/i);
+        await assert.rejects(db.query(`UPDATE po_approval_watch SET state='paid'`), /check/i);
+
+        const n = (status, trigger = 'auto') => db.query(`INSERT INTO po_vendor_notifications(organization_id, zoho_po_id, template, status, trigger) VALUES ('${id(1)}','Z1','t','${status}','${trigger}')`);
+        await n('sent');
+        await assert.rejects(n('sent'), /unique|duplicate/i, 'a second automatic send for the same PO is impossible');
+        await n('failed'); await n('no_phone'); await n('sent', 'manual');
+        await assert.rejects(n('bogus'), /check/i);
+        // A notification can be recorded before the PO has reached our own tables.
+        assert.equal((await db.query('SELECT count(*)::int n FROM po_vendor_notifications WHERE po_id IS NULL')).rows[0].n, 4);
+    } finally { await db.close(); }
+});
+
+test('bounty tables: one bounty per thing per month, cell keys, cadence and status constraints, RLS on', async () => {
+    const db = await setup();
+    try {
+        await db.exec(`CREATE TABLE aop_sites(id uuid primary key, organization_id uuid, name text, is_active boolean default true);
+            CREATE TABLE aop_line_items(id uuid primary key, organization_id uuid, code text, name text, kind text, feed_source text, sort_order int);
+            INSERT INTO aop_sites VALUES ('${id(200)}','${id(1)}','ETPL',true); INSERT INTO aop_line_items VALUES ('${id(300)}','${id(1)}','pest-control','Pest control','cost',null,1);`);
+        await db.exec(await readFile(new URL('../../supabase/migrations/20261023000002_aop_bounty.sql', import.meta.url), 'utf8'));
+        const ins = (extra = '') => db.query(`INSERT INTO aop_bounties(organization_id, period_month, kind, site_id, line_item_id, title, owner_role, due_at ${extra ? ',' + extra.split('=')[0] : ''}) VALUES ('${id(1)}','2026-10-01','actual','${id(200)}','${id(300)}','ETPL · Pest control','purchase','2026-10-31' ${extra ? ',' + extra.split('=')[1] : ''})`);
+        await ins();
+        await assert.rejects(ins(), /unique|duplicate/i, 'the same cell in the same month is one bounty');
+        await db.query(`INSERT INTO aop_bounties(organization_id, period_month, kind, source_id, title, owner_role, due_at) VALUES ('${id(1)}','2026-10-01','decision','inv-1','Invoice X','purchase','2026-10-31')`);
+        await assert.rejects(db.query(`INSERT INTO aop_bounties(organization_id, period_month, kind, source_id, title, owner_role, due_at) VALUES ('${id(1)}','2026-10-01','decision','inv-1','Invoice X again','purchase','2026-10-31')`), /unique|duplicate/i);
+        await assert.rejects(db.query(`INSERT INTO aop_bounties(organization_id, period_month, kind, title, owner_role, due_at) VALUES ('${id(1)}','2026-10-15','actual','x','purchase','2026-10-31')`), /check/i, 'month must be the 1st');
+        await assert.rejects(db.query(`UPDATE aop_bounties SET status='paid'`), /check/i);
+        await assert.rejects(db.query(`INSERT INTO aop_expected_dates(organization_id, site_id, line_item_id, expected_day, cadence_months) VALUES ('${id(1)}','${id(200)}','${id(300)}', 32, 1)`), /check/i);
+        await db.query(`INSERT INTO aop_expected_dates(organization_id, site_id, line_item_id, expected_day, cadence_months, cadence_anchor) VALUES ('${id(1)}','${id(200)}','${id(300)}', 23, 2, '2026-08-01')`);
+        await assert.rejects(db.query(`INSERT INTO aop_line_owners(organization_id) VALUES ('${id(1)}')`), /check/i, 'an owner row needs a person or a role');
+        for (const t of ['aop_line_owners', 'aop_expected_dates', 'aop_bounties', 'aop_bounty_pings']) {
+            assert.equal((await db.query('SELECT relrowsecurity r FROM pg_class WHERE relname=$1', [t])).rows[0].r, true, t);
+            assert.equal((await db.query('SELECT count(*)::int n FROM pg_policies WHERE tablename=$1', [t])).rows[0].n, 0);
+        }
+    } finally { await db.close(); }
+});

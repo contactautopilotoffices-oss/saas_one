@@ -53,6 +53,12 @@ test('extraction: Indian number formats parse, bad values become null, unreadabl
     assert.equal(x.lines[0].quantity, 10);
 });
 
+test('extraction: a GSTIN buried in a label is recovered, a malformed one is not', () => {
+    assert.equal(normalise({ invoice: { vendor_gstin: 'GSTIN: 27ENKPS3864M1Z1' } }).vendor_gstin, '27ENKPS3864M1Z1');
+    assert.equal(normalise({ invoice: { vendor_gstin: '27 ENKPS 3864 M 1 Z 1' } }).vendor_gstin, '27ENKPS3864M1Z1');
+    assert.equal(normalise({ invoice: { vendor_gstin: 'GSTIN not printed' } }).vendor_gstin, null);
+});
+
 test('extraction: an invalid date or GSTIN is dropped rather than guessed', () => {
     const x = normalise({ invoice: { invoice_date: '05/10/2026', vendor_gstin: '123', invoice_number: null }, lines: 'nope' });
     assert.equal(x.invoice_date, null);

@@ -31,23 +31,28 @@ export async function PUT(request: NextRequest) {
     if (!a.canConfigure) return forbidden('Only super admins can change this policy.');
 
     const s = a.settings;
-    const int = (v: unknown, lo: number, hi: number, fallback: number) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n >= lo && n <= hi ? n : fallback; };
-    const dec = (v: unknown, lo: number, hi: number, fallback: number) => { const n = Number(v); return Number.isFinite(n) && n >= lo && n <= hi ? Math.round(n * 1000) / 1000 : fallback; };
+    // A value outside its range is refused with the field named, never silently swapped for the old one.
+    const outOfRange: string[] = [];
+    const NAMES: Record<string, string> = { link_expiry_hours: 'Default expiry (1–720 hours)', max_file_mb: 'Largest file (1–25 MB)', amount_tolerance: 'Rounding allowance (₹0–1,000)', rate_tolerance_pct: 'Rate tolerance (0–25%)', qty_tolerance_pct: 'Quantity tolerance (0–25%)', min_confidence: 'Minimum read confidence (0–100%)', approval_limit: 'Approval limit', doc_deadline_days: 'Days to receive the invoice (1–90)' };
+    const check = (k: string, v: unknown, lo: number, hi: number) => { if (v === undefined || v === null || v === '') return null; const n = Number(v); if (!Number.isFinite(n) || n < lo || n > hi) { outOfRange.push(NAMES[k] ?? k); return null; } return n; };
+    const int = (v: unknown, lo: number, hi: number, fallback: number, k = '') => { const n = check(k, v, lo, hi); return n == null ? fallback : Math.round(n); };
+    const dec = (v: unknown, lo: number, hi: number, fallback: number, k = '') => { const n = check(k, v, lo, hi); return n == null ? fallback : Math.round(n * 1000) / 1000; };
     const roles = (v: unknown, fallback: string[]) => Array.isArray(v) ? [...new Set(v.map(String).filter((r) => ROLE_CHOICES.includes(r)))] : fallback;
 
     const next = {
-        link_expiry_hours: int(body.link_expiry_hours, 1, 720, s.link_expiry_hours),
-        max_file_mb: int(body.max_file_mb, 1, 25, s.max_file_mb),
-        amount_tolerance: dec(body.amount_tolerance, 0, 1000, s.amount_tolerance),
-        rate_tolerance_pct: dec(body.rate_tolerance_pct, 0, 25, s.rate_tolerance_pct),
-        qty_tolerance_pct: dec(body.qty_tolerance_pct, 0, 25, s.qty_tolerance_pct),
-        min_confidence: int(body.min_confidence, 0, 100, s.min_confidence),
+        link_expiry_hours: int(body.link_expiry_hours, 1, 720, s.link_expiry_hours, 'link_expiry_hours'),
+        max_file_mb: int(body.max_file_mb, 1, 25, s.max_file_mb, 'max_file_mb'),
+        amount_tolerance: dec(body.amount_tolerance, 0, 1000, s.amount_tolerance, 'amount_tolerance'),
+        rate_tolerance_pct: dec(body.rate_tolerance_pct, 0, 25, s.rate_tolerance_pct, 'rate_tolerance_pct'),
+        qty_tolerance_pct: dec(body.qty_tolerance_pct, 0, 25, s.qty_tolerance_pct, 'qty_tolerance_pct'),
+        min_confidence: int(body.min_confidence, 0, 100, s.min_confidence, 'min_confidence'),
         approver_roles: roles(body.approver_roles, s.approver_roles),
-        approval_limit: dec(body.approval_limit, 0, 1e9, s.approval_limit),
+        approval_limit: dec(body.approval_limit, 0, 1e9, s.approval_limit, 'approval_limit'),
         escalation_roles: roles(body.escalation_roles, s.escalation_roles),
         evidence_required: typeof body.evidence_required === 'boolean' ? body.evidence_required : s.evidence_required,
-        doc_deadline_days: int(body.doc_deadline_days, 1, 90, s.doc_deadline_days),
+        doc_deadline_days: int(body.doc_deadline_days, 1, 90, s.doc_deadline_days, 'doc_deadline_days'),
     };
+    if (outOfRange.length) return NextResponse.json({ error: `Out of range, nothing saved: ${outOfRange.join(', ')}.` }, { status: 400 });
     // Somebody must always be able to decide, and someone above the limit.
     if (!next.approver_roles.length || !next.escalation_roles.length) return NextResponse.json({ error: 'Pick at least one approver role and one escalation role.' }, { status: 400 });
 

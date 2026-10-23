@@ -1,5 +1,6 @@
 'use client';
 
+import { istDate } from '@/backend/lib/invoices/istDate';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, Circle, Clock, AlertTriangle, Plus, Trash2, Pencil } from 'lucide-react';
 import {
@@ -37,7 +38,7 @@ interface Data {
 }
 
 const TRIGGERS = Object.keys(TRIGGER_LABEL) as MilestoneTrigger[];
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => istDate();
 
 export default function PoPaymentPlan({ orgId, poId, poNumber, onClose, onChanged }: { orgId: string; poId: string; poNumber: string; onClose: () => void; onChanged?: () => void }) {
     const [d, setD] = useState<Data | null>(null);
@@ -145,6 +146,12 @@ export default function PoPaymentPlan({ orgId, poId, poNumber, onClose, onChange
                                                 </span>
                                             </span>
                                         </button>
+                                        {isDue && m.id && d.can_edit && (
+                                            <button className="ml-11 mt-1 text-[11px] font-bold text-primary hover:underline" disabled={busy}
+                                                onClick={() => run(async () => { await api(`/api/po-schedule/milestones/${m.id}`, { method: 'POST', body: JSON.stringify({ org_id: orgId, action: 'reopen' }) }); })}>
+                                                Undo “due” (lets you change the schedule)
+                                            </button>
+                                        )}
                                     </li>
                                 );
                             })}
@@ -187,7 +194,7 @@ export default function PoPaymentPlan({ orgId, poId, poNumber, onClose, onChange
                                 <tbody>
                                     {editing.map((m, i) => {
                                         const set = (patch: Partial<Ms>) => setEditing((rows) => rows!.map((x, j) => (j === i ? { ...x, ...patch } : x)));
-                                        const ref = m.basis === 'gst' ? (basicTotal ? basicTotal * 0.18 : null) : m.basis === 'basic' ? basicTotal : d.po.po_amount;
+                                        const ref = m.basis === 'gst' ? (basicTotal && d.po.po_amount ? d.po.po_amount - basicTotal : null) : m.basis === 'basic' ? basicTotal : d.po.po_amount;
                                         return (
                                             <tr key={i} className="border-t border-border">
                                                 <td className="p-1"><input className={`${inputCls} !py-1 !px-2 text-xs min-w-[180px]`} value={m.label} onChange={(e) => set({ label: e.target.value })} /></td>

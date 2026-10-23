@@ -21,6 +21,7 @@ import { summariseMatch } from '@/backend/lib/invoices/match';
 import { logInvoiceEvent } from '@/backend/lib/invoices/audit';
 import { syncDocumentationState } from '@/backend/lib/invoices/docState';
 import { isUuid } from '@/backend/lib/invoices/http';
+import { syncInvoiceMatchFlag } from '@/backend/lib/invoices/flags';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -84,6 +85,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
             const status = summariseMatch((current ?? []).map((r) => ({ rule_code: r.rule_code, severity: r.severity, outcome: r.outcome, resolved: !!r.resolved_at })));
             await supabaseAdmin.from('invoices').update({ match_status: status, ...(status !== 'duplicate_suspected' ? { duplicate_of: null } : {}), updated_at: new Date().toISOString() }).eq('id', id);
             await log('issue_resolved', { rule_code: rule.rule_code, original_outcome: rule.outcome, severity: rule.severity, note, validation_id: rule.id, resulting_match_status: status });
+            // Resolved down to matched: the bell notification is settled too.
+            if (status === 'matched') await syncInvoiceMatchFlag({ orgId: a.orgId, invoiceId: id, matchStatus: 'matched', poNumber: null, vendorName: null, failedRules: [] }).catch(() => undefined);
             await syncDocumentationState(a.orgId, inv.po_id);
             return NextResponse.json({ match_status: status });
         }
@@ -95,6 +98,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
             if (['pending', 'processing', 'failed'].includes(inv.extraction_status) && !inv.corrected_at) return bad('The invoice has not been read yet.', 409);
             await supabaseAdmin.from('invoices').update({ review_status: 'accepted', reviewed_by: a.userId, reviewed_at: new Date().toISOString(), review_note: String(body.note ?? '').slice(0, 500) || null, updated_at: new Date().toISOString() }).eq('id', id);
             await log('invoice_accepted', { note: body.note ?? null, total: inv.invoice_total, policy_version: a.settings.policy_version });
+    // A person's decision settles the bell notification raised by the check.
+    await syncInvoiceMatchFlag({ orgId: a.orgId, invoiceId: id, matchStatus: 'matched', poNumber: null, vendorName: null, failedRules: [] }).catch(() => undefined);
+
             await syncDocumentationState(a.orgId, inv.po_id);
             return NextResponse.json({ review_status: 'accepted' });
         }
@@ -109,6 +115,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
             const next = body.action === 'reject' ? 'rejected' : 'resubmission_required';
             await supabaseAdmin.from('invoices').update({ review_status: next, reviewed_by: a.userId, reviewed_at: new Date().toISOString(), review_note: reason.slice(0, 500), updated_at: new Date().toISOString() }).eq('id', id);
             await log(next === 'rejected' ? 'invoice_rejected' : 'resubmission_requested', { reason });
+    // A person's decision settles the bell notification raised by the check.
+    await syncInvoiceMatchFlag({ orgId: a.orgId, invoiceId: id, matchStatus: 'matched', poNumber: null, vendorName: null, failedRules: [] }).catch(() => undefined);
+
             await syncDocumentationState(a.orgId, inv.po_id);
             return NextResponse.json({ review_status: next });
         }

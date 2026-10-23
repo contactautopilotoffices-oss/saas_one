@@ -31,7 +31,8 @@ export async function GET(request: NextRequest) {
     const live = requests.filter((r) => !['rejected', 'cancelled'].includes(r.status));
     const pending = requests.filter((r) => r.status === 'pending_approval');
     const toAlign = requests.filter((r) => r.status === 'approved');
-    const alignedDocsPending = requests.filter((r) => r.status === 'aligned' && !['closed', 'waived_by_policy', 'reconciled'].includes(r.documentation_state));
+    // Same rule as the Outstanding documents list (fast-track route, view=invoice_pending), so the badge equals the list.
+    const alignedDocsPending = requests.filter((r) => ['approved', 'alignment_in_progress', 'aligned'].includes(r.status) && !['closed', 'waived_by_policy'].includes(r.documentation_state));
     const overdue = live.filter((r) => isDocOverdue(r.documentation_state, r.doc_due_at));
 
     return NextResponse.json({

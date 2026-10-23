@@ -128,7 +128,7 @@ export function derivePoPaymentStatus(payments: { status: string }[] | undefined
 }
 
 export const PAYMENT_TERMS = [
-    '100% Advance', '50% Advance', '75% Payment', 'Balance + GST', 'Balance Payment',
+    '100% Advance', '50% Advance', '30% Advance', '25% Advance', '75% Payment', 'Balance + GST', 'Balance Payment',
     '100% After Delivery', '100% After Work Completion', 'Against Tax Invoice', 'Full Payment', 'Other',
 ];
 
@@ -186,6 +186,10 @@ export interface PoPayment {
     utr_no?: string | null;
     payment_proof_url?: string | null;
     remarks?: string | null;
+    // Frozen at align time by app/api/accounts/payments (see 20261021000001): what the
+    // invoice check said, and why the aligner went ahead when it did not agree.
+    invoice_match_at_align?: string | null;
+    invoice_override_reason?: string | null;
     po?: { po_number?: string; vendor_name?: string; department?: string; project_name?: string; category?: string; po_amount?: number } | null;
     aligner?: { full_name?: string } | null;
     completer?: { full_name?: string } | null;
@@ -225,7 +229,7 @@ export function getRolePaymentTrackerConfig(
     // Focused work desk — no executive finance overview, unaligned backlog first, create payment sheet button
     if (isProcurement && !isOrgAdmin && !isOpsAdmin) {
         return {
-            visibleTabs: ['to_align', 'batches', 'live_sheet'],
+            visibleTabs: ['to_align', 'batches', 'live_sheet', 'invoices'],
             defaultTab: 'to_align',
             canCreateSheet: true,
             canManageApprovers: false,
@@ -251,7 +255,7 @@ export function getRolePaymentTrackerConfig(
     // Executive overview + Approval Workspace, Aligned & Ready to Pay, Payment Sheets
     if (isOpsAdmin && !isMaster) {
         return {
-            visibleTabs: ['approvals', 'aligned', 'batches'],
+            visibleTabs: ['approvals', 'aligned', 'batches', 'invoices'],
             defaultTab: 'approvals',
             canCreateSheet: false,
             canManageApprovers: isDesignatedApprover || isOrgAdmin,

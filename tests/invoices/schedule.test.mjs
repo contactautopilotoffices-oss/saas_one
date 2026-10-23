@@ -4,7 +4,7 @@ import { loadTs } from '../petty-cash/load-ts.mjs';
 
 const { parsePaymentTerms } = loadTs('backend/lib/accounts/paymentSchedule.ts');
 const { reachedFor, validateMilestones } = loadTs('backend/lib/accounts/poSchedule.ts', {
-    '@/backend/lib/supabase/admin': { supabaseAdmin: {} },
+    '@/backend/lib/supabase/admin': { supabaseAdmin: {} }, './poApproval': { effectivePoStatus: async (_o, _p, s) => s },
 });
 
 const view = (r) => r.milestones.map((m) => [m.basis, m.percent, m.amount, m.trigger, m.progress_pct]);

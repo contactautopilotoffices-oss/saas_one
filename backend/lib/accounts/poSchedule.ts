@@ -1,6 +1,8 @@
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
+import { istDate } from '@/backend/lib/invoices/istDate';
 import { isPoEligible } from '@/backend/lib/invoices/types';
 import type { MilestoneBasis, MilestoneTrigger } from './paymentSchedule';
+import { effectivePoStatus } from './poApproval';
 
 /**
  * Shared pieces of the PO payment schedule: loading what the parser needs, working out
@@ -25,7 +27,7 @@ export async function loadPoForSchedule(orgId: string, poId: string): Promise<{ 
     const basic = (lines ?? []).reduce((s, l) => s + Number(l.item_total ?? 0), 0);
     const d = (po.detail ?? {}) as { terms?: string; notes?: string };
     return {
-        po: { id: po.id, po_number: po.po_number, vendor_name: po.vendor_name, po_amount: po.po_amount == null ? null : Number(po.po_amount), status: po.status, po_date: po.po_date, project_name: po.project_name },
+        po: { id: po.id, po_number: po.po_number, vendor_name: po.vendor_name, po_amount: po.po_amount == null ? null : Number(po.po_amount), status: await effectivePoStatus(orgId, po.id, po.status), po_date: po.po_date, project_name: po.project_name },
         text: [d.terms, d.notes].filter(Boolean).join('\n'),
         basic: basic > 0 ? Math.round(basic * 100) / 100 : null,
     };
@@ -68,7 +70,7 @@ export async function reachedContext(orgId: string, po: SchedulePo): Promise<Rea
         supabaseAdmin.from('invoices').select('submitted_at').eq('organization_id', orgId).eq('po_id', po.id).not('review_status', 'in', '(rejected,resubmission_required)').order('submitted_at').limit(1),
     ]);
     const rows = (log.data ?? []).map((r) => ({ ...r, progress_pct: r.progress_pct == null ? null : Number(r.progress_pct) })) as (LogEntry & { id: string; note: string | null; recorded_by: string | null; created_at: string })[];
-    return { po, log: rows, logRows: rows, firstInvoiceOn: inv.data?.[0]?.submitted_at?.slice(0, 10) ?? null };
+    return { po, log: rows, logRows: rows, firstInvoiceOn: inv.data?.[0]?.submitted_at ? istDate(inv.data[0].submitted_at) : null };
 }
 
 // --- checking a schedule a person has typed or edited -------------------------------

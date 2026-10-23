@@ -9,7 +9,7 @@ import {
     Settings, UserCircle, LogOut, Search, Filter, 
     ChevronDown, ChevronRight, Building2, Calendar, Menu, X,
     ArrowUpRight, Scan, Truck, RefreshCw, Box, Clock,
-    AlertCircle, ExternalLink, Trash2, Camera, Link2, Shield, User, Loader2, FileText, MessageSquarePlus, FileSpreadsheet, FileUp, Eye
+    AlertCircle, ExternalLink, Trash2, Camera, Link2, Shield, User, Loader2, FileText, MessageSquarePlus, FileSpreadsheet, FileUp, Eye, FileCheck2, Target
 } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -33,6 +33,8 @@ import SatejConsole from '@/frontend/components/satej/SatejConsole';
 import ProcurementTasksTab from '../procurement/ProcurementTasksTab';
 import FinanceOverview from '../accounts/FinanceOverview';
 import AccountsDashboard from '../accounts/AccountsDashboard';
+import InvoiceControl from '../invoices/InvoiceControl';
+import BountyInbox from '../aop/BountyInbox';
 
 // Only drawn on its own (legacy) tab and pulls in the Excel library: load it when that tab opens (performance plan Phase 8).
 const SitePricingAdminTab = dynamic(() => import('../procurement/SitePricingAdminTab'), { loading: TabLoading });
@@ -70,7 +72,7 @@ interface MaterialRequest {
     };
 }
 
-type Tab = 'overview' | 'vendor-discovery' | 'tasks' | 'payment-tracker' | 'requests' | 'vendor_tickets' | 'monthly-requisitions' | 'monthly-feedback' | 'site-pricing' | 'history' | 'manage-items' | 'po-generator' | 'settings' | 'profile' | 'grievance';
+type Tab = 'overview' | 'vendor-discovery' | 'tasks' | 'payment-tracker' | 'invoice-control' | 'bounty' | 'requests' | 'vendor_tickets' | 'monthly-requisitions' | 'monthly-feedback' | 'site-pricing' | 'history' | 'manage-items' | 'po-generator' | 'settings' | 'profile' | 'grievance';
 
 export default function ProcurementDashboard() {
     const { dashboardContent, navigateDashboard } = useDashboardContent();
@@ -105,7 +107,7 @@ export default function ProcurementDashboard() {
 
     useEffect(() => {
         const tabParam = searchParams?.get('tab') as string | null;
-        const linkableTabs = ['overview', 'vendor-discovery', 'tasks', 'payment-tracker', 'requests', 'vendor_tickets', 'monthly-requisitions', 'monthly-feedback', 'history', 'manage-items', 'po-generator', 'settings', 'profile', 'grievance'];
+        const linkableTabs = ['overview', 'vendor-discovery', 'tasks', 'payment-tracker', 'invoice-control', 'bounty', 'requests', 'vendor_tickets', 'monthly-requisitions', 'monthly-feedback', 'history', 'manage-items', 'po-generator', 'settings', 'profile', 'grievance'];
         if (SHOW_LEGACY_PER_PROPERTY_CONTROLS) linkableTabs.push('site-pricing');
         if (tabParam === 'urgency-tracker' || tabParam === 'task-sheet') {
             setActiveTab('payment-tracker');
@@ -619,6 +621,16 @@ export default function ProcurementDashboard() {
                                         label: 'Payment Tracker',
                                     },
                                     { 
+                                        id: 'invoice-control', 
+                                        icon: FileCheck2, 
+                                        label: 'Invoice Control',
+                                    },
+                                    { 
+                                        id: 'bounty', 
+                                        icon: Target, 
+                                        label: 'AOP Bounty',
+                                    },
+                                    { 
                                         id: 'requests', 
                                         icon: Package, 
                                         label: 'Active Orders',
@@ -776,6 +788,8 @@ export default function ProcurementDashboard() {
                                  activeTab === 'vendor-discovery' ? 'Meera finds, calls and ranks vendors' :
                                  activeTab === 'tasks' ? 'Your team task board' :
                                  activeTab === 'payment-tracker' ? 'PO Compilation, Alignments & Status' :
+                                 activeTab === 'invoice-control' ? 'Vendor invoices, PO matching & payment plans' :
+                                 activeTab === 'bounty' ? 'What this month\'s AOP still needs from you' :
                                  activeTab === 'manage-items' ? `Catalog · ${stats.total} Items` :
                                  activeTab === 'po-generator' ? 'AI Purchase Order Processor' :
                                  `Awaiting Fulfillment · ${stats.pending} Items`}
@@ -886,6 +900,12 @@ export default function ProcurementDashboard() {
                                     <AccountsDashboard organizationId={userOrgId || user?.user_metadata?.organization_id} />
                                 </div>
                             </div>
+                        )}
+                        {activeTab === 'bounty' && (userOrgId || user?.user_metadata?.organization_id) && (
+                            <BountyInbox orgId={userOrgId || user?.user_metadata?.organization_id} invoicesHref="?tab=invoice-control" />
+                        )}
+                        {activeTab === 'invoice-control' && (userOrgId || user?.user_metadata?.organization_id) && (
+                            <InvoiceControl orgId={userOrgId || user?.user_metadata?.organization_id} mode="procurement" />
                         )}
                         {activeTab === 'history' && <HistoryTab requests={requests} user={user} />}
                         {activeTab === 'vendor_tickets' && <ProcurementVendorTicketsTab />}

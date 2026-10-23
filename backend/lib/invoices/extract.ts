@@ -20,7 +20,15 @@ import { councilChat } from '@/backend/lib/council/llm';
 /** Text path model. Measured fast tier, same choice and reason as backend/lib/wiki/ask.ts. */
 export const INVOICE_TEXT_MODEL = process.env.INVOICE_EXTRACT_MODEL?.trim() || 'deepseek-v4-flash-0731';
 
-const MAX_PAGES = 4;
+/**
+ * How many pages of a scanned invoice are read in total. A long invoice carries its line
+ * items across pages, so stopping early silently loses rows — and a partial read can
+ * still look tidy. The pages are read in batches of PAGES_PER_CALL and merged, rather
+ * than in one call, because a vision model's answer degrades as the image count grows.
+ * Beyond MAX_PAGES the read is marked truncated, which match.ts treats as blocking.
+ */
+const MAX_PAGES = Math.max(1, Number(process.env.INVOICE_MAX_PAGES || 24));
+const PAGES_PER_CALL = Math.max(1, Number(process.env.INVOICE_PAGES_PER_CALL || 4));
 const TEXT_CHAR_LIMIT = 24_000;
 /** Below this many characters a PDF is treated as scanned, whatever pdfjs says. */
 const MIN_TEXT_CHARS = 120;
@@ -62,6 +70,12 @@ export interface ExtractResult {
     model: string;
     path: 'pdf_text' | 'pdf_scan' | 'image';
     error?: string;
+    /** Pages actually read. Null on the text path, where paging does not apply. */
+    pagesRead?: number | null;
+    /** Pages the document has, as reported by the rasterizer. */
+    totalPages?: number | null;
+    /** True when the document has more pages than were read. Never silent: match.ts blocks on it. */
+    truncated?: boolean;
 }
 
 const SCHEMA_PROMPT = `You read Indian GST tax invoices and return ONLY one JSON object:
@@ -101,9 +115,16 @@ export async function extractInvoice(bytes: Buffer, mime: string): Promise<Extra
             if (!raster.pages.length) {
                 return fail('pdf_scan', `scanned PDF could not be rasterized${raster.warnings[0] ? `: ${raster.warnings[0]}` : ''}`);
             }
-            return await viaVision('pdf_scan', raster.pages);
+            const out = await viaVision('pdf_scan', raster.pages);
+            return {
+                ...out,
+                pagesRead: raster.pages.length,
+                totalPages: raster.totalPages,
+                truncated: raster.totalPages > raster.pages.length,
+            };
         }
-        return await viaVision('image', [{ buffer: bytes, mime }]);
+        const img = await viaVision('image', [{ buffer: bytes, mime }]);
+        return { ...img, pagesRead: 1, totalPages: 1, truncated: false };
     } catch (e) {
         return fail(isPdf ? 'pdf_text' : 'image', e instanceof Error ? e.message : 'extraction failed');
     }
@@ -125,14 +146,76 @@ async function viaText(text: string): Promise<ExtractResult> {
 }
 
 async function viaVision(path: 'pdf_scan' | 'image', pages: { buffer: Buffer; mime: 'image/jpeg' | string }[]): Promise<ExtractResult> {
-    const v = await visionExtract({
-        pages: pages as Parameters<typeof visionExtract>[0]['pages'],
-        json: true,
-        maxTokens: 4000,
-        instruction: `${SCHEMA_PROMPT}\n\nExtract the invoice from these page images.`,
-    });
-    if (!v.ok || !v.data) return { ...fail(path, v.error ?? 'vision returned no parseable JSON'), provider: v.provider, model: v.model };
-    return { ok: true, extracted: normalise(v.data), provider: v.provider, model: v.model, path };
+    const batches: typeof pages[] = [];
+    for (let i = 0; i < pages.length; i += PAGES_PER_CALL) batches.push(pages.slice(i, i + PAGES_PER_CALL));
+
+    const reads: ExtractedInvoice[] = [];
+    let provider = 'none';
+    let model = '';
+    let firstError: string | null = null;
+
+    for (let i = 0; i < batches.length; i++) {
+        const first = i === 0;
+        const v = await visionExtract({
+            pages: batches[i] as Parameters<typeof visionExtract>[0]['pages'],
+            json: true,
+            maxTokens: 4000,
+            instruction: `${SCHEMA_PROMPT}\n\n${batches.length === 1
+                ? 'Extract the invoice from these page images.'
+                : `These are pages ${i * PAGES_PER_CALL + 1}-${i * PAGES_PER_CALL + batches[i].length} of a ${pages.length}-page invoice. ` +
+                  `Extract every line-item row you can see on THESE pages. ` +
+                  `${first ? 'Header fields and totals may appear here.' : 'If a header field or a total is not printed on these pages, return null for it rather than repeating or guessing it.'}`}`,
+        });
+        provider = v.provider || provider;
+        model = v.model || model;
+        if (!v.ok || !v.data) { firstError ??= v.error ?? 'vision returned no parseable JSON'; continue; }
+        reads.push(normalise(v.data));
+    }
+
+    // Every batch failed: this is a failed read, not an empty invoice.
+    if (!reads.length) return { ...fail(path, firstError ?? 'vision returned no parseable JSON'), provider, model };
+    return { ok: true, extracted: mergeReads(reads), provider, model, path };
+}
+
+/**
+ * Join the per-batch readings into one invoice.
+ *
+ * Header fields and totals are printed once, usually on the first or last page, so the
+ * first non-null answer wins and later batches are told to return null rather than guess.
+ * Line items are the opposite: they run across pages, so they are concatenated in order.
+ */
+function mergeReads(reads: ExtractedInvoice[]): ExtractedInvoice {
+    if (reads.length === 1) return reads[0];
+    const firstNonNull = <K extends keyof ExtractedInvoice>(key: K): ExtractedInvoice[K] => {
+        for (const r of reads) {
+            const v = r[key];
+            if (v !== null && v !== undefined && v !== '') return v;
+        }
+        return reads[0][key];
+    };
+    const confidence: Record<string, number> = {};
+    for (const r of reads) {
+        for (const [k, v] of Object.entries(r.field_confidence ?? {})) {
+            // Keep the confidence that belongs to the value actually kept: the first
+            // batch that read the field at all.
+            if (!(k in confidence) && typeof v === 'number' && v > 0) confidence[k] = v;
+        }
+    }
+    return {
+        ...reads[0],
+        invoice_number: firstNonNull('invoice_number'),
+        invoice_date: firstNonNull('invoice_date'),
+        vendor_name: firstNonNull('vendor_name'),
+        vendor_gstin: firstNonNull('vendor_gstin'),
+        currency: firstNonNull('currency'),
+        taxable_amount: firstNonNull('taxable_amount'),
+        tax_amount: firstNonNull('tax_amount'),
+        other_charges: firstNonNull('other_charges'),
+        discount_amount: firstNonNull('discount_amount'),
+        invoice_total: firstNonNull('invoice_total'),
+        field_confidence: confidence,
+        lines: reads.flatMap((r) => r.lines),
+    };
 }
 
 function fail(path: ExtractResult['path'], error: string): ExtractResult {
@@ -164,7 +247,8 @@ const clampConf = (v: unknown): number => { const n = Number(v); return Number.i
 export function normalise(raw: Record<string, unknown>): ExtractedInvoice {
     const inv = (raw.invoice && typeof raw.invoice === 'object' ? raw.invoice : raw) as Record<string, unknown>;
     const conf = (raw.confidence && typeof raw.confidence === 'object' ? raw.confidence : {}) as Record<string, unknown>;
-    const gstin = str(inv.vendor_gstin)?.toUpperCase().replace(/\s+/g, '') ?? null;
+    // Tolerate "GSTIN: 27ABC..." and spaced-out forms: pull the 15-character GSTIN out of whatever came back.
+    const gstin = str(inv.vendor_gstin)?.toUpperCase().replace(/[\s\-:.]+/g, '').match(/[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]/)?.[0] ?? null;
 
     const header = {
         invoice_number: str(inv.invoice_number),

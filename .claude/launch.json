@@ -45,6 +45,32 @@
       ],
       "port": 8765,
       "autoPort": false
+    },
+    {
+      "name": "te-upload",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8766",
+        "--directory",
+        "/Users/lohit/Downloads/TE-Landing-upload"
+      ],
+      "port": 8766,
+      "autoPort": false
+    },
+    {
+      "name": "te-site",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8767",
+        "--directory",
+        "/Users/lohit/Downloads/te-landing-site"
+      ],
+      "port": 8767,
+      "autoPort": false
     }
   ]
 }

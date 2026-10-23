@@ -5,7 +5,10 @@ import { matchInvoice, summariseMatch, type MatchInput } from './match';
 import { loadInvoiceSettings } from './settings';
 import { downloadObject, detectContentType } from './storage';
 import { logInvoiceEvent } from './audit';
+import { syncInvoiceMatchFlag } from './flags';
+import { istDate } from './istDate';
 import { syncDocumentationState } from './docState';
+import { effectivePoStatus } from '@/backend/lib/accounts/poApproval';
 
 /**
  * Turning a stored submission into a verdict, in two steps that can run apart:
@@ -29,7 +32,7 @@ export async function runMatching(invoiceId: string, actorUserId?: string | null
 
     const [{ data: lineRows }, { data: po }, { data: poLineRows }, settings] = await Promise.all([
         supabaseAdmin.from('invoice_line_items').select('*').eq('invoice_id', invoiceId).order('line_no'),
-        supabaseAdmin.from('zoho_purchase_orders').select('id, status, po_amount, vendor_name, vendor_id').eq('id', inv.po_id).eq('organization_id', orgId).maybeSingle(),
+        supabaseAdmin.from('zoho_purchase_orders').select('id, po_number, status, po_amount, vendor_name, vendor_id').eq('id', inv.po_id).eq('organization_id', orgId).maybeSingle(),
         supabaseAdmin.from('zoho_po_line_items').select('id, item_id, name, description, hsn_or_sac, unit, quantity, rate, tax_percentage').eq('po_id', inv.po_id).order('item_order').limit(500),
         loadInvoiceSettings(orgId),
     ]);
@@ -81,6 +84,8 @@ export async function runMatching(invoiceId: string, actorUserId?: string | null
     }
 
     const fieldConfidence = ((inv.extracted as { field_confidence?: Record<string, number> } | null)?.field_confidence) ?? {};
+    // What the reader saw of the document, written alongside the fields by runExtraction.
+    const stored = inv.extracted as { pages_read?: number | null; total_pages?: number | null; pages_truncated?: boolean } | null;
     // A person who has corrected the values has, in effect, vouched for them.
     const corrected = !!inv.corrected_at;
     const confidence = corrected
@@ -88,7 +93,7 @@ export async function runMatching(invoiceId: string, actorUserId?: string | null
         : fieldConfidence;
 
     const out = matchInvoice({
-        po: { status: po.status, amount: num(po.po_amount), vendor_name: po.vendor_name },
+        po: { status: await effectivePoStatus(orgId, po.id, po.status), amount: num(po.po_amount), vendor_name: po.vendor_name },
         poLines: (poLineRows ?? []).map((p) => ({
             id: p.id, item_id: p.item_id, name: p.name, description: p.description, hsn_or_sac: p.hsn_or_sac, unit: p.unit,
             quantity: num(p.quantity), rate: num(p.rate), tax_percentage: num(p.tax_percentage),
@@ -100,6 +105,10 @@ export async function runMatching(invoiceId: string, actorUserId?: string | null
             other_charges: num(inv.other_charges), discount_amount: num(inv.discount_amount), invoice_total: num(inv.invoice_total),
             field_confidence: confidence,
             extraction_ok: inv.extraction_status === 'completed' || corrected,
+            pages_read: stored?.pages_read ?? null,
+            total_pages: stored?.total_pages ?? null,
+            // A person correcting the values settles it; otherwise a short read still blocks.
+            pages_truncated: !corrected && stored?.pages_truncated === true,
         },
         lines: (lineRows ?? []).map((l) => ({
             line_no: l.line_no, description: l.description, item_code: l.item_code, hsn_or_sac: l.hsn_or_sac,
@@ -108,7 +117,7 @@ export async function runMatching(invoiceId: string, actorUserId?: string | null
         })),
         priorInvoices: (priorRows ?? []).map((p) => ({ id: p.id, invoice_total: num(p.invoice_total) })),
         priorLineQty, duplicates, settings,
-        today: new Date().toISOString().slice(0, 10),
+        today: istDate(),
     });
 
     // Previous run: retire it, but remember which of its rows a person had resolved.
@@ -156,6 +165,15 @@ export async function runMatching(invoiceId: string, actorUserId?: string | null
         eventType: 'invoice_validated', correlationId: runId,
         details: { match_status: status, failed: out.results.filter((r) => r.outcome === 'fail').length, unknown: out.results.filter((r) => r.outcome === 'unknown').length, policy_version: settings.policy_version },
     });
+    // Put the verdict in front of everyone who can see the PO, on whatever dashboard they
+    // already use. Raised on a bad run, closed when a later run comes back matched.
+    await syncInvoiceMatchFlag({
+        orgId, invoiceId, matchStatus: status,
+        poNumber: (po as { po_number?: string | null }).po_number ?? null,
+        vendorName: po.vendor_name ?? null,
+        failedRules: [...new Set(rows.filter((r) => r.outcome === 'fail').map((r) => r.rule_code))],
+    });
+
     await syncDocumentationState(orgId, inv.po_id);
     return { matchStatus: status, rules: rows.length };
 }
@@ -198,7 +216,11 @@ export async function processInvoice(invoiceId: string, actorUserId?: string | n
     };
     const { error: upErr } = await supabaseAdmin.from('invoices').update({
         ...header,
-        extracted: { ...x, vendor_hint: hint, path: read.path },
+        extracted: {
+            ...x, vendor_hint: hint, path: read.path,
+            pages_read: read.pagesRead ?? null, total_pages: read.totalPages ?? null,
+            pages_truncated: read.truncated === true,
+        },
         extraction_provider: read.provider, extraction_model: read.model,
         extraction_status: 'completed', extraction_error: null, updated_at: new Date().toISOString(),
     }).eq('id', invoiceId);
@@ -217,7 +239,8 @@ export async function processInvoice(invoiceId: string, actorUserId?: string | n
     }
 
     await logInvoiceEvent({ organizationId: orgId, invoiceId, poId: inv.po_id, actorUserId: actorUserId ?? null, actorType: actorUserId ? 'user' : 'system',
-        eventType: 'invoice_extracted', details: { provider: read.provider, model: read.model, path: read.path, lines: x.lines.length } });
+        eventType: 'invoice_extracted', details: { provider: read.provider, model: read.model, path: read.path, lines: x.lines.length,
+            pages_read: read.pagesRead ?? null, total_pages: read.totalPages ?? null, pages_truncated: read.truncated === true } });
 
     const m = await runMatching(invoiceId, actorUserId);
     if ('error' in m) return { ok: false, error: m.error };

@@ -9,6 +9,7 @@ import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { requireInvoiceAccess, isInvoiceAccessError } from '@/backend/lib/invoices/access';
 import { signObject } from '@/backend/lib/invoices/storage';
 import { dbError, isUuid } from '@/backend/lib/invoices/http';
+import { invoiceStage, plainReasons } from '@/backend/lib/invoices/plainReasons';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,8 +39,11 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     })));
 
     const all = rules.data ?? [];
+    const current = all.filter((r) => r.is_current);
     return NextResponse.json({
         invoice: inv,
+        // What a person needs, in plain words: where it is, and if it is done, exactly what is wrong.
+        summary: { stage: invoiceStage(inv, current.length > 0), ...plainReasons(current, inv.match_status) },
         documents,
         lines: lines.data ?? [],
         po: po.data ? { ...po.data, po_amount: po.data.po_amount == null ? null : Number(po.data.po_amount) } : null,

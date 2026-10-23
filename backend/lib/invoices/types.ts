@@ -81,6 +81,7 @@ export interface RuleResult {
 export type SummarisableResult = Pick<RuleResult, 'rule_code' | 'severity' | 'outcome'> & { resolved?: boolean };
 
 export const RULE_LABELS: Record<string, string> = {
+    DOCUMENT_TRUNCATED: 'Whole document read',
     VENDOR_MATCH: 'Vendor matches PO',
     PO_ELIGIBLE: 'PO can take an invoice',
     INVOICE_IDENTITY: 'Invoice number and date',

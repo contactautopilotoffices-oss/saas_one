@@ -1,17 +1,22 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Search, Link2, Upload, Copy, Check, Ban, RefreshCw, MessageCircle, CalendarClock } from 'lucide-react';
+import { Search, Link2, Upload, Copy, Check, Ban, RefreshCw, MessageCircle, CalendarClock, ChevronDown } from 'lucide-react';
 import {
-    api, inr, shortDate, label, newKey, uploadToSlot, Pill, matchTone, reviewTone, docTone, Modal, Field, inputCls, btnPrimary, btnGhost,
+    api, inr, shortDate, label, newKey, uploadToSlot, Pill, matchTone, Modal, Field, inputCls, btnPrimary, btnGhost,
     ErrorLine, Empty, Pager,
 } from './invoiceUi';
 import PoPaymentPlan from './PoPaymentPlan';
+import SimulateApproval from './SimulateApproval';
 
 interface PoRow {
     id: string; po_number: string; vendor_name: string | null; po_amount: number | null; project_name: string | null; po_date: string | null; status: string | null;
     invoices: { id: string; invoice_number: string | null; invoice_total: number | null; match_status: string; review_status: string; extraction_status: string; submitted_at: string }[];
     active_link: { id: string; expires_at: string } | null;
+    simulated_approval: { simulated_at: string; invoice_due_at: string } | null;
+    last_notification: { status: 'sent' | 'failed' | 'no_phone'; sent_at: string; error: string | null; sent_to_last4: string | null; mode: 'test' | 'live' | null } | null;
+    case: { overrides: { tranche_no: number; requested_amount: number; percent_of_po: number | null; status: string; aligned_at: string | null; invoice_match_at_align: string | null; invoice_override_reason: string; aligned_by_name: string | null }[]; notes: { event_type: string; actor_name: string | null; actor_role: string | null; created_at: string; text: string | null; rule_code: string | null }[] };
+    approval_watch: { state: 'pending' | 'sending' | 'notified' | 'no_phone' | 'failed' | 'skipped'; approved_detected_at: string | null; invoice_due_at: string | null; note: string | null } | null;
     fast_track: { id: string; status: string; documentation_state: string; doc_overdue: boolean; invoice_pending: boolean }[];
 }
 
@@ -19,8 +24,8 @@ const FILTERS = [
     ['all', 'All POs'], ['attention', 'Needs attention'], ['has_invoice', 'Invoice received'], ['awaiting_invoice', 'Invoice pending (fast-track)'], ['fast_track', 'Any fast-track'],
 ] as const;
 
-export default function PoInvoiceStatus({ orgId, canGenerate, canUploadInternal, onOpenInvoice, onChanged }: {
-    orgId: string; canGenerate: boolean; canUploadInternal: boolean; onOpenInvoice: (id: string) => void; onChanged: () => void;
+export default function PoInvoiceStatus({ orgId, canGenerate, canUploadInternal, canSimulate, canResend, onOpenInvoice, onOpenPo, onChanged, refreshKey = 0, linkExpiryHours = 72 }: {
+    orgId: string; canGenerate: boolean; canUploadInternal: boolean; canSimulate: boolean; canResend: boolean; onOpenInvoice: (id: string) => void; onOpenPo?: (poId: string) => void; onChanged: () => void; refreshKey?: number; linkExpiryHours?: number;
 }) {
     const [rows, setRows] = useState<PoRow[]>([]);
     const [loading, setLoading] = useState(true);
@@ -32,6 +37,8 @@ export default function PoInvoiceStatus({ orgId, canGenerate, canUploadInternal,
     const [linkFor, setLinkFor] = useState<PoRow | null>(null);
     const [uploadFor, setUploadFor] = useState<PoRow | null>(null);
     const [planFor, setPlanFor] = useState<PoRow | null>(null);
+    const [simFor, setSimFor] = useState<{ po: PoRow; resend: boolean } | null>(null);
+    const [openRow, setOpenRow] = useState<string | null>(null);
     const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const load = useCallback(async () => {
@@ -43,7 +50,7 @@ export default function PoInvoiceStatus({ orgId, canGenerate, canUploadInternal,
         } catch (e) { setError((e as Error).message); } finally { setLoading(false); }
     }, [orgId, page, filter, search]);
 
-    useEffect(() => { if (debounce.current) clearTimeout(debounce.current); debounce.current = setTimeout(load, search ? 300 : 0); return () => { if (debounce.current) clearTimeout(debounce.current); }; }, [load, search]);
+    useEffect(() => { if (debounce.current) clearTimeout(debounce.current); debounce.current = setTimeout(load, search ? 300 : 0); return () => { if (debounce.current) clearTimeout(debounce.current); }; }, [load, search, refreshKey]); // refreshKey: something changed elsewhere in Invoice Control
     useEffect(() => { setPage(1); }, [filter, search]);
 
     return (
@@ -65,48 +72,60 @@ export default function PoInvoiceStatus({ orgId, canGenerate, canUploadInternal,
                     <thead className="bg-surface-elevated text-xs text-text-tertiary">
                         <tr>
                             <th className="text-left px-3 py-2.5 font-bold">PO</th>
-                            <th className="text-left px-3 py-2.5 font-bold">Vendor</th>
-                            <th className="text-right px-3 py-2.5 font-bold">PO value</th>
                             <th className="text-left px-3 py-2.5 font-bold">Invoice</th>
-                            <th className="text-left px-3 py-2.5 font-bold">Fast-track</th>
+                            <th className="text-left px-3 py-2.5 font-bold">Payment</th>
                             <th className="px-3 py-2.5" />
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
                         {rows.map((po) => {
                             const latest = po.invoices[0];
+                            const isOpen = openRow === po.id;
+                            const ft = po.fast_track[0];
+                            const approvalWord = po.simulated_approval ? 'Approved (simulated)' : po.status === 'pending_approval' ? 'Awaiting approval' : label(po.status);
                             return (
-                                <tr key={po.id} className="align-top hover:bg-surface-elevated/50">
-                                    <td className="px-3 py-3"><div className="font-bold text-text-primary">{po.po_number}</div><div className="text-[11px] text-text-tertiary">{shortDate(po.po_date)} · {po.project_name ?? '—'}</div></td>
-                                    <td className="px-3 py-3 text-text-secondary max-w-[220px] truncate" title={po.vendor_name ?? ''}>{po.vendor_name ?? '—'}</td>
-                                    <td className="px-3 py-3 text-right tabular-nums text-text-primary">{inr(po.po_amount)}</td>
-                                    <td className="px-3 py-3">
-                                        {latest ? (
-                                            <button onClick={() => onOpenInvoice(latest.id)} className="text-left group">
-                                                <div className="flex flex-wrap items-center gap-1.5">
-                                                    <Pill tone={matchTone(latest.match_status)}>{latest.extraction_status === 'processing' || latest.extraction_status === 'pending' ? 'Reading…' : label(latest.match_status)}</Pill>
-                                                    {latest.review_status !== 'pending' && <Pill tone={reviewTone(latest.review_status)}>{label(latest.review_status)}</Pill>}
+                                <React.Fragment key={po.id}>
+                                    <tr className="hover:bg-surface-elevated/50 cursor-pointer" onClick={() => setOpenRow(isOpen ? null : po.id)} aria-expanded={isOpen}>
+                                        <td className="px-3 py-3"><div>{onOpenPo ? <button className="font-bold text-text-primary hover:text-primary hover:underline" onClick={(e) => { e.stopPropagation(); onOpenPo(po.id); }} title="Open this PO">{po.po_number}</button> : <span className="font-bold text-text-primary">{po.po_number}</span>}</div><div className="text-[11px] text-text-tertiary truncate max-w-[260px]">{po.vendor_name ?? '—'} · {inr(po.po_amount)}</div></td>
+                                        <td className="px-3 py-3">
+                                            {latest ? (['rejected', 'resubmission_required'].includes(latest.review_status) ? <Pill tone={latest.review_status === 'rejected' ? 'red' : 'amber'}>{label(latest.review_status)}</Pill> : <Pill tone={matchTone(latest.match_status)}>{['pending', 'processing'].includes(latest.extraction_status) ? 'Reading…' : latest.review_status === 'accepted' ? 'Accepted' : label(latest.match_status)}</Pill>)
+                                                : po.active_link ? <Pill tone="blue">Link sent</Pill> : <Pill>None</Pill>}
+                                        </td>
+                                        <td className="px-3 py-3">
+                                            {ft ? <Pill tone={ft.doc_overdue ? 'red' : 'amber'}>{ft.doc_overdue ? 'Invoice overdue' : label(ft.status)}</Pill>
+                                                : po.status === 'pending_approval' && !po.simulated_approval ? <Pill tone="amber">Awaiting approval</Pill> : <span className="text-text-tertiary text-xs">—</span>}
+                                        </td>
+                                        <td className="px-3 py-3 text-right text-text-tertiary"><ChevronDown className={`w-4 h-4 inline transition-transform ${isOpen ? 'rotate-180' : ''}`} /></td>
+                                    </tr>
+                                    {isOpen && (
+                                        <tr className="bg-surface-elevated/40">
+                                            <td colSpan={4} className="px-4 py-3">
+                                                <div className="grid gap-4 md:grid-cols-[1fr_auto]">
+                                                    <div className="space-y-2 text-xs text-text-secondary min-w-0">
+                                                        <div>{shortDate(po.po_date)} · {po.project_name ?? 'no site'} · {approvalWord}{po.simulated_approval ? ` · invoice due by ${shortDate(po.simulated_approval.invoice_due_at)}` : ''}</div>
+                                                        {po.last_notification && <div>{po.last_notification.status === 'sent' ? `Vendor WhatsApp sent (${po.last_notification.mode === 'live' ? 'vendor' : 'test number'})` : po.last_notification.status === 'no_phone' ? 'Vendor has no WhatsApp number. Add it in Zoho, then Send WhatsApp.' : `WhatsApp failed: ${(po.last_notification.error ?? '').slice(0, 100)}`}</div>}
+                                                        {po.invoices.length > 0 && (
+                                                            <ul className="space-y-0.5">
+                                                                {po.invoices.slice(0, 4).map((i) => <li key={i.id}><button className="text-primary font-bold hover:underline" onClick={(e) => { e.stopPropagation(); onOpenInvoice(i.id); }}>{i.invoice_number ?? 'No number'}</button> · {inr(i.invoice_total)} · {label(i.match_status)}{i.review_status !== 'pending' ? ` · ${label(i.review_status).toLowerCase()}` : ''}</li>)}
+                                                                {po.invoices.length > 4 && <li className="text-text-tertiary">+{po.invoices.length - 4} more</li>}
+                                                            </ul>
+                                                        )}
+                                                        {po.active_link && !latest && <div>Upload link active until {shortDate(po.active_link.expires_at)}</div>}
+                                                        {ft && <div>Urgent payment: {label(ft.status)} · invoice {label(ft.documentation_state).toLowerCase()}</div>}
+                                                        {(po.case.overrides.length > 0 || po.case.notes.length > 0) && <CaseFlow c={po.case} />}
+                                                    </div>
+                                                    <div className="flex flex-wrap md:flex-col gap-1.5 items-start" onClick={(e) => e.stopPropagation()}>
+                                                        {canSimulate && !po.simulated_approval && ['pending_approval', 'submitted'].includes(po.status ?? '') && <button className={btnGhost} onClick={() => setSimFor({ po, resend: false })}>Simulate approval</button>}
+                                                        {canResend && (po.simulated_approval || (po.status !== 'pending_approval' && (po.last_notification || po.approval_watch))) && <button className={btnGhost} onClick={() => setSimFor({ po, resend: true })}>{po.last_notification?.status === 'no_phone' ? 'Send WhatsApp' : 'Resend WhatsApp'}</button>}
+                                                        <button className={btnGhost} onClick={() => setPlanFor(po)}><CalendarClock className="w-4 h-4" /> Payment plan</button>
+                                                        {canGenerate && takesInvoice(po) && <button className={btnGhost} onClick={() => setLinkFor(po)}><Link2 className="w-4 h-4" /> Vendor link</button>}
+                                                        {canUploadInternal && takesInvoice(po) && <button className={btnGhost} onClick={() => setUploadFor(po)}><Upload className="w-4 h-4" /> Attach invoice</button>}
+                                                    </div>
                                                 </div>
-                                                <div className="text-[11px] text-text-tertiary mt-1 group-hover:underline">{latest.invoice_number ?? 'No number'} · {inr(latest.invoice_total)}{po.invoices.length > 1 ? ` · +${po.invoices.length - 1} more` : ''}</div>
-                                            </button>
-                                        ) : po.active_link ? (
-                                            <div><Pill tone="blue">Link sent</Pill><div className="text-[11px] text-text-tertiary mt-1">Expires {shortDate(po.active_link.expires_at)}</div></div>
-                                        ) : <Pill>No invoice</Pill>}
-                                    </td>
-                                    <td className="px-3 py-3">
-                                        {po.fast_track.length ? po.fast_track.map((f) => (
-                                            <div key={f.id} className="flex flex-wrap items-center gap-1.5 mb-1">
-                                                <Pill tone="amber">{label(f.status)}</Pill>
-                                                <Pill tone={docTone(f.documentation_state, f.doc_overdue)}>{f.doc_overdue ? 'Invoice overdue' : `Invoice: ${label(f.documentation_state).toLowerCase()}`}</Pill>
-                                            </div>
-                                        )) : <span className="text-text-tertiary text-xs">—</span>}
-                                    </td>
-                                    <td className="px-3 py-3 text-right whitespace-nowrap">
-                                        <button className={`${btnGhost} mr-1.5`} onClick={() => setPlanFor(po)} title="Payment terms as milestones"><CalendarClock className="w-4 h-4" /> Plan</button>
-                                        {canGenerate && <button className={btnGhost} onClick={() => setLinkFor(po)} title="Create a vendor upload link"><Link2 className="w-4 h-4" /> Link</button>}
-                                        {canUploadInternal && <button className={`${btnGhost} ml-1.5`} onClick={() => setUploadFor(po)} title="Attach an invoice received by mail or WhatsApp"><Upload className="w-4 h-4" /></button>}
-                                    </td>
-                                </tr>
+                                            </td>
+                                        </tr>
+                                    )}
+                                </React.Fragment>
                             );
                         })}
                     </tbody>
@@ -115,17 +134,48 @@ export default function PoInvoiceStatus({ orgId, canGenerate, canUploadInternal,
             </div>
             <Pager page={page} totalPages={totalPages} onPage={setPage} />
 
+            {simFor && <SimulateApproval orgId={orgId} po={simFor.po} resend={simFor.resend} canConfigure={canSimulate} onClose={() => setSimFor(null)} onDone={() => { load(); onChanged(); }} />}
             {planFor && <PoPaymentPlan orgId={orgId} poId={planFor.id} poNumber={planFor.po_number} onClose={() => setPlanFor(null)} onChanged={onChanged} />}
-            {linkFor && <LinkModal orgId={orgId} po={linkFor} onClose={() => setLinkFor(null)} onChanged={() => { load(); onChanged(); }} />}
+            {linkFor && <LinkModal orgId={orgId} po={linkFor} defaultHours={linkExpiryHours} onClose={() => setLinkFor(null)} onChanged={() => { load(); onChanged(); }} />}
             {uploadFor && <InternalUploadModal orgId={orgId} po={uploadFor} onClose={() => setUploadFor(null)} onDone={(id) => { setUploadFor(null); load(); onChanged(); onOpenInvoice(id); }} />}
         </div>
     );
 }
 
+
+const EVENT_WORDS: Record<string, string> = {
+    issue_resolved: 'resolved a check', invoice_corrected: 'corrected the invoice values', invoice_rejected: 'rejected the invoice', resubmission_requested: 'asked the vendor to resubmit',
+    invoice_accepted: 'accepted the invoice', invoice_withdrawn: 'withdrew the invoice', fast_track_requested: 'asked for an urgent payment', fast_track_approved: 'approved the urgent payment',
+    fast_track_rejected: 'rejected the urgent payment', fast_track_needs_information: 'asked for more information', documentation_waived: 'waived the invoice by policy',
+};
+
+/** What people said and did on this PO, as one short flow, newest first. The reasons are the point. */
+function CaseFlow({ c }: { c: PoRow['case'] }) {
+    return (
+        <ol className="mt-2 ml-1 border-l-2 border-amber-400/60 space-y-2 max-w-[420px]">
+            {c.overrides.map((o) => (
+                <li key={`o${o.tranche_no}`} className="pl-3">
+                    <div className="text-[12px] font-bold text-amber-800 dark:text-amber-300">{o.aligned_by_name ?? 'Purchase'} aligned {inr(o.requested_amount)}{o.percent_of_po != null ? ` (${o.percent_of_po}%)` : ''} although the invoice was {label(o.invoice_match_at_align ?? 'missing').toLowerCase()}</div>
+                    <div className="text-[12px] text-text-primary">“{o.invoice_override_reason}”</div>
+                </li>
+            ))}
+            {c.notes.map((n, i) => (
+                <li key={i} className="pl-3">
+                    <div className="text-[12px] text-text-secondary"><b className="text-text-primary">{n.actor_name ?? 'Someone'}</b> {EVENT_WORDS[n.event_type] ?? label(n.event_type).toLowerCase()}{n.rule_code ? ` (${label(n.rule_code).toLowerCase()})` : ''}</div>
+                    {n.text && <div className="text-[12px] text-text-primary">“{n.text}”</div>}
+                </li>
+            ))}
+        </ol>
+    );
+}
+
 // --- link generation ----------------------------------------------------------
 
-function LinkModal({ orgId, po, onClose, onChanged }: { orgId: string; po: PoRow; onClose: () => void; onChanged: () => void }) {
-    const [hours, setHours] = useState('72');
+/** A PO awaiting approval cannot take an invoice (the server refuses), unless its approval is simulated. */
+const takesInvoice = (po: PoRow) => !!po.simulated_approval || !['pending_approval', 'submitted', 'draft'].includes(po.status ?? '');
+
+function LinkModal({ orgId, po, onClose, onChanged, defaultHours }: { orgId: string; po: PoRow; onClose: () => void; onChanged: () => void; defaultHours: number }) {
+    const [hours, setHours] = useState(String(defaultHours));
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [made, setMade] = useState<{ upload_url: string; expires_at: string } | null>(null);

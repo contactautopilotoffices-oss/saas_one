@@ -63,6 +63,11 @@ export interface MatchInput {
         /** 0-100 per header field, as the reader reported it. */
         field_confidence: Record<string, number>;
         extraction_ok: boolean;
+        /** Pages read / pages the document has. Set only on the scanned path. */
+        pages_read?: number | null;
+        total_pages?: number | null;
+        /** True when the reader did not see the whole document. */
+        pages_truncated?: boolean;
     };
     lines: MatchInvoiceLine[];
     /** Other invoices on this PO that still count against it (not rejected). */
@@ -132,8 +137,22 @@ function mapLine(line: MatchInvoiceLine, poLines: MatchPoLine[]): Mapped {
 
     const best = scored[0];
     if (!best || best.score < MAP_THRESHOLD) return { poLineId: null, score: best?.score ?? 0, ambiguous: false };
-    const next = scored[1];
-    if (next && best.score - next.score < AMBIGUITY_GAP && best.score < 1) return { poLineId: null, score: best.score, ambiguous: true };
+    // PO lines that read as equally good a fit (two "Chair" lines at different rates) are
+    // told apart by what the invoice says about price and quantity, in that order.
+    const tied = scored.filter((c) => best.score - c.score < AMBIGUITY_GAP).map((c) => poLines.find((p) => p.id === c.id)!);
+    if (tied.length > 1) {
+        const byRate = has(line.unit_rate) ? tied.filter((p) => has(p.rate) && Math.abs(p.rate - line.unit_rate!) < 0.005) : [];
+        if (byRate.length === 1) return { poLineId: byRate[0].id, score: best.score, ambiguous: false };
+        const pool = byRate.length > 1 ? byRate : tied;
+        const byQty = has(line.quantity) ? pool.filter((p) => has(p.quantity) && p.quantity === line.quantity) : [];
+        if (byQty.length === 1) return { poLineId: byQty[0].id, score: best.score, ambiguous: false };
+        // Neither matched exactly: the nearest rate wins if it is clearly nearer than the rest.
+        if (has(line.unit_rate)) {
+            const ranked = pool.filter((p) => has(p.rate)).map((p) => ({ p, d: Math.abs(p.rate! - line.unit_rate!) })).sort((x, y) => x.d - y.d);
+            if (ranked.length > 1 && ranked[1].d > ranked[0].d * 2) return { poLineId: ranked[0].p.id, score: best.score, ambiguous: false };
+        }
+        return { poLineId: null, score: best.score, ambiguous: true };
+    }
     return { poLineId: best.id, score: best.score, ambiguous: false };
 }
 
@@ -170,6 +189,17 @@ export function matchInvoice(input: MatchInput): MatchOutput {
                     explanation: `These fields are missing or were read with low confidence: ${weak.join(', ')}. Check them against the document.` }
                 : { rule_code: 'EXTRACTION_CONFIDENCE', severity: 'blocking', outcome: 'pass', explanation: 'All mandatory fields were read with enough confidence.' });
         }
+    }
+
+    // DOCUMENT_TRUNCATED ---------------------------------------------------------
+    // A document read only in part cannot be compared honestly: the line items that were
+    // never seen are missing, not absent, and the totals below would be measured against
+    // an incomplete list. Blocking and UNKNOWN, never a fail — nothing is known to be
+    // wrong, which is exactly the point.
+    if (inv.pages_truncated) {
+        add({ rule_code: 'DOCUMENT_TRUNCATED', severity: 'blocking', outcome: 'unknown',
+            expected: `all ${inv.total_pages ?? '?'} pages`, actual: `${inv.pages_read ?? '?'} pages read`,
+            explanation: `Only ${inv.pages_read ?? 'some'} of the ${inv.total_pages ?? 'document\u2019s'} pages were read, so any line item beyond them is missing. Split the document or raise INVOICE_MAX_PAGES, then re-run.` });
     }
 
     // PO_ELIGIBLE ---------------------------------------------------------------
@@ -331,6 +361,18 @@ export function matchInvoice(input: MatchInput): MatchOutput {
             if (Math.abs(sum - paise(inv.tax_amount)) > tolP * Math.max(1, lines.length)) {
                 add({ rule_code: 'TAX_CHECK', severity: 'warning', outcome: 'fail', expected: rupees(sum), actual: inv.tax_amount, difference: rupees(paise(inv.tax_amount) - sum),
                     explanation: `Tax on the lines adds to ${rupees(sum)}, but the invoice header says ${inv.tax_amount}.` });
+            }
+        }
+        // Most invoices show tax once, at the foot. Check it against the PO's own rate when every PO line agrees on one.
+        if (!checked && has(inv.taxable_amount) && has(inv.tax_amount)) {
+            const rates = [...new Set(poLines.map((p) => p.tax_percentage).filter(has))];
+            if (rates.length === 1) {
+                checked++;
+                const expected = paise(inv.taxable_amount * rates[0] / 100);
+                if (Math.abs(expected - paise(inv.tax_amount)) > tolP * Math.max(1, lines.length)) {
+                    add({ rule_code: 'TAX_CHECK', severity: 'warning', outcome: 'fail', expected: rupees(expected), actual: inv.tax_amount, difference: rupees(paise(inv.tax_amount) - expected),
+                        explanation: `${rates[0]}% of the taxable amount ${inv.taxable_amount} is ${rupees(expected)}, but the invoice shows ${inv.tax_amount} tax.` });
+                }
             }
         }
         const failedTax = results.some((r) => r.rule_code === 'TAX_CHECK');

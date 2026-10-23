@@ -1,3 +1,27 @@
+## 2026-10-23 — FMS Invoice Control & Payment Tracker: one screen for every login, and a sweep of small bugs
+
+**Accounts, Procurement and super admins now see the same Invoice Control and PO page, and about 40 small defects found in a review were fixed.**
+
+- **Why:** The founder found the Accounts login showed a different invoice screen from Procurement, could not open or download a PO from some tabs, and kept hitting small problems: a replaced invoice still counted, rupee figures shown raw, a stuck "checking invoice" button, and so on.
+- **Structural decisions:** Invoice Control is one component with one set of tabs for everyone; what a person can do still comes from their role on the server. It sits as a "Invoice Control" tab inside the Payment Tracker for every role, and the AOP Bounty has its own entry in the Accounts sidebar. The PO page is one shared drawer used from the tracker and from Invoice Control. The alternative, a separate Accounts-only invoice screen, was what caused the mismatch, so it was removed.
+- **What works now:**
+  - The PO page shows what was ordered (each line, quantity, rate, GST, amount) and the PO's terms, and has a PO PDF button.
+  - Earlier files of the same document type stay visible on the PO page, with View and Remove, so a forgotten invoice no longer silently counts against the PO.
+  - Aligned and Completed rows show whether the invoice matched at the time, open the PO, and link the PO PDF.
+  - Align, Mark paid and uploads now work for master admins and people in more than one organisation; amounts keep their paise; Align warns when more than what is left is being aligned; a read that never finishes no longer locks Align.
+  - The Live Sheet now pages through all POs instead of stopping at 50; searching with a comma or bracket no longer shows a false "nothing found"; load errors are shown instead of an empty table.
+  - Invoice checks: dates use Indian time, the "nothing left on this PO" case reads plainly, the truncated-document check is visible and resolvable, the bell notification opens the invoice and clears when someone decides, and out-of-range policy values are refused with the field named.
+  - Payment plan: a milestone marked due can be undone, GST rows use the PO's real GST, and Esc closes only the top window.
+  - AOP Bounty: "assign for this line" is now remembered, day 31 stays in the month, ordinals read correctly, only the owner or an admin can reopen or set a billing pattern, and the "not set up" message names the right migration.
+  - The approval watch no longer gives up on a PO when Zoho has a momentary error, so its vendor still gets the WhatsApp.
+  - Finance emails escape anything a person typed.
+- **Left undone:**
+  - Directors can mark payments paid on the server but the screen does not offer it. This is a permission decision, so it was not changed.
+  - Tax invoices uploaded on the PO page still go to the older public storage bucket, so anyone with the link can open them. Moving them to the private bucket is a separate, slightly larger change.
+  - Removing a document shows in the PO timeline as "Commented"; a proper label needs a database change.
+  - Nothing here was clicked through signed in; checks were type-check, lint, 105 automated tests and a production build.
+- **Open questions for the founder:** Should directors be able to mark payments paid? Should PO-page invoices move to private storage now?
+
 ## 2026-10-23 — FMS CRM: website enquiries from the Total Environment landing page now become CRM leads
 
 **A new public form endpoint turns every site-visit request on the TE Whitefield page into a CRM lead and emails Harshini and Saniel.**

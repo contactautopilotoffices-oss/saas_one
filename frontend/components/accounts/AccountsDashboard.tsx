@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { useParams, useSearchParams } from 'next/navigation';
+import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import { Search, RefreshCw, Plus, RefreshCcwDot, FileText, IndianRupee, Settings2, AlertTriangle, ChevronLeft, ChevronRight, Download } from 'lucide-react';
 import { useAuth } from '@/frontend/context/AuthContext';
 import { createClient } from '@/frontend/utils/supabase/client';
@@ -19,6 +19,7 @@ import PaymentTrackerSettingsModal from './PaymentTrackerSettingsModal';
 import PaymentSheetBuilderModal from './PaymentSheetBuilderModal';
 import ApprovalWorkspace from './ApprovalWorkspace';
 import InvoiceControl from '../invoices/InvoiceControl';
+import PoDrawer from './PoDrawer';
 
 type Tab = PaymentTrackerTab;
 
@@ -28,9 +29,42 @@ interface AccountsDashboardProps {
     organizationId?: string;
 }
 
+
+/**
+ * Whether the invoice agreed with the PO when this tranche was aligned. Green when it did; amber,
+ * with the aligner's reason on hover, when the money was lined up before a clean invoice existed.
+ */
+function InvoiceAtAlignBadge({ p }: { p: PoPayment }) {
+    if (p.invoice_override_reason) {
+        const what = (p.invoice_match_at_align ?? 'none').replace(/_/g, ' ');
+        return <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20" title={`Invoice ${what} at alignment. Reason given: ${p.invoice_override_reason}`}>Invoice {what === 'none' ? 'missing' : what}</span>;
+    }
+    if (p.invoice_match_at_align === 'matched') return <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20">Invoice matched</span>;
+    return null;
+}
+
+
+/** The PO's own approval state from Zoho, one short line under the PO number. */
+const PO_APPROVAL: Record<string, { label: string; cls: string }> = {
+    pending_approval: { label: 'Awaiting approval', cls: 'text-amber-700 dark:text-amber-400' },
+    submitted: { label: 'Awaiting approval', cls: 'text-amber-700 dark:text-amber-400' },
+    approved: { label: 'PO approved', cls: 'text-emerald-700 dark:text-emerald-400' },
+    open: { label: 'PO approved', cls: 'text-emerald-700 dark:text-emerald-400' },
+    partially_billed: { label: 'Partly billed', cls: 'text-text-tertiary' },
+    billed: { label: 'Billed', cls: 'text-text-tertiary' },
+    closed: { label: 'Closed', cls: 'text-text-tertiary' },
+    cancelled: { label: 'PO cancelled', cls: 'text-red-600' },
+    rejected: { label: 'PO rejected', cls: 'text-red-600' },
+};
+export function PoApprovalLine({ status }: { status?: string | null }) {
+    const m = status ? PO_APPROVAL[status] ?? { label: status.replace(/_/g, ' '), cls: 'text-text-tertiary' } : null;
+    return m ? <span className={`block text-[11px] font-medium ${m.cls}`}>{m.label}</span> : null;
+}
+
 export default function AccountsDashboard({ organizationId: propOrgId }: AccountsDashboardProps = {}) {
     const { membership, user } = useAuth();
     const params = useParams();
+    const router = useRouter();
     const orgId = propOrgId || (params?.orgId as string | undefined) || membership?.organization_id || membership?.org_id || (user?.user_metadata?.organization_id as string | undefined);
     const caps = useMemo(() => accountsCaps(membership, orgId, user), [membership, orgId, user]);
     const [supabase] = useState(() => createClient());
@@ -85,6 +119,7 @@ export default function AccountsDashboard({ organizationId: propOrgId }: Account
     const [showSettings, setShowSettings] = useState(false);
     const [showCreateSheet, setShowCreateSheet] = useState(false);
 
+    const [listError, setListError] = useState<string | null>(null);
     const fetchData = useCallback(async () => {
         // The electricity queue, live sheet, batches, approvals and invoices each own their own fetch cycle
         if (tab === 'electricity-payments' || tab === 'live_sheet' || tab === 'batches' || tab === 'approvals' || tab === 'invoices') { setLoading(false); return; }
@@ -100,24 +135,25 @@ export default function AccountsDashboard({ organizationId: propOrgId }: Account
                 // ~300 of a 5k queue was unreachable — which defeats the flag entirely.
                 if (criticalOnly) p.set('critical_only', 'true');
                 const res = await fetch(`/api/accounts/pos?${p}`);
-                const d = res.ok ? await res.json() : { pos: [], pagination: {} };
-                setPos(d.pos || []); setTotal(d.pagination?.total || 0);
+                const d = await res.json().catch(() => ({}));
+                setListError(res.ok ? null : (d.error || `Could not load (HTTP ${res.status})`));
+                setPos(res.ok ? d.pos || [] : []); setTotal(res.ok ? d.pagination?.total || 0 : 0);
             } else {
                 const p = new URLSearchParams({ status: tab, page: String(page), page_size: String(PAGE_SIZE) });
                 if (orgId) p.set('org_id', orgId);
                 if (search) p.set('search', search);
                 const res = await fetch(`/api/accounts/payments?${p}`);
-                const d = res.ok ? await res.json() : { payments: [], pagination: {} };
-                setPayments(d.payments || []); setTotal(d.pagination?.total || 0);
+                const d = await res.json().catch(() => ({}));
+                setListError(res.ok ? null : (d.error || `Could not load (HTTP ${res.status})`));
+                setPayments(res.ok ? d.payments || [] : []); setTotal(res.ok ? d.pagination?.total || 0 : 0);
             }
-        } catch { setPos([]); setPayments([]); }
+        } catch { setPos([]); setPayments([]); setListError('Could not load: the connection failed.'); }
         finally { setLoading(false); }
-    }, [tab, search, dept, criticalOnly, page]);
+    }, [tab, search, dept, criticalOnly, page, orgId]);
 
     useEffect(() => { fetchData(); }, [fetchData]);
 
     // Any filter change invalidates the current page number.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => { setPage(1); }, [tab, search, dept, criticalOnly]);
 
     // Workflow flags come from the service role, NOT from a browser read of
@@ -144,12 +180,31 @@ export default function AccountsDashboard({ organizationId: propOrgId }: Account
     // The Finance overview above deep-links into a specific tab, both as a shareable
     // ?tab=&focus= URL (which survives a reload) and as an event (which is instant).
     const searchParams = useSearchParams();
+    const openPoId = searchParams.get('po');
+    const setPoParam = useCallback((poId: string | null) => {
+        const next = new URLSearchParams(Array.from(searchParams.entries()));
+        if (poId) next.set('po', poId); else next.delete('po');
+        const qs = next.toString();
+        router.push(qs ? `?${qs}` : '?', { scroll: false });
+    }, [router, searchParams]);
+
+    // Escape closes the PO drawer, and the body does not scroll behind it.
     useEffect(() => {
-        const t = searchParams.get('tab') as Tab | null;
-        if (t && roleConfig.visibleTabs.includes(t)) setTab(t);
-        const f = searchParams.get('focus');
-        if (f) setSearch(f);
-    }, [searchParams, roleConfig.visibleTabs]);
+        if (!openPoId) return;
+        // Esc inside an open form (Align, Mark paid, any Invoice Control modal) must not throw the drawer away.
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !document.querySelector('[data-esc-guard]')) setPoParam(null); };
+        window.addEventListener('keydown', onKey);
+        const prev = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+        return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = prev; };
+    }, [openPoId, setPoParam]);
+
+    const tabParam = searchParams.get('tab') as Tab | null;
+    const focusParam = searchParams.get('focus');
+    useEffect(() => {
+        if (tabParam && roleConfig.visibleTabs.includes(tabParam)) setTab(tabParam);
+    }, [tabParam, roleConfig.visibleTabs]);
+    useEffect(() => { if (focusParam) setSearch(focusParam); }, [focusParam]);
 
     useEffect(() => {
         const onSetTab = (e: Event) => {
@@ -264,11 +319,12 @@ export default function AccountsDashboard({ organizationId: propOrgId }: Account
 
         if (tab === 'to_align') {
             if (pos.length === 0) return;
-            const headers = ['PO Number', 'Vendor Name', 'Site', 'Department', 'PO Amount', 'Pending Amount', 'Status'];
+            const headers = ['PO Number', 'PO Date', 'Vendor Name', 'Site', 'Department', 'PO Amount', 'Pending Amount', 'Status'];
             const lines = [
                 headers.join(','),
                 ...pos.map(p => [
                     escapeVal(p.po_number),
+                    escapeVal(p.po_date),
                     escapeVal(p.vendor_name),
                     escapeVal(p.project_name),
                     escapeVal(p.department),
@@ -309,12 +365,11 @@ export default function AccountsDashboard({ organizationId: propOrgId }: Account
         completed: { key: 'completed', label: 'Completed' },
         'electricity-payments': { key: 'electricity-payments', label: 'Electricity' },
         live_sheet: { key: 'live_sheet', label: 'Live Sheet · All POs' },
-        invoices: { key: 'invoices', label: 'Invoices & Exceptions' },
+        invoices: { key: 'invoices', label: 'Invoice Control' },
     };
 
-    const tabs = useMemo(() => {
-        return roleConfig.visibleTabs.map(key => ALL_TAB_DEFS[key]).filter(Boolean);
-    }, [roleConfig.visibleTabs]);
+    // Plain computation, not a hook: it runs after the early return above.
+    const tabs = roleConfig.visibleTabs.map(key => ALL_TAB_DEFS[key]).filter(Boolean);
 
     return (
         <div className="space-y-5">
@@ -423,10 +478,10 @@ export default function AccountsDashboard({ organizationId: propOrgId }: Account
 
             {/* The live shared sheet — every PO's payment status, identical for procurement,
                 accounts and super admin, updating in place as anyone touches a row. */}
-            {tab === 'live_sheet' && <PaymentTrackerTable orgId={orgId} />}
+            {tab === 'live_sheet' && <PaymentTrackerTable orgId={orgId} onOpenPo={setPoParam} />}
 
             {/* Invoice collection, PO matching and fast-track exceptions (deep-linkable via ?tab=invoices) */}
-            {tab === 'invoices' && orgId && <InvoiceControl orgId={orgId} mode="accounts" />}
+            {tab === 'invoices' && orgId && <InvoiceControl orgId={orgId} />}
 
             {/* Electricity payment queue (deep-linkable via ?tab=electricity-payments) */}
             {tab === 'electricity-payments' && (
@@ -441,7 +496,7 @@ export default function AccountsDashboard({ organizationId: propOrgId }: Account
                         <thead>
                             <tr className="bg-surface-elevated border-b border-border text-left">
                                 {(tab === 'to_align'
-                                    ? ['PO #', 'Vendor', 'Site', 'Dept', 'PO Amount', 'Pending', 'Status', '']
+                                    ? ['PO #', 'PO Date', 'Vendor', 'Site', 'Dept', 'PO Amount', 'Pending', 'Status', '']
                                     : tab === 'aligned'
                                     ? ['PO #', 'Vendor', 'Tranche', 'Req. Amount', 'GST Hold', 'Term', 'Aligned by', 'Status', '']
                                     : ['PO #', 'Vendor', 'Paid', 'Payment Date', 'UTR', 'Proof', 'Status']
@@ -450,11 +505,15 @@ export default function AccountsDashboard({ organizationId: propOrgId }: Account
                         </thead>
                         <tbody className="divide-y divide-border">
                             {loading ? (
-                                [...Array(5)].map((_, i) => <tr key={i}><td colSpan={8} className="px-4 py-4"><div className="h-8 bg-muted rounded animate-pulse" /></td></tr>)
+                                [...Array(5)].map((_, i) => <tr key={i}><td colSpan={9} className="px-4 py-4"><div className="h-8 bg-muted rounded animate-pulse" /></td></tr>)
                             ) : tab === 'to_align' ? (
-                                visiblePos.length === 0 ? <EmptyRow msg={criticalOnly ? 'No critical POs right now.' : 'No POs pending alignment.'} /> : visiblePos.map(po => (
-                                    <tr key={po.id} className="hover:bg-surface-elevated transition-colors" style={criticalRowStyle(isCritical(po.id, po as any))}>
+                                visiblePos.length === 0 ? <EmptyRow msg={listError ?? (criticalOnly ? 'No critical POs right now.' : 'No POs pending alignment.')} /> : visiblePos.map(po => (
+                                    <tr key={po.id}
+                                        onClick={() => setPoParam(po.id)}
+                                        className="hover:bg-surface-elevated transition-colors cursor-pointer"
+                                        style={criticalRowStyle(isCritical(po.id, po as any))}>
                                         <td className="px-4 py-3 font-bold text-text-primary text-sm">{po.po_number}</td>
+                                        <td className="px-4 py-3 text-sm text-text-secondary whitespace-nowrap">{fmtDate(po.po_date)}</td>
                                         <td className="px-4 py-3 text-sm text-text-primary">{po.vendor_name || '—'}</td>
                                         <td className="px-4 py-3 text-sm text-text-secondary">{po.project_name || '—'}</td>
                                         <td className="px-4 py-3 text-sm text-text-secondary">{po.department || '—'}</td>
@@ -466,7 +525,7 @@ export default function AccountsDashboard({ organizationId: propOrgId }: Account
                                                 {isCritical(po.id, po as any) && <CriticalBadge state={workflow[po.id]} />}
                                             </div>
                                         </td>
-                                        <td className="px-4 py-3">
+                                        <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                                             <div className="flex items-center justify-end gap-2">
                                                 {canFlag && (
                                                     <CriticalToggle
@@ -480,9 +539,9 @@ export default function AccountsDashboard({ organizationId: propOrgId }: Account
                                     </tr>
                                 ))
                             ) : tab === 'aligned' ? (
-                                payments.length === 0 ? <EmptyRow msg="Nothing awaiting payment." /> : payments.map(p => (
-                                    <tr key={p.id} className="hover:bg-surface-elevated transition-colors" style={criticalRowStyle(isCritical(p.po_id))}>
-                                        <td className="px-4 py-3 font-bold text-text-primary text-sm">{p.po_number}</td>
+                                payments.length === 0 ? <EmptyRow msg={listError ?? 'Nothing awaiting payment.'} /> : payments.map(p => (
+                                    <tr key={p.id} onClick={() => setPoParam(p.po_id)} title="Open this PO" className="group hover:bg-surface-elevated transition-colors cursor-pointer" style={criticalRowStyle(isCritical(p.po_id))}>
+                                        <td className="px-4 py-3 text-sm whitespace-nowrap"><span className="font-bold text-text-primary group-hover:text-primary group-hover:underline">{p.po_number}</span> {(p as { po?: { zoho_po_id?: string | null } }).po?.zoho_po_id && <a href={`/api/accounts/po/${p.po_id}/pdf?org_id=${orgId ?? ''}`} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="ml-1 inline-flex align-middle text-text-tertiary hover:text-primary" title="Open the PO PDF from Zoho"><Download className="w-3.5 h-3.5" /></a>}<PoApprovalLine status={(p as { po?: { status?: string | null } }).po?.status} /></td>
                                         <td className="px-4 py-3 text-sm text-text-primary">{p.vendor_name || '—'}</td>
                                         <td className="px-4 py-3 text-sm text-text-secondary">#{p.tranche_no}</td>
                                         <td className="px-4 py-3 text-sm font-bold text-text-primary">{inr(p.requested_amount)}</td>
@@ -492,28 +551,29 @@ export default function AccountsDashboard({ organizationId: propOrgId }: Account
                                         <td className="px-4 py-3">
                                             <div className="flex items-center gap-1.5 flex-wrap">
                                                 <StatusBadge status={p.status} />
+                                                <InvoiceAtAlignBadge p={p} />
                                                 {isCritical(p.po_id) && <CriticalBadge state={workflow[p.po_id]} />}
                                             </div>
                                         </td>
                                         <td className="px-4 py-3 text-right">
-                                            {caps.canComplete && <button onClick={() => setPayPayment(p)} className="px-3 py-1.5 bg-primary text-white rounded-lg text-xs font-bold hover:bg-primary/90">Mark paid ▸</button>}
+                                            {caps.canComplete && <button onClick={e => { e.stopPropagation(); setPayPayment(p); }} className="px-3 py-1.5 bg-primary text-white rounded-lg text-xs font-bold hover:bg-primary/90 whitespace-nowrap">Mark paid ▸</button>}
                                         </td>
                                     </tr>
                                 ))
                             ) : (
-                                payments.length === 0 ? <EmptyRow msg="No completed payments yet." /> : payments.map(p => (
-                                    <tr key={p.id} className="hover:bg-surface-elevated transition-colors">
-                                        <td className="px-4 py-3 font-bold text-text-primary text-sm">{p.po_number}</td>
+                                payments.length === 0 ? <EmptyRow msg={listError ?? 'No completed payments yet.'} /> : payments.map(p => (
+                                    <tr key={p.id} onClick={() => setPoParam(p.po_id)} title="Open this PO" className="group hover:bg-surface-elevated transition-colors cursor-pointer">
+                                        <td className="px-4 py-3 text-sm whitespace-nowrap"><span className="font-bold text-text-primary group-hover:text-primary group-hover:underline">{p.po_number}</span> {(p as { po?: { zoho_po_id?: string | null } }).po?.zoho_po_id && <a href={`/api/accounts/po/${p.po_id}/pdf?org_id=${orgId ?? ''}`} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="ml-1 inline-flex align-middle text-text-tertiary hover:text-primary" title="Open the PO PDF from Zoho"><Download className="w-3.5 h-3.5" /></a>}<PoApprovalLine status={(p as { po?: { status?: string | null } }).po?.status} /></td>
                                         <td className="px-4 py-3 text-sm text-text-primary">{p.vendor_name || '—'}</td>
                                         <td className="px-4 py-3 text-sm font-bold text-text-primary">{inr(p.paid_amount)}</td>
                                         <td className="px-4 py-3 text-sm text-text-secondary whitespace-nowrap">{fmtDate(p.payment_date)}</td>
                                         <td className="px-4 py-3 text-xs font-mono text-text-secondary">{p.utr_no || '—'}</td>
                                         <td className="px-4 py-3">
                                             {p.payment_proof_url
-                                                ? <a href={p.payment_proof_url} target="_blank" rel="noopener noreferrer" className="text-primary inline-flex items-center gap-1 text-xs font-bold"><FileText className="w-3.5 h-3.5" /> View</a>
+                                                ? <a href={p.payment_proof_url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="text-primary inline-flex items-center gap-1 text-xs font-bold"><FileText className="w-3.5 h-3.5" /> View</a>
                                                 : <span className="text-xs text-text-tertiary">—</span>}
                                         </td>
-                                        <td className="px-4 py-3"><StatusBadge status={p.status} /></td>
+                                        <td className="px-4 py-3"><div className="flex items-center gap-1.5 flex-wrap"><StatusBadge status={p.status} /><InvoiceAtAlignBadge p={p} /></div></td>
                                     </tr>
                                 ))
                             )}
@@ -543,8 +603,11 @@ export default function AccountsDashboard({ organizationId: propOrgId }: Account
             </div>
             )}
 
-            {alignPo && <AlignPaymentModal po={alignPo} onClose={() => setAlignPo(null)} onDone={() => { setAlignPo(null); fetchData(); }} />}
-            {payPayment && <MarkPaidModal payment={payPayment} onClose={() => setPayPayment(null)} onDone={() => { setPayPayment(null); fetchData(); }} />}
+            {/* PO workspace as a drawer (shared with Invoice Control). */}
+            {openPoId && orgId && <PoDrawer orgId={orgId} poId={openPoId} onClose={() => setPoParam(null)} />}
+
+            {alignPo && <AlignPaymentModal po={alignPo} orgId={orgId ?? undefined} onClose={() => setAlignPo(null)} onDone={() => { setAlignPo(null); fetchData(); }} />}
+            {payPayment && <MarkPaidModal payment={payPayment} orgId={orgId ?? undefined} onClose={() => setPayPayment(null)} onDone={() => { setPayPayment(null); fetchData(); }} />}
             {showAdd && <AddPoModal onClose={() => setShowAdd(false)} onDone={() => { setShowAdd(false); fetchData(); }} />}
             {showZoho && <ZohoConfigModal orgId={orgId} onClose={() => setShowZoho(false)} onSynced={fetchData} />}
             <PaymentTrackerSettingsModal isOpen={showSettings} onClose={() => setShowSettings(false)} orgId={orgId} />

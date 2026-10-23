@@ -10,7 +10,7 @@ import {
     Coffee, IndianRupee, FileDown, ChevronDown, Fuel, Menu, Upload, FileBarChart, Zap, Package, ClipboardCheck, Scan,
     Key, GitBranch, DoorOpen, MessageCircle, Send, Loader2, CalendarDays, Wrench, ShoppingCart, Sun, Moon, Droplets,
     TrendingUp, Smartphone, MessageSquarePlus, Bot, Gauge, Cpu, FolderLock, Layers, ShieldCheck, ClipboardList,
-    FlaskConical, PhoneCall, AlertCircle, CheckCircle2, Clock, Calendar, Mic, BookOpen, FileCheck2
+    FlaskConical, PhoneCall, AlertCircle, CheckCircle2, Clock, Calendar, Mic, BookOpen, FileCheck2, Target
 } from 'lucide-react';
 import SatejConsole from '@/frontend/components/satej/SatejConsole';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -59,6 +59,7 @@ const WikiHome = dynamic(() => import('@/frontend/components/wiki/WikiHome'), { 
 const VendorManagement = dynamic(() => import('@/frontend/components/vendors/VendorManagement'), { loading: TabLoading });
 const TicketFlowMap = dynamic(() => import('../ops/TicketFlowMap'), { loading: TabLoading });
 const ProcurementModule = dynamic(() => import('../procurement/ProcurementModule'), { loading: TabLoading });
+const BountyInbox = dynamic(() => import('../aop/BountyInbox'), { loading: TabLoading });
 const VMSOrgVisitorDashboard = dynamic(() => import('@/frontend/components/vms/VMSOrgVisitorDashboard'), { loading: TabLoading });
 const WaterAnalyticsDashboard = dynamic(() => import('@/frontend/components/water/WaterAnalyticsDashboard'), { loading: TabLoading });
 const VendorManagementModal = dynamic(() => import('@/frontend/components/vendor/VendorManagementModal'), { loading: () => null });
@@ -1179,6 +1180,16 @@ const OrgAdminDashboard = () => {
                                 Invoice Control
                             </button>
                             <button
+                                onClick={() => handleTabChange('bounty')}
+                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'bounty'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                    }`}
+                            >
+                                <Target className="w-4 h-4" />
+                                AOP Bounty
+                            </button>
+                            <button
                                 onClick={() => handleTabChange('procurement', 'all', undefined, undefined, 'vendor-discovery')}
                                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'procurement' && searchParams.get('procurement_tab') === 'vendor-discovery'
                                     ? 'bg-primary text-text-inverse shadow-sm'
@@ -1576,6 +1587,15 @@ const OrgAdminDashboard = () => {
                             Registry, sandbox, live activity, uptime, reliability profile, reinforcement
                             and credentials all live behind it. */}
                         {!isOpsSuperAdmin && activeTab === 'agent_console' && <AgentConsole key="agent-console-tab" orgId={org?.id ?? ''} />}
+                        {activeTab === 'bounty' && org && (
+                            <div className="space-y-3">
+                                <div>
+                                    <h2 className="text-xl font-bold text-text-primary">AOP Bounty</h2>
+                                    <p className="text-sm text-text-secondary">What the month&apos;s AOP still needs, who owes it, and how long it has waited.</p>
+                                </div>
+                                <BountyInbox orgId={org.id} />
+                            </div>
+                        )}
                         {!isOpsSuperAdmin && activeTab === 'wiki' && org && (
                             <div className="w-full min-h-screen bg-white">
                                 <WikiHome orgId={org.id} />

@@ -59,15 +59,22 @@ export const docTone = (s: string, overdue?: boolean) =>
 
 export const label = (s: string | null | undefined) => (s ?? '').replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
 
+const MODAL_STACK: symbol[] = [];
+/** True while any Invoice Control modal is open (so an outer drawer can leave Esc alone). */
+export const anyModalOpen = () => MODAL_STACK.length > 0;
+
 export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
+    // Only the topmost modal answers Esc: a picker opened over the payment plan must not close both.
     useEffect(() => {
-        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-        window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
+        const me = Symbol('modal');
+        MODAL_STACK.push(me);
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && MODAL_STACK[MODAL_STACK.length - 1] === me) { e.stopPropagation(); onClose(); } };
+        window.addEventListener('keydown', onKey, true);
+        return () => { window.removeEventListener('keydown', onKey, true); const i = MODAL_STACK.indexOf(me); if (i >= 0) MODAL_STACK.splice(i, 1); };
     }, [onClose]);
     if (typeof document === 'undefined') return null;
     return createPortal(
-        <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+        <div data-esc-guard className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
             <div className={`bg-surface w-full ${wide ? 'sm:max-w-4xl' : 'sm:max-w-lg'} max-h-[92vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl border border-border shadow-xl`}>
                 <div className="sticky top-0 z-10 flex items-center justify-between gap-3 px-5 py-4 bg-surface border-b border-border">
                     <h2 className="text-base font-bold text-text-primary">{title}</h2>

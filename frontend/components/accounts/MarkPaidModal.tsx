@@ -5,10 +5,13 @@ import { createPortal } from 'react-dom';
 import { X, Loader2, Upload, FileText } from 'lucide-react';
 import { PoPayment, inr } from '@/frontend/lib/accounts/roles';
 
-interface Props { payment: PoPayment; onClose: () => void; onDone: () => void; }
+interface Props { payment: PoPayment; onClose: () => void; onDone: () => void; orgId?: string; }
 
-export default function MarkPaidModal({ payment, onClose, onDone }: Props) {
-    const [paidAmount, setPaidAmount] = useState(String(Math.round(payment.requested_amount)));
+export default function MarkPaidModal({ payment, onClose, onDone, orgId: orgIdProp }: Props) {
+    // The org travels with every call: without it a master admin or multi-org user is refused.
+    const orgId = orgIdProp ?? (payment as { organization_id?: string }).organization_id ?? '';
+    const orgQs = orgId ? `?org_id=${encodeURIComponent(orgId)}` : '';
+    const [paidAmount, setPaidAmount] = useState(String(Math.round(Number(payment.requested_amount) * 100) / 100));
     const [paymentDate, setPaymentDate] = useState('');
     const [utr, setUtr] = useState('');
     const [proof, setProof] = useState<{ url: string; file_name: string } | null>(null);
@@ -19,19 +22,21 @@ export default function MarkPaidModal({ payment, onClose, onDone }: Props) {
 
     const upload = async (file: File | null) => {
         if (!file) return;
-        setUploading(true);
+        setUploading(true); setError(null);
         try {
             const fd = new FormData(); fd.append('file', file);
-            const res = await fetch('/api/accounts/upload', { method: 'POST', body: fd });
+            const res = await fetch(`/api/accounts/upload${orgQs}`, { method: 'POST', body: fd });
             if (res.ok) { const d = await res.json(); setProof(d); }
-        } finally { setUploading(false); }
+            else { const e = await res.json().catch(() => ({})); setError(`Proof not uploaded: ${e.error || `HTTP ${res.status}`}`); }
+        } catch { setError('Proof not uploaded: the connection failed. Try again.'); }
+        finally { setUploading(false); }
     };
 
     const submit = async () => {
         if (!utr.trim()) { setError('UTR number is required'); return; }
         setSaving(true); setError(null);
         try {
-            const res = await fetch(`/api/accounts/payments/${payment.id}`, {
+            const res = await fetch(`/api/accounts/payments/${payment.id}${orgQs}`, {
                 method: 'PATCH', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     action: 'complete', utr_no: utr.trim(),
@@ -51,7 +56,7 @@ export default function MarkPaidModal({ payment, onClose, onDone }: Props) {
     const label = 'block text-xs font-bold text-text-secondary uppercase tracking-wide mb-1.5';
 
     return createPortal(
-        <div className="fixed inset-0 bg-black/50 z-[80] flex items-center justify-center p-4" onClick={onClose}>
+        <div data-esc-guard className="fixed inset-0 bg-black/50 z-[80] flex items-center justify-center p-4" onClick={onClose}>
             <div onClick={e => e.stopPropagation()} className="bg-surface rounded-2xl shadow-2xl w-full max-w-md max-h-[88vh] overflow-hidden flex flex-col">
                 <div className="flex items-center justify-between px-6 py-4 border-b border-border">
                     <h3 className="text-base font-bold text-text-primary">Mark payment completed · {payment.po_number}</h3>
@@ -59,6 +64,21 @@ export default function MarkPaidModal({ payment, onClose, onDone }: Props) {
                 </div>
 
                 <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+                    {/* What the invoice check said when this tranche was aligned, and why the
+                        aligner proceeded. Shown before money moves, never as a gate. */}
+                    {payment.invoice_override_reason && (
+                        <div className="rounded-xl border-2 border-amber-400/60 bg-amber-50 dark:bg-amber-500/10 p-3">
+                            <p className="text-xs font-bold text-amber-900 dark:text-amber-200 uppercase tracking-wide">
+                                Aligned without a verified invoice
+                            </p>
+                            {payment.invoice_match_at_align && (
+                                <p className="text-xs text-amber-800 dark:text-amber-300 mt-0.5">
+                                    Invoice check at the time: {payment.invoice_match_at_align.replace(/_/g, ' ')}
+                                </p>
+                            )}
+                            <p className="text-sm text-amber-900 dark:text-amber-200 mt-1.5">{payment.invoice_override_reason}</p>
+                        </div>
+                    )}
                     <div className="bg-surface-elevated rounded-xl p-3 text-sm">
                         <div className="flex justify-between"><span className="text-text-tertiary">Vendor</span><span className="text-text-primary font-medium">{payment.vendor_name || '—'}</span></div>
                         <div className="flex justify-between mt-1"><span className="text-text-tertiary">Requested</span><span className="text-text-primary font-medium">{inr(payment.requested_amount)}</span></div>

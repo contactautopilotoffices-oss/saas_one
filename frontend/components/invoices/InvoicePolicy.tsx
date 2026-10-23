@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { api, Field, inputCls, btnPrimary, ErrorLine } from './invoiceUi';
+import AutoNotifySettings from './AutoNotifySettings';
 
 interface Settings {
     link_expiry_hours: number; max_file_mb: number; amount_tolerance: number; rate_tolerance_pct: number; qty_tolerance_pct: number; min_confidence: number;
@@ -39,7 +40,7 @@ export default function InvoicePolicy({ orgId, canEdit, onSaved }: { orgId: stri
         api<{ settings: Settings; role_choices: string[] }>(`/api/invoices/settings?org_id=${orgId}`).then((d) => { setS(d.settings); setChoices(d.role_choices); }).catch((e) => setError(e.message));
     }, [orgId]);
 
-    if (!s) return <ErrorLine message={error} />;
+    if (!s) return error ? <ErrorLine message={error} /> : <p className="text-sm text-text-tertiary py-6">Loading…</p>;
     const set = <K extends keyof Settings>(k: K, v: Settings[K]) => { setS({ ...s, [k]: v }); setSaved(false); };
     const toggleRole = (k: 'approver_roles' | 'escalation_roles', r: string) => set(k, s[k].includes(r) ? s[k].filter((x) => x !== r) : [...s[k], r]);
     const num = (k: keyof Settings) => (e: React.ChangeEvent<HTMLInputElement>) => set(k, Number(e.target.value) as never);
@@ -82,6 +83,8 @@ export default function InvoicePolicy({ orgId, canEdit, onSaved }: { orgId: stri
                     <Field label="Largest file (MB)"><input className={inputCls} type="number" disabled={!canEdit} value={s.max_file_mb} onChange={num('max_file_mb')} /></Field>
                 </div>
             </section>
+
+            <AutoNotifySettings orgId={orgId} canEdit={canEdit} />
 
             <ErrorLine message={error} />
             {canEdit ? <button className={btnPrimary} onClick={save} disabled={busy}>{busy ? 'Saving…' : saved ? 'Saved' : 'Save policy'}</button> : <p className="text-xs text-text-tertiary">Only super admins can change this policy.</p>}

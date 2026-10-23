@@ -4,6 +4,7 @@ import {
     contentTypeOfUploadId, detectContentType, downloadObject, removeObject, safeFilename, sha256,
 } from './storage';
 import { isPoEligible } from './types';
+import { effectivePoStatus } from '@/backend/lib/accounts/poApproval';
 
 /**
  * The one place a stored upload becomes an invoice. Used by the vendor link route and by
@@ -89,6 +90,8 @@ export async function checkPoForInvoicing(orgId: string, poId: string): Promise<
     const { data: po } = await supabaseAdmin.from('zoho_purchase_orders')
         .select('id, po_number, vendor_name, status, po_amount').eq('id', poId).eq('organization_id', orgId).maybeSingle();
     if (!po) return { ok: false, status: 404, message: 'PO not found.' };
-    if (!isPoEligible(po.status)) return { ok: false, status: 422, message: `This PO is "${po.status ?? 'blank'}" and cannot take an invoice.` };
-    return { ok: true, po: { ...po, po_amount: po.po_amount == null ? null : Number(po.po_amount) } };
+    // A simulated approval counts as approved here; Zoho's own status is untouched.
+    const status = await effectivePoStatus(orgId, poId, po.status);
+    if (!isPoEligible(status)) return { ok: false, status: 422, message: `This PO is "${po.status ?? 'blank'}" and cannot take an invoice.` };
+    return { ok: true, po: { ...po, status, po_amount: po.po_amount == null ? null : Number(po.po_amount) } };
 }

@@ -54,6 +54,9 @@ async function emailsForUsers(ids: (string | null | undefined)[]): Promise<strin
     return (data || []).map((u: { email?: string }) => u.email).filter(Boolean) as string[];
 }
 
+/** HTML-escape text a person (or the PO reader) wrote, before it goes into an email. */
+const esc = (v: unknown) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
+
 export interface AlignedPayment {
     id: string;
     organization_id: string;
@@ -63,6 +66,9 @@ export interface AlignedPayment {
     requested_amount?: number | null;
     payment_term?: string | null;
     aligned_by_name?: string | null;
+    /** What the invoice check said at alignment, and why the aligner went ahead when it was not clean. */
+    invoice_match_at_align?: string | null;
+    invoice_override_reason?: string | null;
 }
 
 /**
@@ -103,13 +109,14 @@ export async function notifyPaymentAligned(p: AlignedPayment): Promise<void> {
             <div style="font-family:system-ui,sans-serif;max-width:540px;margin:auto">
                 <h2 style="color:#0f172a;font-size:18px">Payment aligned — awaiting your action</h2>
                 <table style="font-size:14px;color:#334155;border-collapse:collapse">
-                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">PO</td><td style="padding:4px 0"><b>${p.po_number || '—'}</b></td></tr>
-                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">Vendor</td><td style="padding:4px 0">${p.vendor_name || '—'}</td></tr>
+                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">PO</td><td style="padding:4px 0"><b>${esc(p.po_number || '—')}</b></td></tr>
+                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">Vendor</td><td style="padding:4px 0">${esc(p.vendor_name || '—')}</td></tr>
                     <tr><td style="padding:4px 12px 4px 0;color:#64748b">Amount</td><td style="padding:4px 0"><b>${inr(p.requested_amount)}</b></td></tr>
                     ${p.tranche_no ? `<tr><td style="padding:4px 12px 4px 0;color:#64748b">Tranche</td><td style="padding:4px 0">#${p.tranche_no}</td></tr>` : ''}
-                    ${p.payment_term ? `<tr><td style="padding:4px 12px 4px 0;color:#64748b">Term</td><td style="padding:4px 0">${p.payment_term}</td></tr>` : ''}
-                    ${p.aligned_by_name ? `<tr><td style="padding:4px 12px 4px 0;color:#64748b">Aligned by</td><td style="padding:4px 0">${p.aligned_by_name}</td></tr>` : ''}
+                    ${p.payment_term ? `<tr><td style="padding:4px 12px 4px 0;color:#64748b">Term</td><td style="padding:4px 0">${esc(p.payment_term)}</td></tr>` : ''}
+                    ${p.aligned_by_name ? `<tr><td style="padding:4px 12px 4px 0;color:#64748b">Aligned by</td><td style="padding:4px 0">${esc(p.aligned_by_name)}</td></tr>` : ''}
                 </table>
+                ${p.invoice_override_reason ? `<div style="margin-top:12px;border:2px solid #fbbf24;background:#fffbeb;border-radius:10px;padding:10px 12px"><p style="margin:0 0 4px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#92400e;font-weight:bold">Aligned without a valid invoice</p><p style="margin:0 0 4px;font-size:12px;color:#92400e">Invoice check at the time: ${String(p.invoice_match_at_align ?? 'none').replace(/_/g, ' ')}</p><p style="margin:0;font-size:14px;color:#78350f">${esc(p.invoice_override_reason)}</p></div>` : ''}
                 ${actions}
                 ${link ? `<p style="margin-top:16px"><a href="${link}" style="background:#f97316;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:bold">Open to complete (needs UTR)</a></p>` : ''}
             </div>`;
@@ -182,13 +189,13 @@ export async function notifyPaymentRequested(p: RequestedPayment): Promise<void>
             <div style="font-family:system-ui,sans-serif;max-width:540px;margin:auto">
                 <h2 style="color:#0f172a;font-size:18px">Payment requested — yet to be aligned</h2>
                 <table style="font-size:14px;color:#334155;border-collapse:collapse">
-                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">PO</td><td style="padding:4px 0"><b>${p.po_number || '—'}</b></td></tr>
-                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">Vendor</td><td style="padding:4px 0">${p.vendor_name || '—'}</td></tr>
+                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">PO</td><td style="padding:4px 0"><b>${esc(p.po_number || '—')}</b></td></tr>
+                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">Vendor</td><td style="padding:4px 0">${esc(p.vendor_name || '—')}</td></tr>
                     <tr><td style="padding:4px 12px 4px 0;color:#64748b">Amount</td><td style="padding:4px 0"><b>${inr(p.requested_amount)}</b></td></tr>
                     ${p.percent_of_po != null ? `<tr><td style="padding:4px 12px 4px 0;color:#64748b">Share of PO</td><td style="padding:4px 0">${p.percent_of_po}%${p.po_amount != null ? ` of ${inr(p.po_amount)}` : ''}</td></tr>` : ''}
                     ${p.tranche_no ? `<tr><td style="padding:4px 12px 4px 0;color:#64748b">Tranche</td><td style="padding:4px 0">#${p.tranche_no}</td></tr>` : ''}
-                    ${p.payment_term ? `<tr><td style="padding:4px 12px 4px 0;color:#64748b">Term</td><td style="padding:4px 0">${p.payment_term}</td></tr>` : ''}
-                    ${p.requested_by_name ? `<tr><td style="padding:4px 12px 4px 0;color:#64748b">Requested by</td><td style="padding:4px 0">${p.requested_by_name}</td></tr>` : ''}
+                    ${p.payment_term ? `<tr><td style="padding:4px 12px 4px 0;color:#64748b">Term</td><td style="padding:4px 0">${esc(p.payment_term)}</td></tr>` : ''}
+                    ${p.requested_by_name ? `<tr><td style="padding:4px 12px 4px 0;color:#64748b">Requested by</td><td style="padding:4px 0">${esc(p.requested_by_name)}</td></tr>` : ''}
                 </table>
                 ${actions}
                 ${link ? `<p style="margin-top:16px"><a href="${link}" style="background:#f97316;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:bold">Open Payment Tracker</a></p>` : ''}
@@ -238,11 +245,11 @@ export async function notifyPaymentCompleted(p: CompletedPayment): Promise<void>
             <div style="font-family:system-ui,sans-serif;max-width:540px;margin:auto">
                 <h2 style="color:#0f172a;font-size:18px">Payment completed</h2>
                 <table style="font-size:14px;color:#334155;border-collapse:collapse">
-                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">PO</td><td style="padding:4px 0"><b>${p.po_number || '—'}</b></td></tr>
-                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">Vendor</td><td style="padding:4px 0">${p.vendor_name || '—'}</td></tr>
+                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">PO</td><td style="padding:4px 0"><b>${esc(p.po_number || '—')}</b></td></tr>
+                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">Vendor</td><td style="padding:4px 0">${esc(p.vendor_name || '—')}</td></tr>
                     <tr><td style="padding:4px 12px 4px 0;color:#64748b">Amount paid</td><td style="padding:4px 0"><b>${inr(p.paid_amount ?? p.requested_amount)}</b></td></tr>
-                    ${p.payment_term ? `<tr><td style="padding:4px 12px 4px 0;color:#64748b">Term</td><td style="padding:4px 0">${p.payment_term}</td></tr>` : ''}
-                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">UTR</td><td style="padding:4px 0"><b>${p.utr_no || '—'}</b></td></tr>
+                    ${p.payment_term ? `<tr><td style="padding:4px 12px 4px 0;color:#64748b">Term</td><td style="padding:4px 0">${esc(p.payment_term)}</td></tr>` : ''}
+                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">UTR</td><td style="padding:4px 0"><b>${esc(p.utr_no || '—')}</b></td></tr>
                     <tr><td style="padding:4px 12px 4px 0;color:#64748b">Date</td><td style="padding:4px 0">${p.payment_date || '—'}</td></tr>
                 </table>
                 ${link ? `<p style="margin-top:16px"><a href="${link}" style="background:#f97316;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:bold">Open Payment Tracker</a></p>` : ''}
@@ -282,9 +289,9 @@ export async function notifyUtrRecorded(p: CompletedPayment, alreadyMailed: stri
                 <h2 style="color:#0f172a;font-size:18px">Payment done — UTR recorded</h2>
                 <p style="font-size:14px;color:#334155;margin:0 0 12px">The vendor has been paid. Quote this UTR when they ask.</p>
                 <table style="font-size:14px;color:#334155;border-collapse:collapse">
-                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">UTR</td><td style="padding:4px 0"><b style="font-family:ui-monospace,monospace">${p.utr_no}</b></td></tr>
-                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">PO</td><td style="padding:4px 0"><b>${p.po_number || '—'}</b></td></tr>
-                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">Vendor</td><td style="padding:4px 0">${p.vendor_name || '—'}</td></tr>
+                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">UTR</td><td style="padding:4px 0"><b style="font-family:ui-monospace,monospace">${esc(p.utr_no)}</b></td></tr>
+                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">PO</td><td style="padding:4px 0"><b>${esc(p.po_number || '—')}</b></td></tr>
+                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">Vendor</td><td style="padding:4px 0">${esc(p.vendor_name || '—')}</td></tr>
                     <tr><td style="padding:4px 12px 4px 0;color:#64748b">Amount paid</td><td style="padding:4px 0"><b>${inr(p.paid_amount ?? p.requested_amount)}</b></td></tr>
                     <tr><td style="padding:4px 12px 4px 0;color:#64748b">Date</td><td style="padding:4px 0">${p.payment_date || '—'}</td></tr>
                 </table>
@@ -321,11 +328,11 @@ export async function notifyPaymentCancelled(p: CancelledPayment): Promise<void>
             <div style="font-family:system-ui,sans-serif;max-width:540px;margin:auto">
                 <h2 style="color:#0f172a;font-size:18px">Payment cancelled</h2>
                 <table style="font-size:14px;color:#334155;border-collapse:collapse">
-                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">PO</td><td style="padding:4px 0"><b>${p.po_number || '—'}</b></td></tr>
-                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">Vendor</td><td style="padding:4px 0">${p.vendor_name || '—'}</td></tr>
+                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">PO</td><td style="padding:4px 0"><b>${esc(p.po_number || '—')}</b></td></tr>
+                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">Vendor</td><td style="padding:4px 0">${esc(p.vendor_name || '—')}</td></tr>
                     <tr><td style="padding:4px 12px 4px 0;color:#64748b">Amount</td><td style="padding:4px 0"><b>${inr(p.requested_amount)}</b></td></tr>
                     ${p.tranche_no ? `<tr><td style="padding:4px 12px 4px 0;color:#64748b">Tranche</td><td style="padding:4px 0">#${p.tranche_no}</td></tr>` : ''}
-                    ${p.reason ? `<tr><td style="padding:4px 12px 4px 0;color:#64748b">Reason</td><td style="padding:4px 0">${p.reason}</td></tr>` : ''}
+                    ${p.reason ? `<tr><td style="padding:4px 12px 4px 0;color:#64748b">Reason</td><td style="padding:4px 0">${esc(p.reason)}</td></tr>` : ''}
                 </table>
                 ${link ? `<p style="margin-top:16px"><a href="${link}" style="background:#f97316;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:bold">Open Payment Tracker</a></p>` : ''}
             </div>`;
@@ -393,12 +400,12 @@ export async function notifyMilestoneDue(p: MilestoneDue): Promise<void> {
                 <h2 style="color:#0f172a;font-size:18px">Payment milestone is due</h2>
                 ${p.early ? '<p style="color:#b45309;font-size:13px;margin:0 0 10px">Marked due before the work was recorded as reaching this stage. Check with Purchase before paying.</p>' : ''}
                 <table style="font-size:14px;color:#334155;border-collapse:collapse">
-                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">PO</td><td style="padding:4px 0"><b>${p.po_number || '—'}</b></td></tr>
-                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">Vendor</td><td style="padding:4px 0">${p.vendor_name || '—'}</td></tr>
-                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">Milestone</td><td style="padding:4px 0">${p.label} (${p.percent}%)</td></tr>
+                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">PO</td><td style="padding:4px 0"><b>${esc(p.po_number || '—')}</b></td></tr>
+                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">Vendor</td><td style="padding:4px 0">${esc(p.vendor_name || '—')}</td></tr>
+                    <tr><td style="padding:4px 12px 4px 0;color:#64748b">Milestone</td><td style="padding:4px 0">${esc(p.label)} (${p.percent}%)</td></tr>
                     <tr><td style="padding:4px 12px 4px 0;color:#64748b">Amount</td><td style="padding:4px 0"><b>${inr(p.amount)}</b></td></tr>
-                    ${p.marked_by_name ? `<tr><td style="padding:4px 12px 4px 0;color:#64748b">Marked by</td><td style="padding:4px 0">${p.marked_by_name}</td></tr>` : ''}
-                    ${p.note ? `<tr><td style="padding:4px 12px 4px 0;color:#64748b">Note</td><td style="padding:4px 0">${p.note}</td></tr>` : ''}
+                    ${p.marked_by_name ? `<tr><td style="padding:4px 12px 4px 0;color:#64748b">Marked by</td><td style="padding:4px 0">${esc(p.marked_by_name)}</td></tr>` : ''}
+                    ${p.note ? `<tr><td style="padding:4px 12px 4px 0;color:#64748b">Note</td><td style="padding:4px 0">${esc(p.note)}</td></tr>` : ''}
                 </table>
                 ${link ? `<p style="margin-top:16px"><a href="${link}" style="background:#f97316;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:bold">Open Payment Tracker</a></p>` : ''}
             </div>`;
