@@ -249,8 +249,8 @@ CREATE TABLE requisition_delivery_items (
 
 Plus: `receipt` added to the `stock_movements.action` CHECK, a nullable
 `stock_movements.delivery_id`, and `partially_received` / `received` added to the requisition
-status CHECK. Challan files go in the existing `procurement_requisitions` bucket under
-`deliveries/<property>/<requisition>/`.
+status CHECK. Challan files go in their own `delivery-challans` bucket (created on first upload; the requisitions bucket only accepts Excel/CSV/PDF), under
+`<org>/<property>/<requisition>/`. Photos are shrunk in the browser first to stay under Vercel's request size limit.
 
 ---
 

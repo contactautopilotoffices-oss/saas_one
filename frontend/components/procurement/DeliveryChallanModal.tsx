@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { X, Truck, Loader2, Upload, FileText, CheckCircle2, AlertCircle, ArrowLeft } from 'lucide-react';
+import imageCompression from 'browser-image-compression';
 import ModalPortal from '../ui/ModalPortal';
 
 interface ChallanLine {
@@ -34,6 +35,27 @@ interface Props {
 }
 
 const today = () => new Date().toISOString().slice(0, 10);
+
+// Vercel refuses request bodies over ~4.5 MB, so photos are shrunk in the browser
+// and PDFs (which cannot be) are checked against the limit before sending.
+const MAX_PDF_BYTES = 4 * 1024 * 1024;
+
+async function prepareChallanFile(file: File): Promise<File> {
+    if (!file.type.startsWith('image/')) return file;
+    try {
+        const compressed = await imageCompression(file, {
+            maxSizeMB: 1.5,
+            maxWidthOrHeight: 2000,
+            fileType: 'image/jpeg',
+            useWebWorker: true,
+        });
+        const name = (file.name || 'challan').replace(/\.[^.]+$/, '') + '.jpg';
+        return new File([compressed], name, { type: 'image/jpeg' });
+    } catch {
+        // A format the browser cannot decode (e.g. some HEIC): send it as it is.
+        return file;
+    }
+}
 const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2));
 
 /**
@@ -99,6 +121,7 @@ export default function DeliveryChallanModal({ requisitionId, title, onClose, on
     const totalUnits = entered.reduce((sum, e) => sum + e.qty, 0);
 
     const formError = !file ? 'Attach the delivery challan.'
+        : !file.type.startsWith('image/') && file.size > MAX_PDF_BYTES ? 'The challan PDF must be 4 MB or smaller. Upload a photo of it instead, or a smaller PDF.'
         : !challanNumber.trim() ? 'Enter the challan number.'
         : !challanDate ? 'Enter the challan date.'
         : invalidLine ? `Received quantity for ${invalidLine.item_name} must be between 0 and ${fmt(invalidLine.pending_qty)}.`
@@ -110,8 +133,9 @@ export default function DeliveryChallanModal({ requisitionId, title, onClose, on
         setSubmitting(true);
         setSubmitError(null);
         try {
+            const upload = await prepareChallanFile(file);
             const form = new FormData();
-            form.append('file', file);
+            form.append('file', upload);
             form.append('challan_number', challanNumber.trim());
             form.append('challan_date', challanDate);
             form.append('idempotency_key', idempotencyKey);

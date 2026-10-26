@@ -18,9 +18,34 @@ import { isValidUuid } from '@/backend/lib/utils';
  * created from (row id 'cat-<catalog id>'), never by name.
  */
 
-const CHALLAN_BUCKET = 'procurement_requisitions';
+// Own bucket: procurement_requisitions only accepts Excel/CSV/PDF, so a challan
+// photographed on a phone was refused there.
+const CHALLAN_BUCKET = 'delivery-challans';
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const ALLOWED_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
+const TYPE_BY_EXTENSION: Record<string, string> = {
+    pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+    webp: 'image/webp', heic: 'image/heic', heif: 'image/heif',
+};
+
+/** The file's type, or one read from its extension when the phone sends none. */
+function challanContentType(file: File): string | null {
+    if (ALLOWED_TYPES.includes(file.type)) return file.type;
+    const ext = (file.name || '').split('.').pop()?.toLowerCase() || '';
+    return TYPE_BY_EXTENSION[ext] || null;
+}
+
+async function ensureChallanBucket(admin: ReturnType<typeof createAdminClient>): Promise<void> {
+    const { error } = await admin.storage.getBucket(CHALLAN_BUCKET);
+    if (!error) return;
+    // Public like procurement_requisitions, so the challan opens from its link.
+    const { error: createError } = await admin.storage.createBucket(CHALLAN_BUCKET, {
+        public: true,
+        allowedMimeTypes: ALLOWED_TYPES,
+        fileSizeLimit: MAX_FILE_BYTES,
+    });
+    if (createError && !/already exists/i.test(createError.message)) throw createError;
+}
 const CHALLAN_STATUSES = ['approved', 'ordered'];
 const MISSING_SCHEMA =
     'Delivery challans have not been set up on this database yet. Run the pending Supabase migration 20261026000001 and try again.';
@@ -220,8 +245,9 @@ export async function POST(
         if (file.size > MAX_FILE_BYTES) {
             return NextResponse.json({ error: 'The challan file must be 10 MB or smaller.' }, { status: 400 });
         }
-        if (file.type && !ALLOWED_TYPES.includes(file.type)) {
-            return NextResponse.json({ error: 'Upload the challan as a PDF or an image.' }, { status: 400 });
+        const contentType = challanContentType(file);
+        if (!contentType) {
+            return NextResponse.json({ error: 'Upload the challan as a PDF or a photo (JPG, PNG, WEBP or HEIC).' }, { status: 400 });
         }
         if (!challanNumber) {
             return NextResponse.json({ error: 'Enter the challan number.' }, { status: 400 });
@@ -287,16 +313,14 @@ export async function POST(
         }, (catalogRows || []) as CatalogItemForStock[]);
 
         const safeName = (file.name || 'challan').replace(/[^a-zA-Z0-9._-]+/g, '_').slice(-80);
-        uploadedPath = `deliveries/${requisition.organization_id}/${requisition.property_id}/${requisition.id}/${Date.now()}_${randomUUID().slice(0, 8)}_${safeName}`;
+        await ensureChallanBucket(admin);
+        uploadedPath = `${requisition.organization_id}/${requisition.property_id}/${requisition.id}/${Date.now()}_${randomUUID().slice(0, 8)}_${safeName}`;
         const { error: uploadError } = await admin.storage
             .from(CHALLAN_BUCKET)
-            .upload(uploadedPath, Buffer.from(await file.arrayBuffer()), {
-                contentType: file.type || 'application/octet-stream',
-                upsert: false,
-            });
+            .upload(uploadedPath, Buffer.from(await file.arrayBuffer()), { contentType, upsert: false });
         if (uploadError) {
             uploadedPath = null;
-            return NextResponse.json({ error: 'Could not upload the challan file', details: uploadError.message }, { status: 500 });
+            return NextResponse.json({ error: `Could not upload the challan file: ${uploadError.message}` }, { status: 500 });
         }
         const fileUrl = admin.storage.from(CHALLAN_BUCKET).getPublicUrl(uploadedPath).data.publicUrl;
 
