@@ -47,7 +47,7 @@ export async function GET(request: NextRequest) {
 
         // 2. Query open HR tickets requiring attention for this user (assigned handler or submitter awaiting ack)
         // Managers only handle Level 1 tickets before escalation. Escalated tickets belong strictly to the current assigned_to_user_id!
-        const filterOr = `assigned_to_user_id.in.(${targetIds.join(',')}),and(is_anonymous.not.is.true,is_confidential.not.is.true,ticket_type.not.in.(anonymous_feedback,confidential_feedback,confidential),manager_user_id.eq.${activeUserId},current_level.eq.1,status.neq.escalated),and(raised_by_user_id.eq.${activeUserId},status.eq.pending_acknowledgement)`;
+        const filterOr = `assigned_to_user_id.in.(${targetIds.join(',')}),and(ticket_type.eq.grievance,is_anonymous.not.is.true,is_confidential.not.is.true,manager_user_id.eq.${activeUserId},current_level.eq.1,status.neq.escalated),and(raised_by_user_id.eq.${activeUserId},status.eq.pending_acknowledgement)`;
 
         const { data: tickets, error } = await supabaseAdmin
             .from('hr_tickets')
@@ -70,7 +70,7 @@ export async function GET(request: NextRequest) {
             const isConfOrAnon = Boolean(t.is_anonymous || t.is_confidential || t.ticket_type === 'confidential_feedback' || t.ticket_type === 'anonymous_feedback' || t.ticket_type === 'confidential');
             const isSubmitterWaitingAck = t.raised_by_user_id === activeUserId && t.status === 'pending_acknowledgement';
             const isCurrentHandler = targetIds.includes(t.assigned_to_user_id);
-            const isL1Manager = !isConfOrAnon && t.current_level === 1 && t.status !== 'escalated' && t.manager_user_id === activeUserId;
+            const isL1Manager = !isConfOrAnon && t.ticket_type === 'grievance' && t.current_level === 1 && t.status !== 'escalated' && t.manager_user_id === activeUserId;
 
             if (t.status === 'escalated' || (t.current_level && t.current_level > 1)) {
                 return isCurrentHandler || isSubmitterWaitingAck;

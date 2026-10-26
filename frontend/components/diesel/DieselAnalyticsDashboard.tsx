@@ -9,6 +9,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useParams } from 'next/navigation';
 import { createClient } from '@/frontend/utils/supabase/client';
 import { useDataCache } from '@/frontend/context/DataCacheContext';
+import { pickActiveTariffs } from '@/frontend/lib/diesel/activeTariffs';
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, Area, AreaChart, YAxis, CartesianGrid } from 'recharts';
 import DGTariffModal from './DGTariffModal';
 import DieselStaffDashboard from './DieselStaffDashboard';
@@ -49,11 +50,16 @@ interface DieselAnalyticsDashboardProps {
     orgId?: string;
 }
 
+/** Cached data younger than this is shown without refreshing; older data is shown and refreshed in the background. */
+const CACHE_FRESH_MS = 60_000;
+
 const DieselAnalyticsDashboard: React.FC<DieselAnalyticsDashboardProps> = ({ propertyId: propIdFromProps, orgId }) => {
     const params = useParams();
     const propertyId = propIdFromProps || (params?.propertyId as string);
     const supabase = useMemo(() => createClient(), []);
-    const { getCachedData, setCachedData, invalidateCache } = useDataCache();
+    const { getCachedData, setCachedData } = useDataCache();
+    // Coming back to the tab: start from the last data at once (no loader), then refresh in the background.
+    const initialCached = useMemo(() => getCachedData(`diesel-analytics-${propertyId || orgId}`), []); // eslint-disable-line react-hooks/exhaustive-deps
 
     // UI State
     const [viewMode, setViewMode] = useState<'combined' | 'generator'>('combined');
@@ -67,15 +73,15 @@ const DieselAnalyticsDashboard: React.FC<DieselAnalyticsDashboardProps> = ({ pro
     const [showTariffModal, setShowTariffModal] = useState(false);
 
     // Data State
-    const [property, setProperty] = useState<{ name: string } | null>(null);
-    const [generators, setGenerators] = useState<Generator[]>([]);
+    const [property, setProperty] = useState<{ name: string } | null>(initialCached?.property ?? null);
+    const [generators, setGenerators] = useState<Generator[]>(initialCached?.generators ?? []);
     const [rawReadings, setRawReadings] = useState<{
         today: DieselReading[];
         month: DieselReading[];
         prevMonth: DieselReading[];
         trend: DieselReading[];
         custom: DieselReading[];
-    }>({ today: [], month: [], prevMonth: [], trend: [], custom: [] });
+    }>(initialCached?.rawReadings ?? { today: [], month: [], prevMonth: [], trend: [], custom: [] });
 
     // Date Range Filter State
     const todayStr = new Date().toISOString().split('T')[0];
@@ -85,11 +91,12 @@ const DieselAnalyticsDashboard: React.FC<DieselAnalyticsDashboardProps> = ({ pro
     const [pendingDateTo, setPendingDateTo] = useState<string>('');
     const [isCustomRange, setIsCustomRange] = useState(false);
 
-    const [activeTariff, setActiveTariff] = useState<number>(0);
-    const [isLoading, setIsLoading] = useState(true);
+    const [activeTariff, setActiveTariff] = useState<number>(initialCached?.activeTariff ?? 0);
+    const [isLoading, setIsLoading] = useState(!initialCached);
 
     // Fetch Initial Data
-    const fetchData = useCallback(async () => {
+    // force = refresh even if the cached data is recent (a reading was just logged).
+    const fetchData = useCallback(async (force = false) => {
         if (!isValidId(propertyId) && !isValidId(orgId)) return;
         
         const cacheKey = isCustomRange && dateFrom && dateTo
@@ -104,10 +111,11 @@ const DieselAnalyticsDashboard: React.FC<DieselAnalyticsDashboardProps> = ({ pro
             if (cached.activeTariff !== undefined) setActiveTariff(cached.activeTariff);
             if (cached.rawReadings) setRawReadings(cached.rawReadings);
             setIsLoading(false);
-            return;
+            // Fresh enough: done. Older: keep showing it and refresh quietly below (no loader).
+            if (!force && cached.savedAt && Date.now() - cached.savedAt < CACHE_FRESH_MS) return;
+        } else {
+            setIsLoading(true);
         }
-
-        setIsLoading(true);
 
         let propData = property;
         let gensData: Generator[] = [];
@@ -115,19 +123,58 @@ const DieselAnalyticsDashboard: React.FC<DieselAnalyticsDashboardProps> = ({ pro
         let readingsData = { today: [], month: [], prevMonth: [], trend: [], custom: [] };
 
         try {
+            // Property, generators and readings don't depend on each other: start them all now and read the answers
+            // below in the original order, so state updates and errors behave exactly as before (performance plan
+            // Phase 4). The tariff lookup still waits for the generator list. (.then(r => r) starts a Supabase query
+            // now; a query builder on its own only runs when awaited.)
+            const propertyRequest = isValidId(propertyId)
+                ? supabase.from('properties').select('name').eq('id', propertyId).single().then(result => result)
+                : null;
+            const gensRequest = isValidId(propertyId)
+                ? fetch(`/api/properties/${propertyId}/generators`)
+                : isValidId(orgId)
+                    ? fetch(`/api/organizations/${orgId}/generators`)
+                    : null;
+            gensRequest?.catch(() => { /* handled when awaited below */ });
+
+            const readingsBaseUrl = isValidId(propertyId)
+                ? `/api/properties/${propertyId}/diesel-readings`
+                : isValidId(orgId)
+                    ? `/api/organizations/${orgId}/diesel-readings`
+                    : null;
+            let readingsRequest: Promise<DieselReading[][]> | null = null;
+            if (readingsBaseUrl) {
+                // Today, this month and the last 30 days come from ONE request that starts at the earliest of their start
+                // dates (the same date strings as before), split below with those same dates. It returns exactly the rows
+                // of the larger of the old month / 30-day requests, so no new row-cap risk. Previous month stays separate
+                // (performance plan Phase 5.6).
+                const todayStr = new Date().toISOString().split('T')[0];
+                const monthStartStr = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
+                const trendStartStr = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+                const recentStartStr = [monthStartStr, trendStartStr, todayStr].sort()[0];
+                const asList = (v: unknown): DieselReading[] => (Array.isArray(v) ? v : []);
+                const recentTask = fetch(`${readingsBaseUrl}?startDate=${recentStartStr}`).then(r => r.json()).catch(() => []);
+                const fetchTasks: Promise<DieselReading[]>[] = [
+                    recentTask.then(rows => asList(rows).filter(r => r.reading_date === todayStr)),
+                    recentTask.then(rows => asList(rows).filter(r => r.reading_date >= monthStartStr)),
+                    fetch(`${readingsBaseUrl}?startDate=${new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1).toISOString().split('T')[0]}&endDate=${new Date(new Date().getFullYear(), new Date().getMonth(), 0).toISOString().split('T')[0]}`).then(r => r.json()).catch(() => []),
+                    recentTask.then(rows => asList(rows).filter(r => r.reading_date >= trendStartStr)),
+                ];
+
+                if (isCustomRange && dateFrom && dateTo) {
+                    fetchTasks.push(fetch(`${readingsBaseUrl}?startDate=${dateFrom}&endDate=${dateTo}`).then(r => r.json()).catch(() => []));
+                }
+                readingsRequest = Promise.all(fetchTasks);
+            }
+
             // 1. Property Name (if propertyId exists)
-            if (isValidId(propertyId)) {
-                const { data } = await supabase.from('properties').select('name').eq('id', propertyId).single();
+            if (propertyRequest) {
+                const { data } = await propertyRequest;
                 setProperty(data);
             }
 
             // 2. Generators
-            let gensRes = null;
-            if (isValidId(propertyId)) {
-                gensRes = await fetch(`/api/properties/${propertyId}/generators`);
-            } else if (isValidId(orgId)) {
-                gensRes = await fetch(`/api/organizations/${orgId}/generators`);
-            }
+            const gensRes = gensRequest ? await gensRequest : null;
 
             let gens = [];
             if (gensRes && gensRes.ok) {
@@ -140,17 +187,18 @@ const DieselAnalyticsDashboard: React.FC<DieselAnalyticsDashboardProps> = ({ pro
             // 3. Current Tariff (Property required for specific tariff, or find first available)
             const today = new Date().toISOString().split('T')[0];
             if (isValidId(propertyId) && Array.isArray(gens) && gens.length > 0) {
+                // ONE request for the property instead of one per generator; the first generator (in list order) with an
+                // active price wins, as before (performance plan Phase 5.1). Same rule as get_active_dg_tariff.
                 let tariffFound = false;
+                const tariffRes = await fetch(`/api/properties/${propertyId}/dg-tariffs`);
+                const active = tariffRes.ok ? pickActiveTariffs(await tariffRes.json(), today) : {};
                 for (const gen of gens) {
-                    const tariffRes = await fetch(`/api/properties/${propertyId}/dg-tariffs?generatorId=${gen.id}&date=${today}`);
-                    if (tariffRes.ok) {
-                        const t = await tariffRes.json();
-                        if (t && t.cost_per_litre) {
-                            activeTariffValue = t.cost_per_litre;
-                            setActiveTariff(activeTariffValue);
-                            tariffFound = true;
-                            break;
-                        }
+                    const t = active[gen.id];
+                    if (t && t.cost_per_litre) {
+                        activeTariffValue = t.cost_per_litre;
+                        setActiveTariff(activeTariffValue);
+                        tariffFound = true;
+                        break;
                     }
                 }
                 if (!tariffFound) {
@@ -159,31 +207,13 @@ const DieselAnalyticsDashboard: React.FC<DieselAnalyticsDashboardProps> = ({ pro
                 }
             }
 
-            // 4. Readings (Batch or separate)
-            // Fetch based on Property or Organization
-            const readingsBaseUrl = isValidId(propertyId)
-                ? `/api/properties/${propertyId}/diesel-readings`
-                : isValidId(orgId)
-                    ? `/api/organizations/${orgId}/diesel-readings`
-                    : null;
-
-            if (!readingsBaseUrl) {
+            // 4. Readings (Batch or separate) — already started above, based on Property or Organization
+            if (!readingsRequest) {
                 setRawReadings({ today: [], month: [], prevMonth: [], trend: [], custom: [] });
                 return;
             }
 
-            const fetchTasks: Promise<DieselReading[]>[] = [
-                fetch(`${readingsBaseUrl}?period=today`).then(r => r.json()).catch(() => []),
-                fetch(`${readingsBaseUrl}?startDate=${new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]}`).then(r => r.json()).catch(() => []),
-                fetch(`${readingsBaseUrl}?startDate=${new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1).toISOString().split('T')[0]}&endDate=${new Date(new Date().getFullYear(), new Date().getMonth(), 0).toISOString().split('T')[0]}`).then(r => r.json()).catch(() => []),
-                fetch(`${readingsBaseUrl}?startDate=${new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]}`).then(r => r.json()).catch(() => [])
-            ];
-
-            if (isCustomRange && dateFrom && dateTo) {
-                fetchTasks.push(fetch(`${readingsBaseUrl}?startDate=${dateFrom}&endDate=${dateTo}`).then(r => r.json()).catch(() => []));
-            }
-
-            const [todayR, monthR, prevMonthR, trendR, customR] = await Promise.all(fetchTasks);
+            const [todayR, monthR, prevMonthR, trendR, customR] = await readingsRequest;
 
             const newRawReadings = {
                 today: Array.isArray(todayR) ? todayR : [],
@@ -199,7 +229,8 @@ const DieselAnalyticsDashboard: React.FC<DieselAnalyticsDashboardProps> = ({ pro
                 property: propData,
                 generators: gens,
                 activeTariff: activeTariffValue,
-                rawReadings: newRawReadings
+                rawReadings: newRawReadings,
+                savedAt: Date.now(),
             });
 
         } catch (error) {
@@ -225,8 +256,8 @@ const DieselAnalyticsDashboard: React.FC<DieselAnalyticsDashboardProps> = ({ pro
                 'postgres_changes',
                 { event: '*', schema: 'public', table: 'diesel_readings', filter: `property_id=eq.${propertyId}` },
                 () => {
-                    invalidateCache();
-                    fetchData();
+                    // Refresh this dashboard only — clearing the whole cache here used to empty every other tab's cache.
+                    fetchData(true);
                 }
             )
             .subscribe();
@@ -234,7 +265,7 @@ const DieselAnalyticsDashboard: React.FC<DieselAnalyticsDashboardProps> = ({ pro
         return () => {
             supabase.removeChannel(channel);
         };
-    }, [propertyId, supabase, invalidateCache, fetchData]);
+    }, [propertyId, supabase, fetchData]);
 
     // Derived Metrics
     const metrics = useMemo(() => {
@@ -806,7 +837,7 @@ const DieselAnalyticsDashboard: React.FC<DieselAnalyticsDashboardProps> = ({ pro
                             onClick={(e) => e.stopPropagation()}
                         >
                             <div className="absolute top-4 right-4 z-10">
-                                <button onClick={() => { setShowLogModal(false); fetchData(); }} className="p-2 bg-slate-100 hover:bg-slate-200 rounded-full transition-colors">
+                                <button onClick={() => { setShowLogModal(false); fetchData(true); }} className="p-2 bg-slate-100 hover:bg-slate-200 rounded-full transition-colors">
                                     <X className="w-5 h-5 text-slate-500" />
                                 </button>
                             </div>
@@ -823,7 +854,7 @@ const DieselAnalyticsDashboard: React.FC<DieselAnalyticsDashboardProps> = ({ pro
                     isOpen={showTariffModal}
                     onClose={() => {
                         setShowTariffModal(false);
-                        fetchData();
+                        fetchData(true);
                     }}
                     propertyId={propertyId}
                     generators={generators}

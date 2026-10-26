@@ -32,15 +32,14 @@ export async function GET(
 
             const isAssigned = reqUserId && (ticket.assigned_to_user_id === reqUserId || (Array.isArray(ticket.assigned_history) && ticket.assigned_history.includes(reqUserId) && (!isConfOrAnon || (reqUserId !== ticket.manager_user_id && reqUserId !== ticket.employee_snapshot?.manager_user_id))));
 
-            if (isAnon && !isSuperAdmin && !isAssigned) {
-                return NextResponse.json({ success: false, error: 'Anonymous ticket comments are strictly restricted to Org Super Admin and assigned users.' }, { status: 403 });
+            const isSubmitter = Boolean(reqUserId && ticket.raised_by_user_id === reqUserId);
+
+            if (isAnon && !isSuperAdmin && !isAssigned && !isSubmitter) {
+                return NextResponse.json({ success: false, error: 'Anonymous ticket comments are strictly restricted to Org Super Admin, assigned users, and the submitter.' }, { status: 403 });
             }
 
-            if (isConfidential) {
-                const isSubmitter = reqUserId && ticket.raised_by_user_id === reqUserId;
-                if (!isSuperAdmin && !isAssigned && !isSubmitter) {
-                    return NextResponse.json({ success: false, error: 'Confidential ticket comments are not accessible to HR roles and are restricted to Org Super Admin and assigned users.' }, { status: 403 });
-                }
+            if (isConfidential && !isSuperAdmin && !isAssigned && !isSubmitter) {
+                return NextResponse.json({ success: false, error: 'Confidential ticket comments are not accessible to HR roles and are restricted to Org Super Admin, assigned users, and the submitter.' }, { status: 403 });
             }
         }
 

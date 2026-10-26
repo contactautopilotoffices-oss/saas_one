@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
-import { NotificationService } from '@/backend/services/NotificationService';
+import { isOrganizationUserApprover, isOrganizationWideUserRole } from '@/backend/lib/users/managementRoles';
+import { ensureEmployeeProfile, type EnsureEmployeeProfileResult } from '@/backend/lib/users/employeeProfile';
 
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
-        const { userId, action = 'approve', reason, propertyId, role } = body;
+        const { userId, action = 'approve', reason, propertyId, organizationId, role } = body;
 
         if (!userId) {
             return NextResponse.json({ error: 'Missing userId parameter' }, { status: 400 });
@@ -24,85 +25,106 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Unauthorized. Please log in.' }, { status: 401 });
         }
 
+        const actorId = currentUser.id;
         const adminClient = createAdminClient();
 
         // 2. Check caller permissions
         const { data: callerProfile } = await adminClient
             .from('users')
             .select('is_master_admin, full_name')
-            .eq('id', currentUser.id)
+            .eq('id', actorId)
             .single();
 
         const isMasterAdmin = !!callerProfile?.is_master_admin;
 
-        // Fetch target user memberships to know target org and property
-        const { data: targetPropMemb } = await adminClient
+        // Resolve arrays: one profile may have memberships in several workspaces.
+        const { data: targetPropMembs, error: targetPropError } = await adminClient
             .from('property_memberships')
-            .select('property_id, organization_id, role')
-            .eq('user_id', userId)
-            .maybeSingle();
+            .select('property_id, organization_id, role, is_active, approval_status, property:properties!inner(id, organization_id)')
+            .eq('user_id', userId);
+        const { data: targetOrgMembs, error: targetOrgError } = await adminClient
+            .from('organization_memberships').select('organization_id, role, is_active, approval_status').eq('user_id', userId);
+        if (targetPropError) throw targetPropError;
+        if (targetOrgError) throw targetOrgError;
 
-        const { data: targetOrgMemb } = await adminClient
-            .from('organization_memberships')
-            .select('organization_id, role')
-            .eq('user_id', userId)
-            .maybeSingle();
+        const propertyMemberships = (targetPropMembs || []).map(m => ({
+            ...m, organization_id: (Array.isArray(m.property) ? m.property[0] : m.property)?.organization_id || m.organization_id
+        }));
+        const targetPropertyMembership = propertyId
+            ? propertyMemberships.find(m => m.property_id === propertyId) : null;
+        if (propertyId && !targetPropertyMembership) {
+            return NextResponse.json({ error: 'Target user does not belong to the supplied property' }, { status: 400 });
+        }
+        const targetOrganizationIds = Array.from(new Set([
+            ...propertyMemberships.map(m => m.organization_id),
+            ...(targetOrgMembs || []).map(m => m.organization_id)
+        ].filter(Boolean)));
+        const accountsOrgMemberships = (targetOrgMembs || []).filter(m => m.role === 'accounts');
+        const implicitAccountsOrg = !organizationId && !propertyId && accountsOrgMemberships.length === 1 ? accountsOrgMemberships[0].organization_id : null;
+        if (!organizationId && !propertyId && !implicitAccountsOrg && targetOrganizationIds.length > 1) {
+            return NextResponse.json({ error: 'organizationId is required for a user with multiple organizations' }, { status: 400 });
+        }
+        const targetOrgId = organizationId || implicitAccountsOrg || targetPropertyMembership?.organization_id || targetOrganizationIds[0];
+        if (!targetOrgId || !targetOrganizationIds.includes(targetOrgId) ||
+            (targetPropertyMembership && targetPropertyMembership.organization_id !== targetOrgId)) {
+            return NextResponse.json({ error: 'Target membership does not match the supplied organization' }, { status: 400 });
+        }
+        const targetPropId = propertyId || null;
+        const scopedPropertyMemberships = propertyMemberships.filter(m =>
+            m.organization_id === targetOrgId && (!targetPropId || m.property_id === targetPropId));
+        const targetOrgMemb = (targetOrgMembs || []).find(m => m.organization_id === targetOrgId);
 
-        let targetOrgId = targetPropMemb?.organization_id || targetOrgMemb?.organization_id || null;
-        const targetPropId = propertyId || targetPropMemb?.property_id || null;
+        const hasLegacyAccountsRole = scopedPropertyMemberships.some(m => m.role === 'accounts') && (!targetOrgMemb || targetOrgMemb.role === 'staff');
+        const targetRole = role || (hasLegacyAccountsRole ? 'accounts' : targetPropertyMembership?.role) || targetOrgMemb?.role || scopedPropertyMemberships[0]?.role;
+        const isAccountsApproval = targetRole === 'accounts';
+        const isAccountsApplication = targetOrgMemb?.role === 'accounts' || scopedPropertyMemberships.some(m => m.role === 'accounts');
 
-        // If organization_id is not directly on property_membership, resolve it from properties table
-        if (!targetOrgId && targetPropId) {
-            const { data: propRow } = await adminClient
-                .from('properties')
-                .select('organization_id')
-                .eq('id', targetPropId)
-                .maybeSingle();
-            if (propRow?.organization_id) {
-                targetOrgId = propRow.organization_id;
+        if (!isMasterAdmin) {
+            const { data: callerOrgMemb, error: callerOrgError } = await adminClient
+                .from('organization_memberships').select('role')
+                .eq('user_id', actorId).eq('organization_id', targetOrgId)
+                .eq('is_active', true).maybeSingle();
+            if (callerOrgError) throw callerOrgError;
+            let isPropertyAdmin = false;
+            const propertyRole = role || targetPropertyMembership?.role || '';
+            const grantsOrganizationAuthority = isOrganizationWideUserRole(propertyRole) ||
+                isOrganizationUserApprover(propertyRole) || ['master_admin', 'org_admin', 'bd_admin'].includes(propertyRole);
+            if (targetPropId && !grantsOrganizationAuthority && !isAccountsApproval && !isAccountsApplication) {
+                const { data: propMemb, error: callerPropError } = await adminClient
+                    .from('property_memberships').select('role')
+                    .eq('user_id', actorId).eq('property_id', targetPropId)
+                    .eq('is_active', true).maybeSingle();
+                if (callerPropError) throw callerPropError;
+                isPropertyAdmin = propMemb?.role === 'property_admin';
+            }
+            if (role === 'master_admin' || (!isOrganizationUserApprover(callerOrgMemb?.role) && !isPropertyAdmin)) {
+                return NextResponse.json({ error: 'Forbidden. You do not have administrative permission for this workspace.' }, { status: 403 });
             }
         }
 
-        if (!isMasterAdmin) {
-            let isAuthorized = false;
-
-            // Fetch caller's organization memberships
-            const { data: callerOrgMembs } = await adminClient
-                .from('organization_memberships')
-                .select('organization_id, role')
-                .eq('user_id', currentUser.id)
-                .eq('is_active', true);
-
-            const callerSuperOrgIds = (callerOrgMembs || [])
-                .filter(m => ['org_super_admin', 'admin', 'owner', 'bd_super_admin'].includes(m.role))
-                .map(m => m.organization_id);
-
-            // Check if caller is Org Super Admin for the target org or if target belongs to caller's org
-            if (callerSuperOrgIds.length > 0) {
-                if (!targetOrgId || callerSuperOrgIds.includes(targetOrgId)) {
-                    isAuthorized = true;
-                }
+        // Membership writes are limited to existing rows in the resolved scope.
+        async function updateMemberships(isActive: boolean) {
+            const propertyIds = scopedPropertyMemberships.map(m => m.property_id);
+            if (propertyIds.length > 0) {
+                const update = {
+                    is_active: isActive, approval_status: isActive ? 'approved' : 'rejected',
+                    updated_by: actorId, updated_at: new Date().toISOString(),
+                    ...(isActive && role && targetPropId ? { role } : {})
+                };
+                const { error } = await adminClient.from('property_memberships')
+                    .update(update).eq('user_id', userId).in('property_id', propertyIds);
+                if (error) throw error;
             }
-
-            // Check if Property Admin for the user's property
-            if (!isAuthorized && targetPropId) {
-                const { data: propMemb } = await adminClient
-                    .from('property_memberships')
-                    .select('role')
-                    .eq('user_id', currentUser.id)
-                    .eq('property_id', targetPropId)
-                    .eq('is_active', true)
-                    .maybeSingle();
-
-                if (propMemb && propMemb.role === 'property_admin') {
-                    isAuthorized = true;
-                }
-            }
-
-            if (!isAuthorized) {
-                return NextResponse.json({
-                    error: 'Forbidden. You do not have administrative permission to approve users for this workspace.'
-                }, { status: 403 });
+            // A property approval cannot create or activate an organization-wide grant.
+            if (!targetPropId && targetOrgMemb) {
+                const { error } = await adminClient.from('organization_memberships')
+                    .update({
+                        is_active: isActive, approval_status: isActive ? 'approved' : 'rejected',
+                        updated_by: actorId, updated_at: new Date().toISOString(),
+                        ...(isActive && role ? { role } : {})
+                    })
+                    .eq('user_id', userId).eq('organization_id', targetOrgId);
+                if (error) throw error;
             }
         }
 
@@ -110,13 +132,24 @@ export async function POST(request: NextRequest) {
         const now = new Date().toISOString();
 
         if (action === 'approve') {
+            if (isAccountsApproval) {
+                // Save organization finance access before marking the applicant approved.
+                const { error: orgError } = await adminClient.from('organization_memberships').upsert({
+                    organization_id: targetOrgId, user_id: userId, role: 'accounts',
+                    is_active: true, approval_status: 'approved', updated_by: actorId, updated_at: now
+                }, { onConflict: 'organization_id,user_id' });
+                if (orgError) throw orgError;
+                const { error: legacyError } = await adminClient.from('property_memberships').delete()
+                    .eq('user_id', userId).eq('organization_id', targetOrgId).eq('role', 'accounts');
+                if (legacyError) throw legacyError;
+            }
             // Update users table
             const { error: userUpdateErr } = await adminClient
                 .from('users')
                 .update({
                     is_approved: true,
                     approval_status: 'approved',
-                    approved_by: currentUser.id,
+                    approved_by: actorId,
                     approved_at: now,
                     rejection_reason: null
                 })
@@ -127,39 +160,18 @@ export async function POST(request: NextRequest) {
                 throw userUpdateErr;
             }
 
-            // Activate all property memberships for this user
-            const propUpdate: any = { is_active: true };
-            if (role && targetPropId) propUpdate.role = role;
+            if (!isAccountsApproval) await updateMemberships(true);
 
-            await adminClient
-                .from('property_memberships')
-                .update(propUpdate)
-                .eq('user_id', userId);
-
-            // Activate or create org membership
-            if (targetOrgId) {
-                const targetRole = role || targetOrgMemb?.role || 'staff';
-                await adminClient
-                    .from('organization_memberships')
-                    .upsert({
+            try {
+                await adminClient.auth.admin.updateUserById(userId, {
+                    user_metadata: {
                         organization_id: targetOrgId,
-                        user_id: userId,
                         role: targetRole,
-                        is_active: true
-                    }, { onConflict: 'organization_id,user_id' });
-
-                try {
-                    await adminClient.auth.admin.updateUserById(userId, {
-                        user_metadata: {
-                            organization_id: targetOrgId,
-                            role: targetRole,
-                            property_id: targetPropId || undefined,
-                            property_role: role || undefined
-                        }
-                    });
-                } catch (metaErr) {
-                    console.warn('[Approve API] Failed to sync auth user_metadata:', metaErr);
-                }
+                        ...(isAccountsApproval ? { property_id: null, property_role: null } : targetPropId ? { property_id: targetPropId, property_role: targetRole } : {})
+                    }
+                });
+            } catch (metaErr) {
+                console.warn('[Approve API] Failed to sync auth user_metadata:', metaErr);
             }
 
             // Ensure employee_profiles record is linked upon approval for internal roles
@@ -169,80 +181,47 @@ export async function POST(request: NextRequest) {
                 .eq('id', userId)
                 .single();
 
+            let employeeProfile: EnsureEmployeeProfileResult = { status: 'skipped' };
             if (approvedUserData) {
-                const appRole = role || targetOrgMemb?.role || approvedUserData.role || approvedUserData.raw_user_meta_data?.role || 'staff';
-                if (['hr', 'hr_head', 'staff', 'property_admin', 'org_super_admin'].includes(appRole)) {
-                    const fullName = approvedUserData.full_name || approvedUserData.raw_user_meta_data?.full_name || approvedUserData.email.split('@')[0];
-                    const nameParts = fullName.split(' ');
-                    const firstName = nameParts[0] || 'Employee';
-                    const lastName = nameParts.slice(1).join(' ') || '';
-                    const ecode = `E${Math.floor(100 + Math.random() * 900)}`;
-
-                    try {
-                        await adminClient
-                            .from('employee_profiles')
-                            .upsert({
-                                organization_id: targetOrgId || approvedUserData.organization_id || null,
-                                user_id: userId,
-                                employee_code: ecode,
-                                first_name: firstName,
-                                last_name: lastName,
-                                full_name: fullName,
-                                email: approvedUserData.email,
-                                contact_number: approvedUserData.phone || null,
-                                department: appRole.includes('hr') ? 'Human Resources' : 'Operations',
-                                designation: appRole === 'hr_head' ? 'HR Head' : (appRole === 'hr' ? 'HR Executive' : 'Executive'),
-                                is_hr_authority: appRole === 'hr' || appRole === 'hr_head',
-                                reconciliation_status: 'linked',
-                                is_active: true
-                            }, { onConflict: 'organization_id,employee_code' });
-                    } catch {
-                        /* ignore duplicate */
-                    }
-                }
+                employeeProfile = await ensureEmployeeProfile(adminClient, {
+                    organizationId: targetOrgId,
+                    userId,
+                    email: approvedUserData.email,
+                    fullName: approvedUserData.full_name || approvedUserData.raw_user_meta_data?.full_name || null,
+                    phone: approvedUserData.phone || null,
+                    appRole: targetRole || 'staff'
+                });
             }
 
             return NextResponse.json({
                 success: true,
                 message: 'User approved successfully',
                 approvedBy: callerProfile?.full_name || 'Admin',
-                approvedAt: now
+                approvedAt: now,
+                // Surfaced rather than swallowed: approval still succeeds, but a failure here
+                // leaves the user without an employee code and must be visible to the caller.
+                employeeProfile
             });
 
         } else {
-            // Rejection flow
-            const { error: userUpdateErr } = await adminClient
-                .from('users')
-                .update({
+            // Shared profile approval must not revoke access granted by another workspace.
+            const scopedPropertyIds = new Set(scopedPropertyMemberships.map(m => m.property_id));
+            const hasOtherActiveMembership = propertyMemberships.some(m =>
+                m.is_active === true && m.organization_id && !scopedPropertyIds.has(m.property_id)) ||
+                (targetOrgMembs || []).some(m => m.is_active === true && m.organization_id &&
+                    (targetPropId || m.organization_id !== targetOrgId));
+            if (!hasOtherActiveMembership) {
+                const { error: userUpdateErr } = await adminClient.from('users').update({
                     is_approved: false,
                     approval_status: 'rejected',
-                    approved_by: currentUser.id,
+                    approved_by: actorId,
                     approved_at: now,
                     rejection_reason: reason || 'Application rejected by administrator'
-                })
-                .eq('id', userId);
-
-            if (userUpdateErr) {
-                console.error('[Reject API] Failed to update user:', userUpdateErr);
-                throw userUpdateErr;
+                }).eq('id', userId);
+                if (userUpdateErr) throw userUpdateErr;
             }
 
-            // Deactivate memberships
-            if (targetPropId) {
-                await adminClient
-                    .from('property_memberships')
-                    .update({ is_active: false })
-                    .eq('user_id', userId)
-                    .eq('property_id', targetPropId);
-            }
-
-            if (targetOrgId) {
-                await adminClient
-                    .from('organization_memberships')
-                    .update({ is_active: false })
-                    .eq('user_id', userId)
-                    .eq('organization_id', targetOrgId);
-            }
+            await updateMemberships(false);
 
             return NextResponse.json({
                 success: true,

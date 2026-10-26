@@ -46,3 +46,12 @@ test('AiSensy project webhook reads nested phone text type and WhatsApp message 
     assert.deepEqual(protocol.normalizeInbound({ ...payload, id: 'delivery-2', delivery_attempt: '2' }), expected);
     assert.equal(protocol.normalizeInbound({ ...payload, topic: 'message.sent.business' }), null);
 });
+test('legacy booking review keeps a valid template parameter when non-tenant credits are skipped',async()=>{
+    const property={id:'p1',name:'Hub'},room={id:'r1',name:'Boardroom'},slot={id:'s1',start_time:'14:00',end_time:'15:00'};
+    const result=await engine.advance({text:'details',phone:'919876543210'},
+        {id:'request',userId:'u1',step:'booking_confirm',property,room,slot,date:'2099-10-01'},
+        {findUser:async()=>({id:'u1'}),properties:async()=>[property],creditSummary:async()=>null});
+    assert.equal(result.reply.key,'booking_review');
+    assert.equal(typeof result.reply.params[4],'string');
+    assert.doesNotMatch(result.reply.params[4],/null|undefined/i);
+});

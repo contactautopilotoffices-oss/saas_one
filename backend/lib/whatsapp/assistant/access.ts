@@ -2,12 +2,17 @@ import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { canonicalPhone } from './protocol.mjs';
 
 export async function findWhatsAppUser(phone: string) {
-    const last10 = phone.slice(-10);
+    const normalized = canonicalPhone(phone);
+    if (!/^\d{11,15}$/.test(normalized)) return null;
+    const last10 = normalized.slice(-10);
+    // Stored profile numbers may contain spaces, brackets or hyphens. Fetch
+    // candidates in digit order, then require exact canonical equality below.
+    const formattedPattern = `%${last10.split('').join('%')}%`;
     const { data, error } = await supabaseAdmin.from('users')
         .select('id, full_name, phone, is_approved, approval_status, is_master_admin')
-        .or(`phone.eq.${last10},phone.ilike.%${last10}`);
+        .or(`phone.eq.${last10},phone.ilike.${formattedPattern}`);
     if (error) throw error;
-    const matches = (data || []).filter(user => canonicalPhone(user.phone) === phone);
+    const matches = (data || []).filter(user => canonicalPhone(user.phone) === normalized);
     // Never silently choose between profiles sharing the same number.
     if (matches.length !== 1) return null;
     const user = matches[0];

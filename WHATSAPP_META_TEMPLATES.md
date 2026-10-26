@@ -90,9 +90,8 @@ A new ticket has been raised on AutoPilot.
 Our team has been notified to attend to this request.
 ```
 - **Footer:** `AutoPilot Property Management`
-- **Button Type:** `Call to Action (Dynamic URL)`
+- **Button Type:** `Call to Action`
   - **Button Text:** `View Ticket`
-  - **URL Type:** `Dynamic` &rarr; `https://fms-dev-saas-one.vercel.app/tickets/{{10}}`
 - **Sample Values:**
   - `Header Image`: Upload any sample equipment/issue photo
   - `{{1}}`: `Property Team`
@@ -104,12 +103,11 @@ Our team has been notified to attend to this request.
   - `{{7}}`: `+91 98765 43210`
   - `{{8}}`: `Sunil Kumar (MST)`
   - `{{9}}`: `+91 98111 22334`
-  - `{{10}}` *(Button URL Ticket UUID)*: `d35372d1-bee2-403f-8578-00da66f16984`
 
 ---
 
-### Template 2: `ticket_assigned_v1` (Dedicated to Assignee / Technician)
-- **Template Name:** `ticket_assigned_v1`
+### Template 2: `ticket_assigned_v2` (Dedicated to Assignee / Technician)
+- **Template Name:** `ticket_assigned_v2`
 - **Category:** `UTILITY`
 - **Language:** `English (en)`
 - **Header:** `Text` &rarr; `Ticket Assigned to You 👷`
@@ -127,10 +125,9 @@ A ticket has been assigned to you for resolution.
 
 Please inspect the issue on site and update progress.
 ```
-- **Footer:** `AutoPilot Maintenance`
-- **Button Type:** `Call to Action (Dynamic URL)`
-  - **Button Text:** `Open Ticket`
-  - **URL Type:** `Dynamic` &rarr; `https://fms-dev-saas-one.vercel.app/tickets/{{8}}`
+- **Footer:** `AutoPilot Property Management`
+- **Button Type:** `Call to Action`
+  - **Button Text:** `View Ticket`
 - **Sample Values:**
   - `{{1}}`: `Sunil Kumar`
   - `{{2}}`: `TICK-1042`
@@ -139,7 +136,6 @@ Please inspect the issue on site and update progress.
   - `{{5}}`: `High`
   - `{{6}}`: `Amit Patel`
   - `{{7}}`: `+91 98765 43210`
-  - `{{8}}` *(Button URL Ticket UUID)*: `d35372d1-bee2-403f-8578-00da66f16984`
 
 ---
 
@@ -147,30 +143,27 @@ Please inspect the issue on site and update progress.
 - **Template Name:** `ticket_completed_v1`
 - **Category:** `UTILITY`
 - **Language:** `English (en)`
-- **Header:** `Text` &rarr; `Ticket Resolved & Completed ✅` *(or None)*
+- **Header:** `Text` &rarr; `Ticket Resolved & Completed` *(or None)*
 - **Body:**
 ```text
 Hello {{1}},
 
 Ticket #{{2}} has been marked completed.
 
-📋 Title: {{3}}
+📄 Title: {{3}}
 🏢 Property: {{4}}
-👷 Resolved By: {{5}}
+👤 Resolved By: {{5}}
 
-Click below to verify the completion and rate the service.
+verify the completion and rate the service.
 ```
-- **Footer:** `AutoPilot Quality Assurance`
-- **Button Type:** `Call to Action (Dynamic URL)`
-  - **Button Text:** `Verify & Rate`
-  - **URL Type:** `Dynamic` &rarr; `https://fms-dev-saas-one.vercel.app/tickets/{{6}}`
+- **Footer:** `Autopilot Property Management`
+- **Button Type:** `None`
 - **Sample Values:**
   - `{{1}}`: `Amit Patel`
   - `{{2}}`: `TICK-1042`
   - `{{3}}`: `Main AC cooling leakage in cafeteria`
   - `{{4}}`: `WorkSquare Hub 1`
   - `{{5}}`: `Sunil Kumar (MST)`
-  - `{{6}}` *(Button URL Ticket UUID)*: `d35372d1-bee2-403f-8578-00da66f16984`
 
 ---
 
@@ -185,16 +178,14 @@ Hello {{1}},
 
 Ticket #{{2}} has been marked completed.
 
-📋 Title: {{3}}
+📄 Title: {{3}}
 🏢 Property: {{4}}
-👷 Resolved By: {{5}}
+👤 Resolved By: {{5}}
 
-Click below to verify the completion and rate the service.
+verify the completion and rate the service.
 ```
-- **Footer:** `AutoPilot Quality Assurance`
-- **Button Type:** `Call to Action (Dynamic URL)`
-  - **Button Text:** `Verify & Rate`
-  - **URL Type:** `Dynamic` &rarr; `https://fms-dev-saas-one.vercel.app/tickets/{{6}}`
+- **Footer:** `Autopilot Property Management`
+- **Button Type:** `None`
 - **Sample Values:**
   - `Header Image`: Upload sample repaired equipment photo
   - `{{1}}`: `Amit Patel`
@@ -202,7 +193,6 @@ Click below to verify the completion and rate the service.
   - `{{3}}`: `Main AC cooling leakage in cafeteria`
   - `{{4}}`: `WorkSquare Hub 1`
   - `{{5}}`: `Sunil Kumar (MST)`
-  - `{{6}}` *(Button URL Ticket UUID)*: `d35372d1-bee2-403f-8578-00da66f16984`
 
 ---
 
@@ -995,7 +985,43 @@ Keep up the great work in maintaining site standards!
 
 ## 7. Meeting Room Reservations
 
-### Template 17: `meeting_room_booked_v3`
+### Template 17: `meeting_room_booked_v4` (Recommended)
+- **Template Name:** `meeting_room_booked_v4`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Text` &rarr; `Meeting Room Booking Notice 📅`
+- **Body:**
+```text
+Hello {{1}},
+
+A meeting room reservation has been confirmed.
+
+🚪 Room: {{2}}
+🏢 Property: {{3}}
+📅 Date: {{4}}
+⏰ Time: {{5}} to {{6}}
+👥 Booked By: {{7}} (📞 {{8}})
+
+We look forward to hosting your meeting. Please contact the front desk if you require any assistance.
+```
+- **Footer:** `AutoPilot Hospitality`
+- **Button Type:** `Quick Reply` &rarr; `View Bookings`
+- **Parameters (8):**
+  - `{{1}}`: `user_name` (e.g. `Bhavin` or `Front Desk Team`)
+  - `{{2}}`: `room_name` (e.g. `Executive Boardroom (12 Pax)`)
+  - `{{3}}`: `property` (e.g. `Mafatlal Chambers`)
+  - `{{4}}`: `date` (e.g. `15/10/2026`)
+  - `{{5}}`: `start_time` (e.g. `11:30 AM`)
+  - `{{6}}`: `end_time` (e.g. `12:00 PM`)
+  - `{{7}}`: `booker` (e.g. `Bhavin`)
+  - `{{8}}`: `booker_phone` (e.g. `+91 99676 67347`)
+
+- **Audience:** Dispatched automatically to the **Requester / Booker** (client).
+- **Note:** Contains the polite guest greeting: *"We look forward to hosting your meeting. Please contact the front desk if you require any assistance."*
+
+---
+
+### Template 17 (Staff / Ops & Added Users): `meeting_room_booked_v3`
 - **Template Name:** `meeting_room_booked_v3`
 - **Category:** `UTILITY`
 - **Language:** `English (en)`
@@ -1016,15 +1042,8 @@ Please ensure facilities and refreshments are arranged if requested.
 ```
 - **Footer:** `AutoPilot Hospitality`
 - **Button Type:** `Quick Reply` &rarr; `View Bookings`
-- **Sample Values:**
-  - `{{1}}`: `Front Desk Team`
-  - `{{2}}`: `Executive Boardroom (12 Pax)`
-  - `{{3}}`: `WorkSquare Hub 1`
-  - `{{4}}`: `19/08/2026`
-  - `{{5}}`: `03:00 PM`
-  - `{{6}}`: `04:30 PM`
-  - `{{7}}`: `Pooja Verma (Design Co)`
-  - `{{8}}`: `+91 98200 54321`
+- **Audience:** Dispatched automatically to the **Operations Team / Staff / Property Admins (`roles`)** AND **Specific Individual Users (`+ Add user...`)** to prepare facilities and refreshments.
+- **Note:** Contains the operational directive: *"Please ensure facilities and refreshments are arranged if requested."* to instruct on-site staff to prep the room.
 
 ---
 
@@ -1056,7 +1075,49 @@ The room is now released and available for booking.
   - `{{4}}`: `19/08/2026`
   - `{{5}}`: `03:00 PM`
   - `{{6}}`: `04:30 PM`
-  - `{{7}}`: `Pooja Verma`
+---
+
+### Template 18a: `meeting_room_start_reminder_v1`
+- **Template Name:** `meeting_room_start_reminder_v1`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Text` &rarr; `Upcoming Meeting Reminder`
+- **Body:**
+```text
+Hello {{1}},
+
+This is a reminder that your meeting in {{2}} at {{3}} is scheduled to begin in {{4}} minutes (at {{5}}).
+```
+- **Footer:** None
+- **Buttons:** None
+- **Parameters (5):**
+  - `{{1}}`: `user_name` (e.g. `Meenaa Chavan`)
+  - `{{2}}`: `room_name` (e.g. `Boardroom`)
+  - `{{3}}`: `property` (e.g. `Mafatlal Chambers, Lower Parel`)
+  - `{{4}}`: `remaining_minutes` (e.g. `10`)
+  - `{{5}}`: `start_time` (e.g. `11:00 AM`)
+
+---
+
+### Template 18b: `meeting_room_end_reminder_v1`
+- **Template Name:** `meeting_room_end_reminder_v1`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Text` &rarr; `Meeting Ending Soon`
+- **Body:**
+```text
+Hello {{1}},
+
+This is a reminder that your meeting in {{2}} at {{3}} is scheduled to end in {{4}} minutes (at {{5}}).
+```
+- **Footer:** None
+- **Buttons:** None
+- **Parameters (5):**
+  - `{{1}}`: `user_name` (e.g. `Meenaa Chavan`)
+  - `{{2}}`: `room_name` (e.g. `Boardroom`)
+  - `{{3}}`: `property` (e.g. `Mafatlal Chambers, Lower Parel`)
+  - `{{4}}`: `remaining_minutes` (e.g. `10`)
+  - `{{5}}`: `end_time` (e.g. `01:00 PM`)
 
 ---
 
@@ -1446,5 +1507,207 @@ Thank you for ensuring prompt maintenance service!
   - `{{5}}`: `Sunil Kumar (MST)`
   - `{{6}}` *(Dynamic URL Path)*: `guest-requests`
 
+---
+
+## 11. Task Manager & Bot Operations
+
+All `UTILITY`. Sent **template-only** (never free text first): WhatsApp rejects free text to anyone who has not messaged in
+24 hours ("Re-engagement message"). Every blank is filled on **one line** — Meta rejects line breaks inside a variable, so
+lists use ` | `. Each name can be overridden with the env variable shown (only needed if a template is renamed).
+
+### Which template is used when
+
+| When | Template | Env override |
+|---|---|---|
+| Morning rule (standup — also greets people with no tasks yet) | `task_morning_kickoff_v2` (v1 still works if the env says v1: one blank) | `AISENSY_TASK_MORNING_CAMPAIGN` |
+| Midday / Evening rule | `task_midday_reminder_v1` · `task_eod_summary_v1` | `AISENSY_TASK_MIDDAY_CAMPAIGN` · `AISENSY_TASK_EOD_CAMPAIGN` |
+| **Overdue alert** rule (Notifications tab) — only people with open tasks from earlier days | `task_overdue_alert_v1` | `AISENSY_TASK_OVERDUE_CAMPAIGN` |
+| **Midday rule → managers and superusers** get team progress **only if something is still pending**; **Evening rule → always** (each once a day) | `task_manager_team_digest_v1` | `AISENSY_TASK_TEAM_DIGEST_CAMPAIGN` |
+| A task is assigned (Tasks tab, WhatsApp AI, old Assign tab, "assign …") | `task_assigned_v1` | `AISENSY_TASK_ASSIGNED_CAMPAIGN` |
+| A task is **handed over** ("Give to…") | `task_handover_v1` | `AISENSY_TASK_HANDOVER_CAMPAIGN` |
+| **Any** task someone gave you is completed → the giver | `task_completed_notice_v1` | `AISENSY_TASK_COMPLETED_CAMPAIGN` |
+| A superuser replies to a reminder ("working on it", "stuck", "done") → the giver | `task_update_v2` | `AISENSY_TASK_UPDATE_CAMPAIGN` |
+| A team reminds the superuser about pending tasks | `task_user_mentioned_v1` | `AISENSY_TASK_PING_CAMPAIGN` |
+| Bot health incident / new AI-instruction version waiting → configured admins | `whatsapp_bot_admin_alert_v2` | `AISENSY_BOT_ADMIN_ALERT_CAMPAIGN` |
+
+### Template 27: `whatsapp_bot_admin_alert_v2` (System Incident Alert)
+*(To the bot-alert admins on an apology / AI-failure spike — at most once an hour — and when a new AI-instruction version waits for approval)*
+
+- **Category:** `UTILITY` · **Language:** `English (en)` · **Header:** `Text` &rarr; `System Incident Alert`
+- **Body:**
+```text
+Technical Alert: A system operational incident has been logged.
+
+Incident Details: {{1}}
+
+Please review system telemetry in your administrative console.
+```
+- **Button:** `Open Dashboard`
+- **Params:** `[incidentDetails]` (one line, at most 900 characters)
+
+---
+
+### Template 28: `task_overdue_alert_v1` (Task Overdue Alert)
+*(The "Overdue alert" rule in the Notifications tab. People with nothing overdue are skipped.)*
+
+- **Category:** `UTILITY` · **Language:** `English (en)` · **Header:** `Text` &rarr; `Task Overdue Alert ⚠️`
+- **Body:**
+```text
+Hello {{1}},
+You have {{2}} overdue task(s) requiring your immediate attention:
+📋 Overdue List:
+{{3}}
+Please update your progress or mark them completed today.
+```
+- **Footer:** `AutoPilot Task Management` · **Button:** `Quick Reply` &rarr; `View My Tasks`
+- **Params:** `[firstName, overdueCount, list]` — oldest first, e.g. `1. DG Meter Log (Due: 10 Oct) | 2. Chiller Filter Check (Due: 9 Oct)`
+- **Sample:** `{{1}}` Rahul · `{{2}}` 2 · `{{3}}` `1. DG Meter Log (Due: 10 Oct) | 2. Chiller Filter Check (Due: 09 Oct)`
+
+---
+
+### Template 29: `task_handover_v1` (Task Handed Over)
+*(To the new holder when someone uses "Give to…", on the web or through WhatsApp)*
+
+- **Category:** `UTILITY` · **Language:** `English (en)` · **Header:** `Text` &rarr; `Task Handed Over 🤝`
+- **Body:**
+```text
+Hello {{1}},
+{{2}} has handed over a task to you:
+📋 Task: {{3}}
+📅 Target Date: {{4}}
+Reply "tasks" or tap below to view your task queue.
+```
+- **Footer:** `AutoPilot Task Management` · **Button:** `Quick Reply` &rarr; `View My Tasks`
+- **Params:** `[recipientFirstName, giver (Department), taskTitle, targetDate "12 Oct 2026"]`
+- **Sample:** `{{1}}` Vidya · `{{2}}` Priyanka (Procurement) · `{{3}}` Single Disc Machine Vendor PO Follow-up · `{{4}}` 12 Oct 2026
+
+---
+
+### Template 30: `task_manager_team_digest_v1` (Daily Team Progress Summary)
+*(A reporting manager gets their department, a superuser gets all departments. With the **Midday** rule — only if something in that scope is still pending; with the **Evening** rule — always, in addition to their own evening summary. Once per person per day for each.)*
+
+- **Category:** `UTILITY` · **Language:** `English (en)` · **Header:** `Text` &rarr; `Daily Team Progress Summary 📊`
+- **Body:**
+```text
+Hello {{1}},
+Here is today's task completion summary for {{2}}:
+📅 Date: {{3}}
+👥 Total Members: {{4}}
+✅ Tasks Completed Today: {{5}}
+⏳ Tasks Remaining Pending: {{6}}
+📋 Team Status:
+{{7}}
+Review your full team board on the portal.
+```
+- **Footer:** `AutoPilot Task Intelligence` · **Button:** `Call to Action (Website URL)` &rarr; `Open Team Board` &rarr; `https://autopilotoffices.com/task-manager`
+- **Params:** `[firstName, scope, date, members, completed, pending, statusList]` — scope `Tech Department` or `All Active Departments`;
+  status list e.g. `• Tech: 12/12 Done (100% ✅) | • Ops: 18/20 Done (2 Pending ⏳)` (per person for a manager, per department for a superuser)
+
+---
+
+### Template 31: `task_completed_notice_v1` (Task Completed)
+*(To the person who GAVE the task, for every completion — Tasks tab, WhatsApp, "done 2", old dashboard. Several tasks finished together → one message listing them; at most once an hour per task; not sent when a superuser's "done" reply is already relayed with `task_update_v2`.)*
+
+- **Category:** `UTILITY` · **Language:** `English (en)` · **Header:** `Text` &rarr; `Task Completed ✅`
+- **Body:**
+```text
+Hello {{1}},
+A task you assigned has been completed:
+📋 Task: {{2}}
+👤 Completed By: {{3}} ({{4}})
+⏰ Completed At: {{5}}
+Thank you for keeping team workflows moving!
+```
+- **Footer:** `AutoPilot Task Management` · **Button:** `Quick Reply` &rarr; `View Task Details`
+- **Params:** `[giverFirstName, task(s), completedByName, department, "11 Oct 2026, 04:30 PM" (India time)]`
+
+---
+
+### Template 32: `task_morning_kickoff_v2` (Daily Task Standup)
+*(The Morning rule. Replaces `task_morning_kickoff_v1`. On a rule set to "don't skip people with no tasks" (the morning default) it also greets people with nothing logged yet.)*
+
+- **Category:** `UTILITY` · **Language:** `English (en)` · **Header:** `Text` &rarr; `Daily Task Standup 📋`
+- **Body:**
+```text
+Good morning {{1}}!
+Your Task Manager workspace is open for today ({{2}}).
+{{3}}
+💡 Quick Guide:
+• 🎙️ Send a voice note or text to add or assign tasks
+• Ask "how is my team doing" to check team progress
+• Reply "tasks" to view your board, or "done 1" when finished
+```
+- **Footer:** `AutoPilot Task Manager` · **Button:** `Quick Reply` &rarr; `View My Tasks`
+- **Params:** `[firstName, "12 Oct 2026", summary]` — summary on one line: `You have 3 tasks today: 1. Submit EOD report ⏳ | 2. Call vendor 🔄 | 3. 🔄 Old one ⏳`,
+  or with no tasks: `You have no tasks logged yet. Speak or type your priorities for today to add them to your board.`
+- **Sample:** `{{1}}` Harsh · `{{2}}` 12 Oct 2026 · `{{3}}` You have no tasks logged yet. Speak or type your priorities for today to add them to your board.
 
 
+
+
+---
+
+## 11. Meera — Vendor Discovery Agent
+
+Sent by `backend/lib/satej/clients/whatsapp.ts` through AiSensy. The full ranked
+summary never goes in a template (templates cannot carry new lines); the button
+opens the requirement on the Meera page, where the summary has a copy button.
+Names are configurable with `SATEJ_WA_SUMMARY_TEMPLATE` / `SATEJ_WA_INPUT_TEMPLATE`.
+
+### Template 27: `satej_input_needed_v1` (Meera needs an answer or an approval)
+- **Template Name:** `satej_input_needed_v1`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Text` &rarr; `Vendor discovery: your input`
+- **Body:**
+```text
+Hello {{1}},
+
+Meera needs your input on {{2}} (ref {{3}}):
+
+{{4}}
+
+Open the requirement to continue.
+```
+- **Footer:** `AutoPilot Procurement`
+- **Button Type:** `Call to Action (Dynamic URL)`
+  - **Button Text:** `Open requirement`
+  - **URL Type:** `Dynamic` &rarr; `https://fms-dev-saas-one.vercel.app/{{5}}`
+- **Sample Values:**
+  - `{{1}}`: `Meera`
+  - `{{2}}`: `Gypsum false ceiling, Lower Parel office`
+  - `{{3}}`: `REQ-260928-4821`
+  - `{{4}}`: `12 vendors are ready to call. Please check the list and approve the calls.`
+  - `{{5}}` *(Dynamic URL Path)*: `211e1330-ad83-446d-941f-dcea48396798/meera?req=REQ-260928-4821`
+
+### Template 28: `satej_vendor_summary_v1` (Ranked shortlist is ready)
+- **Template Name:** `satej_vendor_summary_v1`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Text` &rarr; `Vendor shortlist ready`
+- **Body:**
+```text
+Hello {{1}},
+
+Meera has finished vendor discovery for {{2}} (ref {{3}}).
+
+Vendors called: {{4}}
+Qualified: {{5}}
+Top pick: {{6}}
+Last call: {{7}}
+
+The ranked list, call recordings and transcripts are on the Meera page.
+```
+- **Footer:** `AutoPilot Procurement`
+- **Button Type:** `Call to Action (Dynamic URL)`
+  - **Button Text:** `Open shortlist`
+  - **URL Type:** `Dynamic` &rarr; `https://fms-dev-saas-one.vercel.app/{{8}}`
+- **Sample Values:**
+  - `{{1}}`: `Meera`
+  - `{{2}}`: `Gypsum false ceiling, Lower Parel office`
+  - `{{3}}`: `REQ-260928-4821`
+  - `{{4}}`: `6`
+  - `{{5}}`: `3`
+  - `{{6}}`: `Shree Ganesh Interiors (96/100)`
+  - `{{7}}`: `28 Sept 2026, 05:39 pm`
+  - `{{8}}` *(Dynamic URL Path)*: `211e1330-ad83-446d-941f-dcea48396798/meera?req=REQ-260928-4821`

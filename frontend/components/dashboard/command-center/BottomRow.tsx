@@ -239,7 +239,7 @@ export default function BottomRow({
   const mail = mailLive ? mailRows! : MAIL_DIGEST;
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '5fr 3fr 4fr', gap: 16 }}>
+    <div className="cc-band-detail" style={{ display: 'grid', gap: 16 }}>
       {/* 1 — Budget vs Actual */}
       <div className="cc-card">
         <div className="cc-card-head" style={{ marginBottom: 8 }}>
@@ -368,7 +368,7 @@ export default function BottomRow({
           <span className="cc-chip cc-chip--blue">
             <Mail />
           </span>
-          <span className="cc-title">Mail Digest (Top Unresolved)</span>
+          <span className="cc-title" title="Mail Digest (Top Unresolved)">Mail Digest (Top Unresolved)</span>
           <span className="cc-head-meta">
             <SourceTag live={mailLive} />
           </span>

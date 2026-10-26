@@ -66,6 +66,10 @@ export interface TaskTemplate {
     created_by: string | null;
     task_type: TaskType;
     is_active: boolean;
+    /** Personal fixed task: only ever created for this person. Null/absent = the original department-wide fixed task. */
+    owner_id?: string | null;
+    /** Days a fixed task comes back (0 = Sunday ... 6 = Saturday). Default Monday to Saturday. */
+    days_of_week?: number[];
     created_at: string;
     updated_at: string;
     department?: Department | null;
@@ -86,6 +90,13 @@ export interface TaskAssignment {
     employee?: Employee | null;
     template?: TaskTemplate | null;
 }
+
+/**
+ * One line of a person's numbered task list: open tasks from earlier days first (oldest first), then today's tasks.
+ * `listNumber` is the SAME in every message (morning, midday, evening, overdue) and in the bot, so "done 1" always means
+ * the task shown as 1.
+ */
+export type NumberedAssignment = TaskAssignment & { listNumber: number; isCarriedForward?: boolean };
 
 export interface ConversationContext {
     id: string;
@@ -115,3 +126,103 @@ export interface ProgressSummary {
     pending: number;
     percentage: number;
 }
+
+export type NotificationRuleType =
+    | 'morning_digest'       // 09:00 AM: Tasks for today + optional yesterday carry-forward
+    | 'pending_reminder'     // 14:00 PM: Midday reminder for unfinished tasks
+    | 'overdue_alert'        // Escalation for tasks past due date
+    | 'eod_summary';         // 18:30 PM: Daily completion recap & outstanding items
+
+export interface NotificationTaskFilters {
+    includeTodayFixed: boolean;
+    includeTodayAssigned: boolean;
+    includeYesterdayPending: boolean;
+    lookbackDays?: number;       // e.g. 1 = yesterday only, 3 = last 3 days
+    onlyPending?: boolean;       // Ignore completed tasks
+}
+
+export interface CarryForwardSetting {
+    enabled: boolean;   // show unfinished tasks from earlier days at all
+    days: number;       // how many days back, 1–7
+}
+
+export interface NotificationConditions {
+    skipIfZeroTasks: boolean;   // Don't message if 0 tasks match
+    requirePendingOnly?: boolean;// Don't message if user already completed all tasks
+}
+
+export interface NotificationRecipients {
+    target: 'whitelist' | 'tech_all' | 'specific_employees' | 'department';
+    employeeIds?: string[];
+    notifyReportingManager?: boolean;
+}
+
+export interface NotificationCustomTemplate {
+    headerGreeting?: string;       // Custom greeting or header, e.g. "Good morning {{firstName}}! 📋"
+    customMessage?: string;        // Optional announcement or note to prepend
+    footerInstruction?: string;    // Custom quick-action notes
+    includeQuickReplies?: boolean; // Whether to append "done 1", "done all", "tasks" instructions
+}
+
+export interface NotificationRule {
+    id: string;                     // e.g. "rule_morning_digest"
+    name: string;                   // "Morning Task Kickoff"
+    enabled: boolean;               // Master toggle for this specific rule
+    targetTimeIST: string;          // "09:00", "14:30", "18:30"
+    daysOfWeek: number[];           // [1, 2, 3, 4, 5, 6] (1=Mon ... 6=Sat, 0=Sun)
+    ruleType: NotificationRuleType;
+    departmentId?: string | null;   // Phase 5: Optional Department-scope (null/'all' = company-wide or default)
+    ownerUserId?: string | null;    // Personal rule: it only ever reaches this one person (a superuser's own notifications)
+    taskFilters: NotificationTaskFilters;
+    conditions: NotificationConditions;
+    recipients: NotificationRecipients;
+    customTemplate?: NotificationCustomTemplate;
+    lastRunDate?: string | null;    // "2026-10-05"
+    lastRunSummary?: string | null; // Summary string of last run
+    lastManualSendAt?: string | null; // ISO time of the last "Send now" (cooldown against double sends)
+}
+
+
+export interface WhatsAppKillSwitches {
+    globalHalt: boolean;                  // Master emergency switch: true = STOP ALL WHATSAPP MESSAGES
+    haltReason?: string | null;           // Optional reason e.g. "Maintenance or Emergency Stop"
+    haltedAt?: string | null;             // ISO timestamp when halt was engaged
+    haltedBy?: string | null;             // Name or email of who engaged halt
+    departmentHalt?: Record<string, boolean>; // departmentId -> boolean (true = paused)
+    messageTypeHalt?: {
+        morning_digest?: boolean;         // Pause Morning Task Digests
+        pending_reminder?: boolean;       // Pause Midday Progress Reminders
+        eod_summary?: boolean;            // Pause Evening Wrap-up Summaries
+        overdue_alert?: boolean;          // Pause Overdue Alerts
+        manager_kickoff?: boolean;        // Pause Manager Onboarding Kickoffs
+        employee_kickoff?: boolean;       // Pause Employee Onboarding Kickoffs
+    };
+}
+
+export interface TestingConfig {
+    enabled: boolean;
+    manager?: { name: string; phone: string };
+    notifyManager?: boolean;
+    employees?: Array<{ name: string; phone: string }>;
+    cronTiming?: string; // IST time string, e.g. "09:00" (legacy fallback)
+    cronEnabled?: boolean; // Automation master toggle
+    cronLastRunDate?: string | null; // YYYY-MM-DD (legacy fallback)
+    cronLastRunSummary?: string | null; // Last run stats (legacy fallback)
+    rules?: NotificationRule[]; // Multi-rule notification engine
+    killSwitches?: WhatsAppKillSwitches; // Phase 2: Multi-level WhatsApp kill switches
+    nlGatewayEnabled?: boolean; // Step 4: natural-language front door (OFF unless explicitly switched on)
+    whatsappPretendMode?: boolean; // Step 1: when not explicitly false, NO Task Manager WhatsApp message is sent (saved to history only)
+    neverSilentEnabled?: boolean; // Bot plan Phase 1: note each message, apologise when no reply came (OFF unless switched on)
+    conversationMemoryEnabled?: boolean; // Bot plan Phase 2: remember the last 20 messages of each chat for 24 hours (OFF unless switched on)
+    frontDoorEnabled?: boolean; // Bot plan Phase 3: Smart chat exact commands without AI, "undo", no menu when the AI is down (OFF unless switched on)
+    teamReportsEnabled?: boolean; // Bot plan Phase 4: "how is my team doing today?" (OFF unless switched on)
+    learningLoopEnabled?: boolean; // Bot plan Phase 5: capture likely mistakes for admin review
+    promptVersionsEnabled?: boolean; // Bot plan Phase 5: active database prompt sections
+    voiceNotesEnabled?: boolean; // WhatsApp voice notes for everyone using the Task Manager (Task Access panel; OFF unless switched on)
+    nightlyAutoTuneEnabled?: boolean; // Bot plan Phase 5: draft and evaluate prompt candidates after 02:00 IST
+    botAlertAdmins?: Array<{ name: string; phone: string }>;
+    /** Per department (key = department id): show unfinished tasks from earlier days, and how many days back (1–7).
+     *  Applies to the person's numbered list, so to every scheduled message AND the bot's "tasks" list. Missing = on, 7 days. */
+    carryForward?: Record<string, CarryForwardSetting>;
+}
+

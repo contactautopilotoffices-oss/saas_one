@@ -37,7 +37,7 @@ const UserManagement = ({ orgId }: { orgId: string }) => {
         role,
         is_active,
         created_at,
-        users (
+        users!user_id (
           id,
           full_name,
           email

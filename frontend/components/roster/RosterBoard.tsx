@@ -51,7 +51,7 @@ export function RosterBoard({ staff, rosters, configs, year, month, viewDate, on
     const sortedGroups = useMemo(() => {
         const groups: Record<string, StaffMember[]> = {};
         staff.forEach(s => {
-            const desig = s.custom_designation || s.users.designation || s.role || 'Unassigned';
+            const desig = s.custom_designation || s.users?.designation || s.role || 'Unassigned';
             if (!groups[desig]) groups[desig] = [];
             groups[desig].push(s);
         });
@@ -145,7 +145,14 @@ export function RosterBoard({ staff, rosters, configs, year, month, viewDate, on
                     </tr>
                 </thead>
                 <tbody>
-                    {sortedGroups.map(([designation, members]) => (
+                    {sortedGroups.length === 0 ? (
+                        <tr>
+                            <td colSpan={days.length + 1} className="py-12 text-center text-gray-500 font-medium">
+                                No staff members found for this property. Click "+ Add Offline Staff" to get started.
+                            </td>
+                        </tr>
+                    ) : (
+                        sortedGroups.map(([designation, members]) => (
                         <React.Fragment key={designation}>
                             {/* Designation Group Header */}
                             <tr className="bg-gray-200">
@@ -320,7 +327,8 @@ export function RosterBoard({ staff, rosters, configs, year, month, viewDate, on
                                 </tr>
                             ))}
                         </React.Fragment>
-                    ))}
+                    ))
+                )}
                 </tbody>
             </table>
         </div>

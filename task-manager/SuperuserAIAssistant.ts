@@ -139,7 +139,7 @@ export class SuperuserAIAssistant {
     /**
      * Formats clean, executive WhatsApp replies from structured tool output.
      */
-    private static async formatReply(params: {
+    static async formatReply(params: {
         question: string;
         toolUsed: string;
         data: any;

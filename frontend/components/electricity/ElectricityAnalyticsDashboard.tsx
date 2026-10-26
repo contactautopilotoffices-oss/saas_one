@@ -107,11 +107,16 @@ const TabNotice: React.FC<{ title: string; detail?: string; onRetry?: () => void
     </div>
 );
 
+/** Cached data younger than this is shown without refreshing; older data is shown and refreshed in the background. */
+const CACHE_FRESH_MS = 60_000;
+
 const ElectricityAnalyticsDashboard: React.FC<ElectricityAnalyticsDashboardProps> = ({ propertyId: propIdFromProps, orgId, properties = [] }) => {
     const params = useParams();
     const propertyId = propIdFromProps || (params?.propertyId as string);
     const supabase = useMemo(() => createClient(), []);
-    const { getCachedData, setCachedData, invalidateCache } = useDataCache();
+    const { getCachedData, setCachedData } = useDataCache();
+    // Coming back to the tab: start from the last data at once (no loader), then refresh in the background.
+    const initialCached = useMemo(() => getCachedData(`electricity-analytics-${propertyId || orgId}`), []); // eslint-disable-line react-hooks/exhaustive-deps
     const { membership } = useAuth();
 
     // UI State
@@ -127,9 +132,9 @@ const ElectricityAnalyticsDashboard: React.FC<ElectricityAnalyticsDashboardProps
     const [showOCRCenter, setShowOCRCenter] = useState(false);
 
     // Data State
-    const [property, setProperty] = useState<{ name: string } | null>(null);
-    const [meters, setMeters] = useState<ElectricityMeter[]>([]);
-    const [categories, setCategories] = useState<any[]>([]);
+    const [property, setProperty] = useState<{ name: string } | null>(initialCached?.property ?? null);
+    const [meters, setMeters] = useState<ElectricityMeter[]>(initialCached?.meters ?? []);
+    const [categories, setCategories] = useState<any[]>(initialCached?.categories ?? []);
     const [rawReadings, setRawReadings] = useState<{
         today: ElectricityReading[];
         month: ElectricityReading[];
@@ -146,8 +151,8 @@ const ElectricityAnalyticsDashboard: React.FC<ElectricityAnalyticsDashboardProps
     const [pendingDateTo, setPendingDateTo] = useState<string>('');
     const [isCustomRange, setIsCustomRange] = useState(false);
 
-    const [activeTariff, setActiveTariff] = useState<number>(0);
-    const [isLoading, setIsLoading] = useState(true);
+    const [activeTariff, setActiveTariff] = useState<number>(initialCached?.activeTariff ?? 0);
+    const [isLoading, setIsLoading] = useState(!initialCached);
 
     // Bill Tracker State — a second, independent lifecycle. It must NOT share isLoading:
     // that one gates the readings skeleton, and folding the two together would hide the
@@ -184,7 +189,8 @@ const ElectricityAnalyticsDashboard: React.FC<ElectricityAnalyticsDashboardProps
     const canSetTarget = isMasterAdmin || orgRoles.some(r => SUPER_ADMIN_ROLES.includes(r));
 
     // Fetch Initial Data
-    const fetchData = useCallback(async () => {
+    // force = refresh even if the cached data is recent (a reading or tariff was just saved).
+    const fetchData = useCallback(async (force = false) => {
         if (!isValidId(propertyId) && !isValidId(orgId)) return;
         
         const supabase = createClient();
@@ -201,10 +207,11 @@ const ElectricityAnalyticsDashboard: React.FC<ElectricityAnalyticsDashboardProps
             setActiveTariff(cached.activeTariff);
             setRawReadings(cached.rawReadings);
             setIsLoading(false);
-            return;
+            // Fresh enough: done. Older: keep showing it and refresh quietly below (no loader).
+            if (!force && cached.savedAt && Date.now() - cached.savedAt < CACHE_FRESH_MS) return;
+        } else {
+            setIsLoading(true);
         }
-
-        setIsLoading(true);
 
         let metersData: ElectricityMeter[] = [];
         let activeTariffValue = 0;
@@ -212,20 +219,73 @@ const ElectricityAnalyticsDashboard: React.FC<ElectricityAnalyticsDashboardProps
         let propData: { name: string } | null = property;
 
         try {
+            // Property, meters, layout, tariff and readings don't depend on each other: start them all now and read
+            // the answers below in the original order, so state updates and errors behave exactly as before
+            // (performance plan Phase 4). (.then(r => r) starts a Supabase query now; a query builder on its own only
+            // runs when awaited.)
+            const today = new Date().toISOString().split('T')[0];
+            const propertyRequest = isValidId(propertyId)
+                ? supabase.from('properties').select('name').eq('id', propertyId).single().then(result => result)
+                : null;
+            const metersRequest = isValidId(propertyId)
+                ? fetch(`/api/properties/${propertyId}/electricity-meters`)
+                : isValidId(orgId)
+                    ? fetch(`/api/organizations/${orgId}/electricity-meters`)
+                    : null;
+            metersRequest?.catch(() => { /* handled when awaited below */ });
+            const layoutRequest = isValidId(propertyId) ? fetch(`/api/properties/${propertyId}/facility-meters`) : null;
+            layoutRequest?.catch(() => { /* handled when awaited below */ });
+            const tariffRequest = isValidId(propertyId) ? fetch(`/api/properties/${propertyId}/grid-tariffs?date=${today}`) : null;
+            tariffRequest?.catch(() => { /* handled when awaited below */ });
+
+            const readingsBaseUrl = isValidId(propertyId)
+                ? `/api/properties/${propertyId}/electricity-readings`
+                : isValidId(orgId)
+                    ? `/api/organizations/${orgId}/electricity-readings`
+                    : null;
+            let readingsRequest: Promise<ElectricityReading[][]> | null = null;
+            if (readingsBaseUrl) {
+                const getLocalYMD = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                const now = new Date();
+                const dates = {
+                    today: today,
+                    monthStart: getLocalYMD(new Date(now.getFullYear(), now.getMonth(), 1)),
+                    prevMonthStart: getLocalYMD(new Date(now.getFullYear(), now.getMonth() - 1, 1)),
+                    prevMonthEnd: getLocalYMD(new Date(now.getFullYear(), now.getMonth(), 0)),
+                    trendStart: getLocalYMD(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30))
+                };
+
+                const handleFetch = (url: string) => fetch(url).then(r => r.ok ? r.json() : []).catch(() => []);
+                // Today, this month and the trend come from ONE request starting at the earliest of their start dates
+                // (the same date strings as before), split below with those same dates. It returns exactly the rows of
+                // the larger of the old month / trend requests, so no new row-cap risk. Previous month stays separate
+                // (performance plan Phase 5.6).
+                const recentStart = [dates.today, dates.monthStart, dates.trendStart].sort()[0];
+                const asList = (v: unknown): ElectricityReading[] => (Array.isArray(v) ? v : []);
+                const recentTask = handleFetch(`${readingsBaseUrl}?startDate=${recentStart}`);
+                const fetchTasks: Promise<ElectricityReading[]>[] = [
+                    recentTask.then(rows => asList(rows).filter(r => r.reading_date === dates.today)),
+                    recentTask.then(rows => asList(rows).filter(r => r.reading_date >= dates.monthStart)),
+                    handleFetch(`${readingsBaseUrl}?startDate=${dates.prevMonthStart}&endDate=${dates.prevMonthEnd}`),
+                    recentTask.then(rows => asList(rows).filter(r => r.reading_date >= dates.trendStart)),
+                ];
+
+                // If custom range is active, also fetch custom range data
+                if (isCustomRange && dateFrom && dateTo) {
+                    fetchTasks.push(handleFetch(`${readingsBaseUrl}?startDate=${dateFrom}&endDate=${dateTo}`));
+                }
+                readingsRequest = Promise.all(fetchTasks);
+            }
+
             // 1. Property Name
-            if (isValidId(propertyId)) {
-                const { data: fetchedPropData } = await supabase.from('properties').select('name').eq('id', propertyId).single();
+            if (propertyRequest) {
+                const { data: fetchedPropData } = await propertyRequest;
                 propData = fetchedPropData;
                 setProperty(propData);
             }
 
             // 2. Meters
-            let metersRes = null;
-            if (isValidId(propertyId)) {
-                metersRes = await fetch(`/api/properties/${propertyId}/electricity-meters`);
-            } else if (isValidId(orgId)) {
-                metersRes = await fetch(`/api/organizations/${orgId}/electricity-meters`);
-            }
+            const metersRes = metersRequest ? await metersRequest : null;
 
             if (metersRes && metersRes.ok) {
                 metersData = await metersRes.json();
@@ -236,9 +296,9 @@ const ElectricityAnalyticsDashboard: React.FC<ElectricityAnalyticsDashboardProps
 
             // 2.5 Categories (for Sheet/Location mapping)
             let categoriesData: any[] = [];
-            if (isValidId(propertyId)) {
+            if (layoutRequest) {
                 try {
-                    const layoutRes = await fetch(`/api/properties/${propertyId}/facility-meters`);
+                    const layoutRes = await layoutRequest;
                     if (layoutRes.ok) {
                         const layoutData = await layoutRes.json();
                         if (Array.isArray(layoutData)) {
@@ -252,9 +312,8 @@ const ElectricityAnalyticsDashboard: React.FC<ElectricityAnalyticsDashboardProps
             }
 
             // 3. Tariff
-            const today = new Date().toISOString().split('T')[0];
-            if (isValidId(propertyId)) {
-                const tariffRes = await fetch(`/api/properties/${propertyId}/grid-tariffs?date=${today}`);
+            if (tariffRequest) {
+                const tariffRes = await tariffRequest;
                 if (tariffRes && tariffRes.ok) {
                     const t = await tariffRes.json();
                     activeTariffValue = t?.rate_per_unit || 0;
@@ -262,38 +321,9 @@ const ElectricityAnalyticsDashboard: React.FC<ElectricityAnalyticsDashboardProps
                 }
             }
 
-            // 4. Readings (Batch or separate)
-            const readingsBaseUrl = isValidId(propertyId)
-                ? `/api/properties/${propertyId}/electricity-readings`
-                : isValidId(orgId)
-                    ? `/api/organizations/${orgId}/electricity-readings`
-                    : null;
-
-            if (readingsBaseUrl) {
-                const getLocalYMD = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-                const now = new Date();
-                const dates = {
-                    today: today,
-                    monthStart: getLocalYMD(new Date(now.getFullYear(), now.getMonth(), 1)),
-                    prevMonthStart: getLocalYMD(new Date(now.getFullYear(), now.getMonth() - 1, 1)),
-                    prevMonthEnd: getLocalYMD(new Date(now.getFullYear(), now.getMonth(), 0)),
-                    trendStart: getLocalYMD(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30))
-                };
-
-                const handleFetch = (url: string) => fetch(url).then(r => r.ok ? r.json() : []).catch(() => []);
-                const fetchTasks: Promise<ElectricityReading[]>[] = [
-                    handleFetch(`${readingsBaseUrl}?startDate=${dates.today}&endDate=${dates.today}`),
-                    handleFetch(`${readingsBaseUrl}?startDate=${dates.monthStart}`),
-                    handleFetch(`${readingsBaseUrl}?startDate=${dates.prevMonthStart}&endDate=${dates.prevMonthEnd}`),
-                    handleFetch(`${readingsBaseUrl}?startDate=${dates.trendStart}`)
-                ];
-
-                // If custom range is active, also fetch custom range data
-                if (isCustomRange && dateFrom && dateTo) {
-                    fetchTasks.push(handleFetch(`${readingsBaseUrl}?startDate=${dateFrom}&endDate=${dateTo}`));
-                }
-
-                const [todayR, monthR, prevMonthR, trendR, customR] = await Promise.all(fetchTasks);
+            // 4. Readings (Batch or separate) — already started above
+            if (readingsRequest) {
+                const [todayR, monthR, prevMonthR, trendR, customR] = await readingsRequest;
 
                 readingsData = {
                     today: Array.isArray(todayR) ? todayR : [],
@@ -311,7 +341,8 @@ const ElectricityAnalyticsDashboard: React.FC<ElectricityAnalyticsDashboardProps
                 meters: metersData,
                 categories: categoriesData,
                 activeTariff: activeTariffValue || activeTariff,
-                rawReadings: readingsData
+                rawReadings: readingsData,
+                savedAt: Date.now(),
             });
 
         } catch (error) {
@@ -1101,8 +1132,7 @@ const ElectricityAnalyticsDashboard: React.FC<ElectricityAnalyticsDashboardProps
                             <div className="sticky top-0 right-0 z-10 flex justify-end p-4">
                                 <button onClick={() => { 
                                     setShowLogModal(false); 
-                                    invalidateCache(`electricity-analytics-${propertyId || orgId}`);
-                                    fetchData(); 
+                                    fetchData(true); 
                                 }} className="p-2 bg-slate-100 hover:bg-slate-200 rounded-full transition-colors">
                                     <X className="w-5 h-5 text-slate-500" />
                                 </button>
@@ -1120,8 +1150,7 @@ const ElectricityAnalyticsDashboard: React.FC<ElectricityAnalyticsDashboardProps
                     isOpen={showTariffModal}
                     onClose={() => {
                         setShowTariffModal(false);
-                        invalidateCache(`electricity-analytics-${propertyId || orgId}`);
-                        fetchData();
+                        fetchData(true);
                     }}
                     propertyId={propertyId}
                 />

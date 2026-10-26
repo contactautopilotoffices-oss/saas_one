@@ -1,6 +1,8 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { useDataCache } from '@/frontend/context/DataCacheContext';
+import { pickActiveTariffs } from '@/frontend/lib/diesel/activeTariffs';
 import {
     Fuel, Zap, Settings, CheckCircle, Plus,
     AlertTriangle, History, BarChart3, Coins, ArrowLeft, Upload
@@ -63,16 +65,20 @@ const DieselStaffDashboard: React.FC<DieselStaffDashboardProps> = ({ propertyId:
     const router = useRouter();
     const propertyId = propIdFromProps || (params?.propertyId as string);
     const supabase = React.useMemo(() => createClient(), []);
+    // Coming back to the tab: show the last loaded data at once (no loader); fetchData still refreshes it every time.
+    const { getCachedData, setCachedData } = useDataCache();
+    const cacheKey = `tab-diesel-logger-${propertyId}`;
+    const initialCached = React.useMemo(() => (propertyId ? getCachedData(cacheKey) : null), []); // eslint-disable-line react-hooks/exhaustive-deps
 
     // State
     const [viewMode, setViewMode] = useState<'cards' | 'spreadsheet'>(initialViewMode);
-    const [property, setProperty] = useState<Property | null>(null);
-    const [generators, setGenerators] = useState<Generator[]>([]);
+    const [property, setProperty] = useState<Property | null>(initialCached?.property ?? null);
+    const [generators, setGenerators] = useState<Generator[]>(initialCached?.generators ?? []);
     const [readings, setReadings] = useState<Record<string, DieselReading>>({});
-    const [previousClosings, setPreviousClosings] = useState<Record<string, any>>({});
-    const [averages, setAverages] = useState<Record<string, number>>({});
-    const [activeTariffs, setActiveTariffs] = useState<Record<string, any>>({});
-    const [isLoading, setIsLoading] = useState(true);
+    const [previousClosings, setPreviousClosings] = useState<Record<string, any>>(initialCached?.previousClosings ?? {});
+    const [averages, setAverages] = useState<Record<string, number>>(initialCached?.averages ?? {});
+    const [activeTariffs, setActiveTariffs] = useState<Record<string, any>>(initialCached?.activeTariffs ?? {});
+    const [isLoading, setIsLoading] = useState(!initialCached);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [showConfigModal, setShowConfigModal] = useState(false);
     const [showTariffModal, setShowTariffModal] = useState(false);
@@ -91,22 +97,30 @@ const DieselStaffDashboard: React.FC<DieselStaffDashboardProps> = ({ propertyId:
     // Fetch data
     const fetchData = useCallback(async (isInitial = false) => {
         if (!propertyId) return;
-        if (isInitial) setIsLoading(true);
+        if (isInitial && !initialCached) setIsLoading(true);
         setError(null);
 
         try {
-            // Fetch property
-            const { data: propData, error: propError } = await supabase
+            // Property and generators don't depend on each other: start both now, then read the answers in the same
+            // order as before, so errors and state updates behave exactly as they did (performance plan Phase 4).
+            // (.then(r => r) starts the Supabase query now; a query builder on its own only runs when awaited.)
+            const propertyRequest = supabase
                 .from('properties')
                 .select('id, name, code')
                 .eq('id', propertyId)
-                .single();
+                .single()
+                .then(result => result);
+            const generatorsRequest = fetch(`/api/properties/${propertyId}/generators`);
+            generatorsRequest.catch(() => { /* handled when awaited below */ });
+
+            // Fetch property
+            const { data: propData, error: propError } = await propertyRequest;
 
             if (propError) throw propError;
             setProperty(propData);
 
             // Fetch generators
-            const generatorsRes = await fetch(`/api/properties/${propertyId}/generators`);
+            const generatorsRes = await generatorsRequest;
             if (!generatorsRes.ok) throw new Error('Failed to fetch generators');
             const generatorsData = await generatorsRes.json();
             setGenerators(generatorsData);
@@ -114,15 +128,32 @@ const DieselStaffDashboard: React.FC<DieselStaffDashboardProps> = ({ propertyId:
             // Fetch yesterday's readings for opening
             if (generatorsData.length > 0) {
                 const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+                // Readings, averages and tariffs only need the generator list, not each other: start all three now and
+                // read the answers below in the original order (performance plan Phase 4).
+                const monthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+                const today = new Date().toISOString().split('T')[0];
+                const readingsRequest = fetch(`/api/properties/${propertyId}/diesel-readings?limit=100`);
+                readingsRequest.catch(() => { /* handled when awaited below */ });
+                // Tariffs: ONE request for the whole property; each generator's active tariff is picked with the same
+                // rule as get_active_dg_tariff (performance plan Phase 5.1). Errors: no tariff, as before.
+                let tariffs: Record<string, any> = {};
+                const tariffsRequest = (async () => {
+                    try {
+                        const tariffRes = await fetch(`/api/properties/${propertyId}/dg-tariffs`);
+                        if (tariffRes.ok) tariffs = pickActiveTariffs(await tariffRes.json(), today);
+                    } catch (e) {
+                        // Silent fail - no tariff is a valid state
+                    }
+                })();
+
                 // v2 Carry-Forward: Get latest readings for all generators
-                const readingsRes = await fetch(
-                    `/api/properties/${propertyId}/diesel-readings?limit=100`
-                );
+                let readingsData: any[] | null = null;
+                const readingsRes = await readingsRequest;
                 if (readingsRes.ok) {
-                    const readingsData = await readingsRes.json();
+                    readingsData = await readingsRes.json();
 
                     // Sort readings by date and then by creation time to find the newest for each generator
-                    const sortedReadings = [...readingsData].sort((a, b) => {
+                    const sortedReadings = [...(readingsData as any[])].sort((a, b) => {
                         const dateDiff = new Date(b.reading_date).getTime() - new Date(a.reading_date).getTime();
                         if (dateDiff !== 0) return dateDiff;
                         return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
@@ -153,13 +184,17 @@ const DieselStaffDashboard: React.FC<DieselStaffDashboardProps> = ({ propertyId:
                     setPreviousClosings(initialTruth);
                 }
 
-                // Fetch averages
-                const monthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-                const avgRes = await fetch(
-                    `/api/properties/${propertyId}/diesel-readings?startDate=${monthAgo}`
-                );
-                if (avgRes.ok) {
-                    const avgData = await avgRes.json();
+                // Averages over the last 30 days. The readings above are the property's full list, so the 30-day rows are
+                // taken from it instead of a second request (performance plan Phase 5.2). If that list may have been cut
+                // at the 1,000-row cap, fall back to the separate 30-day request so the averages can never change.
+                let avgData: any[] | null = null;
+                if (Array.isArray(readingsData) && readingsData.length < 1000) {
+                    avgData = readingsData.filter((r: any) => typeof r.reading_date === 'string' && r.reading_date >= monthAgo);
+                } else {
+                    const avgRes = await fetch(`/api/properties/${propertyId}/diesel-readings?startDate=${monthAgo}`);
+                    if (avgRes.ok) avgData = await avgRes.json();
+                }
+                if (avgData) {
                     const avgByGen: Record<string, number[]> = {};
                     avgData.forEach((r: any) => {
                         if (!avgByGen[r.generator_id]) avgByGen[r.generator_id] = [];
@@ -174,24 +209,8 @@ const DieselStaffDashboard: React.FC<DieselStaffDashboardProps> = ({ propertyId:
                     setAverages(avgs);
                 }
 
-                // Fetch tariffs for each generator (ignore errors - no tariff is valid state)
-                const today = new Date().toISOString().split('T')[0];
-                const tariffs: Record<string, any> = {};
-                await Promise.all(generatorsData.map(async (gen: Generator) => {
-                    try {
-                        const tariffRes = await fetch(`/api/properties/${propertyId}/dg-tariffs?generatorId=${gen.id}&date=${today}`);
-                        if (tariffRes.ok) {
-                            const t = await tariffRes.json();
-                            if (t && t.id) {
-                                tariffs[gen.id] = t;
-                            }
-                            // If t is null or empty, that's fine - no tariff configured
-                        }
-                        // 500 errors are expected when RPC doesn't exist or no tariff - just skip
-                    } catch (e) {
-                        // Silent fail - no tariff is a valid state
-                    }
-                }));
+                // Tariffs for each generator (ignore errors - no tariff is valid state)
+                await tariffsRequest;
                 setActiveTariffs(tariffs);
             }
         } catch (err: any) {
@@ -199,11 +218,17 @@ const DieselStaffDashboard: React.FC<DieselStaffDashboardProps> = ({ propertyId:
         } finally {
             setIsLoading(false);
         }
-    }, [propertyId, supabase]);
+    }, [propertyId, supabase, initialCached]);
 
     useEffect(() => {
         fetchData(true);
     }, [fetchData]);
+
+    // Keep a copy of what was loaded, for the next visit to this tab (saved once loading has finished).
+    useEffect(() => {
+        if (isLoading || !propertyId || !property) return;
+        setCachedData(cacheKey, { property, generators, previousClosings, averages, activeTariffs });
+    }, [isLoading, propertyId, property, generators, previousClosings, averages, activeTariffs, cacheKey, setCachedData]);
 
     // Handle reading changes
     const handleReadingChange = (generatorId: string, reading: DieselReading) => {

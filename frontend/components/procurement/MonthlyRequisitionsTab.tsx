@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { createClient } from '@/frontend/utils/supabase/client';
 import {
     FileText, Upload, CheckCircle2, Clock, Download, Filter,
@@ -13,10 +13,13 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ModalPortal from '../ui/ModalPortal';
 import SiteRequisitionSheet from './SiteRequisitionSheet';
 import ApproverRequisitionModal from './ApproverRequisitionModal';
+import { siteVendorQuotation, siteEstimatedAmount } from '@/backend/lib/procurement/requisition-approval.mjs';
+
 import PropertyBudgetManagerModal from './PropertyBudgetManagerModal';
 import BulkApproverUploadModal from './BulkApproverUploadModal';
 import MonthlyFeedbackFormModal from './MonthlyFeedbackFormModal';
 import { SHOW_LEGACY_PER_PROPERTY_CONTROLS } from './procurementFeatureFlags';
+import RequisitionApproverSelect, { type RequisitionApprover } from './RequisitionApproverSelect';
 
 interface Property {
     id: string;
@@ -77,7 +80,11 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
     const [hasPropertyMembershipAdmin, setHasPropertyMembershipAdmin] = useState(false);
     const [requisitions, setRequisitions] = useState<MonthlyRequisition[]>([]);
     const [properties, setProperties] = useState<Property[]>([]);
-    const [approverUsers, setApproverUsers] = useState<any[]>([]);
+    const [approverUsers, setApproverUsers] = useState<RequisitionApprover[]>([]);
+    const [approversLoading, setApproversLoading] = useState(false);
+    const [approversError, setApproversError] = useState('');
+    const approverRequest = useRef(0);
+    const approverOrganizationId = organizationId || user?.user_metadata?.organization_id || '';
     const [isLoading, setIsLoading] = useState(true);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [viewMode, setViewMode] = useState<'list' | 'create_sheet'>('list');
@@ -252,27 +259,34 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
         }
     }, [supabase, organizationId, propertyId, user?.id, isSuperAdmin, isProcurementRole]);
 
-    // Load Approvers (Admins & Directors)
+    // Load eligible approvers through an organization-authorized server lookup.
     const fetchApprovers = useCallback(async () => {
-        try {
-            if (!organizationId) return;
-            const { data: members } = await supabase
-                .from('organization_memberships')
-                .select('user:users!user_id(id, full_name, email, phone), role')
-                .eq('organization_id', organizationId)
-                .in('role', ['org_super_admin', 'master_admin', 'org_admin', 'property_admin'])
-                .eq('is_active', true);
-
-            if (members) {
-                const usersList = members.map((m: any) => m.user).filter(Boolean);
-                const uniqueUsers = Array.from(new Map(usersList.map((u: any) => [u.id, u])).values());
-                setApproverUsers(uniqueUsers);
-                setSelectedApproverId(prev => prev || uniqueUsers[0]?.id || '');
-            }
-        } catch (e) {
-            console.error('Failed to fetch approvers:', e);
+        const requestId = ++approverRequest.current;
+        setApproverUsers([]);
+        setApproversError('');
+        if (!approverOrganizationId) {
+            setSelectedApproverId('');
+            setApproversLoading(false);
+            setApproversError('Select an organization to load approvers.');
+            return;
         }
-    }, [supabase, organizationId]);
+        setApproversLoading(true);
+        try {
+            const response = await fetch(`/api/procurement/requisitions/approvers?organization_id=${encodeURIComponent(approverOrganizationId)}`, { cache: 'no-store' });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || 'Could not load approvers.');
+            if (requestId !== approverRequest.current) return;
+            const users: RequisitionApprover[] = data.approvers || [];
+            setApproverUsers(users);
+            setSelectedApproverId(prev => users.some(user => user.id === prev) ? prev : '');
+        } catch (error) {
+            if (requestId !== approverRequest.current) return;
+            setSelectedApproverId('');
+            setApproversError(error instanceof Error ? error.message : 'Could not load approvers. Please retry.');
+        } finally {
+            if (requestId === approverRequest.current) setApproversLoading(false);
+        }
+    }, [approverOrganizationId]);
 
     // Load Requisitions without jarring skeleton flicker
     const fetchRequisitions = useCallback(async (showSkeleton: boolean = false) => {
@@ -329,6 +343,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
     const handleVendorQuotationSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!vendorQuoteModalReq) return;
+        if (approversLoading || approversError || !approverUsers.some(user => user.id === selectedApproverId)) return;
 
         setIsSubmittingVendorQuote(true);
         try {
@@ -376,7 +391,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
             formData.append('action', 'issue_po');
             formData.append('po_number', poNumber.trim());
             formData.append('vendor_name', poVendorName.trim() || issuePoModalReq.vendor_quotation?.vendor_name || 'Selected Vendor');
-            formData.append('total_po_amount', poAmount || String(issuePoModalReq.vendor_quotation?.total_quoted_amount || issuePoModalReq.total_estimated_amount || 0));
+            formData.append('total_po_amount', poAmount || String(siteVendorQuotation(issuePoModalReq)?.total_quoted_amount ?? siteEstimatedAmount(issuePoModalReq)));
             formData.append('expected_delivery_date', poExpectedDeliveryDate);
             formData.append('po_notes', poNotes);
             if (poFile) {
@@ -455,6 +470,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
         const effectiveOrgId = organizationId || user?.user_metadata?.organization_id || (properties[0] as any)?.organization_id || '';
         return (
             <SiteRequisitionSheet
+                key={`${user?.id}:${effectiveOrgId}`}
                 user={user}
                 organizationId={effectiveOrgId}
                 properties={properties}
@@ -807,7 +823,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                 {filteredRequisitions.map(req => {
                                     const monthName = MONTH_NAMES[req.requisition_month - 1] || req.requisition_month;
                                     const itemsCount = req.total_items_count || req.items?.length || 0;
-                                    const totalAmount = req.vendor_quotation?.total_quoted_amount || req.total_estimated_amount || 0;
+                                    const totalAmount = siteEstimatedAmount(req);
 
                                     return (
                                         <tr key={req.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-700/30 transition-colors">
@@ -922,7 +938,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                                             onClick={() => {
                                                                 setVendorQuoteModalReq(req);
                                                                 setVendorName(req.vendor_quotation?.vendor_name || '');
-                                                                setVendorQuotedAmount(req.vendor_quotation?.total_quoted_amount?.toString() || req.total_estimated_amount?.toString() || '');
+                                                                setVendorQuotedAmount(String(siteVendorQuotation(req)?.total_quoted_amount ?? siteEstimatedAmount(req)));
                                                             }}
                                                             className="inline-flex items-center gap-1.5 h-8 px-3 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold whitespace-nowrap transition-all shadow-xs shrink-0 cursor-pointer"
                                                         >
@@ -938,7 +954,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                                                 setIssuePoModalReq(req);
                                                                 setPoNumber(`PO-${req.requisition_year}-${String(Math.floor(1000 + Math.random() * 9000))}`);
                                                                 setPoVendorName(req.vendor_quotation?.vendor_name || '');
-                                                                setPoAmount(req.vendor_quotation?.total_quoted_amount?.toString() || req.total_estimated_amount?.toString() || '');
+                                                                setPoAmount(String(siteVendorQuotation(req)?.total_quoted_amount ?? siteEstimatedAmount(req)));
                                                                 setPoExpectedDeliveryDate('');
                                                                 setPoNotes('');
                                                                 setPoFile(null);
@@ -1038,18 +1054,9 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                     <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                                         Select Designated Approver <span className="text-red-500">*</span>
                                     </label>
-                                    <select
-                                        value={selectedApproverId}
-                                        onChange={e => setSelectedApproverId(e.target.value)}
-                                        required
-                                        className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-sky-500"
-                                    >
-                                        {approverUsers.map(u => (
-                                            <option key={u.id} value={u.id}>
-                                                {u.full_name || u.email} ({u.email})
-                                            </option>
-                                        ))}
-                                    </select>
+                                    <RequisitionApproverSelect approvers={approverUsers} value={selectedApproverId}
+                                        onChange={setSelectedApproverId} loading={approversLoading}
+                                        error={approversError} onRetry={fetchApprovers} />
                                 </div>
 
                                 <div>
@@ -1087,7 +1094,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                     </button>
                                     <button
                                         type="submit"
-                                        disabled={isSubmittingVendorQuote}
+                                        disabled={isSubmittingVendorQuote || approversLoading || !!approversError || !selectedApproverId}
                                         className="h-9 px-4.5 inline-flex items-center gap-1.5 rounded-xl text-xs font-black text-white bg-sky-600 hover:bg-sky-700 shadow-md shadow-sky-600/20 transition-all disabled:opacity-50 cursor-pointer"
                                     >
                                         {isSubmittingVendorQuote ? (
@@ -1140,7 +1147,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                 <div className="p-3.5 bg-emerald-50 dark:bg-emerald-950/30 rounded-2xl border border-emerald-200 dark:border-emerald-800/40 text-xs">
                                     <span className="font-bold text-emerald-800 dark:text-emerald-300 block mb-0.5">Approved Requisition</span>
                                     <p className="text-emerald-700 dark:text-emerald-400">
-                                        Approved for ₹{Number(issuePoModalReq.vendor_quotation?.total_quoted_amount || issuePoModalReq.total_estimated_amount || 0).toLocaleString('en-IN')}. Issuing the PO will notify site staff via WhatsApp & Email.
+                                        Approved for ₹{Number(siteVendorQuotation(issuePoModalReq)?.total_quoted_amount ?? siteEstimatedAmount(issuePoModalReq)).toLocaleString('en-IN')}. Issuing the PO will notify site staff via WhatsApp & Email.
                                     </p>
                                 </div>
 
@@ -1285,7 +1292,10 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                 onClose={() => setShowBulkApprovalModal(false)}
                 requisitions={requisitions}
                 approvers={approverUsers}
-                organizationId={organizationId || ''}
+                approversLoading={approversLoading}
+                approversError={approversError}
+                onRetryApprovers={fetchApprovers}
+                organizationId={approverOrganizationId}
                 currentUser={user}
                 onSuccess={() => {
                     fetchRequisitions();

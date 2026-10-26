@@ -170,7 +170,7 @@ export async function parseDocument(fileBytes: Buffer, mimeType: string, signedU
     return { extracted, text: text || null, payload: { ...result.payload, field_confidence: extracted.fieldConfidence } };
 }
 
-async function extractPdfText(pdfBytes: Buffer): Promise<string> {
+export async function extractPdfText(pdfBytes: Buffer): Promise<string> {
     const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
     const doc = await pdfjs.getDocument({
         data: new Uint8Array(pdfBytes),

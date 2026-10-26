@@ -7,6 +7,7 @@ import { Menu } from "lucide-react";
 import { ContextBar } from "@/frontend/components/layout/ContextBar";
 import DashboardSidebar, { MobileHeader } from "@/frontend/components/layout/DashboardSidebar";
 import Loader from "@/frontend/components/ui/Loader";
+import PettyCashShell from '@/frontend/components/layout/PettyCashShell';
 import ModuleSwitch from "@/frontend/components/layout/ModuleSwitch";
 import { isBdSuperAdmin } from "@/frontend/constants/bdSuperAdmins";
 import CrmBackground, { useWallpaper, crmThemeVars, useIsDark } from "@/frontend/components/ui/CrmBackground";
@@ -85,14 +86,15 @@ export default function DashboardLayout({
     }
 
     const isFullDashboard = pathname?.endsWith('/dashboard');
+    const isPettyCashWorkspace = !!pathname && /\/petty-cash(\/|$)/.test(pathname);
     // The Accounts (Finance) workspace renders its OWN chrome via its nested
     // layout — same pattern as the FMS dashboard — so skip the shared sidebar.
-    const isAccountsWorkspace = !!pathname && /\/(accounts|petty-cash|aop)(\/|$)/.test(pathname);
+    const isAccountsWorkspace = !!pathname && /\/(accounts|aop)(\/|$)/.test(pathname);
 
-    if (isFullDashboard) {
+    if (isFullDashboard || isPettyCashWorkspace) {
         // FMS dashboard renders its own chrome (no shared sidebar) — still surface
         // the CRM⇄FMS switch for BD Super Admins.
-        return <>{children}<ModuleSwitch /></>;
+        return <><PettyCashShell>{isPettyCashWorkspace ? children : undefined}</PettyCashShell><ModuleSwitch /></>;
     }
 
     if (isAccountsWorkspace) {

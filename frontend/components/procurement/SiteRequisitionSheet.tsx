@@ -7,11 +7,14 @@ import {
     MapPin, IndianRupee, ShieldAlert, Coffee, X, Search
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useRequisitionDraft } from '@/frontend/hooks/useRequisitionDraft';
+import { draftPeriodKey } from '@/frontend/lib/requisitionDrafts';
+import type { DraftPayload } from '@/frontend/lib/requisitionDrafts';
 import ModalPortal from '../ui/ModalPortal';
 
 export interface RequisitionRow {
     id: string;
-    category: 'HK' | 'Beverages' | 'Technical' | 'General';
+    category: string;
     name: string;
     brand: string;
     details: string; // color, size
@@ -114,6 +117,24 @@ export default function SiteRequisitionSheet({
 
     // Initialize rows
     const [items, setItems] = useState<RequisitionRow[]>([]);
+    const [catalogScope, setCatalogScope] = useState('');
+    const [catalogError, setCatalogError] = useState('');
+    const [catalogRetry, setCatalogRetry] = useState(0);
+    const draftOrgId = organizationId || resolvedOrgId;
+    const restoreDraft = useCallback((draft: DraftPayload) => {
+        setFloorTag(draft.floorTag);
+        setRequisitionMonth(draft.month);
+        setRequisitionYear(draft.year);
+        setSiteNotes(draft.siteNotes);
+        setItems(current => draft.items.map(row => {
+            const catalog = current.find(item => item.id === row.id);
+            return catalog ? { ...row, unit_price: catalog.unit_price } : row;
+        }));
+    }, []);
+    const draftPayload = { floorTag, month: requisitionMonth, year: requisitionYear, siteNotes, items };
+    const draft = useRequisitionDraft({ userId: user?.id || '', orgId: draftOrgId, propertyId: selectedPropertyId,
+        ready: !isLoadingItems && catalogScope === `${user?.id}:${draftOrgId}:${selectedPropertyId}`,
+        payload: draftPayload, onRestore: restoreDraft });
 
     // Automatically sync selectedPropertyId when initialPropertyId or properties prop updates
     useEffect(() => {
@@ -208,12 +229,15 @@ export default function SiteRequisitionSheet({
     // the per-property stock rows have been reconciled (see
     // docs/MONTHLY_REQUISITION_STANDARD_CATALOG_PLAN.md §6).
     useEffect(() => {
+        let cancelled = false;
         const fetchSiteData = async () => {
             const org = organizationId || resolvedOrgId;
             if (!org || !selectedPropertyId) return;
             setIsLoadingItems(true);
+            setCatalogError('');
             try {
                 const res = await fetch(`/api/procurement/pricing?organization_id=${org}&property_id=${selectedPropertyId}`);
+                if (!res.ok) throw new Error('Could not load the item list');
                 const data = await res.json();
                 const siteCatalogList: any[] = Array.isArray(data.items) ? data.items : [];
 
@@ -230,15 +254,23 @@ export default function SiteRequisitionSheet({
                     is_site_specific: !!catItem.is_site_specific
                 }));
 
+                if (cancelled) return;
                 setItems(populatedRows);
+                setSiteNotes('');
+                setFloorTag('All Floors');
+                setRequisitionMonth(new Date().getMonth() + 1);
+                setRequisitionYear(new Date().getFullYear());
+                setCatalogScope(`${user?.id}:${org}:${selectedPropertyId}`);
             } catch (err) {
                 console.error('Failed to load the standard item list:', err);
+                if (!cancelled) setCatalogError('Could not load the item list. Your saved drafts have not been changed.');
             } finally {
-                setIsLoadingItems(false);
+                if (!cancelled) setIsLoadingItems(false);
             }
         };
         fetchSiteData();
-    }, [organizationId, resolvedOrgId, selectedPropertyId]);
+        return () => { cancelled = true; };
+    }, [user?.id, organizationId, resolvedOrgId, selectedPropertyId, catalogRetry]);
 
     const grandTotalEstimated = useMemo(() => {
         return items.reduce((acc, row) => acc + ((Number(row.requested_qty) || 0) * (Number(row.unit_price) || 0)), 0);
@@ -417,6 +449,7 @@ export default function SiteRequisitionSheet({
 
         // Clean items list ensuring valid item objects
         const submitItems = items.filter(i => i.name && i.name.trim().length > 0);
+        const submittedDraft = structuredClone(draftPayload);
 
         isSubmittingRef.current = true;
         setIsSubmitting(true);
@@ -443,6 +476,8 @@ export default function SiteRequisitionSheet({
                 throw new Error(data.error || 'Failed to submit requisition');
             }
 
+            await draft.clearAfterSubmit(submittedDraft);
+
             if (isOverBudget) {
                 alert(`⚠️ Requisition for ${selectedProperty?.name || 'Property'} (${floorTag}) submitted with Over-Budget Flag (+₹${excessBudgetAmount.toLocaleString('en-IN')}). Procurement & Approvers have been notified.`);
             } else {
@@ -462,7 +497,8 @@ export default function SiteRequisitionSheet({
     };
 
     return (
-        <div className="bg-slate-50 min-h-screen pb-20">
+        <fieldset disabled={isSubmitting || (!catalogError && (isLoadingItems || draft.isLoadingDraft))}
+            className="bg-slate-50 min-h-screen pb-20 min-w-0">
             <div className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
                 <div className="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-4">
                     <div className="flex items-center gap-3">
@@ -476,6 +512,14 @@ export default function SiteRequisitionSheet({
                     </div>
 
                     <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => { void draft.save(); }}
+                            disabled={isSubmitting || isLoadingItems || draft.isLoadingDraft || draft.isSaving}
+                            className="h-9 px-3.5 inline-flex items-center gap-1.5 rounded-xl text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50"
+                        >
+                            {draft.isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                            {draft.isSaving ? 'Saving…' : draft.drafts.length ? 'Save Changes' : 'Save Draft'}
+                        </button>
                         {onCancel && (
                             <button
                                 onClick={onCancel}
@@ -499,7 +543,7 @@ export default function SiteRequisitionSheet({
                         </button>
                         <button
                             onClick={() => handleSubmitRequisition(false)}
-                            disabled={isSubmitting || isDownloading}
+                            disabled={isSubmitting || isDownloading || isLoadingItems || draft.isLoadingDraft}
                             className="h-9 px-4.5 inline-flex items-center gap-1.5 rounded-xl text-xs font-black text-white bg-emerald-600 hover:bg-emerald-700 shadow-md shadow-emerald-600/20 transition-all disabled:opacity-50 cursor-pointer"
                         >
                             {isSubmitting ? (
@@ -513,7 +557,25 @@ export default function SiteRequisitionSheet({
                 </div>
             </div>
 
-            <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+            {(draft.isLoadingDraft || isLoadingItems) && <div role={catalogError ? 'alert' : 'status'} className="max-w-7xl mx-auto px-4 py-6 text-sm text-slate-700">
+                {catalogError || 'Loading items and saved draft…'}
+                {catalogError && <button type="button" onClick={() => setCatalogRetry(value => value + 1)} className="ml-3 font-bold underline">Retry</button>}
+            </div>}
+            <div className="max-w-7xl mx-auto px-4 py-6 space-y-6" hidden={draft.isLoadingDraft || isLoadingItems}>
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm">
+                    <p role="status" className="text-emerald-900">{draft.status || 'Loading draft…'} Your draft is private and is not sent to procurement until you submit.</p>
+                    {draft.status.includes('another session') && <button type="button" className="font-bold underline"
+                        onClick={() => { if (confirm('Replace these edits with the latest online draft?')) void draft.reloadSaved(); }}>
+                        Reload saved version
+                    </button>}
+                    {draft.drafts.length > 0 && <select aria-label="Resume saved draft" value="" disabled={isSubmitting || draft.isLoadingDraft}
+                        onChange={event => draft.restore(event.target.value)} className="rounded-lg border border-emerald-200 bg-white px-3 py-2">
+                        <option value="">Resume saved draft…</option>
+                        {draft.drafts.map(row => <option key={draftPeriodKey(row.payload)} value={draftPeriodKey(row.payload)}>
+                            {MONTH_NAMES[row.payload.month - 1]} {row.payload.year} — {row.payload.floorTag}
+                        </option>)}
+                    </select>}
+                </div>
                 <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4">
                     <div>
                         <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1">Center / Property</label>
@@ -1098,6 +1160,6 @@ export default function SiteRequisitionSheet({
                 </div>
             )}
             </ModalPortal>
-        </div>
+        </fieldset>
     );
 }

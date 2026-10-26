@@ -61,15 +61,17 @@ function decryptWhatsAppMedia(encryptedBuffer: Buffer, mediaKeyBase64: string, m
     return Buffer.concat([decipher.update(encData), decipher.final()]);
 }
 
-async function uploadMediaToStorage(mediaUrl: string, ticketId: string, mediaKeyBase64?: string): Promise<string | null> {
+async function uploadMediaToStorage(mediaUrl: string, ticketId: string, mediaKeyBase64?: string, preloaded?: Buffer): Promise<string | null> {
     try {
-        const res = await fetch(mediaUrl);
-        if (!res.ok) {
-            console.error('[WA WEBHOOK] Failed to download media:', res.status);
-            return null;
+        let encryptedBuffer = preloaded;
+        if (!encryptedBuffer) {
+            const res = await fetch(mediaUrl);
+            if (!res.ok) {
+                console.error('[WA WEBHOOK] Failed to download media:', res.status);
+                return null;
+            }
+            encryptedBuffer = Buffer.from(await res.arrayBuffer());
         }
-
-        const encryptedBuffer = Buffer.from(await res.arrayBuffer());
         let rawBuffer: Buffer;
         if (mediaKeyBase64) {
             rawBuffer = decryptWhatsAppMedia(encryptedBuffer, mediaKeyBase64);
@@ -189,7 +191,7 @@ export async function processIncomingMessage(
     isVideo = false,
     forcedPropertyId: string | null = null,
     waMessageId: string | null = null,
-    processingOptions: { userId?: string; requestId?: string; suppressReply?: boolean; throwOnError?: boolean } = {},
+    processingOptions: { userId?: string; requestId?: string; suppressReply?: boolean; throwOnError?: boolean; skipTaskRouting?: boolean; mediaBuffer?: Buffer; interpreterInputHash?: string } = {},
 ) {
     const sendReply = (options: WhatsAppOptions) => {
         if (!processingOptions.suppressReply) WhatsAppService.send(senderPhone, options);
@@ -226,13 +228,10 @@ export async function processIncomingMessage(
         }
 
         // ── Task Manager Interceptor: handle employee task actions ──────────
-        const { TaskMessageRouter } = await import('@/task-manager/TaskMessageRouter');
-        const routeResult = await TaskMessageRouter.routeInboundMessage({
-            phone: senderPhone,
-            text: messageText,
-        });
-        if (routeResult.handledByTaskManager) {
-            return;
+        if (!processingOptions.skipTaskRouting) {
+            const { TaskMessageRouter } = await import('@/task-manager/TaskMessageRouter');
+            const routeResult = await TaskMessageRouter.routeInboundMessage({ phone: senderPhone, text: messageText });
+            if (routeResult.handledByTaskManager) return;
         }
 
         // Resolve active memberships across all organizations, including ops super admins.
@@ -419,11 +418,16 @@ export async function processIncomingMessage(
                 confidence_score: resolution.llmResult ? 90 : 100,
                 wa_message_id: waMessageId,
                 ...(processingOptions.requestId ? { wa_assistant_request_id: processingOptions.requestId } : {}),
+                ...(processingOptions.interpreterInputHash ? { wa_assistant_input_hash: processingOptions.interpreterInputHash } : {}),
             })
             .select('*')
             .single();
 
         const ticket = createdTicket;
+        // Pilot retries resume the persisted ticket; they must not reassign it or
+        // reset escalation after a later delivery/completion-marker failure.
+        const resumedPilot = !!processingOptions.interpreterInputHash && !!existingTicket;
+        const needsAssignment = !resumedPilot || (ticket?.status === 'open' && !ticket.assigned_to);
 
         if (insertError || !ticket) {
             if (processingOptions.throwOnError) throw insertError || new Error('Ticket creation failed');
@@ -436,7 +440,7 @@ export async function processIncomingMessage(
 
         let photoUrl: string | null = ticket.photo_before_url || null;
         if (mediaUrl && isImage && !photoUrl) {
-            photoUrl = await uploadMediaToStorage(mediaUrl, ticket.id, mediaKey ?? undefined);
+            photoUrl = await uploadMediaToStorage(mediaUrl, ticket.id, mediaKey ?? undefined, processingOptions.mediaBuffer);
             if (!photoUrl && processingOptions.throwOnError) throw new Error('Ticket photo upload failed');
             if (photoUrl) {
                 const photoUpdate = await supabaseAdmin
@@ -479,7 +483,7 @@ export async function processIncomingMessage(
             defaultHierarchy = orgWide;
         }
 
-        if (defaultHierarchy) {
+        if (defaultHierarchy && (!resumedPilot || !ticket.hierarchy_id)) {
             await supabaseAdmin
                 .from('tickets')
                 .update({
@@ -490,14 +494,14 @@ export async function processIncomingMessage(
                 .eq('id', ticket.id);
         }
 
-        try {
+        if (needsAssignment) try {
             const { processIntelligentAssignment } = await import('@/backend/lib/ticketing/assignment');
             await processIntelligentAssignment(
                 supabaseAdmin,
                 [{ 
                     id: ticket.id, 
                     property_id: propertyId, 
-                    skill_group_code: skill_group,
+                    skill_group_code: resumedPilot ? (ticket.skill_group_code || skill_group) : skill_group,
                     title: ticket.title,
                     description: ticket.description
                 }],

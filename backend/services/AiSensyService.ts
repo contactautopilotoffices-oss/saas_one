@@ -1,4 +1,6 @@
 import { campaignOptions } from '../lib/whatsapp/assistant/templates.mjs';
+import { providerIds } from '../lib/whatsapp/interpreter/delivery.mjs';
+import { sanitizeWhatsAppParam } from '../lib/whatsapp/sanitize';
 
 const AISENSY_API_URL = 'https://backend.aisensy.com/campaign/t1/api/v2';
 
@@ -9,12 +11,17 @@ export interface AiSensyTemplateOptions {
     userName?: string;
     mediaUrl?: string;
     mediaFilename?: string;
+    /** Value for an authentication template's copy-code button (the OTP itself). */
+    copyCode?: string;
 }
 
 export interface AiSensySendResult {
     success: boolean;
     error?: string;
+    ambiguous?: boolean;
+    providerReference?: string;
     retryable?: boolean;
+    messageIds?: string[];
 }
 
 export class AiSensyService {
@@ -61,12 +68,15 @@ export class AiSensyService {
         }
 
         try {
-            const bodyPayload: { apiKey: string; campaignName: string; destination: string; userName: string; templateParams: string[]; source: string; media?: { url: string; filename: string } } = {
+            const sanitizedParams = (options.templateParams || []).map(p => sanitizeWhatsAppParam(p));
+            const userName = sanitizeWhatsAppParam(options.userName ?? 'User');
+
+            const bodyPayload: { apiKey: string; campaignName: string; destination: string; userName: string; templateParams: string[]; source: string; media?: { url: string; filename: string }; buttons?: unknown[] } = {
                 apiKey,
                 campaignName: options.campaignName,
                 destination,
-                userName: options.userName ?? 'User',
-                templateParams: options.templateParams,
+                userName,
+                templateParams: sanitizedParams,
                 source: 'autopilot-fms',
             };
 
@@ -75,6 +85,16 @@ export class AiSensyService {
                     url: options.mediaUrl,
                     filename: options.mediaFilename || 'ticket_attachment.jpg'
                 };
+            }
+
+            if (options.copyCode) {
+                // Meta sends the copy-code button of an authentication template as a URL-type button parameter.
+                bodyPayload.buttons = [{
+                    type: 'button',
+                    sub_type: 'url',
+                    index: 0,
+                    parameters: [{ type: 'text', text: options.copyCode }],
+                }];
             }
 
             console.info('[AiSensy] Sending campaign', {
@@ -96,12 +116,14 @@ export class AiSensyService {
 
             if (!res.ok) {
                 console.error(`[AiSensy] ❌ Campaign "${options.campaignName}" failed — Status: ${res.status}`, responseText);
-                return { success: false, error: `AiSensy HTTP ${res.status}: ${responseText}`,
+                return { success: false, ambiguous: res.status >= 500, error: `AiSensy HTTP ${res.status}: ${responseText}`,
                     retryable: !(res.status >= 400 && res.status < 500 && ![408, 409, 425, 429].includes(res.status)) };
             }
 
+            let messageIds: string[] = [];
             try {
                 const parsed = JSON.parse(responseText);
+                messageIds = providerIds(parsed);
                 if (parsed.success === false) {
                     console.error(`[AiSensy] ❌ Campaign "${options.campaignName}" API error:`, parsed.message || 'unknown');
                     const error = typeof parsed.message === 'string' ? parsed.message : 'AiSensy API returned failure';
@@ -112,10 +134,10 @@ export class AiSensyService {
                 // Non-JSON response — treat as success if HTTP was ok
             }
 
-            return { success: true };
+            return { success: true, ...(messageIds.length ? { messageIds, providerReference: messageIds[0] } : {}) };
         } catch (err: unknown) {
             console.error('[AiSensy] ❌ Network error:', err);
-            return { success: false, error: err instanceof Error ? err.message : 'Network error' };
+            return { success: false, ambiguous: true, error: err instanceof Error ? err.message : 'Network error' };
         }
     }
 }

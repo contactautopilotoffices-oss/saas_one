@@ -48,6 +48,8 @@ interface AccountsPayload {
     align: { total_count: number; total_value: number; critical_count: number };
     complete: { total_count: number; total_value: number };
   };
+  /** Which queues the caller may action. The queue lists come back empty when they can't. */
+  can?: { align: boolean; complete: boolean };
 }
 
 interface MrPayload {
@@ -96,6 +98,16 @@ export interface PoStats {
   pipelineValue: string;
   pipelinePct: number;
   completedThisMonth: number;
+  /* Added for the clearer Purchase Orders card (USE_CLEAR_MR_PO in IntelligenceRow.tsx). */
+  /** totals.po_value this month, compact ₹. */
+  monthValue: string;
+  /** buckets.completed.value this month, compact ₹. */
+  completedValue: string;
+  /** queue.align.total_count — ALL-TIME open POs waiting for payment alignment. null = not in the caller's queue. */
+  alignCount: number | null;
+  alignCritical: number | null;
+  /** queue.complete.total_count — aligned payments waiting for UTR / payment. null = not in the caller's queue. */
+  completeCount: number | null;
 }
 
 export interface MrStats {
@@ -103,11 +115,19 @@ export interface MrStats {
   delayed: number;
   critical: number;
   avgWait: string;
+  /* Added for the clearer Material Requests card (USE_CLEAR_MR_PO in IntelligenceRow.tsx). */
+  needsQuote: number;
+  needsDecision: number;
+  inFlight: number;
+  oldestDays: number;
+  medianWaitDays: number;
 }
 
 export interface BudgetStats {
   utilizedPct: number;
   overspendRisk: string;
+  /** The AOP month these figures are for (YYYY-MM-DD): the latest imported, which can be months old. */
+  month?: string | null;
 }
 
 /** Loading/error for one underlying feed, so a card can tell "still loading" apart from
@@ -194,6 +214,11 @@ export function useCommandCenterData(orgId: string | null, propertyId: string | 
       pipelineValue: inr(d.totals.po_value, { compact: true }),
       pipelinePct: valueSum > 0 ? Math.round((d.buckets.completed.value / valueSum) * 100) : 0,
       completedThisMonth: d.buckets.completed.count,
+      monthValue: inr(d.totals.po_value, { compact: true }),
+      completedValue: inr(d.buckets.completed.value, { compact: true }),
+      alignCount: d.can?.align === false ? null : d.queue.align.total_count,
+      alignCritical: d.can?.align === false ? null : d.queue.align.critical_count,
+      completeCount: d.can?.complete === false ? null : d.queue.complete.total_count,
     };
   }
 
@@ -206,6 +231,11 @@ export function useCommandCenterData(orgId: string | null, propertyId: string | 
       delayed: mrt.needs_quote,
       critical: mrt.needs_decision,
       avgWait: `${mrt.median_wait_days} days`,
+      needsQuote: mrt.needs_quote,
+      needsDecision: mrt.needs_decision,
+      inFlight: mrt.in_flight,
+      oldestDays: mrt.oldest_days,
+      medianWaitDays: mrt.median_wait_days,
     };
   }
 
@@ -219,6 +249,7 @@ export function useCommandCenterData(orgId: string | null, propertyId: string | 
       budget = {
         utilizedPct: Math.round(site.utilisation_pct ?? 0),
         overspendRisk: inr(Math.max(0, -site.saving), { compact: true }),
+        month: aopQ.data?.current?.month ?? null,
       };
     }
   } else {
@@ -227,6 +258,7 @@ export function useCommandCenterData(orgId: string | null, propertyId: string | 
       budget = {
         utilizedPct: Math.round(cur.utilisation_pct ?? 0),
         overspendRisk: inr(Math.max(0, -cur.saving), { compact: true }),
+        month: cur.month,
       };
     }
   }

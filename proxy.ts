@@ -30,7 +30,9 @@ const securityHeaders = {
         "font-src 'self' data: https://fonts.gstatic.com",
         // api.openai.com: the council 1:1 voice call opens its WebRTC leg from
         // the browser with a server-minted ephemeral secret (never the API key).
-        `connect-src 'self' http://localhost:3000 ws://localhost:3000 ${process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://*.supabase.co'} ${process.env.NEXT_PUBLIC_SUPABASE_URL?.replace('https://', 'wss://') || 'wss://*.supabase.co'} https://www.gstatic.com https://firebaseinstallations.googleapis.com https://fcmregistrations.googleapis.com https://*.firebaseio.com https://api.openai.com https://api.plivo.com`,
+        // *.livekit.cloud: meeting rooms (signalling over wss, region lookup over https).
+        // LIVEKIT_URL is added too, so a self-hosted LiveKit works without editing this line.
+        `connect-src 'self' http://localhost:3000 ws://localhost:3000 wss://*.livekit.cloud https://*.livekit.cloud ${process.env.LIVEKIT_URL ? `${process.env.LIVEKIT_URL} ${process.env.LIVEKIT_URL.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:')}` : ''} ${process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://*.supabase.co'} ${process.env.NEXT_PUBLIC_SUPABASE_URL?.replace('https://', 'wss://') || 'wss://*.supabase.co'} https://www.gstatic.com https://firebaseinstallations.googleapis.com https://fcmregistrations.googleapis.com https://*.firebaseio.com https://api.openai.com https://api.plivo.com https://api.elevenlabs.io wss://api.elevenlabs.io`,
         "frame-ancestors 'none'",
         "base-uri 'self'",
         "form-action 'self'",

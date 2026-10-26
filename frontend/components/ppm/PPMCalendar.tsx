@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useDataCache } from '@/frontend/context/DataCacheContext';
 import { ChevronLeft, ChevronRight, ChevronDown, Upload, X, CheckCircle2, Clock, AlertCircle, SkipForward, Loader2, FileSpreadsheet, CalendarDays, Camera, FileText, Receipt, Building2, LayoutDashboard, Maximize2, ExternalLink, Eye } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useAuth } from '@/frontend/context/AuthContext';
@@ -80,6 +81,12 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
     // Active property filter — comes from props (global selector)
     const activePropertyId = propertyId || '';
 
+    // Each month's schedules are kept in memory (per user): coming back to the tab or to a month shows them at once,
+    // and they are refreshed quietly. A ref keeps the cache reader out of fetchSchedules' dependencies.
+    const { getCachedData, setCachedData } = useDataCache();
+    const readCache = useRef(getCachedData);
+    readCache.current = getCachedData;
+
     const [showUpload, setShowUpload] = useState(false);
     const [uploadFile, setUploadFile] = useState<File | null>(null);
     const [uploadPropertyId, setUploadPropertyId] = useState(propertyId || '');
@@ -123,7 +130,9 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
     }, [organizationId, propertyId]);
 
     const fetchSchedules = useCallback(async () => {
-        setIsLoading(true);
+        const cacheKey = `tab-ppm-${organizationId}-${activePropertyId || 'all'}-${viewYear}-${viewMonth}`;
+        const cached = readCache.current(cacheKey);
+        if (cached) setSchedules(cached.schedules); else setIsLoading(true);
         try {
             const params = new URLSearchParams({
                 organization_id: organizationId,
@@ -135,11 +144,12 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
             if (res.ok) {
                 const data = await res.json();
                 setSchedules(data.schedules || []);
+                setCachedData(cacheKey, { schedules: data.schedules || [] });
             }
         } finally {
             setIsLoading(false);
         }
-    }, [organizationId, activePropertyId, viewMonth, viewYear]);
+    }, [organizationId, activePropertyId, viewMonth, viewYear, setCachedData]);
 
     useEffect(() => { fetchSchedules(); }, [fetchSchedules]);
 

@@ -36,15 +36,28 @@ export function normalizeInbound(body) {
         msg.interactive?.button_reply?.title, msg.interactive?.list_reply?.title,
         msg.button?.text, data.button?.text, data.buttonReply?.title,
         ...buttonIds,
-        msg.message_content?.text, msg.text?.body, msg.text, msg.body, image.caption, video.caption, msg.caption,
+        msg.message_content?.text, msg.message_content?.caption, msg.text?.body, msg.text, msg.body, image.caption, video.caption, msg.caption,
         data.caption, data.text?.body, data.text, data.messageText, data.message_text,
         data.message, data.content, body.message, body.text,
     );
     const mediaUrl = firstText(data.mediaUrl, data.media_url, data.media?.url,
-        image.url, video.url, msg.mediaUrl, msg.url, data.url, body.mediaUrl) || null;
+        image.url, video.url, msg.message_content?.url, msg.message_content?.media?.url, msg.mediaUrl, msg.url, data.url, body.mediaUrl) || null;
     const messageId = firstText(data.messageId, data.message_id, data.wamid, msg.messageId, msg.message_id, msg.id, data.id, body.messageId, body.id);
     if (!text && !mediaUrl) return null;
-    return { phone, messageId, text, mediaUrl, mediaType: mediaType === 'photo' ? 'image' : mediaType };
+    /** @type {{phone:string,messageId:string,text:string,mediaUrl:string|null,mediaType:string,quotedIds?:string[],projectId?:string,inboundAt?:string}} */
+    const envelope = { phone, messageId, text, mediaUrl, mediaType: mediaType === 'photo' ? 'image' : mediaType };
+    const context = msg.context || data.context;
+    const quotedIds = [...new Set([context?.id, context?.submitted_message_id].filter(value => typeof value === 'string' && value.length <= 512))];
+    if (quotedIds.length) envelope.quotedIds = quotedIds;
+    const projectId = firstText(body.project_id, data.project_id, msg.project_id);
+    if (projectId) envelope.projectId = projectId;
+    const stamp = msg.sent_at ?? msg.timestamp ?? data.timestamp;
+    if (stamp !== undefined && stamp !== null) {
+        const numeric = Number(stamp);
+        const millis = Number.isFinite(numeric) ? numeric * (numeric < 1e12 ? 1000 : 1) : Date.parse(stamp);
+        if (Number.isFinite(millis) && millis > 0) envelope.inboundAt = new Date(millis).toISOString();
+    }
+    return envelope;
 }
 
 export function parseBookingDate(text, now = new Date()) {

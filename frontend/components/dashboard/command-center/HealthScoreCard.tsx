@@ -132,9 +132,12 @@ export default function HealthScoreCard() {
         <CardEmpty reason={fetchErrorReason(ticketsQ.error)} />
       ) : (
         <>
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+          {/* Metric + bars share a line when the card has ~412px inside (160 + 12 + 240),
+              otherwise they stack. The metric column was `flex: none`, so its long caption
+              grew it to the text width and squeezed the bars to zero. */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: 12 }}>
             {/* Metric column */}
-            <div style={{ flex: 'none', paddingTop: 2 }}>
+            <div style={{ flex: '1 1 160px', minWidth: 0, paddingTop: 2 }}>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
                 <span className="cc-metric cc-metric--lg">
                   {score}
@@ -150,14 +153,14 @@ export default function HealthScoreCard() {
             </div>
 
             {/* Component breakdown bars (higher = healthier). */}
-            <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ flex: '999 1 240px', minWidth: 0 }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 7, paddingTop: 4 }}>
                 {components.map(c => (
                   <div key={c.label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ width: 96, fontSize: 10, fontWeight: 500, color: 'var(--cc-ink-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    <span title={c.label} style={{ flex: '0 1 96px', minWidth: 0, fontSize: 10, fontWeight: 500, color: 'var(--cc-ink-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {c.label}
                     </span>
-                    <span style={{ flex: 1, height: 6, borderRadius: 3, background: 'rgba(30,42,48,0.06)', overflow: 'hidden' }}>
+                    <span style={{ flex: '1 1 48px', minWidth: 48, height: 6, borderRadius: 3, background: 'rgba(30,42,48,0.06)', overflow: 'hidden' }}>
                       <span
                         style={{
                           display: 'block',
@@ -168,7 +171,7 @@ export default function HealthScoreCard() {
                         }}
                       />
                     </span>
-                    <span style={{ width: 48, textAlign: 'right', fontSize: 10, fontWeight: 600, color: 'var(--cc-ink-2)', fontVariantNumeric: 'tabular-nums' }}>
+                    <span style={{ flex: 'none', width: 48, textAlign: 'right', whiteSpace: 'nowrap', fontSize: 10, fontWeight: 600, color: 'var(--cc-ink-2)', fontVariantNumeric: 'tabular-nums' }}>
                       {Math.round(c.value)} · w{c.weight}
                     </span>
                   </div>

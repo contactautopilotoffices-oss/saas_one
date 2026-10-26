@@ -86,7 +86,7 @@ export async function GET(
                 .from('users')
                 .select('id, full_name, email')
                 .in('id', approverUids);
-            
+
             const userMap = new Map(approverUsers?.map((u: any) => [u.id, u]) || []);
             allComparatives.forEach((c: any) => {
                 if (c.approver_uid) {
@@ -102,7 +102,7 @@ export async function GET(
                 .from('users')
                 .select('id, full_name')
                 .in('id', deliveredUids);
-            
+
             const deliveredMap = new Map(deliveredUsers?.map((u: any) => [u.id, u]) || []);
             formattedProcurementRequests.forEach((r: any) => {
                 if (r.delivered_by) {
@@ -155,14 +155,14 @@ export async function GET(
             { step: 'Completed', completed: ticket.status === 'resolved' || ticket.status === 'closed', time: ticket.resolved_at },
         ];
 
-        return NextResponse.json({ 
-            ticket, 
-            comments: comments || [], 
-            activities: activities || [], 
-            escalationLogs: escalationLogs || [], 
+        return NextResponse.json({
+            ticket,
+            comments: comments || [],
+            activities: activities || [],
+            escalationLogs: escalationLogs || [],
             procurementRequests: formattedProcurementRequests,
-            timeline, 
-            validationEnabled 
+            timeline,
+            validationEnabled
         });
     } catch (error) {
         console.error('Ticket detail error:', error);

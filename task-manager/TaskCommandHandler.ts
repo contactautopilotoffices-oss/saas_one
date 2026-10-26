@@ -1,11 +1,16 @@
 import { TaskDatabaseService } from './TaskDatabaseService';
 import { TaskMessagingService } from './TaskMessagingService';
+import { personLabel, sendTaskAssigned } from './taskAlerts';
+import { notifyGiversOfCompletion } from './completionNotice';
 import { TaskErrorHandler } from './TaskErrorHandler';
+import { TaskAccessService } from './TaskAccessService';
+import { PermissionService } from './PermissionService';
 import { Employee, TaskAssignment } from './types';
+import { sectionedList } from './brain/text';
 
 export interface CommandExecutionResult {
     success: boolean;
-    command: 'tasks' | 'status' | 'done_single' | 'done_all' | 'cancel' | 'unknown' | 'unregistered' | 'team_status' | 'assign_task';
+    command: 'tasks' | 'status' | 'done_single' | 'done_all' | 'cancel' | 'unknown' | 'unregistered' | 'team_status' | 'assign_task' | 'locked' | 'confirm_pending' | 'confirm_cancelled' | 'insight' | 'pick_pending';
     taskNumber?: number;
     affectedTaskId?: string;
     employee?: Employee;
@@ -44,18 +49,47 @@ export class TaskCommandHandler {
             };
         }
 
-        // Set or renew active Task Manager conversation context (30 min TTL)
-        await TaskDatabaseService.setConversationContext({
-            phone: params.phone,
-            system: 'TASK_MANAGER',
-            contextType: 'ACTIVE_SESSION',
-            ttlMinutes: 30
-        });
+        // 1b. Access gate (Step 3): the department must be switched ON and the person's kickoff recorded.
+        const access = await TaskAccessService.check({ userId: employee.id, departmentId: employee.department_id });
+        if (!access.allowed) {
+            const reply = TaskErrorHandler.taskManagerLocked(access.message);
+            await TaskDatabaseService.logAudit({
+                eventType: 'task_access_blocked',
+                actorId: employee.id,
+                targetEmployeeId: employee.id,
+                details: { reason: access.reason, channel: 'whatsapp' }
+            });
+            if (shouldSend) await TaskMessagingService.sendMessage(params.phone, reply);
+            return {
+                success: false,
+                command: 'locked',
+                employee,
+                replyText: reply
+            };
+        }
 
-        // 2. Fetch today's tasks
-        const tasks = await TaskDatabaseService.getDailyAssignments({
+        // Set or renew active Task Manager conversation context (30 min TTL).
+        // Group 3 (2026-10-13): never overwrite a conversation still in progress (a task-list preview waiting for YES, a
+        // question the bot asked). Priyanka's photo preview was lost when her "tasks" came through here. Only the old idle
+        // markers are renewed.
+        const existingContext = await TaskDatabaseService.getConversationContext(params.phone, 'TASK_MANAGER').catch(() => null);   // unreadable → as before
+        const keepOpen = !!existingContext && existingContext.context_type !== 'ACTIVE_SESSION' && existingContext.context_type !== 'DISAMBIGUATION';
+        if (!keepOpen) {
+            await TaskDatabaseService.setConversationContext({
+                phone: params.phone,
+                system: 'TASK_MANAGER',
+                contextType: 'ACTIVE_SESSION',
+                ttlMinutes: 30
+            });
+        }
+        const previewWaiting = keepOpen && existingContext?.context_type === 'IMPORT_PREVIEW'
+            ? '📥 Your task list preview is still waiting: reply YES to save it, or NO to cancel.' : null;
+
+        // 2. The numbered list: older open tasks first, then today's — the same numbers as the person's messages
+        const tasks = await TaskDatabaseService.getNumberedList({
             employeeId: employee.id,
-            date: targetDate
+            date: targetDate,
+            departmentId: employee.department_id ?? null
         });
 
         // ── Command 1: Cancel ─────────────────────────────────────────────────
@@ -87,9 +121,11 @@ export class TaskCommandHandler {
                 };
             }
 
-            const deptEmployees = employee.department_id
+            const teamPool = employee.department_id
                 ? await TaskDatabaseService.getEmployeesByDepartment(employee.department_id)
                 : await TaskDatabaseService.getAllEmployees();
+            // Step 5: same rule as the web Tasks tab: yourself, your reports, and colleagues when team sharing is ON
+            const deptEmployees = await PermissionService.visibleAndAssignable(employee, teamPool);
 
             const deptName = employee.department_name || 'Department';
 
@@ -188,44 +224,44 @@ export class TaskCommandHandler {
             const targetNameQuery = assignMatch[1].trim();
             const taskTitle = assignMatch[2].trim();
 
-            if (employee.role !== 'reporting_manager' && employee.role !== 'superuser') {
-                const reply = `❌ *Permission Denied*\n\nOnly Reporting Managers and Superusers can assign tasks.`;
-                if (shouldSend) await TaskMessagingService.sendMessage(params.phone, reply);
-                return {
-                    success: false,
-                    command: 'assign_task',
-                    employee,
-                    replyText: reply
-                };
-            }
+            // People this person may assign to (the shared rule, same as the web Tasks tab):
+            // themselves, everyone below them in the reporting chain, colleagues when team sharing is ON;
+            // superusers may assign to anyone.
+            const allEmployees = await TaskDatabaseService.getAllEmployees();
+            const deptEmployees = await PermissionService.assignableTo(employee, allEmployees);
 
-            if (!employee.department_id && employee.role !== 'superuser') {
-                const reply = `⚠️ You are marked as a Reporting Manager, but have no department assigned.`;
-                if (shouldSend) await TaskMessagingService.sendMessage(params.phone, reply);
-                return {
-                    success: false,
-                    command: 'assign_task',
-                    employee,
-                    replyText: reply
-                };
-            }
-
-            // Fetch team members in manager's department
-            const deptEmployees = employee.department_id
-                ? await TaskDatabaseService.getEmployeesByDepartment(employee.department_id)
-                : await TaskDatabaseService.getAllEmployees();
-
-            // Match by first name, full name, or ID
-            const targetEmployee = deptEmployees.find(e => {
-                const fullName = e.name.toLowerCase();
-                const firstName = e.name.split(' ')[0].toLowerCase();
-                const query = targetNameQuery.toLowerCase();
-                return firstName === query || fullName.includes(query) || e.id === targetNameQuery;
-            });
+            // Match by self ('me' / 'myself'), or search available assignees
+            const isSelf = targetNameQuery.toLowerCase() === 'me' || targetNameQuery.toLowerCase() === 'myself';
+            const targetEmployee = isSelf ? employee : (
+                deptEmployees.find(e => {
+                    const firstName = e.name.split(' ')[0].toLowerCase();
+                    const query = targetNameQuery.toLowerCase();
+                    // Prefer self if the name query matches the sender's own first name
+                    return query === firstName && e.id === employee.id;
+                }) || deptEmployees.find(e => {
+                    const fullName = e.name.toLowerCase();
+                    const firstName = e.name.split(' ')[0].toLowerCase();
+                    const query = targetNameQuery.toLowerCase();
+                    return firstName === query || fullName.includes(query) || e.id === targetNameQuery;
+                })
+            );
 
             if (!targetEmployee) {
                 const availableNames = deptEmployees.map(e => e.name.split(' ')[0]).join(', ');
-                const reply = `❌ *Employee Not Found*\n\nCould not find "${targetNameQuery}" in your department.\n\nAvailable team members: *${availableNames}*\n\n_Example: assign ${deptEmployees[0]?.name.split(' ')[0] || 'Name'} ${taskTitle}_`;
+                const reply = `❌ *Employee Not Found*\n\nCould not find "${targetNameQuery}" among the people who report to you.\n\nAvailable team members: *${availableNames}*\n\n_Example: assign ${deptEmployees[0]?.name.split(' ')[0] || 'Name'} ${taskTitle}_`;
+                if (shouldSend) await TaskMessagingService.sendMessage(params.phone, reply);
+                return {
+                    success: false,
+                    command: 'assign_task',
+                    employee,
+                    replyText: reply
+                };
+            }
+
+            // Access gate (Step 3): the person being assigned must be unlocked too.
+            const targetAccess = await TaskAccessService.check({ userId: targetEmployee.id, departmentId: targetEmployee.department_id });
+            if (!targetAccess.allowed) {
+                const reply = TaskErrorHandler.assigneeLocked(targetEmployee.name, targetAccess.message);
                 if (shouldSend) await TaskMessagingService.sendMessage(params.phone, reply);
                 return {
                     success: false,
@@ -253,22 +289,14 @@ export class TaskCommandHandler {
             });
 
             // Notify assigned employee via WhatsApp if they have a phone number
-            if (targetEmployee.phone_number && targetEmployee.phone_number.trim().length >= 10) {
-                const managerDept = employee.department_name ? ` (${employee.department_name})` : '';
-                const empAlert = [
-                    `🔔 *New Task Assigned!*`,
-                    ``,
-                    `*Task:* ${taskTitle}`,
-                    `*Assigned By:* ${employee.name}${managerDept}`,
-                    `*Date:* ${targetDate}`,
-                    ``,
-                    `Reply *tasks* to view your full list, or *done <number>* once completed!`
-                ].join('\n');
-
-                TaskMessagingService.sendMessage(targetEmployee.phone_number, empAlert).catch(err => {
-                    console.error('[WhatsAppAssign] Failed to notify target employee:', err);
-                });
+            // Same approved template as the Tasks tab (task_assigned_v1), so it also reaches people outside the 24-hour window.
+            if (targetEmployee.id !== employee.id) {
+                void import('./taskBell').then(({ taskBell }) => taskBell({ userId: targetEmployee.id, kind: 'TASK_ASSIGNED', title: `New task from ${employee.name}`, message: `${employee.name} gave you: ${taskTitle}`, departmentName: targetEmployee.department_name }));
             }
+            void sendTaskAssigned(targetEmployee.phone_number, {
+                titles: [taskTitle], fromLabel: personLabel(employee.name, employee.department_name), date: targetDate,
+                departmentId: targetEmployee.department_id || undefined,
+            });
 
             // Confirm back to the Manager
             const managerReply = [
@@ -308,11 +336,12 @@ export class TaskCommandHandler {
             const completedCount = tasks.filter(t => t.status === 'completed').length;
             const percent = Math.round((completedCount / tasks.length) * 100);
 
-            const taskLines = tasks.map((t, idx) => {
+            // Three sections (owner 2026-10-16): carry forward → pending today → completed; the numbers stay the same.
+            const taskLines = sectionedList(tasks.map((t, idx) => {
                 const icon = t.status === 'completed' ? '✅' : '⏳';
                 const statusStr = t.status === 'completed' ? 'Completed' : 'Pending';
-                return `${idx + 1}. ${t.title} [${statusStr} ${icon}]`;
-            }).join('\n');
+                return { carried: !!t.isCarriedForward, done: t.status === 'completed', line: `${idx + 1}. ${t.title} [${statusStr} ${icon}]` };
+            }));
 
             const reply = [
                 `📋 Tasks for today (${targetDate}):`,
@@ -321,7 +350,8 @@ export class TaskCommandHandler {
                 '',
                 `Progress: ${completedCount}/${tasks.length} (${percent}%)`,
                 '',
-                `💡 Reply "done 1" to complete a task, or "done all" to finish all.`
+                `💡 Reply "done 1" to complete a task, or "done all" to finish all.`,
+                ...(previewWaiting ? ['', previewWaiting] : []),
             ].join('\n');
 
             if (shouldSend) await TaskMessagingService.sendMessage(params.phone, reply);
@@ -382,6 +412,8 @@ export class TaskCommandHandler {
 
             const reply = `🎉 All your tasks for today have been completed (${tasks.length}/${tasks.length} - 100%)!\n\nHave a great rest of your day!`;
             if (shouldSend) await TaskMessagingService.sendMessage(params.phone, reply);
+            // Tell each giver once, listing their tasks (approved template; never blocks or fails the reply).
+            if (shouldSend) void notifyGiversOfCompletion(pendingTasks);
 
             return {
                 success: true,
@@ -447,6 +479,8 @@ export class TaskCommandHandler {
             const reply = `✅ Marked task #${taskNum} ("${targetTask.title}") as completed!\n\nProgress: ${newCompletedCount}/${tasks.length} (${percent}%)${allDoneCelebration}`;
 
             if (shouldSend) await TaskMessagingService.sendMessage(params.phone, reply);
+            // Tell whoever gave this task (approved template; never blocks or fails the reply).
+            if (shouldSend) void notifyGiversOfCompletion([targetTask]);
 
             return {
                 success: true,

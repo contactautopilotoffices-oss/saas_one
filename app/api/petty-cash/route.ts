@@ -1,212 +1,42 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { resolvePettyCashAccess, isPettyCashAccessError, readOrgId } from '@/backend/lib/pettyCash/access';
-import { notifyPettyCash } from '@/backend/lib/pettyCash/notify';
-
-const SELECT = `
-    *,
-    requester:users!petty_cash_requests_requester_id_fkey(id, full_name, email),
-    approver:users!petty_cash_requests_approver_id_fkey(id, full_name),
-    assigned_approver:users!petty_cash_requests_assigned_approver_id_fkey(id, full_name, email),
-    payer:users!petty_cash_requests_paid_by_fkey(id, full_name),
-    property:properties(id, name, code)
-`;
-
-// GET /api/petty-cash — list requests for a tab (mine | approvals | disbursements | all)
+import { PC_SELECT, pcError, isUuid } from '@/backend/lib/pettyCash/api';
 export async function GET(request: NextRequest) {
     const access = await resolvePettyCashAccess(request, readOrgId(request));
     if (isPettyCashAccessError(access)) return access;
-
-    const sp = new URL(request.url).searchParams;
-    // Allowlist the tab: any unrecognized value must fall back to the most
-    // restrictive ('mine') scope, never through the branch chain unscoped.
-    const TABS = ['mine', 'approvals', 'disbursements', 'all'] as const;
-    const rawTab = sp.get('tab') || 'mine';
-    const tab: (typeof TABS)[number] = (TABS as readonly string[]).includes(rawTab) ? (rawTab as (typeof TABS)[number]) : 'mine';
-    const page = Math.max(1, parseInt(sp.get('page') || '1'));
-    const pageSize = Math.min(100, Math.max(1, parseInt(sp.get('page_size') || '20')));
-    const propertyId = sp.get('property_id');
-    const status = sp.getAll('status');
-    const category = sp.get('category');
-    const dateFrom = sp.get('date_from');
-    const dateTo = sp.get('date_to');
-    const search = (sp.get('search') || '').trim();
-
-    let query = supabaseAdmin
-        .from('petty_cash_requests')
-        .select(SELECT, { count: 'exact' })
-        .eq('organization_id', access.organizationId);
-
-    // Tab scoping
-    if (tab === 'mine') {
-        query = query.eq('requester_id', access.user.id);
-    } else if (tab === 'approvals') {
-        query = query.eq('status', 'submitted');
-        if (!access.isAdmin) {
-            const scopeFilters = [`assigned_approver_id.eq.${access.user.id}`];
-            if (access.canApprove && access.propertyIds.length) {
-                scopeFilters.push(`property_id.in.(${access.propertyIds.join(',')})`);
-            }
-            query = query.or(scopeFilters.join(','));
-        }
-    } else if (tab === 'disbursements') {
-        if (!access.canDisburse) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-        query = query.in('status', ['approved', 'settlement_submitted']);
-    } else if (tab === 'all') {
-        // Admins/finance see the whole org; others fall back to their own + their properties.
-        if (!access.isAdmin && !access.canDisburse) {
-            const scope = [`requester_id.eq.${access.user.id}`];
-            if (access.propertyIds.length) scope.push(`property_id.in.(${access.propertyIds.join(',')})`);
-            query = query.or(scope.join(','));
-        }
+    const q = request.nextUrl.searchParams;
+    const page = Math.max(1, Number(q.get('page')) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number(q.get('page_size')) || 50));
+    let query = supabaseAdmin.rpc('pc_requests', { actor: access.user.id, org: access.organizationId }, { count: 'exact' }).select(PC_SELECT);
+    switch (q.get('tab')) {
+        case 'allocations': query = query.eq('assigned_allocator_id', access.user.id).eq('status', 'submitted'); break;
+        case 'approvals': query = query.eq('assigned_approver_id', access.user.id).eq('workflow_version', 2).eq('status', 'pending_approval'); break;
+        case 'disbursements':
+            if (!access.canDisburse) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+            query = query.eq('status', 'approved'); break;
+        case 'reconciliation':
+            if (!access.canDisburse) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+            query = query.in('status', ['paid', 'settlement_submitted']); break;
+        case 'assigned': query = query.or(`assigned_allocator_id.eq.${access.user.id},assigned_approver_id.eq.${access.user.id}`); break;
+        case 'all': break; // pc_requests already enforces record-level scope.
+        default: query = query.eq('requester_id', access.user.id);
     }
-
-    if (propertyId) query = query.eq('property_id', propertyId);
-    if (status.length) query = query.in('status', status);
-    if (category) query = query.eq('category', category);
-    if (dateFrom) query = query.gte('created_at', dateFrom);
-    if (dateTo) query = query.lte('created_at', `${dateTo}T23:59:59.999Z`);
-    if (search) query = query.or(`request_no.ilike.%${search}%,purpose.ilike.%${search}%,vendor_name.ilike.%${search}%`);
-
-    query = query.order('created_at', { ascending: false });
-    const from = (page - 1) * pageSize;
-    query = query.range(from, from + pageSize - 1);
-
-    const { data, error, count } = await query;
-    if (error) {
-        console.error('Petty cash GET error:', error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-    return NextResponse.json({
-        requests: data,
-        pagination: { page, page_size: pageSize, total: count || 0, total_pages: Math.ceil((count || 0) / pageSize) },
-    });
+    const property = q.get('property_id');
+    if (property) { if (!isUuid(property)) return NextResponse.json({ error: 'Invalid property' }, { status: 400 }); query = query.eq('property_id', property); }
+    if (q.get('status')) query = query.eq('status', q.get('status')!);
+    const search = (q.get('search') || '').replace(/[^a-zA-Z0-9 @._-]/g, '').slice(0, 100);
+    if (search) query = query.ilike('purpose', `%${search}%`);
+    const { data, error, count } = await query.order('created_at', { ascending: false }).range((page - 1) * pageSize, page * pageSize - 1);
+    if (error) return pcError(error);
+    return NextResponse.json({ requests: data, pagination: { page, page_size: pageSize, total: count || 0, total_pages: Math.ceil((count || 0) / pageSize) } });
 }
-
-// POST /api/petty-cash — create a request (status: submitted, or draft)
 export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => null);
-    if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
-
+    if (!body || Array.isArray(body) || typeof body !== 'object') return NextResponse.json({ error: 'Invalid body' }, { status: 400 });
     const access = await resolvePettyCashAccess(request, readOrgId(request, body));
     if (isPettyCashAccessError(access)) return access;
-
-    if (!body.property_id) return NextResponse.json({ error: 'property_id is required' }, { status: 400 });
-    // A requester may only file against a property they belong to (admins: any in org).
-    if (!access.isAdmin && !access.propertyIds.includes(body.property_id)) {
-        return NextResponse.json({ error: 'You are not a member of that property' }, { status: 403 });
-    }
-    const amount = Number(body.amount_requested);
-    if (!amount || amount <= 0) return NextResponse.json({ error: 'amount_requested must be greater than 0' }, { status: 400 });
-    if (!body.purpose?.trim()) return NextResponse.json({ error: 'purpose is required' }, { status: 400 });
-
-    const asDraft = body.status === 'draft';
-
-    // --- Open-advance gate ---------------------------------------------------------
-    // PRD §6.3: an approver must see the requester's open advances and overdue
-    // settlements before more cash goes out. Nothing enforced this, so a custodian
-    // sitting on an unaccounted float could draw another one immediately.
-    //
-    // A warning with the numbers attached, not a hard stop: genuine same-day second
-    // floats happen, and blocking outright would push people back to cash off-system,
-    // which is the outcome this module exists to prevent. Drafts never trigger it.
-    if (!asDraft && body.acknowledge_open_advances !== true) {
-        const { data: open } = await supabaseAdmin
-            .from('petty_cash_settlement_status')
-            .select('request_no, disbursed, accounted, unaccounted, accounted_pct, days_outstanding, status')
-            .eq('organization_id', access.organizationId)
-            .eq('requester_id', access.user.id)
-            .eq('is_open_advance', true)
-            .order('days_outstanding', { ascending: false, nullsFirst: false });
-
-        if (open && open.length) {
-            return NextResponse.json({
-                error: 'open_advance_outstanding',
-                open_advances: {
-                    count: open.length,
-                    total_unaccounted: open.reduce((s, r) => s + Number(r.unaccounted || 0), 0),
-                    requests: open.map((r) => ({
-                        request_no: r.request_no,
-                        status: r.status,
-                        disbursed: Number(r.disbursed || 0),
-                        accounted: Number(r.accounted || 0),
-                        unaccounted: Number(r.unaccounted || 0),
-                        accounted_pct: r.accounted_pct == null ? null : Number(r.accounted_pct),
-                        days_outstanding: r.days_outstanding,
-                    })),
-                },
-            }, { status: 409 });
-        }
-    }
-    const { data: created, error } = await supabaseAdmin
-        .from('petty_cash_requests')
-        .insert({
-            organization_id: access.organizationId,
-            property_id: body.property_id,
-            requester_id: access.user.id,
-            request_type: body.request_type === 'reimbursement' ? 'reimbursement' : 'advance',
-            department: body.department ?? null,
-            category: body.category ?? null,
-            amount_requested: amount,
-            purpose: String(body.purpose).trim(),
-            payment_mode: body.payment_mode ?? null,
-            expected_date: body.expected_date || null,
-            vendor_name: body.vendor_name ?? null,
-            // Who physically takes the cash — often not the person filing the request.
-            recipient_name: body.recipient_name?.trim() || null,
-            recipient_phone: body.recipient_phone?.trim() || null,
-            assigned_approver_id: body.assigned_approver_id || null,
-            status: asDraft ? 'draft' : 'submitted',
-            remarks: body.remarks ?? null,
-        })
-        .select(SELECT)
-        .single();
-
-    if (error) {
-        console.error('Petty cash CREATE error:', error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-
-    // Attach any documents uploaded during creation.
-    //
-    // `url` is accepted alongside `file_url` because /api/petty-cash/upload returns the
-    // former and the client posts that object back verbatim — so every insert here was
-    // failing the NOT NULL on file_url, unchecked, and no attachment ever landed.
-    if (Array.isArray(body.documents) && body.documents.length) {
-        const rows = body.documents
-            .map((d: { file_url?: string; url?: string; file_name?: string; file_type?: string }) => ({
-                request_id: created.id,
-                organization_id: access.organizationId,
-                stage: 'request',
-                file_url: d.file_url || d.url,
-                file_name: d.file_name ?? null,
-                file_type: d.file_type ?? null,
-                uploaded_by: access.user.id,
-            }))
-            .filter((r: { file_url?: string }) => !!r.file_url);
-
-        if (rows.length) {
-            const { error: docErr } = await supabaseAdmin.from('petty_cash_documents').insert(rows);
-            // Never fails the request — the money movement matters more than the
-            // attachment — but it must not vanish silently the way it used to.
-            if (docErr) console.error('Petty cash CREATE document attach error:', docErr);
-        }
-    }
-
-    await supabaseAdmin.from('petty_cash_activity').insert({
-        request_id: created.id,
-        organization_id: access.organizationId,
-        actor_id: access.user.id,
-        action: asDraft ? 'draft_saved' : 'submitted',
-        to_status: created.status,
-    });
-
-    if (!asDraft) {
-        notifyPettyCash('submitted', {
-            ...created,
-            requester_name: (created.requester as any)?.full_name,
-        }).catch(() => {});
-    }
-
-    return NextResponse.json({ request: created }, { status: 201 });
+    const { data, error } = await supabaseAdmin.rpc('pc_create_request', { actor: access.user.id, org: access.organizationId, body });
+    if (error) return pcError(error);
+    return NextResponse.json({ request: data }, { status: 201 });
 }

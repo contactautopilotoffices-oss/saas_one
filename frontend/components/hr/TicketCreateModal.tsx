@@ -2,13 +2,13 @@
 
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Send, ShieldAlert, UserX, AlertTriangle, Paperclip, CheckCircle2 } from 'lucide-react';
+import { X, Send, ShieldAlert, UserX, AlertTriangle, Paperclip, CheckCircle2, Info, Lock, HelpCircle, FileText, Check } from 'lucide-react';
 import { formatSlaDisplay } from '@/frontend/components/hr/HRAdminConfigPanel';
 
 interface TicketCreateModalProps {
     isOpen: boolean;
     onClose: () => void;
-    onSuccess: () => void;
+    onSuccess?: (ticket?: any) => void;
     orgId: string;
     userId: string;
 }
@@ -17,6 +17,7 @@ export default function TicketCreateModal({ isOpen, onClose, onSuccess, orgId, u
     const [mounted, setMounted] = useState(false);
     const [categories, setCategories] = useState<any[]>([]);
     const [ticketType, setTicketType] = useState<'grievance' | 'hr_query' | 'confidential_feedback' | 'anonymous_feedback'>('grievance');
+    const [showTypeInfoModal, setShowTypeInfoModal] = useState(false);
     const [categoryId, setCategoryId] = useState('');
     const [subject, setSubject] = useState('');
     const [description, setDescription] = useState('');
@@ -89,6 +90,19 @@ export default function TicketCreateModal({ isOpen, onClose, onSuccess, orgId, u
         return c.ticket_type === ticketType;
     });
 
+    // Auto-select category if there is only 1 option; reset if invalid
+    useEffect(() => {
+        if (filteredCategories.length === 1) {
+            setCategoryId(filteredCategories[0].id);
+        } else if (filteredCategories.length > 1) {
+            if (categoryId && !filteredCategories.some(c => c.id === categoryId)) {
+                setCategoryId('');
+            }
+        } else {
+            setCategoryId('');
+        }
+    }, [ticketType, categories]);
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError('');
@@ -124,7 +138,10 @@ export default function TicketCreateModal({ isOpen, onClose, onSuccess, orgId, u
             try { data = text ? JSON.parse(text) : {}; } catch {}
             if (!data.success) throw new Error(data.error || 'Failed to submit ticket');
 
-            onSuccess();
+            if (onSuccess) onSuccess(data.data);
+            if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('hr-ticket-created', { detail: { ticket: data.data } }));
+            }
             onClose();
         } catch (err: any) {
             setError(err.message || 'Failed to submit ticket');
@@ -169,9 +186,20 @@ export default function TicketCreateModal({ isOpen, onClose, onSuccess, orgId, u
 
                         {/* Ticket Type Tabs */}
                         <div>
-                            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2">
-                                Select Request Type
-                            </label>
+                            <div className="flex items-center justify-between mb-2">
+                                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                                    Select Request Type
+                                </label>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowTypeInfoModal(true)}
+                                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold text-[#587e85] hover:text-[#3d5b60] dark:text-[#7ba9b1] bg-[#587e85]/10 hover:bg-[#587e85]/20 border border-[#587e85]/20 transition-all cursor-pointer shadow-2xs active:scale-95"
+                                    title="Click to view full guide explaining ticket types"
+                                >
+                                    <Info className="w-3.5 h-3.5" />
+                                    <span>Ticket Type Guide (i)</span>
+                                </button>
+                            </div>
                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                                 {[
                                     { id: 'grievance', label: 'Employee Grievance', sub: 'L1 Manager / HOD' },
@@ -183,10 +211,20 @@ export default function TicketCreateModal({ isOpen, onClose, onSuccess, orgId, u
                                         key={tab.id}
                                         type="button"
                                         onClick={() => {
-                                            setTicketType(tab.id as any);
-                                            setCategoryId('');
-                                            setIsConfidential(tab.id === 'confidential_feedback');
-                                            setIsAnonymous(tab.id === 'anonymous_feedback');
+                                            const newType = tab.id as any;
+                                            setTicketType(newType);
+                                            setIsConfidential(newType === 'confidential_feedback');
+                                            setIsAnonymous(newType === 'anonymous_feedback');
+                                            const matched = categories.filter(c => {
+                                                if (newType === 'confidential_feedback') return c.ticket_type === 'confidential_feedback' || c.is_confidential;
+                                                if (newType === 'anonymous_feedback') return c.ticket_type === 'anonymous_feedback' || c.is_anonymous;
+                                                return c.ticket_type === newType;
+                                            });
+                                            if (matched.length === 1) {
+                                                setCategoryId(matched[0].id);
+                                            } else {
+                                                setCategoryId('');
+                                            }
                                         }}
                                         className={`p-2.5 sm:p-3 rounded-xl border text-left transition-all ${
                                             ticketType === tab.id
@@ -232,25 +270,42 @@ export default function TicketCreateModal({ isOpen, onClose, onSuccess, orgId, u
                             </div>
                         )}
 
-                        {/* Category Selection Dropdown */}
+                        {/* Category Selection */}
                         <div>
                             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center justify-between">
                                 <span>Category *</span>
-                                <span className="text-[10px] font-normal text-slate-400">Select from list ({filteredCategories.length} options)</span>
+                                <span className="text-[10px] font-normal text-slate-400">
+                                    {filteredCategories.length === 1
+                                        ? 'Default Category'
+                                        : `Select from list (${filteredCategories.length} options)`}
+                                </span>
                             </label>
-                            <select
-                                value={categoryId}
-                                onChange={(e) => setCategoryId(e.target.value)}
-                                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-semibold focus:ring-2 focus:ring-indigo-500 outline-none cursor-pointer"
-                                required
-                            >
-                                <option value="">-- Select Category Option --</option>
-                                {filteredCategories.map((cat) => (
-                                    <option key={cat.id} value={cat.id}>
-                                        {cat.category_name}{cat.sub_category_name ? ` — ${cat.sub_category_name}` : ''}
-                                    </option>
-                                ))}
-                            </select>
+
+                            {filteredCategories.length === 1 ? (
+                                <div className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 text-slate-900 dark:text-white text-xs font-semibold flex items-center justify-between shadow-2xs">
+                                    <span className="truncate">
+                                        {filteredCategories[0].category_name}
+                                        {filteredCategories[0].sub_category_name ? ` — ${filteredCategories[0].sub_category_name}` : ''}
+                                    </span>
+                                    <span className="text-[10px] font-bold text-[#587e85] dark:text-[#7ba9b1] bg-[#587e85]/10 px-2 py-0.5 rounded-md border border-[#587e85]/20 shrink-0">
+                                        Selected
+                                    </span>
+                                </div>
+                            ) : (
+                                <select
+                                    value={categoryId}
+                                    onChange={(e) => setCategoryId(e.target.value)}
+                                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-semibold focus:ring-2 focus:ring-indigo-500 outline-none cursor-pointer"
+                                    required
+                                >
+                                    <option value="">-- Select Category Option --</option>
+                                    {filteredCategories.map((cat) => (
+                                        <option key={cat.id} value={cat.id}>
+                                            {cat.category_name}{cat.sub_category_name ? ` — ${cat.sub_category_name}` : ''}
+                                        </option>
+                                    ))}
+                                </select>
+                            )}
                         </div>
 
                         {/* Subject */}
@@ -283,40 +338,22 @@ export default function TicketCreateModal({ isOpen, onClose, onSuccess, orgId, u
                             />
                         </div>
 
-                        {/* Priority & Document File Upload */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                            <div>
-                                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                                    Priority Level
-                                </label>
-                                <select
-                                    value={priority}
-                                    onChange={(e) => setPriority(e.target.value)}
-                                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs focus:ring-2 focus:ring-indigo-500 outline-none"
-                                >
-                                    <option value="low">Low Priority</option>
-                                    <option value="medium">Medium Priority</option>
-                                    <option value="high">High Priority</option>
-                                    <option value="critical">Critical / Urgent</option>
-                                </select>
-                            </div>
-
-                            <div>
-                                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                                    Attach Documents / Screenshots
-                                </label>
-                                <label className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold cursor-pointer transition-colors">
-                                    <Paperclip className="w-4 h-4 text-[#587e85]" />
-                                    <span>{uploadingFile ? 'Uploading file...' : 'Choose File(s) to Attach'}</span>
-                                    <input
-                                        type="file"
-                                        multiple
-                                        onChange={handleFileUpload}
-                                        disabled={uploadingFile}
-                                        className="hidden"
-                                    />
-                                </label>
-                            </div>
+                        {/* Document File Upload */}
+                        <div>
+                            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                                Attach Documents / Screenshots
+                            </label>
+                            <label className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold cursor-pointer transition-colors">
+                                <Paperclip className="w-4 h-4 text-[#587e85]" />
+                                <span>{uploadingFile ? 'Uploading file...' : 'Choose File(s) to Attach'}</span>
+                                <input
+                                    type="file"
+                                    multiple
+                                    onChange={handleFileUpload}
+                                    disabled={uploadingFile}
+                                    className="hidden"
+                                />
+                            </label>
                         </div>
 
                         {/* Attachments List */}
@@ -364,6 +401,207 @@ export default function TicketCreateModal({ isOpen, onClose, onSuccess, orgId, u
                     </div>
                 </form>
             </div>
+
+            {/* Ticket Type Information Modal (i-button) */}
+            {showTypeInfoModal && (
+                <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-3 sm:p-4">
+                    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xl w-full max-w-xl max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                        {/* Header */}
+                        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/60">
+                            <div className="flex items-center gap-2.5">
+                                <div className="w-8 h-8 rounded-xl bg-[#587e85]/15 text-[#587e85] dark:text-[#7ba9b1] flex items-center justify-center shrink-0">
+                                    <Info className="w-4 h-4" />
+                                </div>
+                                <div>
+                                    <h3 className="text-sm font-black text-slate-900 dark:text-white">
+                                        Understanding Request Types
+                                    </h3>
+                                    <p className="text-[11px] text-slate-500">
+                                        Choose the right channel for your grievance or query
+                                    </p>
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setShowTypeInfoModal(false)}
+                                className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-white rounded-lg transition-colors"
+                            >
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+
+                        {/* Guide Content Cards */}
+                        <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3.5">
+                            {/* Card 1: Grievance */}
+                            <div 
+                                onClick={() => {
+                                    setTicketType('grievance');
+                                    setCategoryId('');
+                                    setIsConfidential(false);
+                                    setIsAnonymous(false);
+                                    setShowTypeInfoModal(false);
+                                }}
+                                className={`p-4 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${
+                                    ticketType === 'grievance' 
+                                        ? 'border-amber-500 bg-amber-50/40 dark:bg-amber-950/20 ring-1 ring-amber-500/30' 
+                                        : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800 hover:border-amber-300'
+                                }`}
+                            >
+                                <div className="flex items-start justify-between gap-3">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-7 h-7 rounded-lg bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 flex items-center justify-center shrink-0 font-bold text-xs">
+                                            🛡️
+                                        </div>
+                                        <div>
+                                            <h4 className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1.5">
+                                                Employee Grievance
+                                                {ticketType === 'grievance' && <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400">(Selected)</span>}
+                                            </h4>
+                                            <p className="text-[10.5px] text-slate-500">Workplace issues, peer conflict, policy dissatisfaction</p>
+                                        </div>
+                                    </div>
+                                    <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300 shrink-0">
+                                        Level 1 Manager
+                                    </span>
+                                </div>
+                                <div className="mt-2.5 pt-2 border-t border-slate-100 dark:border-slate-800/80 text-[11px] text-slate-600 dark:text-slate-300 space-y-1">
+                                    <p><strong>• Routing:</strong> Assigned directly to your <strong>Reporting Manager / HOD (Level 1)</strong>.</p>
+                                    <p><strong>• Resolution SLA:</strong> 3 working days TAT. Automatically escalates to HR Head (Level 2) if unresolved.</p>
+                                    <p><strong>• When to choose:</strong> For grievances regarding workplace conduct, team conflicts, work conditions, or managerial decisions.</p>
+                                </div>
+                            </div>
+
+                            {/* Card 2: HR Query */}
+                            <div 
+                                onClick={() => {
+                                    setTicketType('hr_query');
+                                    setCategoryId('');
+                                    setIsConfidential(false);
+                                    setIsAnonymous(false);
+                                    setShowTypeInfoModal(false);
+                                }}
+                                className={`p-4 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${
+                                    ticketType === 'hr_query' 
+                                        ? 'border-blue-500 bg-blue-50/40 dark:bg-blue-950/20 ring-1 ring-blue-500/30' 
+                                        : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800 hover:border-blue-300'
+                                }`}
+                            >
+                                <div className="flex items-start justify-between gap-3">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-7 h-7 rounded-lg bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 flex items-center justify-center shrink-0 font-bold text-xs">
+                                            📋
+                                        </div>
+                                        <div>
+                                            <h4 className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1.5">
+                                                HR Query
+                                                {ticketType === 'hr_query' && <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400">(Selected)</span>}
+                                            </h4>
+                                            <p className="text-[10.5px] text-slate-500">Payroll, leaves, benefits, letters, policies</p>
+                                        </div>
+                                    </div>
+                                    <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-300 shrink-0">
+                                        HR Operations
+                                    </span>
+                                </div>
+                                <div className="mt-2.5 pt-2 border-t border-slate-100 dark:border-slate-800/80 text-[11px] text-slate-600 dark:text-slate-300 space-y-1">
+                                    <p><strong>• Routing:</strong> Routes straight to the <strong>HR Operations Department (Level 1)</strong>.</p>
+                                    <p><strong>• Scope:</strong> Salary slips, attendance regularization, leave quotas, PF/ESIC, health insurance, experience letters.</p>
+                                    <p><strong>• When to choose:</strong> For standard questions, inquiries, and routine administrative requests.</p>
+                                </div>
+                            </div>
+
+                            {/* Card 3: Confidential Feedback */}
+                            <div 
+                                onClick={() => {
+                                    setTicketType('confidential_feedback');
+                                    setCategoryId('');
+                                    setIsConfidential(true);
+                                    setIsAnonymous(false);
+                                    setShowTypeInfoModal(false);
+                                }}
+                                className={`p-4 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${
+                                    ticketType === 'confidential_feedback' 
+                                        ? 'border-purple-500 bg-purple-50/40 dark:bg-purple-950/20 ring-1 ring-purple-500/30' 
+                                        : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800 hover:border-purple-300'
+                                }`}
+                            >
+                                <div className="flex items-start justify-between gap-3">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-7 h-7 rounded-lg bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 flex items-center justify-center shrink-0 font-bold text-xs">
+                                            🔒
+                                        </div>
+                                        <div>
+                                            <h4 className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1.5">
+                                                Confidential Feedback
+                                                {ticketType === 'confidential_feedback' && <span className="text-[10px] font-bold text-purple-600 dark:text-purple-400">(Selected)</span>}
+                                            </h4>
+                                            <p className="text-[10.5px] text-slate-500">Sensitive ethics, leadership, or whistleblowing</p>
+                                        </div>
+                                    </div>
+                                    <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-purple-100 dark:bg-purple-900/40 text-purple-800 dark:text-purple-300 shrink-0">
+                                        Directors Only
+                                    </span>
+                                </div>
+                                <div className="mt-2.5 pt-2 border-t border-slate-100 dark:border-slate-800/80 text-[11px] text-slate-600 dark:text-slate-300 space-y-1">
+                                    <p><strong>• Confidentiality:</strong> Your identity is captured for accountability, but visible <strong>ONLY to authorized Company Directors</strong>.</p>
+                                    <p><strong>• Zero Peer/Manager Access:</strong> Reporting Managers, HODs, and standard HR staff have zero visibility into this ticket.</p>
+                                    <p><strong>• When to choose:</strong> Severe ethical concerns, whistleblowing, harassment, or conflicts involving department leadership.</p>
+                                </div>
+                            </div>
+
+                            {/* Card 4: Anonymous Feedback */}
+                            <div 
+                                onClick={() => {
+                                    setTicketType('anonymous_feedback');
+                                    setCategoryId('');
+                                    setIsConfidential(false);
+                                    setIsAnonymous(true);
+                                    setShowTypeInfoModal(false);
+                                }}
+                                className={`p-4 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${
+                                    ticketType === 'anonymous_feedback' 
+                                        ? 'border-teal-500 bg-teal-50/40 dark:bg-teal-950/20 ring-1 ring-teal-500/30' 
+                                        : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800 hover:border-teal-300'
+                                }`}
+                            >
+                                <div className="flex items-start justify-between gap-3">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-7 h-7 rounded-lg bg-teal-100 dark:bg-teal-950 text-teal-700 dark:text-teal-300 flex items-center justify-center shrink-0 font-bold text-xs">
+                                            🎭
+                                        </div>
+                                        <div>
+                                            <h4 className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1.5">
+                                                Anonymous Feedback
+                                                {ticketType === 'anonymous_feedback' && <span className="text-[10px] font-bold text-teal-600 dark:text-teal-400">(Selected)</span>}
+                                            </h4>
+                                            <p className="text-[10.5px] text-slate-500">100% Identity Masked for fear-free communication</p>
+                                        </div>
+                                    </div>
+                                    <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-teal-100 dark:bg-teal-900/40 text-teal-800 dark:text-teal-300 shrink-0">
+                                        Masked Identity
+                                    </span>
+                                </div>
+                                <div className="mt-2.5 pt-2 border-t border-slate-100 dark:border-slate-800/80 text-[11px] text-slate-600 dark:text-slate-300 space-y-1">
+                                    <p><strong>• Total Anonymity:</strong> Your name, email, employee code, and department are completely masked in ticket records.</p>
+                                    <p><strong>• Two-way Communication:</strong> You can still reply and receive updates without exposing your identity.</p>
+                                    <p><strong>• When to choose:</strong> Honest suggestions, culture feedback, or sensitive observations when you prefer 100% privacy.</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Footer */}
+                        <div className="p-4 bg-slate-50/80 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 flex justify-end">
+                            <button
+                                type="button"
+                                onClick={() => setShowTypeInfoModal(false)}
+                                className="px-4 py-2 bg-[#587e85] hover:bg-[#48686e] text-white text-xs font-bold rounded-xl shadow-xs cursor-pointer"
+                            >
+                                Got it, Close Guide
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>,
         document.body
     );

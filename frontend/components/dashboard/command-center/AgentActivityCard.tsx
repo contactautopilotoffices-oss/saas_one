@@ -484,9 +484,9 @@ export default function AgentActivityCard({ orgId: orgIdProp }: { orgId?: string
     return (
       <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
         <div
+          className="cc-band-counts"
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
             gap: 8,
             paddingBottom: 12,
             borderBottom: '1px solid var(--cc-hairline)',

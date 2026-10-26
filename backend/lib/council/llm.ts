@@ -178,12 +178,20 @@ const MAX_OUTPUT_TOKENS: Record<CouncilPurpose, number> = {
     // its budget reasoning before it emits the JSON; 3000 was eaten entirely
     // and nothing parseable came back. Sized so the answer survives the thinking.
     vet: 6000,
+    // Meera's JSON stages (structure a brief, read a vendor page, analyse a call
+    // transcript). Same reasoning-then-JSON shape as `vet`, so the same headroom.
+    procure: 6000,
+    // The Agent Console workflow planner. Measured 2026-09-28: a nine-step plan
+    // for one ordinary paragraph used 6,011 output tokens on glm-5.3-flash, when
+    // it borrowed `opinion`'s 7,000. A longer description ran out
+    // (finish_reason=length) and the planner quietly fell back to its template.
+    plan: 12000,
 };
 
 /** Soft per-session warning threshold; a full 17-call session on luna is well under this. */
 const RUN_BUDGET_USD = Number(process.env.COUNCIL_RUN_BUDGET_USD || 1.00);
 
-export type CouncilPurpose = 'opinion' | 'review' | 'synthesis' | 'email' | 'vet';
+export type CouncilPurpose = 'opinion' | 'review' | 'synthesis' | 'email' | 'vet' | 'procure' | 'plan';
 
 export interface CouncilChatMessage {
     role: 'system' | 'user' | 'assistant';

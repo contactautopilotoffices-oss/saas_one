@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
         // migration 20260904000001_app_role_ops_super_admin.
         const ORG_LEVEL_ROLES = [
             'org_super_admin', 'super_tenant', 'ops_super_admin', 'procurement', 'finance', 'accounts',
-            'hr', 'hr_head', 'bd_admin', 'bd_super_admin', 'bd_rep', 'sales', 'sales_executive', 'admin', 'owner'
+            'hr', 'hr_head', 'bd_admin', 'bd_super_admin', 'bd_rep', 'sales', 'sales_executive', 'admin', 'owner', 'tech'
         ];
         // Property-level roles that belong in property_memberships
         const PROPERTY_LEVEL_ROLES = [
@@ -304,6 +304,16 @@ export async function POST(request: NextRequest) {
             }
 
 
+        } else if (isNewRoleOrgLevel && oldRoleSource === 'org' && organizationId) {
+            // Same-level ORG role change (e.g. procurement → tech), even when the screen also sent a property: the
+            // organisation membership is what decides the dashboard after sign-in, so that is the row to change.
+            const { error: orgUpdateError } = await adminClient
+                .from('organization_memberships')
+                .update({ role: newRole, is_active: true })
+                .eq('user_id', userId)
+                .eq('organization_id', organizationId);
+
+            if (orgUpdateError) throw orgUpdateError;
         } else if (propertyId) {
             // Same-level property role change (e.g., staff → mst)
             const { error: propUpdateError } = await adminClient

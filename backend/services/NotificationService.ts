@@ -130,10 +130,10 @@ export class NotificationService {
                     title: 'New Ticket Created & Assigned',
                     message: `A new ticket "${ticket.title}" has been created and assigned to you.`,
                     deepLink: `/tickets/${ticket.id}?from=requests`,
-                    whatsapp: { 
-                        message: `*New Ticket Created & Assigned*\n\n${waBody}${APP_URL ? `\n\n🔗 ${APP_URL}/tickets/${ticket.id}?from=requests` : ''}`, 
-                        mediaUrl: waMediaUrl, 
-                        mediaType: waMediaType 
+                    whatsapp: {
+                        message: `*New Ticket Created & Assigned*\n\n${waBody}${APP_URL ? `\n\n🔗 ${APP_URL}/tickets/${ticket.id}?from=requests` : ''}`,
+                        mediaUrl: waMediaUrl,
+                        mediaType: waMediaType
                     },
                 });
 
@@ -141,7 +141,7 @@ export class NotificationService {
                 for (const userId of others) {
                     const isWhatsAppTicket = ticket.classification_source === 'whatsapp';
                     const isCreator = userId === creatorId;
-                    
+
                     await this.send({
                         userId,
                         ticketId: ticket.id,
@@ -151,10 +151,10 @@ export class NotificationService {
                         title: 'New Ticket Created & Assigned',
                         message: `A new ticket "${ticket.title}" has been created and assigned to ${assigneeName}.`,
                         deepLink: `/tickets/${ticket.id}?from=requests`,
-                        whatsapp: (isWhatsAppTicket && isCreator) ? undefined : { 
-                            message: `*New Ticket Created & Assigned*\n\n${waBody}${APP_URL ? `\n\n🔗 ${APP_URL}/tickets/${ticket.id}?from=requests` : ''}`, 
-                            mediaUrl: waMediaUrl, 
-                            mediaType: waMediaType 
+                        whatsapp: (isWhatsAppTicket && isCreator) ? undefined : {
+                            message: `*New Ticket Created & Assigned*\n\n${waBody}${APP_URL ? `\n\n🔗 ${APP_URL}/tickets/${ticket.id}?from=requests` : ''}`,
+                            mediaUrl: waMediaUrl,
+                            mediaType: waMediaType
                         },
                     });
                 }
@@ -172,10 +172,10 @@ export class NotificationService {
                         title: 'New Ticket Created',
                         message: `A new ticket "${ticket.title}" has been raised at ${ticket.properties?.name}.`,
                         deepLink: `/tickets/${ticket.id}?from=requests`,
-                        whatsapp: (isWhatsAppTicket && isCreator) ? undefined : { 
-                            message: `*New Ticket Created*\n\n${waBody}${APP_URL ? `\n\n🔗 ${APP_URL}/tickets/${ticket.id}?from=requests` : ''}`, 
-                            mediaUrl: waMediaUrl, 
-                            mediaType: waMediaType 
+                        whatsapp: (isWhatsAppTicket && isCreator) ? undefined : {
+                            message: `*New Ticket Created*\n\n${waBody}${APP_URL ? `\n\n🔗 ${APP_URL}/tickets/${ticket.id}?from=requests` : ''}`,
+                            mediaUrl: waMediaUrl,
+                            mediaType: waMediaType
                         },
                     });
                 }
@@ -755,22 +755,41 @@ export class NotificationService {
             const templateTitle = (completion.template as any)?.title || 'Checklist';
             const completerName = completer?.full_name || 'Staff';
 
+            // Resolve assigned approver for this property
+            let approverId: string | null = (completion as any)?.approver_id || null;
+            if (!approverId && completion.property_id) {
+                const { data: propSettings } = await supabaseAdmin
+                    .from('checklist_property_settings')
+                    .select('approver_user_id')
+                    .eq('property_id', completion.property_id)
+                    .maybeSingle();
+                if (propSettings?.approver_user_id) {
+                    approverId = propSettings.approver_user_id;
+                }
+            }
+
             const { WhatsAppRecipientResolver } = await import('./WhatsAppRecipientResolver');
             const { users: waUsers } = await WhatsAppRecipientResolver.resolveRecipients({
                 organizationId: completion.organization_id,
                 propertyId: completion.property_id,
                 featureKey: 'checklist_completed',
-                contextualUserIds: [completion.completed_by]
+                contextualUsers: {
+                    requesterId: completion.completed_by,
+                    approverId: approverId || undefined
+                }
             });
 
             for (const u of waUsers) {
+                const isApproverUser = approverId && u.id === approverId;
                 await this.send({
                     userId: u.id,
                     propertyId: completion.property_id,
                     organizationId: completion.organization_id,
                     type: 'SOP_COMPLETED',
-                    title: 'Checklist Completed ✅',
-                    message: `"${templateTitle}" was completed by ${completerName}.`,
+                    title: isApproverUser ? 'Checklist Ready for Review 📋' : 'Checklist Completed ✅',
+                    message: isApproverUser 
+                        ? `"${templateTitle}" was completed by ${completerName} and is waiting for your review.`
+                        : `"${templateTitle}" was completed by ${completerName}.`,
                     deepLink: `/properties/${completion.property_id}/sop?completionId=${completionId}`
                 });
             }
@@ -783,7 +802,8 @@ export class NotificationService {
                     property_id: completion.property_id,
                     completion_id: completionId,
                     template_title: templateTitle,
-                    completed_by: completion.completed_by
+                    completed_by: completion.completed_by,
+                    approver_id: approverId
                 }
             });
         } catch (err) {
@@ -875,7 +895,7 @@ export class NotificationService {
                 .select('user_id, role')
                 .eq('property_id', request.property_id)
                 .in('role', ['property_admin', 'procurement']);
-            
+
             (propMembers || []).forEach(m => recipientIds.add(String(m.user_id)));
 
             // Procurement users are stored in organization_memberships, not property_memberships
@@ -885,7 +905,7 @@ export class NotificationService {
                     .select('user_id, role')
                     .eq('organization_id', request.organization_id)
                     .eq('role', 'procurement');
-                
+
                 (orgMembers || []).forEach(m => recipientIds.add(String(m.user_id)));
             }
 
@@ -960,7 +980,7 @@ export class NotificationService {
                 .select('user_id, role')
                 .eq('property_id', request.property_id)
                 .in('role', ['property_admin', 'procurement']);
-            
+
             (propMembers || []).forEach(m => recipientIds.add(String(m.user_id)));
 
             // Procurement users are stored in organization_memberships, not property_memberships
@@ -970,7 +990,7 @@ export class NotificationService {
                     .select('user_id, role')
                     .eq('organization_id', request.organization_id)
                     .eq('role', 'procurement');
-                
+
                 (orgMembers || []).forEach(m => recipientIds.add(String(m.user_id)));
             }
 
@@ -1055,7 +1075,7 @@ export class NotificationService {
                     .select('user_id')
                     .eq('property_id', request.property_id)
                     .in('role', ['property_admin', 'procurement']);
-                
+
                 (propMembers || []).forEach(m => recipientIds.add(String(m.user_id)));
 
                 // 2. Organization-level Procurement
@@ -1065,7 +1085,7 @@ export class NotificationService {
                         .select('user_id')
                         .eq('organization_id', request.organization_id)
                         .eq('role', 'procurement');
-                    
+
                     (orgMembers || []).forEach(m => recipientIds.add(String(m.user_id)));
                 }
             }
@@ -1417,9 +1437,39 @@ export class NotificationService {
         }
     }
 
-    private static async dispatchPushNotification(token: string, notification: any, priority: "LOW" | "NORMAL" | "HIGH" | "CRITICAL" = 'NORMAL') {
+    /** Outbox-only push/in-app adapter. Recipient authorization is resolved by the caller's Omnichannel rule. */
+    static async sendOutboxPush(payload: NotificationPayload & { deliveryId: string }): Promise<{ success: boolean; ambiguous?: boolean; error?: string; providerReference?: string }> {
+        const { error: insertError } = await supabaseAdmin.from('notifications').upsert({
+            id: payload.deliveryId, user_id: payload.userId, organization_id: payload.organizationId,
+            property_id: payload.propertyId, notification_type: payload.type, title: payload.title,
+            message: payload.message, deep_link: payload.deepLink, is_read: false
+        }, { onConflict: 'id', ignoreDuplicates: true });
+        if (insertError) throw new Error(insertError.message);
+        const { data: notification, error: readError } = await supabaseAdmin.from('notifications').select('*').eq('id', payload.deliveryId).single();
+        if (readError || !notification) throw new Error(readError?.message || 'Push notification unavailable');
+        const { data: tokens, error: tokenError } = await supabaseAdmin.from('push_tokens').select('token,browser').eq('user_id', payload.userId).eq('is_active', true).order('updated_at', { ascending: false });
+        if (tokenError) throw new Error(tokenError.message);
+        const { data: previous, error: previousError } = await supabaseAdmin.from('notification_delivery').select('push_token,delivery_status').eq('notification_id', payload.deliveryId);
+        if (previousError) throw new Error(previousError.message);
+        const sent = new Set((previous || []).filter(row => row.delivery_status === 'SENT').map(row => row.push_token));
+        const seen = new Set<string>();
+        for (const row of tokens || []) {
+            const key = row.browser || row.token;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            if (sent.has(row.token)) continue;
+            await this.dispatchPushNotification(row.token, notification, payload.priority, true);
+        }
+        const { data: deliveries, error: deliveryError } = await supabaseAdmin.from('notification_delivery').select('delivery_status').eq('notification_id', payload.deliveryId);
+        if (deliveryError) throw new Error(deliveryError.message);
+        if (deliveries?.some(row => row.delivery_status !== 'SENT')) return { success: false, ambiguous: true, error: 'Push provider outcome needs reconciliation' };
+        // Users without an active device still receive the standard in-app notification.
+        return { success: true, providerReference: payload.deliveryId };
+    }
+
+    private static async dispatchPushNotification(token: string, notification: any, priority: "LOW" | "NORMAL" | "HIGH" | "CRITICAL" = 'NORMAL', requireTrackedAttempt = false) {
         const fcmPriority: 'high' | 'normal' = (priority === 'CRITICAL' || priority === 'HIGH') ? 'high' : 'normal';
-        const { data: delivery } = await supabaseAdmin
+        const { data: delivery, error: trackingError } = await supabaseAdmin
             .from('notification_delivery')
             .insert({
                 notification_id: notification.id,
@@ -1429,9 +1479,12 @@ export class NotificationService {
             .select()
             .single();
 
+        if (requireTrackedAttempt && (trackingError || !delivery)) throw new Error(trackingError?.message || 'Push attempt could not be persisted');
+
         try {
             const message = {
                 token,
+                ...(requireTrackedAttempt && notification.deep_link ? { webpush: { fcmOptions: { link: notification.deep_link } } } : {}),
                 notification: {
                     title: notification.title,
                     body: notification.message,
@@ -1543,7 +1596,7 @@ export class NotificationService {
                 .eq('organization_id', orgId)
                 .in('role', ['bd_admin', 'bd_super_admin', 'org_admin', 'org_super_admin'])
                 .eq('is_active', true);
-            
+
             (admins || []).forEach(m => recipientIds.add(String(m.user_id)));
 
             // Also fetch Saniel's user explicitly if they aren't somehow mapped
@@ -2734,6 +2787,53 @@ export class NotificationService {
     // ============================================================================
     // HR Tickets & Grievances Notification Methods
     // ============================================================================
+    // Resolves every user who owns an HR ticket at a given escalation level.
+    // hr_tickets.assigned_to_user_id holds only the primary handler, so the HR Admin Config
+    // step assignee roster is read here and all of them are notified, not just the first one.
+    private static async resolveHrLevelRecipients(ticket: any, level: number): Promise<string[]> {
+        const recipients = new Set<string>();
+        if (ticket.assigned_to_user_id) recipients.add(ticket.assigned_to_user_id);
+
+        try {
+            const { data: orgSettings } = await supabaseAdmin
+                .from('organization_settings')
+                .select('hr_escalation_config, notification_matrix')
+                .eq('organization_id', ticket.organization_id)
+                .maybeSingle();
+
+            const configObj = (orgSettings as any)?.notification_matrix?.hr_escalation_config
+                || (orgSettings as any)?.hr_escalation_config
+                || {};
+            let flowAssignees = configObj.flow_assignees || {};
+            while (flowAssignees && flowAssignees.flow_assignees) {
+                flowAssignees = flowAssignees.flow_assignees;
+            }
+
+            const tType = ticket.ticket_type || ticket.category?.ticket_type || 'grievance';
+            const levelAssignees = flowAssignees[tType]?.[String(level)] || flowAssignees[tType]?.[level];
+            if (!Array.isArray(levelAssignees) || levelAssignees.length === 0) {
+                return Array.from(recipients);
+            }
+
+            const filterOr = levelAssignees.map((cid: string) => `id.eq.${cid},user_id.eq.${cid}`).join(',');
+            const { data: profiles } = await supabaseAdmin
+                .from('employee_profiles')
+                .select('id, user_id')
+                .or(filterOr);
+
+            (profiles || []).forEach((prof: any) => {
+                if (prof.user_id) recipients.add(prof.user_id);
+            });
+        } catch (err) {
+            console.error('[NotificationService] resolveHrLevelRecipients error:', err);
+        }
+
+        // The submitter is never notified as a handler of their own ticket
+        if (ticket.raised_by_user_id) recipients.delete(ticket.raised_by_user_id);
+
+        return Array.from(recipients);
+    }
+
     static async afterHrTicketCreated(ticketId: string) {
         try {
             const { data: ticket, error } = await supabaseAdmin
@@ -2760,10 +2860,11 @@ export class NotificationService {
                 });
             }
 
-            // 2. Send Omnichannel Notification to Assigned Level Handler
-            if (ticket.assigned_to_user_id) {
+            // 2. Send Omnichannel Notification to EVERY handler configured at this level
+            const levelRecipients = await this.resolveHrLevelRecipients(ticket, ticket.current_level || 1);
+            for (const recipientId of levelRecipients) {
                 await this.send({
-                    userId: ticket.assigned_to_user_id,
+                    userId: recipientId,
                     organizationId: ticket.organization_id,
                     type: 'HR_TICKET_ASSIGNED',
                     title: `New HR Ticket Assigned #${ticket.ticket_number}`,
@@ -2793,10 +2894,11 @@ export class NotificationService {
             const newAssigneeName = ticket.assigned_to?.full_name || ticket.assigned_to?.email || `Level ${toLevel} Authority`;
             const reason = isSlaBreach ? 'due to SLA timeout' : 'by handler escalation';
 
-            // 1. Notify Newly Assigned Level Owner
-            if (ticket.assigned_to_user_id) {
+            // 1. Notify EVERY level owner configured at the new level, not only the primary assignee
+            const newLevelRecipients = await this.resolveHrLevelRecipients(ticket, toLevel);
+            for (const recipientId of newLevelRecipients) {
                 await this.send({
-                    userId: ticket.assigned_to_user_id,
+                    userId: recipientId,
                     organizationId: ticket.organization_id,
                     type: 'HR_TICKET_ESCALATED',
                     title: `⚠️ HR Ticket Escalated to Level ${toLevel} #${ticket.ticket_number}`,
@@ -2886,9 +2988,10 @@ export class NotificationService {
             // Strictly exclude internal notes from external WhatsApp / Email channels
             if (comment.is_internal) {
                 const recipients = new Set<string>();
-                if (ticket.assigned_to_user_id && ticket.assigned_to_user_id !== comment.sender_user_id) {
-                    recipients.add(ticket.assigned_to_user_id);
-                }
+                const levelOwners = await this.resolveHrLevelRecipients(ticket, ticket.current_level || 1);
+                levelOwners.forEach(uid => {
+                    if (uid !== comment.sender_user_id) recipients.add(uid);
+                });
 
                 if (orgId) {
                     const { data: hrMembers } = await supabaseAdmin
@@ -2922,11 +3025,12 @@ export class NotificationService {
             const isSenderSubmitter = comment.sender_user_id === ticket.raised_by_user_id;
 
             if (isSenderSubmitter) {
-                // Submitter replied -> notify assigned handler and HR authorities
+                // Submitter replied -> notify every handler at the current level and HR authorities
                 const recipients = new Set<string>();
-                if (ticket.assigned_to_user_id && ticket.assigned_to_user_id !== comment.sender_user_id) {
-                    recipients.add(ticket.assigned_to_user_id);
-                }
+                const levelOwners = await this.resolveHrLevelRecipients(ticket, ticket.current_level || 1);
+                levelOwners.forEach(uid => {
+                    if (uid !== comment.sender_user_id) recipients.add(uid);
+                });
                 if ((ticket.current_level >= 2 || !ticket.assigned_to_user_id) && orgId) {
                     const { data: hrMembers } = await supabaseAdmin
                         .from('organization_memberships')

@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useDataCache } from '@/frontend/context/DataCacheContext';
 import {
     Plus, Search, Building2, Phone, Mail, CheckCircle2, AlertCircle,
     Loader2, ChevronDown, ChevronUp, X, Ban, RefreshCw, FileText, MapPin
@@ -49,8 +50,13 @@ interface Props {
 }
 
 export default function VendorManagement({ organizationId, propertyId, properties: propsProp = [] }: Props) {
-    const [vendors, setVendors] = useState<Vendor[]>([]);
-    const [loading, setLoading] = useState(true);
+    // Coming back to the tab: the last list is shown at once from memory (per user), then refreshed quietly.
+    const { getCachedData, setCachedData } = useDataCache();
+    const cacheKey = `tab-vendors-${organizationId}-${propertyId ?? 'all'}`;
+    const initialCached = useMemo(() => getCachedData(cacheKey), []); // eslint-disable-line react-hooks/exhaustive-deps
+    const quietFirstLoad = useRef(!!initialCached);
+    const [vendors, setVendors] = useState<Vendor[]>(initialCached?.vendors ?? []);
+    const [loading, setLoading] = useState(!initialCached);
     const [search, setSearch] = useState('');
     const [showAddForm, setShowAddForm] = useState(false);
     const [expandedVendor, setExpandedVendor] = useState<string | null>(null);
@@ -92,7 +98,7 @@ export default function VendorManagement({ organizationId, propertyId, propertie
     }, [organizationId, propsProp]);
 
     async function loadVendors() {
-        setLoading(true);
+        if (quietFirstLoad.current) quietFirstLoad.current = false; else setLoading(true);
         try {
             let url = `/api/vendors/maintenance?organization_id=${organizationId}`;
             if (propertyId) url += `&property_id=${propertyId}`;
@@ -100,6 +106,7 @@ export default function VendorManagement({ organizationId, propertyId, propertie
             const data = await res.json();
             if (!res.ok) throw new Error(data.error);
             setVendors(data.vendors || []);
+            setCachedData(cacheKey, { vendors: data.vendors || [] });
         } catch (e: any) {
             setError(e.message);
         } finally {

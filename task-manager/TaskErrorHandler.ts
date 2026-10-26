@@ -55,6 +55,28 @@ export class TaskErrorHandler {
     }
 
     /**
+     * Person is locked out of the Task Manager (department switched off, or kickoff not sent yet).
+     */
+    static taskManagerLocked(message: string): string {
+        return [
+            `🔒 ${message}`,
+            ``,
+            `You'll be told here as soon as it is ready for you.`
+        ].join('\n');
+    }
+
+    /**
+     * Someone tried to assign a task to a person who is locked out of the Task Manager.
+     */
+    static assigneeLocked(name: string, message: string): string {
+        return [
+            `❌ *Cannot assign to ${name}*`,
+            ``,
+            `The Task Manager isn't available to ${name} yet. ${message}`
+        ].join('\n');
+    }
+
+    /**
      * Unexpected server or database exception.
      */
     static systemError(): string {

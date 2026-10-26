@@ -17,6 +17,7 @@ import WallpaperSettings from '@/frontend/components/dashboard/WallpaperSettings
 import EmailServiceSettings from '@/frontend/components/admin/EmailServiceSettings';
 import WhatsAppServiceSettings from '@/frontend/components/admin/WhatsAppServiceSettings';
 import OmnichannelNotificationSettings from '@/frontend/components/admin/OmnichannelNotificationSettings';
+import AssistantSettings from '@/frontend/components/whatsapp/AssistantSettings';
 
 interface RoleInfo {
     role: string;
@@ -955,6 +956,7 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
             {activeTab === 'whatsapp_service' && superAdminOrgId && (
                 <section className="bg-white rounded-2xl border border-slate-200 p-4 md:p-8 shadow-sm">
                     <WhatsAppServiceSettings organizationId={superAdminOrgId} />
+                    <AssistantSettings organizationId={superAdminOrgId} />
                 </section>
             )}
 

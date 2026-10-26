@@ -266,7 +266,7 @@ const SuperTenantDashboard = () => {
         while (true) {
             const { data, count } = await supabase
                 .from('tickets')
-                .select('*, assignee:users!assigned_to(full_name, user_photo_url), creator:users!raised_by(full_name, property_memberships(role, property_id)), property:properties(name), ticket_escalation_logs(from_level, to_level, escalated_at, from_employee:users!from_employee_id(full_name, user_photo_url), to_employee:users!to_employee_id(full_name, user_photo_url)), material_requests(id)')
+                .select('*, assignee:users!assigned_to(full_name, user_photo_url), creator:users!raised_by(full_name, property_memberships!property_memberships_user_id_fkey(role, property_id)), property:properties(name), ticket_escalation_logs(from_level, to_level, escalated_at, from_employee:users!from_employee_id(full_name, user_photo_url), to_employee:users!to_employee_id(full_name, user_photo_url)), material_requests(id)')
                 .eq('property_id', selectedPropertyId)
                 .order('created_at', { ascending: false })
                 .limit(to + 1)
@@ -294,7 +294,7 @@ const SuperTenantDashboard = () => {
         while (true) {
             const { data, count } = await supabase
                 .from('tickets')
-                .select('*, assignee:users!assigned_to(full_name, user_photo_url), creator:users!raised_by(full_name, property_memberships(role, property_id)), property:properties(name), ticket_escalation_logs(from_level, to_level, escalated_at, from_employee:users!from_employee_id(full_name, user_photo_url), to_employee:users!to_employee_id(full_name, user_photo_url))')
+                .select('*, assignee:users!assigned_to(full_name, user_photo_url), creator:users!raised_by(full_name, property_memberships!property_memberships_user_id_fkey(role, property_id)), property:properties(name), ticket_escalation_logs(from_level, to_level, escalated_at, from_employee:users!from_employee_id(full_name, user_photo_url), to_employee:users!to_employee_id(full_name, user_photo_url))')
                 .in('property_id', ids)
                 .order('created_at', { ascending: false })
                 .limit(to + 1)

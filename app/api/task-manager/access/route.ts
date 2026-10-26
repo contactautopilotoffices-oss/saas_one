@@ -1,0 +1,250 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { supabaseAdmin } from '@/backend/lib/supabase/admin';
+import { TaskAccessService, AccessNotProvisionedError, TEAM_FEATURES, TeamFeature } from '@/task-manager/TaskAccessService';
+import { TaskDatabaseService } from '@/task-manager/TaskDatabaseService';
+import { resetBotSwitchCache } from '@/task-manager/BotSwitches';
+import { clearAllMemory } from '@/task-manager/ConversationMemory';
+import { requireControlCentre } from '../_shared/adminGuard';
+
+export const dynamic = 'force-dynamic';
+
+/**
+ * Step 3 — Task Manager access control.
+ *   GET  /api/task-manager/access?orgId=   → departments (ON/OFF) with each member's onboarding status
+ *   POST /api/task-manager/access?orgId=   → { action: 'set_department' | 'record_kickoff' | 'remove_kickoff', ... }
+ *
+ * 'record_kickoff' is the MANUAL record ("I sent the kickoff outside the system"). It sends NOTHING.
+ * Requires a signed-in organisation admin (or master admin).
+ */
+export async function GET(request: NextRequest) {
+    try {
+        const orgId = request.nextUrl.searchParams.get('orgId') || '';
+        const guard = await requireControlCentre(orgId);
+        if (!guard.ok) return guard.response;
+
+        const overview = await TaskAccessService.getOverview();
+        const config = await TaskDatabaseService.getTestingConfig();
+        return NextResponse.json({
+            success: true, ...overview, nlGatewayEnabled: config.nlGatewayEnabled === true,
+            botFeatures: { neverSilent: config.neverSilentEnabled === true, conversationMemory: config.conversationMemoryEnabled === true, frontDoor: config.frontDoorEnabled === true, teamReports: config.teamReportsEnabled === true, learningLoop: config.learningLoopEnabled === true, promptVersions: config.promptVersionsEnabled === true, nightlyAutoTune: config.nightlyAutoTuneEnabled === true, voiceNotes: config.voiceNotesEnabled === true },
+        });
+    } catch (err) {
+        console.error('[TaskAccessAPI] GET error:', err);
+        return NextResponse.json({ success: false, error: err instanceof Error ? err.message : 'Failed to load access settings' }, { status: 500 });
+    }
+}
+
+export async function POST(request: NextRequest) {
+    try {
+        const orgId = request.nextUrl.searchParams.get('orgId') || '';
+        const guard = await requireControlCentre(orgId);
+        if (!guard.ok) return guard.response;
+
+        const body = await request.json().catch(() => ({}));
+
+        if (body.action === 'set_department') {
+            if (!body.departmentId || typeof body.enabled !== 'boolean') {
+                return NextResponse.json({ success: false, error: 'Missing departmentId or enabled (true/false)' }, { status: 400 });
+            }
+            await TaskAccessService.setDepartmentEnabled(body.departmentId, body.enabled, guard.label);
+            return NextResponse.json({
+                success: true,
+                message: body.enabled
+                    ? 'Task Manager switched ON for this department. Only people with a recorded kickoff are unlocked.'
+                    : 'Task Manager switched OFF for this department. Nobody in it can use it.'
+            });
+        }
+
+        // Step 5: "team sharing" for a department (members see and assign each other's tasks)
+        if (body.action === 'set_team_sharing') {
+            if (!body.departmentId || typeof body.enabled !== 'boolean') {
+                return NextResponse.json({ success: false, error: 'Missing departmentId or enabled (true/false)' }, { status: 400 });
+            }
+            await TaskAccessService.setPeerAssign(body.departmentId, body.enabled, guard.label);
+            return NextResponse.json({
+                success: true,
+                message: body.enabled
+                    ? 'Team sharing ON: members of this department can see and assign each other\'s tasks.'
+                    : 'Team sharing OFF: only the reporting chain applies.'
+            });
+        }
+
+        // Owner 2026-10-19: "assign to anyone in team" (give tasks to anyone in the department; seeing stays by the chain)
+        if (body.action === 'set_team_assign') {
+            if (!body.departmentId || typeof body.enabled !== 'boolean') {
+                return NextResponse.json({ success: false, error: 'Missing departmentId or enabled (true/false)' }, { status: 400 });
+            }
+            await TaskAccessService.setTeamAssign(body.departmentId, body.enabled, guard.label);
+            return NextResponse.json({
+                success: true,
+                message: body.enabled
+                    ? 'Assign to anyone in team ON: members can give tasks to anyone in this department. They still only see their own tasks and those below them.'
+                    : 'Assign to anyone in team OFF: members can give tasks only to people below them.'
+            });
+        }
+
+        // Owner 2026-10-19: the other per-team switches (Pending on…, Protect given tasks, Assigned by me tab)
+        if (body.action === 'set_team_feature') {
+            if (!body.departmentId || typeof body.enabled !== 'boolean' || !TEAM_FEATURES.includes(body.feature)) {
+                return NextResponse.json({ success: false, error: 'Missing departmentId, feature or enabled (true/false)' }, { status: 400 });
+            }
+            await TaskAccessService.setTeamFeature(body.departmentId, body.feature as TeamFeature, body.enabled, guard.label);
+            return NextResponse.json({ success: true, message: body.enabled ? 'Switched ON for this department.' : 'Switched OFF for this department.' });
+        }
+
+        // Superuser role (Task Manager): make or remove a superuser. Admin-only; the last superuser cannot be removed.
+        // Reporting manager role (moved from the old manager-role card). Admin-only, like every action here.
+        if (body.action === 'set_manager') {
+            if (!body.userId || typeof body.enabled !== 'boolean') {
+                return NextResponse.json({ success: false, error: 'Missing userId or enabled (true/false)' }, { status: 400 });
+            }
+            await TaskAccessService.setReportingManager(body.userId, body.enabled, guard.label);
+            return NextResponse.json({
+                success: true,
+                message: body.enabled
+                    ? 'Now a reporting manager: can see and assign tasks across their department.'
+                    : 'Back to a normal employee.'
+            });
+        }
+
+        if (body.action === 'set_superuser') {
+            if (!body.userId || typeof body.enabled !== 'boolean') {
+                return NextResponse.json({ success: false, error: 'Missing userId or enabled (true/false)' }, { status: 400 });
+            }
+            await TaskAccessService.setSuperuser(body.userId, body.enabled, guard.label);
+            return NextResponse.json({
+                success: true,
+                message: body.enabled
+                    ? 'Now a superuser: can see and assign tasks across every department.'
+                    : 'Back to a normal employee.'
+            });
+        }
+
+        // Step 6: let a department manage its own notification schedule and wording
+        if (body.action === 'set_notifications_delegated') {
+            if (!body.departmentId || typeof body.enabled !== 'boolean') {
+                return NextResponse.json({ success: false, error: 'Missing departmentId or enabled (true/false)' }, { status: 400 });
+            }
+            await TaskAccessService.setNotificationsDelegated(body.departmentId, body.enabled, guard.label);
+            return NextResponse.json({
+                success: true,
+                message: body.enabled
+                    ? 'This team can now manage its own notification schedule and wording.'
+                    : 'Notification settings are back under your control only.'
+            });
+        }
+
+        // Step 4: natural-language chat for unlocked people (OFF until switched on here)
+        // WhatsApp bot upgrades (docs/WHATSAPP_BOT_PRODUCTION_PLAN.md): switched here, no redeploy. Takes effect within ~30 s.
+        if (body.action === 'set_bot_feature') {
+            if (!['neverSilent', 'conversationMemory', 'frontDoor', 'teamReports', 'learningLoop', 'promptVersions', 'nightlyAutoTune', 'voiceNotes'].includes(body.feature) || typeof body.enabled !== 'boolean') {
+                return NextResponse.json({ success: false, error: 'Missing feature (neverSilent | conversationMemory | frontDoor | teamReports | learningLoop | promptVersions | nightlyAutoTune | voiceNotes) or enabled (true/false)' }, { status: 400 });
+            }
+            await TaskDatabaseService.setBotFeature(body.feature, body.enabled, guard.label);
+            resetBotSwitchCache();
+            // Privacy: with memory OFF the 24-hour clean-up stops, so delete everything stored right away.
+            const cleared = body.feature === 'conversationMemory' && !body.enabled ? await clearAllMemory() : null;
+            const names: Record<string, string> = { neverSilent: 'Never silent', conversationMemory: 'Conversation memory', frontDoor: 'One front door', teamReports: 'Team reports', learningLoop: 'Learning loop', promptVersions: 'Prompt versions', nightlyAutoTune: 'Nightly auto-tune', voiceNotes: 'Voice notes' };
+            const name = names[body.feature] || 'Bot feature';
+            return NextResponse.json({
+                success: true,
+                message: `${name} is ${body.enabled ? 'ON' : 'OFF'}. It takes effect within about 30 seconds.${cleared !== null ? ` Stored chat memories deleted: ${cleared}.` : ''}`,
+            });
+        }
+
+        if (body.action === 'set_nl_gateway') {
+            if (typeof body.enabled !== 'boolean') {
+                return NextResponse.json({ success: false, error: 'Missing enabled (true/false)' }, { status: 400 });
+            }
+            await TaskDatabaseService.setNaturalLanguageGateway(body.enabled, guard.label);
+            return NextResponse.json({
+                success: true,
+                message: body.enabled
+                    ? 'Natural-language chat is ON for everyone who is unlocked for the Task Manager.'
+                    : 'Natural-language chat is OFF. The bot behaves as before.'
+            });
+        }
+
+        // Task Import: let a department's people send a task list (Excel / image / text) on WhatsApp
+        if (body.action === 'set_task_import') {
+            if (!body.departmentId || typeof body.enabled !== 'boolean') {
+                return NextResponse.json({ success: false, error: 'Missing departmentId or enabled (true/false)' }, { status: 400 });
+            }
+            await TaskAccessService.setTaskImportEnabled(body.departmentId, body.enabled, guard.label);
+            return NextResponse.json({
+                success: true,
+                message: body.enabled
+                    ? 'People in this team can now send a task list on WhatsApp (preview first, saved only after YES).'
+                    : 'Task import is OFF for this team. Files and images are handled exactly as before.'
+            });
+        }
+
+        // Working with a superuser: let a department give tasks to a superuser and send them "pending for you" reminders
+        if (body.action === 'set_superuser_collab') {
+            if (!body.departmentId || typeof body.enabled !== 'boolean') {
+                return NextResponse.json({ success: false, error: 'Missing departmentId or enabled (true/false)' }, { status: 400 });
+            }
+            await TaskAccessService.setSuperuserCollabEnabled(body.departmentId, body.enabled, guard.label);
+            return NextResponse.json({
+                success: true,
+                message: body.enabled
+                    ? 'This team can now give tasks to a superuser and send them reminders (a new "superuser" tab appears in their Tasks tab).'
+                    : 'This team can no longer give tasks to a superuser or remind them. Existing tasks stay where they are.'
+            });
+        }
+
+        // Smart chat: let a department's people talk to the Task Manager in plain language on WhatsApp
+        if (body.action === 'set_smart_chat') {
+            if (!body.departmentId || typeof body.enabled !== 'boolean') {
+                return NextResponse.json({ success: false, error: 'Missing departmentId or enabled (true/false)' }, { status: 400 });
+            }
+            await TaskAccessService.setSmartChatEnabled(body.departmentId, body.enabled, guard.label);
+            return NextResponse.json({
+                success: true,
+                message: body.enabled
+                    ? 'People in this team can now talk to the Task Manager in plain language (every change is confirmed first).'
+                    : 'Smart chat is OFF for this team. The bot answers exactly as before.'
+            });
+        }
+
+        if (body.action === 'record_kickoff') {
+            if (!body.userId) {
+                return NextResponse.json({ success: false, error: 'Missing userId' }, { status: 400 });
+            }
+            const { data: profile } = await supabaseAdmin
+                .from('employee_profiles')
+                .select('department_id, task_role')
+                .eq('user_id', body.userId)
+                .eq('is_active', true)
+                .limit(1)
+                .maybeSingle();
+            if (!profile) {
+                return NextResponse.json({ success: false, error: 'Active employee with a user account not found' }, { status: 404 });
+            }
+            await TaskAccessService.recordKickoff({
+                userId: body.userId,
+                departmentId: profile.department_id,
+                kickoffType: profile.task_role === 'reporting_manager' ? 'manager' : 'employee',
+                source: 'manual',
+                actor: guard.label
+            });
+            return NextResponse.json({ success: true, message: 'Kickoff recorded as sent (manual). No WhatsApp message was sent.' });
+        }
+
+        if (body.action === 'remove_kickoff') {
+            if (!body.userId) {
+                return NextResponse.json({ success: false, error: 'Missing userId' }, { status: 400 });
+            }
+            await TaskAccessService.removeKickoff(body.userId, guard.label);
+            return NextResponse.json({ success: true, message: 'Kickoff record removed. This person is locked again.' });
+        }
+
+        return NextResponse.json({ success: false, error: `Invalid action: ${body.action}` }, { status: 400 });
+    } catch (err) {
+        if (err instanceof AccessNotProvisionedError) {
+            return NextResponse.json({ success: false, code: 'NOT_PROVISIONED', error: err.message }, { status: 409 });
+        }
+        console.error('[TaskAccessAPI] POST error:', err);
+        return NextResponse.json({ success: false, error: err instanceof Error ? err.message : 'Failed to update access settings' }, { status: 500 });
+    }
+}

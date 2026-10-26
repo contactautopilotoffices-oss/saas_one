@@ -1,0 +1,648 @@
+"use client";
+
+import React, { useEffect, useState } from 'react';
+import { Lock, Unlock, RefreshCw, ChevronDown, ChevronRight, AlertTriangle, CheckCircle2 } from 'lucide-react';
+
+/**
+ * Step 3 — Who is unlocked for the Task Manager.
+ * A person can use it only when their department is switched ON *and* their kickoff is recorded.
+ * "Mark kickoff as sent (manual)" only RECORDS it. It never sends a WhatsApp message.
+ */
+
+interface AccessMember {
+    userId: string;
+    name: string;
+    taskRole: string;
+    onboarded: boolean;
+    source: string | null;
+    kickoffSentAt: string | null;
+}
+
+interface AccessDepartment {
+    departmentId: string;
+    name: string;
+    enabled: boolean;
+    peerAssign: boolean;
+    /** Owner 2026-10-19: members may give tasks to anyone in the team (seeing still follows the reporting chain). */
+    teamAssign?: boolean;
+    /** Owner 2026-10-19: the "Pending on…" button, protection of given tasks, and the "Assigned by me" tab. */
+    pendingOn?: boolean;
+    protectGiven?: boolean;
+    assignedTab?: boolean;
+    notificationsDelegated: boolean;
+    taskImportEnabled: boolean;
+    smartChatEnabled: boolean;
+    superuserCollabEnabled: boolean;
+    memberCount: number;
+    onboardedCount: number;
+    members: AccessMember[];
+}
+
+function formatWhen(iso: string | null): string {
+    if (!iso) return '';
+    try {
+        return new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true });
+    } catch {
+        return '';
+    }
+}
+
+const SOURCE_LABEL: Record<string, string> = {
+    whatsapp: 'kickoff sent via WhatsApp',
+    manual: 'marked manually',
+    backfill: 'already onboarded (existing team)',
+};
+
+export default function TaskAccessPanel({ orgId }: { orgId?: string }) {
+    const [loading, setLoading] = useState(true);
+    const [busyKey, setBusyKey] = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(null);
+    const [notice, setNotice] = useState<string | null>(null);
+    const [provisioned, setProvisioned] = useState(true);
+    const [nlGateway, setNlGateway] = useState(false);
+    type BotFeature = 'neverSilent' | 'conversationMemory' | 'frontDoor' | 'teamReports' | 'learningLoop' | 'promptVersions' | 'nightlyAutoTune' | 'voiceNotes';
+    const [botFeatures, setBotFeatures] = useState<Record<BotFeature, boolean>>({ neverSilent: false, conversationMemory: false, frontDoor: false, teamReports: false, learningLoop: false, promptVersions: false, nightlyAutoTune: false, voiceNotes: false });
+    const [taskImportColumnMissing, setTaskImportColumnMissing] = useState(false);
+    const [smartChatColumnMissing, setSmartChatColumnMissing] = useState(false);
+    const [collabColumnMissing, setCollabColumnMissing] = useState(false);
+    const [sharingColumnMissing, setSharingColumnMissing] = useState(false);
+    const [teamAssignColumnMissing, setTeamAssignColumnMissing] = useState(false);
+    const [teamFeaturesColumnMissing, setTeamFeaturesColumnMissing] = useState(false);
+    const [notificationsColumnMissing, setNotificationsColumnMissing] = useState(false);
+    const [departments, setDepartments] = useState<AccessDepartment[]>([]);
+    const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+    const url = `/api/task-manager/access?orgId=${encodeURIComponent(orgId || '')}`;
+
+    const load = async () => {
+        setLoading(true);
+        setError(null);
+        try {
+            const res = await fetch(url);
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.error || 'Failed to load access settings');
+            setProvisioned(Boolean(data.provisioned));
+            setNlGateway(Boolean(data.nlGatewayEnabled));
+            setBotFeatures({ neverSilent: data.botFeatures?.neverSilent === true, conversationMemory: data.botFeatures?.conversationMemory === true, frontDoor: data.botFeatures?.frontDoor === true, teamReports: data.botFeatures?.teamReports === true, learningLoop: data.botFeatures?.learningLoop === true, promptVersions: data.botFeatures?.promptVersions === true, nightlyAutoTune: data.botFeatures?.nightlyAutoTune === true, voiceNotes: data.botFeatures?.voiceNotes === true });
+            setTaskImportColumnMissing(Boolean(data.taskImportColumnMissing));
+            setSmartChatColumnMissing(Boolean(data.smartChatColumnMissing));
+            setCollabColumnMissing(Boolean(data.superuserCollabColumnMissing));
+            setSharingColumnMissing(Boolean(data.teamSharingColumnMissing));
+            setTeamAssignColumnMissing(Boolean(data.teamAssignColumnMissing));
+            setTeamFeaturesColumnMissing(Boolean(data.teamFeaturesColumnMissing));
+            setNotificationsColumnMissing(Boolean(data.notificationsColumnMissing));
+            if (data.readable === false) setError('Access settings could not be read. Everyone is treated as locked until this works again.');
+            setDepartments(data.departments || []);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to load access settings');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        load();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [orgId]);
+
+    const post = async (key: string, body: Record<string, unknown>) => {
+        setBusyKey(key);
+        setError(null);
+        setNotice(null);
+        try {
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.error || 'Action failed');
+            setNotice(data.message || 'Saved.');
+            await load();
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Action failed');
+        } finally {
+            setBusyKey(null);
+        }
+    };
+
+    const toggleDepartment = (d: AccessDepartment) => {
+        const next = !d.enabled;
+        const text = next
+            ? `Switch the Task Manager ON for ${d.name}?\n\nOnly people whose kickoff is recorded will be unlocked (${d.onboardedCount} of ${d.memberCount} right now).`
+            : `Switch the Task Manager OFF for ${d.name}?\n\nNobody in this department will be able to use it.`;
+        if (!window.confirm(text)) return;
+        post(`dept-${d.departmentId}`, { action: 'set_department', departmentId: d.departmentId, enabled: next });
+    };
+
+    const toggleTeamSharing = (d: AccessDepartment) => {
+        const next = !d.peerAssign;
+        const text = next
+            ? `Switch team sharing ON for ${d.name}?\n\nMembers of ${d.name} will be able to see each other's tasks and assign tasks to each other (web Tasks tab and WhatsApp). Each person can still complete only their own tasks.`
+            : `Switch team sharing OFF for ${d.name}?\n\nMembers will only see themselves and the people who report to them.`;
+        if (!window.confirm(text)) return;
+        post(`share-${d.departmentId}`, { action: 'set_team_sharing', departmentId: d.departmentId, enabled: next });
+    };
+
+    const toggleTeamAssign = (d: AccessDepartment) => {
+        const next = !d.teamAssign;
+        const text = next
+            ? `Switch "Assign to anyone in team" ON for ${d.name}?\n\nEveryone in ${d.name} will be able to give a task to anyone else in ${d.name}, including their own manager (web Tasks tab and WhatsApp).\n\nSeeing tasks does not change: each person still sees only their own tasks and those of the people below them.`
+            : `Switch "Assign to anyone in team" OFF for ${d.name}?\n\nMembers will be able to give tasks only to the people below them.`;
+        if (!window.confirm(text)) return;
+        post(`assign-${d.departmentId}`, { action: 'set_team_assign', departmentId: d.departmentId, enabled: next });
+    };
+
+    // Owner 2026-10-19: one handler for the three new per-team switches.
+    const TEAM_FEATURE_TEXT = {
+        pending_on: {
+            on: (n: string) => `Switch "Pending on" ON for ${n}?\n\nPeople in ${n} get a "Pending on…" button on their own open tasks, to tell a colleague the task is waiting on them. The colleague gets an app notification and a WhatsApp message. Nobody can see anyone else's board because of this.`,
+            off: (n: string) => `Switch "Pending on" OFF for ${n}?\n\nThe button disappears for this team.`,
+        },
+        protect_given: {
+            on: (n: string) => `Switch "Protect given tasks" ON for ${n}?\n\nA task someone else gave a person in ${n} can no longer be deleted or renamed by that person. Only the giver, the giver's manager (or anyone above), or a superuser can.`,
+            off: (n: string) => `Switch "Protect given tasks" OFF for ${n}?\n\nPeople can delete any task on their own list again.`,
+        },
+        assigned_tab: {
+            on: (n: string) => `Switch the "Assigned by me" tab ON for ${n}?\n\nPeople in ${n} see every task they gave, with status and times, and can edit or delete them. Managers also see (view only) the tasks given by the people below them.`,
+            off: (n: string) => `Switch the "Assigned by me" tab OFF for ${n}?\n\nThe tab disappears for this team. No task is changed.`,
+        },
+    } as const;
+    type TeamFeatureKey = keyof typeof TEAM_FEATURE_TEXT;
+    const featureValue = (d: AccessDepartment, f: TeamFeatureKey) => (f === 'pending_on' ? d.pendingOn : f === 'protect_given' ? d.protectGiven : d.assignedTab) === true;
+    const toggleTeamFeature = (d: AccessDepartment, feature: TeamFeatureKey) => {
+        const next = !featureValue(d, feature);
+        if (!window.confirm(next ? TEAM_FEATURE_TEXT[feature].on(d.name) : TEAM_FEATURE_TEXT[feature].off(d.name))) return;
+        post(`${feature}-${d.departmentId}`, { action: 'set_team_feature', departmentId: d.departmentId, feature, enabled: next });
+    };
+
+    const toggleNotificationsDelegated = (d: AccessDepartment) => {
+        const next = !d.notificationsDelegated;
+        const text = next
+            ? `Let ${d.name} manage its own notifications?\n\nAnyone in ${d.name} will be able to change when its Task Manager messages go out and what they say (only for their own team). You keep the kill switches, Pretend Mode and every other department.`
+            : `Take notification settings back for ${d.name}?\n\nThe team will still see their schedule but cannot change it.`;
+        if (!window.confirm(text)) return;
+        post(`notif-${d.departmentId}`, { action: 'set_notifications_delegated', departmentId: d.departmentId, enabled: next });
+    };
+
+    // Reporting manager (moved here from the old "Manager Role Assignment & WhatsApp Kickoff" card, 2026-10-12).
+    const toggleManager = (m: AccessMember) => {
+        const next = m.taskRole !== 'reporting_manager';
+        const text = next
+            ? `Make ${m.name} a REPORTING MANAGER?\n\nThey can see and assign tasks across their department, and get their team's progress at midday (if anything is pending) and in the evening. No WhatsApp message is sent by this button. You can remove this later.`
+            : `Remove ${m.name}'s manager role?\n\nThey go back to a normal employee.`;
+        if (!window.confirm(text)) return;
+        post(`manager-${m.userId}`, { action: 'set_manager', userId: m.userId, enabled: next });
+    };
+
+    const toggleSuperuser = (m: AccessMember) => {
+        const next = m.taskRole !== 'superuser';
+        const text = next
+            ? `Make ${m.name} a SUPERUSER?\n\nThey will be able to see and assign tasks for every department, on the web and by WhatsApp. You can remove this later.`
+            : `Remove ${m.name}'s superuser role?\n\nThey go back to a normal employee.`;
+        if (!window.confirm(text)) return;
+        post(`super-${m.userId}`, { action: 'set_superuser', userId: m.userId, enabled: next });
+    };
+
+    const markKickoff = (m: AccessMember, deptName: string) => {
+        const ok = window.confirm(
+            `Record that ${m.name}'s kickoff has been sent?\n\nThis only RECORDS it so ${m.name} is unlocked once ${deptName} is switched ON.\nIt does NOT send any WhatsApp message.`
+        );
+        if (!ok) return;
+        post(`kick-${m.userId}`, { action: 'record_kickoff', userId: m.userId });
+    };
+
+    const undoKickoff = (m: AccessMember) => {
+        if (!window.confirm(`Remove the kickoff record for ${m.name}? They will be locked again.`)) return;
+        post(`kick-${m.userId}`, { action: 'remove_kickoff', userId: m.userId });
+    };
+
+    const toggleNlGateway = () => {
+        const next = !nlGateway;
+        const text = next
+            ? 'Switch natural-language chat ON?\n\nEveryone who is unlocked for the Task Manager can then write normally ("show my tasks", "I finished the vendor call"). Any change asks "confirm?" first. While Pretend Mode is ON no reply is actually sent.'
+            : 'Switch natural-language chat OFF? The bot goes back to the exact old behaviour.';
+        if (!window.confirm(text)) return;
+        post('nl-gateway', { action: 'set_nl_gateway', enabled: next });
+    };
+
+    const toggleBotFeature = (feature: BotFeature) => {
+        const next = !botFeatures[feature];
+        const phase5 = feature === 'learningLoop' ? 'Capture likely mistakes for admin review? Requires Phase 5 SQL.' : feature === 'promptVersions' ? 'Use approved database prompt versions? Invalid or unavailable versions fall back to built-in instructions.' : feature === 'nightlyAutoTune' ? 'Draft and safety-test at most one candidate per night after 02:00 IST? Nothing activates automatically.' : null;
+        const text = phase5 ? `Switch "${feature}" ${next ? 'ON' : 'OFF'}?\n\n${phase5}` : feature === 'voiceNotes'
+            ? (next
+                ? 'Switch "Voice notes" ON?\n\nEveryone who uses the Task Manager can send a WhatsApp voice note instead of typing. It is turned into text, they see "🎙️ I heard: …", and changes still need their YES. While the sandbox is ON, only sandbox numbers can use it.\n\nNo SQL file needed. Needs GROQ_VOICE_API_KEY on the server.'
+                : 'Switch "Voice notes" OFF? Voice notes are ignored again; typing works as before.')
+            : feature === 'teamReports'
+            ? (next
+                ? 'Switch "Team reports" ON?\n\nIn Smart chat, anyone who can give work to others can ask "how is my team doing today?" or "anything overdue in my team?". The answer only includes people they are already allowed to see. Read-only: nothing is changed.\n\nNo SQL file needed.'
+                : 'Switch "Team reports" OFF? Team questions stop working; the AI goes back to exactly its previous instructions.')
+            : feature === 'frontDoor'
+            ? (next
+                ? 'Switch "One front door" ON?\n\nFor departments with Smart chat ON:\n• "done 2", "done all" and "tasks" are answered at once (no AI, no YES).\n• "undo" reverses your own last change within 10 minutes (not hand-overs).\n• When the AI is down, people get a short help line instead of the 1 / 2 menu.\n\nNo SQL file needed.'
+                : 'Switch "One front door" OFF? Smart chat goes back to asking YES for every completion, and "undo" stops working.')
+            : feature === 'neverSilent'
+            ? (next
+                ? 'Switch "Never silent" ON?\n\nNeeds the SQL file supabase/migrations/20261011000001_whatsapp_inbound_ledger.sql run once first.\n\nEvery Task Manager WhatsApp message is noted (no message text). If the bot does not reply, the person gets one short apology at the next 15-minute check. While Pretend Mode is ON no apology is actually sent.'
+                : 'Switch "Never silent" OFF? Messages are no longer noted and no apologies are sent.')
+            : (next
+                ? 'Switch "Conversation memory" ON?\n\nNeeds the SQL file supabase/migrations/20261011000002_whatsapp_conversation_memory.sql run once first.\n\nThe last 20 messages of each person\'s chat with the bot are kept for 24 hours so the AI can follow the conversation, then deleted. Nobody can see them in the app.'
+                : 'Switch "Conversation memory" OFF?\n\nThe AI stops reading earlier messages and ALL stored chat memories are deleted now.');
+        if (!window.confirm(text)) return;
+        post(`bot-${feature}`, { action: 'set_bot_feature', feature, enabled: next });
+    };
+
+    const toggleTaskImport = (d: AccessDepartment) => {
+        const next = !d.taskImportEnabled;
+        const text = next
+            ? `Let ${d.name} send task lists on WhatsApp?
+
+Anyone in ${d.name} who is unlocked for the Task Manager can then send an Excel file (or an image / text that says "add tasks"). The bot shows a numbered preview and saves nothing until they reply YES. While Pretend Mode is ON no reply is actually sent (saving after YES still happens). While the sandbox is ON only the sandbox numbers can use it.`
+            : `Switch task import OFF for ${d.name}?
+
+Their files and images go back to being handled exactly as before.`;
+        if (!window.confirm(text)) return;
+        post(`import-${d.departmentId}`, { action: 'set_task_import', departmentId: d.departmentId, enabled: next });
+    };
+
+    const toggleSuperuserCollab = (d: AccessDepartment) => {
+        const next = !d.superuserCollabEnabled;
+        const text = next
+            ? `Let ${d.name} give tasks to a superuser?\n\nThis is a PERMISSION change. People in ${d.name} will be able to give tasks to a superuser (for example Saniel), see the tasks they gave him, and send him "these are pending for you" reminders, now or scheduled, plus one shared regular reminder for the team. His replies ("working on it", "done") are passed back to whoever gave him each task, as a summary, not his exact words. Nothing else about who can assign to whom changes. While Pretend Mode is ON no WhatsApp message is actually sent.`
+            : `Stop ${d.name} from giving tasks to a superuser?\n\nThe "superuser" tab disappears for them and scheduled reminders will no longer be sent. Tasks already given stay where they are.`;
+        if (!window.confirm(text)) return;
+        post(`collab-${d.departmentId}`, { action: 'set_superuser_collab', departmentId: d.departmentId, enabled: next });
+    };
+
+    const toggleSmartChat = (d: AccessDepartment) => {
+        const next = !d.smartChatEnabled;
+        const text = next
+            ? `Let ${d.name} talk to the Task Manager in plain language?\n\nAnyone in ${d.name} who is unlocked can then write normally on WhatsApp ("what's pending?", "give Vidya a task to chase the quote", "finished the carpet one"). Every change is confirmed first, and anything unclear is asked about, never guessed. If the AI is unavailable, or a message is about rooms or tickets, the old bot answers as before. While Pretend Mode is ON no reply is actually sent (changes after YES still happen). While the sandbox is ON only the sandbox numbers can use it.`
+            : `Switch smart chat OFF for ${d.name}?\n\nThe bot answers them exactly as before.`;
+        if (!window.confirm(text)) return;
+        post(`smart-${d.departmentId}`, { action: 'set_smart_chat', departmentId: d.departmentId, enabled: next });
+    };
+
+    const toggleExpanded = (id: string) => {
+        setExpanded(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id); else next.add(id);
+            return next;
+        });
+    };
+
+    return (
+        <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                    <Lock className="w-5 h-5 text-emerald-600" />
+                    <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                            <h3 className="text-sm font-black uppercase tracking-wider text-slate-900">
+                                Task Manager Access (who is unlocked)
+                            </h3>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                Step 3
+                            </span>
+                        </div>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                            A person can use the Task Manager only when their department is switched ON <strong>and</strong> their kickoff has been sent.
+                        </p>
+                    </div>
+                </div>
+                <button
+                    type="button"
+                    disabled={loading}
+                    onClick={load}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-xl font-bold text-xs cursor-pointer disabled:opacity-50 self-start"
+                >
+                    <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+                    Refresh
+                </button>
+            </div>
+
+            {!provisioned && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs space-y-1">
+                    <p className="font-black flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Access tables are not created yet</p>
+                    <p>
+                        Run <code className="font-mono bg-white/70 px-1 rounded">supabase/migrations/20261007000001_task_manager_access_control.sql</code> once in the Supabase SQL Editor.
+                        Until then <strong>only the Tech team is unlocked</strong> and the switches below are disabled.
+                    </p>
+                </div>
+            )}
+
+            {provisioned && sharingColumnMissing && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs">
+                    <p className="font-black flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Team sharing needs one more SQL file</p>
+                    <p>Run <code className="font-mono bg-white/70 px-1 rounded">supabase/migrations/20261007000002_task_manager_team_sharing.sql</code> once in the Supabase SQL Editor. Until then team sharing is OFF everywhere and its buttons are disabled.</p>
+                </div>
+            )}
+
+            {provisioned && (teamAssignColumnMissing || teamFeaturesColumnMissing) && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs">
+                    <p className="font-black flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> The new team switches need one more SQL file</p>
+                    <p>Run <code className="font-mono bg-white/70 px-1 rounded">supabase/migrations/20261019000001_task_manager_team_controls.sql</code> once in the Supabase SQL Editor. Until then &quot;Assign to anyone in team&quot;, &quot;Pending on&quot;, &quot;Protect given tasks&quot; and &quot;Assigned by me&quot; are OFF everywhere and their buttons are disabled.</p>
+                </div>
+            )}
+
+            {provisioned && notificationsColumnMissing && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs">
+                    <p className="font-black flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Team-managed notifications need one more SQL file</p>
+                    <p>Run <code className="font-mono bg-white/70 px-1 rounded">supabase/migrations/20261007000003_task_manager_notification_delegation.sql</code> once in the Supabase SQL Editor. Until then no team can manage its own notifications and the button is disabled.</p>
+                </div>
+            )}
+
+            {provisioned && collabColumnMissing && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs">
+                    <p className="font-black flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Working with a superuser needs one more SQL file</p>
+                    <p>Run <code className="font-mono bg-white/70 px-1 rounded">supabase/migrations/20261007000006_task_manager_superuser_pings.sql</code> once in the Supabase SQL Editor. Until then no team can give tasks to a superuser and its buttons are disabled.</p>
+                </div>
+            )}
+
+            {provisioned && smartChatColumnMissing && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs">
+                    <p className="font-black flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Smart chat needs one more SQL file</p>
+                    <p>Run <code className="font-mono bg-white/70 px-1 rounded">supabase/migrations/20261007000005_task_manager_smart_chat.sql</code> once in the Supabase SQL Editor. Until then smart chat is OFF for every team and its buttons are disabled.</p>
+                </div>
+            )}
+
+            {provisioned && taskImportColumnMissing && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs">
+                    <p className="font-black flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Task import needs one more SQL file</p>
+                    <p>Run <code className="font-mono bg-white/70 px-1 rounded">supabase/migrations/20261007000004_task_manager_task_import.sql</code> once in the Supabase SQL Editor. Until then task import is OFF for every team and its buttons are disabled.</p>
+                </div>
+            )}
+
+            <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                    <p className="font-black text-slate-900">Natural-language chat <span className="text-[10px] font-black uppercase tracking-wider text-indigo-700">Step 4</span></p>
+                    <p className="text-slate-600">Unlocked people can write normally (&ldquo;show my tasks&rdquo;, &ldquo;I finished the vendor call&rdquo;). Any change asks &ldquo;confirm?&rdquo; first. Room and ticket messages go to the existing bot.</p>
+                </div>
+                <button
+                    type="button"
+                    disabled={busyKey === 'nl-gateway'}
+                    onClick={toggleNlGateway}
+                    className={`px-3.5 py-1.5 rounded-xl font-black text-xs uppercase tracking-wider cursor-pointer disabled:opacity-50 whitespace-nowrap ${nlGateway ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-slate-200 hover:bg-slate-300 text-slate-700'}`}
+                >
+                    {nlGateway ? 'ON' : 'OFF'}
+                </button>
+            </div>
+
+            {([
+                { key: 'neverSilent', title: 'Never silent', body: 'If the bot does not reply to a Task Manager message, the person gets one short "Sorry, please try again" at the next 15-minute check. No message text is stored. Needs SQL file 20261011000001 run once.' },
+                { key: 'frontDoor', title: 'One front door', body: 'For Smart-chat departments: "done 2" / "done all" / "tasks" answered instantly without AI, "undo" within 10 minutes, and a short help line instead of the 1 / 2 menu when the AI is down. No SQL file needed.' },
+                { key: 'teamReports', title: 'Team reports', body: 'In Smart chat, managers (anyone who can give work to others) can ask "how is my team doing today?" — done / in progress / overdue for the people they may already see. Read-only. No SQL file needed.' },
+                { key: 'conversationMemory', title: 'Conversation memory', body:'The AI remembers the last 20 messages of each chat for 24 hours, so "make it tomorrow" or "the second one" are understood. Nobody can see them in the app. Needs SQL file 20261011000002 run once.' },
+                { key: 'learningLoop', title: 'Learning loop', body: 'Capture likely mistakes for admin review and permanent live test cases. Needs SQL file 20261011000003 run once.' },
+                { key: 'promptVersions', title: 'Prompt versions', body: 'Use approved tunable instruction versions without redeploying. Locked safety rules remain in code.' },
+                { key: 'voiceNotes', title: 'Voice notes', body: 'Everyone using the Task Manager can send a WhatsApp voice note instead of typing: it is turned into text and handled like a typed message (changes still need YES). Sandbox ON → only sandbox numbers. No SQL needed.' },
+                { key: 'nightlyAutoTune', title: 'Nightly auto-tune', body: 'After 02:00 IST, draft and safety-test one candidate only when new labelled cases exist. Never auto-activates.' },
+            ] as const).map(f => (
+                <div key={f.key} className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                        <p className="font-black text-slate-900">{f.title} <span className="text-[10px] font-black uppercase tracking-wider text-indigo-700">WhatsApp bot</span></p>
+                        <p className="text-slate-600">{f.body}</p>
+                    </div>
+                    <button
+                        type="button"
+                        disabled={busyKey === `bot-${f.key}`}
+                        onClick={() => toggleBotFeature(f.key)}
+                        className={`px-3.5 py-1.5 rounded-xl font-black text-xs uppercase tracking-wider cursor-pointer disabled:opacity-50 whitespace-nowrap ${botFeatures[f.key] ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-slate-200 hover:bg-slate-300 text-slate-700'}`}
+                    >
+                        {botFeatures[f.key] ? 'ON' : 'OFF'}
+                    </button>
+                </div>
+            ))}
+
+            <div className="p-3 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-950 text-xs">
+                While Pretend Mode is ON no kickoff is really sent. After you send a kickoff yourself, use
+                <strong> &ldquo;Mark kickoff as sent (manual)&rdquo; </strong> to record it. That button only records it. It sends nothing.
+            </div>
+
+            {error && <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-medium">⚠️ {error}</div>}
+            {notice && (
+                <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-bold flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4" /> {notice}
+                </div>
+            )}
+
+            {loading && departments.length === 0 && <p className="text-xs text-slate-500">Loading…</p>}
+
+            <div className="space-y-2">
+                {departments.map(d => {
+                    const isOpen = expanded.has(d.departmentId);
+                    const busy = busyKey === `dept-${d.departmentId}`;
+                    const noneUnlocked = d.enabled && d.onboardedCount === 0;
+                    return (
+                        <div key={d.departmentId} className="border border-slate-200 rounded-2xl overflow-hidden">
+                            <div className="flex items-center justify-between gap-3 p-3 flex-wrap">
+                                <button
+                                    type="button"
+                                    onClick={() => toggleExpanded(d.departmentId)}
+                                    className="flex items-center gap-2 text-left cursor-pointer"
+                                >
+                                    {isOpen ? <ChevronDown className="w-4 h-4 text-slate-500" /> : <ChevronRight className="w-4 h-4 text-slate-500" />}
+                                    <span className="text-sm font-bold text-slate-900">{d.name}</span>
+                                    <span className="text-[11px] text-slate-500">{d.onboardedCount} of {d.memberCount} kickoff sent</span>
+                                    {noneUnlocked && (
+                                        <span className="px-2 py-0.5 rounded-md text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-300">
+                                            ON, but nobody is unlocked yet
+                                        </span>
+                                    )}
+                                </button>
+                                <div className="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    disabled={!provisioned || collabColumnMissing || busyKey === `collab-${d.departmentId}`}
+                                    onClick={() => toggleSuperuserCollab(d)}
+                                    className={`px-3 py-1.5 rounded-xl font-bold text-[11px] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                                        d.superuserCollabEnabled
+                                            ? 'bg-amber-600 hover:bg-amber-700 text-white'
+                                            : 'bg-white border border-slate-300 hover:bg-slate-100 text-slate-600'
+                                    }`}
+                                    title="This team can give tasks to a superuser and send them reminders"
+                                >
+                                    Send tasks to a superuser: {d.superuserCollabEnabled ? 'ON' : 'OFF'}
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={!provisioned || smartChatColumnMissing || busyKey === `smart-${d.departmentId}`}
+                                    onClick={() => toggleSmartChat(d)}
+                                    className={`px-3 py-1.5 rounded-xl font-bold text-[11px] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                                        d.smartChatEnabled
+                                            ? 'bg-violet-600 hover:bg-violet-700 text-white'
+                                            : 'bg-white border border-slate-300 hover:bg-slate-100 text-slate-600'
+                                    }`}
+                                    title="People in this team can talk to the Task Manager in plain language on WhatsApp"
+                                >
+                                    Smart chat: {d.smartChatEnabled ? 'ON' : 'OFF'}
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={!provisioned || taskImportColumnMissing || busyKey === `import-${d.departmentId}`}
+                                    onClick={() => toggleTaskImport(d)}
+                                    className={`px-3 py-1.5 rounded-xl font-bold text-[11px] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                                        d.taskImportEnabled
+                                            ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                                            : 'bg-white border border-slate-300 hover:bg-slate-100 text-slate-600'
+                                    }`}
+                                    title="People in this team can send a task list (Excel / image / text) on WhatsApp and save it to their Tasks tab"
+                                >
+                                    Task import: {d.taskImportEnabled ? 'ON' : 'OFF'}
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={!provisioned || notificationsColumnMissing || busyKey === `notif-${d.departmentId}`}
+                                    onClick={() => toggleNotificationsDelegated(d)}
+                                    className={`px-3 py-1.5 rounded-xl font-bold text-[11px] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                                        d.notificationsDelegated
+                                            ? 'bg-sky-600 hover:bg-sky-700 text-white'
+                                            : 'bg-white border border-slate-300 hover:bg-slate-100 text-slate-600'
+                                    }`}
+                                    title="Let this team set its own notification times and wording"
+                                >
+                                    Team manages notifications: {d.notificationsDelegated ? 'ON' : 'OFF'}
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={!provisioned || sharingColumnMissing || busyKey === `share-${d.departmentId}`}
+                                    onClick={() => toggleTeamSharing(d)}
+                                    className={`px-3 py-1.5 rounded-xl font-bold text-[11px] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                                        d.peerAssign
+                                            ? 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                                            : 'bg-white border border-slate-300 hover:bg-slate-100 text-slate-600'
+                                    }`}
+                                    title="Members can see and assign each other's tasks"
+                                >
+                                    Team sharing: {d.peerAssign ? 'ON' : 'OFF'}
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={!provisioned || teamAssignColumnMissing || busyKey === `assign-${d.departmentId}`}
+                                    onClick={() => toggleTeamAssign(d)}
+                                    className={`px-3 py-1.5 rounded-xl font-bold text-[11px] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                                        d.teamAssign
+                                            ? 'bg-violet-600 hover:bg-violet-700 text-white'
+                                            : 'bg-white border border-slate-300 hover:bg-slate-100 text-slate-600'
+                                    }`}
+                                    title="Members can give tasks to anyone in the team (including their manager), but still only see their own tasks and those below them"
+                                >
+                                    Assign to anyone in team: {d.teamAssign ? 'ON' : 'OFF'}
+                                </button>
+                                {([
+                                    ['pending_on', 'Pending on', 'bg-amber-600 hover:bg-amber-700', 'A "Pending on…" button to tell a colleague a task is waiting on them'],
+                                    ['protect_given', 'Protect given tasks', 'bg-rose-600 hover:bg-rose-700', 'People cannot delete or rename tasks someone else gave them'],
+                                    ['assigned_tab', 'Assigned by me', 'bg-teal-600 hover:bg-teal-700', 'Show the "Assigned by me" tab (tasks you gave, with status and times)'],
+                                ] as Array<[TeamFeatureKey, string, string, string]>).map(([feature, label, onClass, title]) => (
+                                    <button
+                                        key={feature}
+                                        type="button"
+                                        disabled={!provisioned || teamFeaturesColumnMissing || busyKey === `${feature}-${d.departmentId}`}
+                                        onClick={() => toggleTeamFeature(d, feature)}
+                                        className={`px-3 py-1.5 rounded-xl font-bold text-[11px] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                                            featureValue(d, feature)
+                                                ? `${onClass} text-white`
+                                                : 'bg-white border border-slate-300 hover:bg-slate-100 text-slate-600'
+                                        }`}
+                                        title={title}
+                                    >
+                                        {label}: {featureValue(d, feature) ? 'ON' : 'OFF'}
+                                    </button>
+                                ))}
+                                <button
+                                    type="button"
+                                    disabled={!provisioned || busy}
+                                    onClick={() => toggleDepartment(d)}
+                                    className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-black text-xs uppercase tracking-wider cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                                        d.enabled
+                                            ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                                            : 'bg-slate-200 hover:bg-slate-300 text-slate-700'
+                                    }`}
+                                    title={d.enabled ? 'Click to switch OFF' : 'Click to switch ON'}
+                                >
+                                    {d.enabled ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+                                    {d.enabled ? 'ON' : 'OFF'}
+                                </button>
+                                </div>
+                            </div>
+
+                            {isOpen && (
+                                <div className="border-t border-slate-100 bg-slate-50/60 divide-y divide-slate-100">
+                                    {d.members.length === 0 && <p className="p-3 text-xs text-slate-500">No members with a user account.</p>}
+                                    {d.members.map(m => {
+                                        const mBusy = busyKey === `kick-${m.userId}`;
+                                        return (
+                                            <div key={m.userId} className="flex items-center justify-between gap-3 px-4 py-2 flex-wrap">
+                                                <div className="flex items-center gap-2 flex-wrap">
+                                                    <span className="text-xs font-bold text-slate-900">{m.name}</span>
+                                                    {m.taskRole !== 'employee' && (
+                                                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">{m.taskRole}</span>
+                                                    )}
+                                                    {m.onboarded ? (
+                                                        <span className="px-2 py-0.5 rounded-md text-[10px] font-black bg-emerald-100 text-emerald-900 border border-emerald-300">
+                                                            ✅ Kickoff sent
+                                                        </span>
+                                                    ) : (
+                                                        <span className="px-2 py-0.5 rounded-md text-[10px] font-black bg-slate-200 text-slate-700 border border-slate-300">
+                                                            Not invited
+                                                        </span>
+                                                    )}
+                                                    {m.onboarded && m.source && (
+                                                        <span className="text-[10px] text-slate-500">
+                                                            {SOURCE_LABEL[m.source] || m.source}{m.kickoffSentAt ? ` · ${formatWhen(m.kickoffSentAt)}` : ''}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                {provisioned && m.taskRole !== 'superuser' && (
+                                                    <button
+                                                        type="button"
+                                                        disabled={busyKey === `manager-${m.userId}`}
+                                                        onClick={() => toggleManager(m)}
+                                                        className={`text-[11px] font-bold underline cursor-pointer disabled:opacity-50 mr-3 ${m.taskRole === 'reporting_manager' ? 'text-rose-600 hover:text-rose-800' : 'text-emerald-700 hover:text-emerald-900'}`}
+                                                    >
+                                                        {m.taskRole === 'reporting_manager' ? 'Remove manager' : 'Make manager'}
+                                                    </button>
+                                                )}
+                                                {provisioned && (
+                                                    <button
+                                                        type="button"
+                                                        disabled={busyKey === `super-${m.userId}`}
+                                                        onClick={() => toggleSuperuser(m)}
+                                                        className={`text-[11px] font-bold underline cursor-pointer disabled:opacity-50 mr-3 ${m.taskRole === 'superuser' ? 'text-rose-600 hover:text-rose-800' : 'text-indigo-600 hover:text-indigo-800'}`}
+                                                    >
+                                                        {m.taskRole === 'superuser' ? 'Remove superuser' : 'Make superuser'}
+                                                    </button>
+                                                )}
+                                                {provisioned && (
+                                                    m.onboarded ? (
+                                                        <button
+                                                            type="button"
+                                                            disabled={mBusy}
+                                                            onClick={() => undoKickoff(m)}
+                                                            className="text-[11px] font-bold text-slate-500 hover:text-rose-700 underline cursor-pointer disabled:opacity-50"
+                                                        >
+                                                            Undo
+                                                        </button>
+                                                    ) : (
+                                                        <button
+                                                            type="button"
+                                                            disabled={mBusy}
+                                                            onClick={() => markKickoff(m, d.name)}
+                                                            className="px-3 py-1 bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 rounded-lg text-[11px] font-bold cursor-pointer disabled:opacity-50"
+                                                        >
+                                                            Mark kickoff as sent (manual)
+                                                        </button>
+                                                    )
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { X, Send, Loader2, CheckCircle, AlertCircle, Camera, Image as ImageIcon, Video, Play, Pause, AtSign } from 'lucide-react';
+import { X, Send, Loader2, CheckCircle, AlertCircle, Camera, Image as ImageIcon, Video, Play, Pause, AtSign, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
 import { playTickleSound } from '@/frontend/utils/sounds';
@@ -56,8 +56,11 @@ export default function TicketCreateModal({
 
     // @mention state
     const textareaRef = useRef<HTMLTextAreaElement>(null);
-    const [propertyUsers, setPropertyUsers] = useState<{ id: string; full_name: string; role?: string }[]>([]);
+    const mentionDropdownRef = useRef<HTMLDivElement>(null);
+    const [propertyUsers, setPropertyUsers] = useState<{ id: string; full_name: string; role?: string; designation?: string; email?: string }[]>([]);
+    const [isLoadingUsers, setIsLoadingUsers] = useState(false);
     const [mentionQuery, setMentionQuery] = useState('');
+    const [mentionSearch, setMentionSearch] = useState('');
     const [mentionStartIndex, setMentionStartIndex] = useState(-1);
     const [showMentionDropdown, setShowMentionDropdown] = useState(false);
     const [taggedUser, setTaggedUser] = useState<{ id: string; full_name: string } | null>(null);
@@ -68,22 +71,52 @@ export default function TicketCreateModal({
         }
     }, [properties]);
 
-    // Fetch property users for @mention
+    // Fetch property users for @mention via backend API
     useEffect(() => {
         const pid = isAdminMode ? selectedPropId : propertyId;
-        if (!pid) return;
-        supabase
-            .from('property_memberships')
-            .select('user:users(id, full_name), role')
-            .eq('property_id', pid)
-            .eq('is_active', true)
-            .then(({ data }) => {
-                const users = (data || [])
-                    .map((m: any) => ({ id: m.user?.id, full_name: m.user?.full_name, role: m.role }))
-                    .filter((u: any) => u.id && u.full_name);
-                setPropertyUsers(users);
+        const oid = isAdminMode ? selectedOrgId : organizationId;
+        if (!pid && !oid) {
+            setPropertyUsers([]);
+            return;
+        }
+
+        let isMounted = true;
+        setIsLoadingUsers(true);
+        const params = new URLSearchParams();
+        if (pid) params.append('propertyId', pid);
+        if (oid) params.append('organizationId', oid);
+
+        fetch(`/api/tickets/mention-users?${params.toString()}`)
+            .then(res => res.json())
+            .then(data => {
+                if (isMounted && data.users) {
+                    setPropertyUsers(data.users);
+                }
+            })
+            .catch(err => console.error('Failed to load mention users:', err))
+            .finally(() => {
+                if (isMounted) setIsLoadingUsers(false);
             });
-    }, [propertyId, selectedPropId]);
+
+        return () => { isMounted = false; };
+    }, [propertyId, selectedPropId, organizationId, selectedOrgId, isAdminMode]);
+
+    // Close mention dropdown when clicking outside
+    useEffect(() => {
+        const handleClickOutside = (e: MouseEvent) => {
+            if (
+                mentionDropdownRef.current &&
+                !mentionDropdownRef.current.contains(e.target as Node) &&
+                textareaRef.current &&
+                !textareaRef.current.contains(e.target as Node)
+            ) {
+                setShowMentionDropdown(false);
+                setMentionSearch('');
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
 
     const handleOrgChange = async (orgId: string) => {
         setSelectedOrgId(orgId);
@@ -125,17 +158,26 @@ export default function TicketCreateModal({
     };
 
     const handleMentionSelect = (user: { id: string; full_name: string }) => {
-        const before = description.slice(0, mentionStartIndex);
-        const after = description.slice(mentionStartIndex + 1 + mentionQuery.length);
-        setDescription(`${before}@${user.full_name} ${after}`);
+        const atIdx = mentionStartIndex >= 0 ? mentionStartIndex : description.lastIndexOf('@');
+        const queryLen = mentionQuery.length;
+        const before = atIdx >= 0 ? description.slice(0, atIdx) : description;
+        const after = atIdx >= 0 ? description.slice(atIdx + 1 + queryLen) : '';
+        setDescription(`${before}@${user.full_name} ${after}`.trimStart());
         setTaggedUser(user);
         setShowMentionDropdown(false);
         setMentionQuery('');
+        setMentionSearch('');
         setTimeout(() => textareaRef.current?.focus(), 0);
     };
 
-    const filteredMentionUsers = mentionQuery
-        ? propertyUsers.filter(u => u.full_name.toLowerCase().includes(mentionQuery.toLowerCase()))
+    const activeFilter = (mentionSearch || mentionQuery).trim().toLowerCase();
+    const filteredMentionUsers = activeFilter
+        ? propertyUsers.filter(u =>
+            u.full_name.toLowerCase().includes(activeFilter) ||
+            (u.role && u.role.toLowerCase().includes(activeFilter)) ||
+            (u.designation && u.designation.toLowerCase().includes(activeFilter)) ||
+            (u.email && u.email.toLowerCase().includes(activeFilter))
+          )
         : propertyUsers;
 
     const handleSubmit = async () => {
@@ -191,6 +233,12 @@ export default function TicketCreateModal({
             setClassification(data.classification);
             setSuccess(true);
             onSuccess?.(data.ticket);
+
+            // Dispatch global event so dashboards, lists, and boards update immediately
+            if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('ticket-created', { detail: { ticket: data.ticket } }));
+                window.dispatchEvent(new CustomEvent('request-created', { detail: { ticket: data.ticket } }));
+            }
 
             setTimeout(() => {
                 handleReset();
@@ -285,9 +333,33 @@ export default function TicketCreateModal({
 
                                 {/* Description */}
                                 <div>
-                                    <label className="text-sm font-bold text-slate-700 mb-2 block">
-                                        Description
-                                        <span className="ml-2 text-xs font-normal text-slate-400">type @ to assign someone</span>
+                                    <label className="text-sm font-bold text-slate-700 mb-2 flex items-center justify-between flex-wrap gap-2">
+                                        <span className="flex items-center gap-2">
+                                            <span>Description</span>
+                                            <span className="text-xs font-normal text-slate-400 hidden xs:inline">type @ to assign someone</span>
+                                        </span>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                if (!showMentionDropdown) {
+                                                    const cursor = textareaRef.current?.selectionStart ?? description.length;
+                                                    const newDesc = description.slice(0, cursor) + '@' + description.slice(cursor);
+                                                    setDescription(newDesc);
+                                                    setMentionStartIndex(cursor);
+                                                    setMentionQuery('');
+                                                    setMentionSearch('');
+                                                    setShowMentionDropdown(true);
+                                                    setTimeout(() => textareaRef.current?.focus(), 0);
+                                                } else {
+                                                    setShowMentionDropdown(false);
+                                                    setMentionSearch('');
+                                                }
+                                            }}
+                                            className="inline-flex items-center gap-1.5 text-xs font-bold text-primary bg-primary/10 hover:bg-primary/20 active:scale-95 transition-all px-3 py-1.5 rounded-xl touch-manipulation"
+                                        >
+                                            <AtSign className="w-3.5 h-3.5" />
+                                            <span>Mention / Assign</span>
+                                        </button>
                                     </label>
                                     <div className="relative">
                                         <textarea
@@ -297,39 +369,128 @@ export default function TicketCreateModal({
                                             onKeyDown={(e) => {
                                                 if (showMentionDropdown && e.key === 'Escape') {
                                                     setShowMentionDropdown(false);
+                                                    setMentionSearch('');
                                                     e.preventDefault();
                                                 }
                                             }}
                                             placeholder="Describe the issue in your own words...&#10;Example: Leaking tap in kitchenette, 2nd floor"
-                                            className="w-full h-32 px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 placeholder-slate-400 resize-none focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all"
+                                            className="w-full h-32 px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 placeholder-slate-400 resize-none focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all text-sm font-medium"
                                         />
 
-                                        {/* @mention dropdown */}
-                                        {showMentionDropdown && filteredMentionUsers.length > 0 && (
-                                            <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-xl z-50 max-h-48 overflow-y-auto">
-                                                <div className="px-3 py-2 border-b border-slate-100 flex items-center gap-1.5">
-                                                    <AtSign className="w-3 h-3 text-primary" />
-                                                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Assign to</span>
-                                                </div>
-                                                {filteredMentionUsers.map(user => (
-                                                    <button
-                                                        key={user.id}
-                                                        type="button"
-                                                        onMouseDown={(e) => { e.preventDefault(); handleMentionSelect(user); }}
-                                                        className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-slate-50 transition-colors text-left"
-                                                    >
-                                                        <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                                                            <span className="text-[10px] font-bold text-primary">
-                                                                {user.full_name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()}
+                                        {/* @mention mobile backdrop & dropdown */}
+                                        {showMentionDropdown && (
+                                            <>
+                                                {/* Mobile Backdrop */}
+                                                <div
+                                                    className="fixed inset-0 bg-black/50 backdrop-blur-xs z-[110] sm:hidden transition-opacity"
+                                                    onClick={() => {
+                                                        setShowMentionDropdown(false);
+                                                        setMentionSearch('');
+                                                    }}
+                                                />
+
+                                                {/* Dropdown Container (Mobile bottom sheet / Desktop floating card) */}
+                                                <div
+                                                    ref={mentionDropdownRef}
+                                                    className="fixed inset-x-0 bottom-0 z-[120] max-h-[80vh] rounded-t-[28px] border-t border-slate-200 bg-white shadow-2xl flex flex-col overflow-hidden sm:absolute sm:inset-x-0 sm:top-full sm:bottom-auto sm:mt-1.5 sm:max-h-64 sm:rounded-2xl sm:border sm:shadow-xl sm:z-50 animate-in slide-in-from-bottom-4 sm:slide-in-from-top-1 duration-200"
+                                                >
+                                                    {/* Mobile Drag Indicator Handle */}
+                                                    <div className="w-12 h-1.5 bg-slate-300 rounded-full mx-auto my-2.5 sm:hidden shrink-0" />
+
+                                                    {/* Dropdown Header */}
+                                                    <div className="px-4 py-3 sm:px-3 sm:py-2 border-b border-slate-100 flex items-center justify-between bg-slate-50/80 shrink-0">
+                                                        <div className="flex items-center gap-2">
+                                                            <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center">
+                                                                <AtSign className="w-3.5 h-3.5 text-primary" />
+                                                            </div>
+                                                            <span className="text-xs sm:text-[11px] font-black text-slate-800 uppercase tracking-wider">Assign to user</span>
+                                                            <span className="text-xs sm:text-[10px] font-bold text-slate-500 bg-slate-200/60 px-2 py-0.5 rounded-full">
+                                                                {filteredMentionUsers.length}
                                                             </span>
                                                         </div>
-                                                        <div>
-                                                            <p className="text-sm font-semibold text-slate-900">{user.full_name}</p>
-                                                            {user.role && <p className="text-[10px] text-slate-400 capitalize">{user.role.replace(/_/g, ' ')}</p>}
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                setShowMentionDropdown(false);
+                                                                setMentionSearch('');
+                                                            }}
+                                                            className="text-slate-400 hover:text-slate-700 active:bg-slate-200 p-2 sm:p-1 rounded-xl transition-all"
+                                                            aria-label="Close user selection"
+                                                        >
+                                                            <X className="w-5 h-5 sm:w-4 sm:h-4" />
+                                                        </button>
+                                                    </div>
+
+                                                    {/* Search Input */}
+                                                    <div className="p-3 sm:p-2 border-b border-slate-100 bg-white shrink-0">
+                                                        <div className="relative">
+                                                            <Search className="w-4 h-4 sm:w-3.5 sm:h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                                                            <input
+                                                                type="text"
+                                                                value={mentionSearch}
+                                                                onChange={(e) => setMentionSearch(e.target.value)}
+                                                                placeholder="Search name, role, or email..."
+                                                                className="w-full pl-9 pr-9 py-2.5 sm:py-1.5 text-sm sm:text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary focus:bg-white transition-all font-medium"
+                                                                autoFocus
+                                                            />
+                                                            {mentionSearch && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setMentionSearch('')}
+                                                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1"
+                                                                >
+                                                                    <X className="w-3.5 h-3.5" />
+                                                                </button>
+                                                            )}
                                                         </div>
-                                                    </button>
-                                                ))}
-                                            </div>
+                                                    </div>
+
+                                                    {/* User List */}
+                                                    <div className="overflow-y-auto max-h-[50vh] sm:max-h-48 divide-y divide-slate-100 custom-scrollbar overscroll-contain">
+                                                        {isLoadingUsers ? (
+                                                            <div className="p-6 flex items-center justify-center gap-2 text-xs text-slate-500">
+                                                                <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                                                                <span>Loading team members...</span>
+                                                            </div>
+                                                        ) : filteredMentionUsers.length === 0 ? (
+                                                            <div className="p-6 text-center text-xs text-slate-400">
+                                                                {activeFilter ? (
+                                                                    <>No team members matching &ldquo;{activeFilter}&rdquo;</>
+                                                                ) : (
+                                                                    <>No users available for assignment</>
+                                                                )}
+                                                            </div>
+                                                        ) : (
+                                                            filteredMentionUsers.map(user => (
+                                                                <button
+                                                                    key={user.id}
+                                                                    type="button"
+                                                                    onMouseDown={(e) => { e.preventDefault(); handleMentionSelect(user); }}
+                                                                    onTouchEnd={(e) => { e.preventDefault(); handleMentionSelect(user); }}
+                                                                    className="w-full flex items-center justify-between px-4 py-3 sm:px-3 sm:py-2.5 hover:bg-slate-50 active:bg-slate-100 transition-colors text-left min-h-[50px] sm:min-h-0"
+                                                                >
+                                                                    <div className="flex items-center gap-3 min-w-0">
+                                                                        <div className="w-9 h-9 sm:w-7 sm:h-7 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
+                                                                            <span className="text-xs sm:text-[10px] font-black text-primary">
+                                                                                {user.full_name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()}
+                                                                            </span>
+                                                                        </div>
+                                                                        <div className="min-w-0">
+                                                                            <p className="text-sm sm:text-xs font-bold text-slate-900 truncate">{user.full_name}</p>
+                                                                            {user.email && <p className="text-xs sm:text-[10px] text-slate-400 truncate font-medium">{user.email}</p>}
+                                                                        </div>
+                                                                    </div>
+                                                                    {user.role && (
+                                                                        <span className="text-[10px] sm:text-[9px] font-bold text-slate-600 bg-slate-100 border border-slate-200/80 px-2.5 py-1 rounded-full uppercase tracking-wider shrink-0 ml-2">
+                                                                            {user.role.replace(/_/g, ' ')}
+                                                                        </span>
+                                                                    )}
+                                                                </button>
+                                                            ))
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </>
                                         )}
                                     </div>
 

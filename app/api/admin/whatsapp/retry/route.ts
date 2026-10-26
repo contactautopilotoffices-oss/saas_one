@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { AiSensyService } from '@/backend/services/AiSensyService';
 import { WhatsAppService } from '@/backend/services/WhatsAppService';
+import { sanitizeWhatsAppParam } from '@/backend/lib/whatsapp/sanitize';
 
 /**
  * POST /api/admin/whatsapp/retry
@@ -45,18 +46,22 @@ export async function POST(request: NextRequest) {
             if (campaignName === 'checklist_overdue_alert') campaignName = 'checklist_overdue_alert_v2';
             if (campaignName === 'material_request_created' || campaignName === 'material_request_created_v3') campaignName = 'material_request_created_v4';
             if ((campaignName === 'material_request_created_v4' || campaignName === 'material_request_created_v3') && templateParams.length > 7) templateParams = templateParams.slice(0, 7);
-            if (campaignName === 'comparative_approval_requested_v1' && templateParams.length > 7) templateParams = templateParams.slice(0, 7);
-            if (campaignName === 'comparative_uploaded_info_v1' && templateParams.length > 8) templateParams = templateParams.slice(0, 8);
-            if (campaignName === 'comparative_approved_v1' && templateParams.length > 7) templateParams = templateParams.slice(0, 7);
-            if (campaignName === 'comparative_rejected_v1' && templateParams.length > 7) templateParams = templateParams.slice(0, 7);
-            if (campaignName === 'material_delivered_v1' && templateParams.length > 6) templateParams = templateParams.slice(0, 6);
-            if (campaignName === 'procurement_vendor_tag_v1' && templateParams.length > 7) templateParams = templateParams.slice(0, 7);
-            if (campaignName === 'procurement_vendor_aligned_v1' && templateParams.length > 6) templateParams = templateParams.slice(0, 6);
+            if (campaignName === 'comparative_approval_requested_v1' && templateParams.length > 8) templateParams = templateParams.slice(0, 8);
+            if (campaignName === 'comparative_uploaded_info_v1' && templateParams.length > 9) templateParams = templateParams.slice(0, 9);
+            if (campaignName === 'comparative_approved_v1' && templateParams.length > 8) templateParams = templateParams.slice(0, 8);
+            if (campaignName === 'comparative_rejected_v1' && templateParams.length > 8) templateParams = templateParams.slice(0, 8);
+            if (campaignName === 'material_delivered_v1' && templateParams.length > 7) templateParams = templateParams.slice(0, 7);
+            if (campaignName === 'procurement_vendor_tag_v1' && templateParams.length > 8) templateParams = templateParams.slice(0, 8);
+            if (campaignName === 'procurement_vendor_aligned_v1' && templateParams.length > 7) templateParams = templateParams.slice(0, 7);
             if (campaignName === 'ticket_assigned_v1' && templateParams.length > 7) templateParams = templateParams.slice(0, 7);
             if (campaignName === 'ticket_completed_v1' && templateParams.length > 5) templateParams = templateParams.slice(0, 5);
             if (campaignName === 'ticket_completed_v1_media' && templateParams.length > 5) templateParams = templateParams.slice(0, 5);
-            if (campaignName === 'ticket_created_v3' && templateParams.length > 9) templateParams = templateParams.slice(0, 9);
+            if (campaignName === 'ticket_created_v3' && templateParams.length > 10) templateParams = templateParams.slice(0, 10);
             if (campaignName === 'ticket_created_v3_media' && templateParams.length > 9) templateParams = templateParams.slice(0, 9);
+            if (campaignName === 'reminder_ticket_sla_v1' && templateParams.length > 7) templateParams = templateParams.slice(0, 7);
+            if ((campaignName === 'checklist_slot_reminder_v2' || campaignName === 'checklist_slot_reminder_v1') && templateParams.length > 5) templateParams = templateParams.slice(0, 5);
+
+            templateParams = templateParams.map(p => sanitizeWhatsAppParam(p));
 
             const res = await AiSensyService.sendTemplate({
                 phone: row.phone,

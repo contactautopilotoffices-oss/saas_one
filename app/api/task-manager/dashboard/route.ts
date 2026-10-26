@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { WhatsAppService } from '@/backend/services/WhatsAppService';
+import { requireTaskManagerAdmin } from '../_shared/adminGuard';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,6 +22,9 @@ const CORPORATE_DEPARTMENTS = [
 
 export async function GET(request: NextRequest) {
     try {
+        const guard = await requireTaskManagerAdmin();
+        if (!guard.ok) return guard.response;
+
         const { searchParams } = new URL(request.url);
         const department = searchParams.get('department') || '';
         const status = searchParams.get('status') || '';
@@ -131,6 +135,9 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
     try {
+        const guard = await requireTaskManagerAdmin();
+        if (!guard.ok) return guard.response;
+
         const body = await request.json();
         const { action } = body;
 

@@ -1,70 +1,117 @@
 'use client';
 
-import HRTicketsContent from '@/frontend/components/hr/HRTicketsContent';
-import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from 'react';
+import { resolveOrgDashboardTab, pushDashboardNavigation, type OrgDashboardTab } from '@/frontend/lib/dashboard/orgTabs';
+import { useDashboardContent } from '@/frontend/components/layout/DashboardContentSlot';
+import PettyCashNavLink from '@/frontend/components/pettyCash/PettyCashNavLink';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
     LayoutDashboard, Building2, Users, UserPlus, Ticket, Settings, UserCircle, Activity,
     Search, Plus, Filter, LogOut, ChevronRight, MapPin, Edit, Trash2, X, Check, UsersRound,
-    Coffee, IndianRupee, FileDown, ChevronDown, Fuel, Menu, Upload, FileBarChart, Zap, Package, ClipboardCheck, Scan, Key,
-    AlertCircle, CheckCircle2, Clock, GitBranch, DoorOpen, MessageCircle, Send, Loader2, CalendarDays, Calendar, Wrench, ShoppingCart, Sun, Moon, Droplets, TrendingUp, Smartphone,
-    MessageSquarePlus, Bot, Gauge, Cpu, FolderLock, Layers, ShieldCheck, ClipboardList, FlaskConical
+    Coffee, IndianRupee, FileDown, ChevronDown, Fuel, Menu, Upload, FileBarChart, Zap, Package, ClipboardCheck, Scan,
+    Key, GitBranch, DoorOpen, MessageCircle, Send, Loader2, CalendarDays, Wrench, ShoppingCart, Sun, Moon, Droplets,
+    TrendingUp, Smartphone, MessageSquarePlus, Bot, Gauge, Cpu, FolderLock, Layers, ShieldCheck, ClipboardList,
+    FlaskConical, PhoneCall, AlertCircle, CheckCircle2, Clock, Calendar, Mic, BookOpen, FileCheck2, Target
 } from 'lucide-react';
+import SatejConsole from '@/frontend/components/satej/SatejConsole';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
 import { useAuth } from '@/frontend/context/AuthContext';
 import { useDataCache } from '@/frontend/context/DataCacheContext';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { HapticCard } from '@/frontend/components/ui/HapticCard';
-import { RosterDashboard } from '@/frontend/components/roster/RosterDashboard';
-import { WaterDashboard } from '@/frontend/components/water/WaterDashboard';
-import UserDirectory from './UserDirectory';
 import SignOutModal from '@/frontend/components/ui/SignOutModal';
-import AdminSPOCDashboard from '../tickets/AdminSPOCDashboard';
 import TicketsView from './TicketsView';
-import SettingsView from './SettingsView';
-import DieselAnalyticsDashboard from '../diesel/DieselAnalyticsDashboard';
-import DieselStaffDashboard from '../diesel/DieselStaffDashboard';
-import ElectricityAnalyticsDashboard from '../electricity/ElectricityAnalyticsDashboard';
-import ElectricityStaffDashboard from '../electricity/ElectricityStaffDashboard';
-import InviteMemberModal from './InviteMemberModal';
 import NotificationBell from './NotificationBell';
 import Image from 'next/image';
-import { ImportReportsView } from '@/frontend/components/snags';
-import TicketCreateModal from '@/frontend/components/tickets/TicketCreateModal';
-import StockReportView from '@/frontend/components/stock/StockReportView';
-import StockMovementModal from '@/frontend/components/stock/StockMovementModal';
-import SOPDashboard from '@/frontend/components/sop/SOPDashboard';
-import PropertyFeaturesModal from './PropertyFeaturesModal';
-import EscalationHierarchyBuilder from '@/frontend/components/escalation/EscalationHierarchyBuilder';
-import AdminRoomManager from '@/frontend/components/meeting-rooms/AdminRoomManager';
-import PPMModule from '@/frontend/components/ppm/PPMModule';
-import AssetsModule from '@/frontend/components/assets/AssetsModule';
 import { assetCaps } from '@/frontend/lib/assets/roles';
-import DocumentBank from '@/frontend/components/audit/DocumentBank';
-import VendorManagement from '@/frontend/components/vendors/VendorManagement';
-import { UniversalSearch } from '@/frontend/components/shared/UniversalSearch';
-import TicketFlowMap from '../ops/TicketFlowMap';
-import ProcurementModule from '../procurement/ProcurementModule';
-import VMSOrgVisitorDashboard from '@/frontend/components/vms/VMSOrgVisitorDashboard';
-import UniversalQRScannerModal, { QRScanResult } from '@/frontend/components/shared/UniversalQRScannerModal';
-import WaterAnalyticsDashboard from '@/frontend/components/water/WaterAnalyticsDashboard';
-import VendorManagementModal from '@/frontend/components/vendor/VendorManagementModal';
-import GuestExperienceDashboard from '@/frontend/components/guest-experience/GuestExperienceDashboard';
-import AITicketsDashboard from '@/frontend/components/ai-tickets/AITicketsDashboard';
-import TaskManagerSuperuserDashboard from '@/frontend/components/task-manager/TaskManagerSuperuserDashboard';
-import TaskManagerTestingDashboard from '@/frontend/components/task-manager/TaskManagerTestingDashboard';
+import type { QRScanResult } from '@/frontend/components/shared/UniversalQRScannerModal';
 
-import { BDQuickStats } from './UnifiedDashboard';
-import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
-import OrgProgressTracker from '@/frontend/components/org-efficiency/OrgProgressTracker';
-import OrgEfficiencyMeter from '@/frontend/components/org-efficiency/OrgEfficiencyMeter';
 import CommandCenter from '@/frontend/components/dashboard/command-center/CommandCenter';
-import AgentConsole from '@/frontend/components/agents/AgentConsole';
 import AgentPulse from '@/frontend/components/agents/AgentPulse';
 import type { ModuleKey } from '@/frontend/types/agentRuntime';
+import dynamic from 'next/dynamic';
+import { usePreloadTabs } from '@/frontend/lib/dashboard/preloadTabs';
+import TabLoading from './TabLoading';
+
+// Pop-ups stay mounted exactly as before (they open via isOpen); only their code moves out of this file, so the
+// dashboard itself downloads sooner and they arrive right after it, before anyone clicks (performance plan Phase 8).
+const InviteMemberModal = dynamic(() => import('./InviteMemberModal'), { loading: () => null });
+const TicketCreateModal = dynamic(() => import('@/frontend/components/tickets/TicketCreateModal'), { loading: () => null });
+const StockMovementModal = dynamic(() => import('@/frontend/components/stock/StockMovementModal'), { loading: () => null });
+const HRTicketsContent = dynamic(() => import('@/frontend/components/hr/HRTicketsContent'), { loading: TabLoading });
+const UserDirectory = dynamic(() => import('./UserDirectory'), { loading: TabLoading });
+const AdminSPOCDashboard = dynamic(() => import('../tickets/AdminSPOCDashboard'), { loading: TabLoading });
+const SettingsView = dynamic(() => import('./SettingsView'), { loading: TabLoading });
+const DieselAnalyticsDashboard = dynamic(() => import('../diesel/DieselAnalyticsDashboard'), { loading: TabLoading });
+const DieselStaffDashboard = dynamic(() => import('../diesel/DieselStaffDashboard'), { loading: TabLoading });
+const ElectricityAnalyticsDashboard = dynamic(() => import('../electricity/ElectricityAnalyticsDashboard'), { loading: TabLoading });
+const ElectricityStaffDashboard = dynamic(() => import('../electricity/ElectricityStaffDashboard'), { loading: TabLoading });
+const StockReportView = dynamic(() => import('@/frontend/components/stock/StockReportView'), { loading: TabLoading });
+const SOPDashboard = dynamic(() => import('@/frontend/components/sop/SOPDashboard'), { loading: TabLoading });
+const PropertyFeaturesModal = dynamic(() => import('./PropertyFeaturesModal'), { loading: () => null });
+const EscalationHierarchyBuilder = dynamic(() => import('@/frontend/components/escalation/EscalationHierarchyBuilder'), { loading: TabLoading });
+const AdminRoomManager = dynamic(() => import('@/frontend/components/meeting-rooms/AdminRoomManager'), { loading: TabLoading });
+const PPMModule = dynamic(() => import('@/frontend/components/ppm/PPMModule'), { loading: TabLoading });
+const AssetsModule = dynamic(() => import('@/frontend/components/assets/AssetsModule'), { loading: TabLoading });
+const DocumentBank = dynamic(() => import('@/frontend/components/audit/DocumentBank'), { loading: TabLoading });
+const MeetingsHome = dynamic(() => import('@/frontend/components/meetings/MeetingsHome'), { loading: TabLoading });
+const WikiHome = dynamic(() => import('@/frontend/components/wiki/WikiHome'), { loading: TabLoading });
+const VendorManagement = dynamic(() => import('@/frontend/components/vendors/VendorManagement'), { loading: TabLoading });
+const TicketFlowMap = dynamic(() => import('../ops/TicketFlowMap'), { loading: TabLoading });
+const ProcurementModule = dynamic(() => import('../procurement/ProcurementModule'), { loading: TabLoading });
+const BountyInbox = dynamic(() => import('../aop/BountyInbox'), { loading: TabLoading });
+const VMSOrgVisitorDashboard = dynamic(() => import('@/frontend/components/vms/VMSOrgVisitorDashboard'), { loading: TabLoading });
+const WaterAnalyticsDashboard = dynamic(() => import('@/frontend/components/water/WaterAnalyticsDashboard'), { loading: TabLoading });
+const VendorManagementModal = dynamic(() => import('@/frontend/components/vendor/VendorManagementModal'), { loading: () => null });
+const GuestExperienceDashboard = dynamic(() => import('@/frontend/components/guest-experience/GuestExperienceDashboard'), { loading: TabLoading });
+const AITicketsDashboard = dynamic(() => import('@/frontend/components/ai-tickets/AITicketsDashboard'), { loading: TabLoading });
+const TaskManagerSuperuserDashboard = dynamic(() => import('@/frontend/components/task-manager/TaskManagerSuperuserDashboard'), { loading: TabLoading });
+const OrgProgressTracker = dynamic(() => import('@/frontend/components/org-efficiency/OrgProgressTracker'), { loading: TabLoading });
+const OrgEfficiencyMeter = dynamic(() => import('@/frontend/components/org-efficiency/OrgEfficiencyMeter'), { loading: TabLoading });
+const AgentConsole = dynamic(() => import('@/frontend/components/agents/AgentConsole'), { loading: TabLoading });
+const RosterDashboard = dynamic(() => import('@/frontend/components/roster/RosterDashboard').then(m => m.RosterDashboard), { loading: TabLoading });
+const WaterDashboard = dynamic(() => import('@/frontend/components/water/WaterDashboard').then(m => m.WaterDashboard), { loading: TabLoading });
+const ImportReportsView = dynamic(() => import('@/frontend/components/snags').then(m => m.ImportReportsView), { loading: TabLoading });
+const AppUsageReport = dynamic(() => import('@/frontend/components/dashboard/AppUsageReport'), { loading: TabLoading });
+
+// Tabs live in their own files so the dashboard opens faster; once it is on screen they are downloaded quietly in
+// the background (usePreloadTabs), so opening a tab shows no extra spinner (performance plan Phase 1).
+const TAB_PRELOADS = [
+    () => import('@/frontend/components/hr/HRTicketsContent'),
+    () => import('./UserDirectory'),
+    () => import('../tickets/AdminSPOCDashboard'),
+    () => import('./SettingsView'),
+    () => import('../diesel/DieselAnalyticsDashboard'),
+    () => import('../diesel/DieselStaffDashboard'),
+    () => import('../electricity/ElectricityAnalyticsDashboard'),
+    () => import('../electricity/ElectricityStaffDashboard'),
+    () => import('@/frontend/components/stock/StockReportView'),
+    () => import('@/frontend/components/sop/SOPDashboard'),
+    () => import('./PropertyFeaturesModal'),
+    () => import('@/frontend/components/escalation/EscalationHierarchyBuilder'),
+    () => import('@/frontend/components/meeting-rooms/AdminRoomManager'),
+    () => import('@/frontend/components/ppm/PPMModule'),
+    () => import('@/frontend/components/assets/AssetsModule'),
+    () => import('@/frontend/components/audit/DocumentBank'),
+    () => import('@/frontend/components/vendors/VendorManagement'),
+    () => import('../ops/TicketFlowMap'),
+    () => import('../procurement/ProcurementModule'),
+    () => import('@/frontend/components/vms/VMSOrgVisitorDashboard'),
+    () => import('@/frontend/components/water/WaterAnalyticsDashboard'),
+    () => import('@/frontend/components/vendor/VendorManagementModal'),
+    () => import('@/frontend/components/guest-experience/GuestExperienceDashboard'),
+    () => import('@/frontend/components/ai-tickets/AITicketsDashboard'),
+    () => import('@/frontend/components/task-manager/TaskManagerSuperuserDashboard'),
+    () => import('@/frontend/components/org-efficiency/OrgProgressTracker'),
+    () => import('@/frontend/components/org-efficiency/OrgEfficiencyMeter'),
+    () => import('@/frontend/components/agents/AgentConsole'),
+    () => import('@/frontend/components/roster/RosterDashboard'),
+    () => import('@/frontend/components/water/WaterDashboard'),
+    () => import('@/frontend/components/snags'),
+];
 
 // Types
-type Tab = 'overview' | 'properties' | 'requests' | 'reports' | 'visitors' | 'settings' | 'profile' | 'revenue' | 'users' | 'diesel_logger' | 'diesel' | 'electricity_logger' | 'electricity' | 'stock_reports' | 'checklist' | 'super_tenants' | 'escalation' | 'rooms' | 'ppm' | 'vendors' | 'procurement' | 'roster' | 'water_logger' | 'water' | 'guest_experience' | 'ai_tickets' | 'org_progress' | 'org_efficiency' | 'agent_console' | 'document_bank' | 'grievance' | 'assets' | 'tasks' | 'task_testing';
+type Tab = OrgDashboardTab;
 
 /**
  * AGENT PULSE MOUNTS — tab -> canonical module slug.
@@ -95,6 +142,8 @@ interface Property {
     address: string;
     image_url?: string;
     created_at: string;
+    /** 'opex' = operational (default), 'capex' = CAPEX only. Missing until the migration is applied. */
+    operation_type?: 'opex' | 'capex';
 }
 
 interface OrgUser {
@@ -121,49 +170,17 @@ interface Organization {
 }
 
 const OrgAdminDashboard = () => {
+    usePreloadTabs(TAB_PRELOADS);
+    const { dashboardContent, navigateDashboard } = useDashboardContent();
     const { user, signOut, membership } = useAuth();
     const params = useParams();
     const router = useRouter();
     const searchParams = useSearchParams();
     const orgSlugOrId = params?.orgId as string;
 
-    // Active Tab with URL searchParams & localStorage persistence
-    const [activeTab, setActiveTabRaw] = useState<Tab>(() => {
-        if (typeof window !== 'undefined') {
-            const urlParams = new URLSearchParams(window.location.search);
-            const tabParam = urlParams.get('tab');
-            if (tabParam) return tabParam as Tab;
-            const savedKey = orgSlugOrId ? `active_tab_${orgSlugOrId}` : 'active_tab_org';
-            const saved = localStorage.getItem(savedKey);
-            if (saved) return saved as Tab;
-        }
-        return 'overview';
-    });
-
-    const setActiveTab = useCallback((newTab: Tab | ((prev: Tab) => Tab)) => {
-        setActiveTabRaw(newTab);
-    }, []);
-
-    // Sync activeTab to localStorage & URL without triggering in-render Router setState
-    useEffect(() => {
-        if (typeof window === 'undefined' || !activeTab) return;
-        try {
-            const savedKey = orgSlugOrId ? `active_tab_${orgSlugOrId}` : 'active_tab_org';
-            localStorage.setItem(savedKey, activeTab);
-            const url = new URL(window.location.href);
-            if (url.searchParams.get('tab') !== activeTab) {
-                url.searchParams.set('tab', activeTab);
-                window.history.replaceState(null, '', url.toString());
-            }
-        } catch (e) {}
-    }, [activeTab, orgSlugOrId]);
-
-    useEffect(() => {
-        const tabParam = searchParams.get('tab');
-        if (tabParam) {
-            setActiveTabRaw(tabParam as Tab);
-        }
-    }, [searchParams]);
+    const isOpsTabScope = ['ops_super_admin', 'ops super admin'].includes((membership?.org_role || '').toLowerCase());
+    const dashboardTab = resolveOrgDashboardTab(searchParams.get('tab'), isOpsTabScope);
+    const activeTab = dashboardContent !== undefined ? 'petty-cash' as Tab : dashboardTab;
 
     const [org, setOrg] = useState<Organization | null>(null);
     const [properties, setProperties] = useState<Property[]>([]);
@@ -187,6 +204,15 @@ const OrgAdminDashboard = () => {
     const [userRole, setUserRole] = useState<string>('User');
     const rawOrgRole = (membership?.org_role || userRole || '').toLowerCase();
     const isOpsSuperAdmin = rawOrgRole.includes('ops_super_admin') || rawOrgRole.includes('ops super admin');
+    // Reports → App usage is for org super admins only (the API enforces the same rule).
+    const isOrgSuperAdmin = rawOrgRole.includes('org_super_admin');
+    const reportsView: 'imports' | 'app_usage' = isOrgSuperAdmin && searchParams.get('report') === 'app_usage' ? 'app_usage' : 'imports';
+    const setReportsView = (next: 'imports' | 'app_usage') => {
+        const params = new URLSearchParams(window.location.search);
+        if (next === 'app_usage') params.set('report', 'app_usage');
+        else params.delete('report');
+        router.replace(`${window.location.pathname}?${params.toString()}`, { scroll: false });
+    };
     const [isSelectorOpen, setIsSelectorOpen] = useState(false); // Global toggle state
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [pendingStatusFilter, setPendingStatusFilter] = useState('all');
@@ -194,89 +220,14 @@ const OrgAdminDashboard = () => {
     const [showFeaturesModal, setShowFeaturesModal] = useState(false);
     const [selectedPropertyForFeatures, setSelectedPropertyForFeatures] = useState<Property | null>(null);
     
-    // Summary Data (Lifted for performance & deduplication)
-    const [ticketSummary, setTicketSummary] = useState({
-        total_tickets: 0,
-        open_tickets: 0,
-        waitlist: 0,
-        in_progress: 0,
-        resolved: 0,
-        pending_validation: 0,
-        validated_closed: 0,
-        urgent_open: 0,
-        sla_breached: 0,
-        avg_resolution_hours: 0,
-        properties_with_validation: 0,
-        properties: [] as any[],
-        trends: { total: [], resolved: [], active: [], pending: [] } as any,
-    });
-    const [electricitySummary, setElectricitySummary] = useState({
-        total_units: 0,
-        latest_reading: 0,
-        total_units_today: 0,
-        total_cost: 0,
-        properties: [] as any[],
-        properties_today: [] as any[],
-    });
-    const [vmsSummary, setVmsSummary] = useState({
-        total_visitors: 0,
-        checked_in: 0,
-        checked_out: 0,
-        properties: [] as any[],
-    });
-    const [vendorSummary, setVendorSummary] = useState({
-        total_revenue: 0,
-        total_commission: 0,
-        total_vendors: 0,
-        properties: [] as any[],
-    });
-    const [dieselSummary, setDieselSummary] = useState({
-        total_litres: 0,
-        total_cost: 0,
-        refill_count: 0,
-        properties: [] as any[],
-    });
-    // TODO: Fetch diesel data from API when available
-    // Mock data for demo - replace with actual API call
-    const mockDieselSummary = {
-        total_litres: 2450,
-        total_cost: 198000,
-        refill_count: 12,
-        properties: []
-    };
-    const displayDieselStats = dieselSummary;
-    const [checklistSummary, setChecklistSummary] = useState({
-        completed: 0,
-        total: 0,
-        day_total: 0,
-        day_completed: 0,
-        night_total: 0,
-        night_completed: 0,
-        properties: [] as any[],
-    });
-    const [timePeriod, setTimePeriod] = useState<'today' | 'month' | 'all'>('month');
-    const [ticketPeriod, setTicketPeriod] = useState<'today' | 'month' | 'all'>('month');
-    const [electricityPeriod, setElectricityPeriod] = useState<'today' | 'month'>('month');
-    const [upcomingPpmTasks, setUpcomingPpmTasks] = useState<any[]>([]);
-    const [isSummariesLoading, setIsSummariesLoading] = useState(false);
     const { getCachedData, setCachedData, invalidateCache } = useDataCache();
 
-    // Restore showRequestsList, filter, and selectedPropertyId from URL on mount/back navigation
-    // Restore showRequestsList, filter, and selectedPropertyId from URL on mount/back navigation
+    // Only restore subordinate filters. The validated URL owns the active tab.
     useEffect(() => {
-        const tab = searchParams.get('tab') as Tab;
-        // No ?tab= means overview: `/{orgId}/dashboard` is the board. Leaving the
-        // previous tab in place made a bare dashboard link a no-op on back navigation.
-        setActiveTab(tab || 'overview');
-        
-        const filter = searchParams.get('filter');
-        if (filter) setPendingStatusFilter(filter);
-        
-        const propId = searchParams.get('propertyId');
-        if (propId) setSelectedPropertyId(propId);
-
-        const view = searchParams.get('view') as any;
-        if (view) setRequestsView(view);
+        setPendingStatusFilter(searchParams.get('filter') || 'all');
+        setSelectedPropertyId(searchParams.get('propertyId') || 'all');
+        const view = searchParams.get('view');
+        setRequestsView(view === 'board' || view === 'flow' ? view : 'list');
     }, [searchParams]);
 
     // Robust Unified Scroll Restoration for Org Admin
@@ -550,19 +501,6 @@ const OrgAdminDashboard = () => {
         init();
     }, [orgSlugOrId, fetchOrgDetails]);
 
-    // Restore tab from URL
-    useEffect(() => {
-        const tab = searchParams.get('tab');
-        if (tab && ['overview', 'properties', 'requests', 'reports', 'visitors', 'settings', 'profile', 'revenue', 'users', 'diesel_logger', 'diesel', 'electricity_logger', 'electricity', 'stock_reports', 'checklist', 'super_tenants', 'escalation', 'rooms', 'ppm', 'vendors', 'procurement', 'roster', 'water_logger', 'water', 'guest_experience', 'agent_console', 'org_progress', 'org_efficiency', 'grievance', 'assets', 'tasks'].includes(tab)) {
-            if (isOpsSuperAdmin && (tab === 'org_progress' || tab === 'org_efficiency' || tab === 'agent_console')) {
-                setActiveTab('overview');
-            } else {
-                setActiveTab(tab as Tab);
-            }
-        }
-    }, [searchParams, isOpsSuperAdmin]);
-
-
     // Fetch properties ONCE when org is loaded (not on every tab change)
     useEffect(() => {
         const init = async () => {
@@ -585,7 +523,7 @@ const OrgAdminDashboard = () => {
                 user_id,
                 role,
                 is_active,
-                user:users (
+                user:users!user_id (
                     id,
                     full_name,
                     email
@@ -609,13 +547,13 @@ const OrgAdminDashboard = () => {
                     organization_id,
                     name
                 ),
-                user:users (
+                user:users!user_id (
                     id,
                     full_name,
                     email
                 )
             `)
-            .eq('properties.organization_id', org.id)
+            .eq('property.organization_id', org.id)
             .eq('is_active', true);
 
         if (propError) console.error('Error fetching property users:', propError);
@@ -662,199 +600,18 @@ const OrgAdminDashboard = () => {
         setOrgUsers(Array.from(userMap.values()));
     };
 
-    // Centralized Summary Fetching (Prevents redundant calls on tab switch)
-    const fetchSummaries = useCallback(async () => {
-        if (!org?.id) return;
-
-        const cacheKey = `org-summaries-${org.id}-${timePeriod}`;
-        const cached = getCachedData(cacheKey);
-        if (cached) {
-            setTicketSummary(cached.ticketSummary);
-            setElectricitySummary(cached.electricitySummary);
-            setVmsSummary(cached.vmsSummary);
-            setVendorSummary(cached.vendorSummary);
-            setChecklistSummary(cached.checklistSummary || { completed: 0, total: 0, day_total: 0, day_completed: 0, night_total: 0, night_completed: 0, properties: [] });
-            setIsSummariesLoading(false);
-        } else {
-            setIsSummariesLoading(true);
-        }
-
-        try {
-            const todayDate = new Date().toISOString().split('T')[0];
-            let elecStartDate = '';
-            
-            if (timePeriod === 'today') {
-                elecStartDate = todayDate;
-            } else if (timePeriod === 'month') {
-                const d = new Date();
-                elecStartDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
-            } else {
-                elecStartDate = '2000-01-01'; // All time
-            }
-
-            const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();
-            
-            const propIds = properties.map(p => p.id);
-            let checklistQuery = supabase.from('sop_completions').select('status, property_id, due_at').in('property_id', propIds);
-            if (timePeriod === 'today') {
-                checklistQuery = checklistQuery.eq('completion_date', todayDate);
-            } else if (timePeriod === 'month') {
-                const d = new Date();
-                checklistQuery = checklistQuery.gte('completion_date', `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`);
-            }
-
-            let ppmQuery = supabase.from('ppm_schedules')
-                .select('id, system_name, planned_date, property:properties(name)')
-                .eq('organization_id', org.id)
-                .eq('status', 'pending')
-                .gte('planned_date', todayDate)
-                .order('planned_date', { ascending: true })
-                .limit(3);
-                
-            if (selectedPropertyId !== 'all') {
-                ppmQuery = ppmQuery.eq('property_id', selectedPropertyId);
-            }
-
-            const [ticketsRes, electricityRes, vmsRes, vendorRes, checklistRes, ppmRes, dieselRes] = await Promise.all([
-                fetch(`/api/organizations/${org.id}/tickets-summary?period=${timePeriod}`),
-                fetch(`/api/organizations/${org.id}/electricity-readings?startDate=${elecStartDate}&endDate=${todayDate}`),
-                fetch(`/api/organizations/${org.id}/vms-summary?period=${timePeriod}`),
-                fetch(`/api/organizations/${org.id}/vendor-summary?period=${timePeriod}`),
-                checklistQuery,
-                ppmQuery,
-                fetch(`/api/organizations/${org.id}/diesel-summary?period=${timePeriod}`)
-            ]);
-
-            const [ticketsData, electricityData, vmsData, vendorData, dieselData] = await Promise.all([
-                ticketsRes.ok ? ticketsRes.json() : null,
-                electricityRes.ok ? electricityRes.json() : null,
-                vmsRes.ok ? vmsRes.json() : null,
-                vendorRes.ok ? vendorRes.json() : null,
-                dieselRes.ok ? dieselRes.json() : null,
-            ]);
-            const checklistData = checklistRes?.data || [];
-            if (ppmRes?.data) setUpcomingPpmTasks(ppmRes.data);
-
-            if (ticketsData) setTicketSummary(ticketsData);
-            if (electricityData && Array.isArray(electricityData)) {
-                const totalUnits = electricityData.reduce((acc: number, r: any) => acc + (r.final_units ?? r.computed_units ?? 0), 0);
-                const totalCost = electricityData.reduce((acc: number, r: any) => acc + (r.computed_cost || 0), 0);
-                const propMap: Record<string, { property_id: string; units: number }> = {};
-                electricityData.forEach((r: any) => {
-                    if (!propMap[r.property_id]) propMap[r.property_id] = { property_id: r.property_id, units: 0 };
-                    propMap[r.property_id].units += (r.final_units ?? r.computed_units ?? 0);
-                });
-                const todayReadings = electricityData.filter((r: any) => r.reading_date === todayDate);
-                const todayUnits = todayReadings.reduce((acc: number, r: any) => acc + (r.final_units ?? r.computed_units ?? 0), 0);
-                const propMapToday: Record<string, { property_id: string; units: number }> = {};
-                todayReadings.forEach((r: any) => {
-                    if (!propMapToday[r.property_id]) propMapToday[r.property_id] = { property_id: r.property_id, units: 0 };
-                    propMapToday[r.property_id].units += (r.final_units ?? r.computed_units ?? 0);
-                });
-                setElectricitySummary({
-                    total_units: Math.round(totalUnits),
-                    latest_reading: electricityData.length > 0 ? (electricityData[0].closing_reading || 0) : 0,
-                    total_units_today: Math.round(todayUnits),
-                    total_cost: Math.round(totalCost),
-                    properties: Object.values(propMap),
-                    properties_today: Object.values(propMapToday),
-                });
-            }
-            if (vmsData) {
-                setVmsSummary({
-                    total_visitors: vmsData.total_visitors || 0,
-                    checked_in: vmsData.total_checked_in || 0,
-                    checked_out: vmsData.total_checked_out || 0,
-                    properties: vmsData.properties || [],
-                });
-            }
-            if (vendorData) {
-                setVendorSummary({
-                    total_revenue: vendorData.total_revenue || 0,
-                    total_commission: vendorData.total_commission || 0,
-                    total_vendors: vendorData.total_vendors || 0,
-                    properties: vendorData.properties || [],
-                });
-            }
-            if (dieselData) {
-                setDieselSummary({
-                    total_litres: dieselData.total_litres || 0,
-                    total_cost: dieselData.total_cost || 0,
-                    refill_count: dieselData.refill_count || 0,
-                    properties: dieselData.properties || [],
-                });
-            }
-
-            const getShiftFromDueAt = (dueAtUTC: string | null) => {
-                if (!dueAtUTC) return 'day';
-                const hours = new Date(dueAtUTC).getHours();
-                return (hours >= 6 && hours < 18) ? 'day' : 'night';
-            };
-
-            const totalChecklists = checklistData.length;
-            const completedChecklists = checklistData.filter((d: any) => d.status === 'completed').length;
-            const propMap: Record<string, { property_id: string; completed: number; total: number; day_total: number; day_completed: number; night_total: number; night_completed: number }> = {};
-            checklistData.forEach((d: any) => {
-                if (!propMap[d.property_id]) {
-                    propMap[d.property_id] = { property_id: d.property_id, completed: 0, total: 0, day_total: 0, day_completed: 0, night_total: 0, night_completed: 0 };
-                }
-                const shift = getShiftFromDueAt(d.due_at);
-                propMap[d.property_id].total += 1;
-                if (shift === 'day') propMap[d.property_id].day_total += 1;
-                if (shift === 'night') propMap[d.property_id].night_total += 1;
-                
-                if (d.status === 'completed') {
-                    propMap[d.property_id].completed += 1;
-                    if (shift === 'day') propMap[d.property_id].day_completed += 1;
-                    if (shift === 'night') propMap[d.property_id].night_completed += 1;
-                }
-            });
-            const newChecklistSummary = {
-                completed: completedChecklists,
-                total: totalChecklists,
-                day_total: checklistData.filter((d: any) => getShiftFromDueAt(d.due_at) === 'day').length,
-                day_completed: checklistData.filter((d: any) => getShiftFromDueAt(d.due_at) === 'day' && d.status === 'completed').length,
-                night_total: checklistData.filter((d: any) => getShiftFromDueAt(d.due_at) === 'night').length,
-                night_completed: checklistData.filter((d: any) => getShiftFromDueAt(d.due_at) === 'night' && d.status === 'completed').length,
-                properties: Object.values(propMap)
-            };
-            setChecklistSummary(newChecklistSummary);
-
-            // Update Cache
-            setCachedData(cacheKey, {
-                ticketSummary: ticketsData || ticketSummary,
-                electricitySummary: (electricityData && Array.isArray(electricityData)) ? {
-                    total_units: Math.round(electricityData.reduce((acc: number, r: any) => acc + (r.final_units ?? r.computed_units ?? 0), 0)),
-                    latest_reading: electricityData.length > 0 ? (electricityData[0].closing_reading || 0) : 0,
-                    total_units_today: Math.round(electricityData.filter((r: any) => r.reading_date === todayDate).reduce((acc: number, r: any) => acc + (r.final_units ?? r.computed_units ?? 0), 0)),
-                    total_cost: Math.round(electricityData.reduce((acc: number, r: any) => acc + (r.computed_cost || 0), 0)),
-                    properties: Object.values(electricityData.reduce((acc: any, r: any) => { if (!acc[r.property_id]) acc[r.property_id] = { property_id: r.property_id, units: 0, latest: 0 }; acc[r.property_id].units += (r.final_units ?? r.computed_units ?? 0); if (r.closing_reading && !acc[r.property_id].latest) acc[r.property_id].latest = r.closing_reading; return acc; }, {})),
-                    properties_today: Object.values(electricityData.filter((r: any) => r.reading_date === todayDate).reduce((acc: any, r: any) => { if (!acc[r.property_id]) acc[r.property_id] = { property_id: r.property_id, units: 0 }; acc[r.property_id].units += (r.final_units ?? r.computed_units ?? 0); return acc; }, {})),
-                } : electricitySummary,
-                vmsSummary: vmsData ? {
-                    total_visitors: vmsData.total_visitors || 0,
-                    checked_in: vmsData.total_checked_in || 0,
-                    checked_out: vmsData.total_checked_out || 0,
-                    properties: vmsData.properties || [],
-                } : vmsSummary,
-                vendorSummary: vendorData ? {
-                    total_revenue: vendorData.total_revenue || 0,
-                    total_commission: vendorData.total_commission || 0,
-                    total_vendors: vendorData.total_vendors || 0,
-                    properties: vendorData.properties || [],
-                } : vendorSummary,
-                checklistSummary: newChecklistSummary
-            });
-        } catch (error) {
-            console.error('Error fetching org summaries:', error);
-        } finally {
-            setIsSummariesLoading(false);
-        }
-    }, [org?.id, timePeriod, properties]);
-
     useEffect(() => {
-        fetchSummaries();
-    }, [fetchSummaries]);
+        const handleCreated = () => {
+            invalidateCache('tickets-');
+            invalidateCache('spoc-dashboard-');
+        };
+        window.addEventListener('ticket-created', handleCreated);
+        window.addEventListener('request-created', handleCreated);
+        return () => {
+            window.removeEventListener('ticket-created', handleCreated);
+            window.removeEventListener('request-created', handleCreated);
+        };
+    }, [invalidateCache]);
 
     const uploadBase64IfNeeded = async (url: string | undefined) => {
         if (!url || !url.startsWith('data:image/')) return url;
@@ -1027,8 +784,7 @@ const OrgAdminDashboard = () => {
     };
 
     const handleTabChange = (tab: Tab, filter: string = 'all', dateFrom?: string, dateTo?: string, procurementTab?: string) => {
-        const effectiveTab = (isOpsSuperAdmin && (tab === 'org_progress' || tab === 'org_efficiency' || tab === 'agent_console')) ? 'overview' : tab;
-        setActiveTab(effectiveTab);
+        const effectiveTab = (isOpsSuperAdmin && (tab === 'org_progress' || tab === 'org_efficiency' || tab === 'agent_console' || tab === 'wiki')) ? 'overview' : tab;
         setPendingStatusFilter(filter);
         setSidebarOpen(false);
         const params = new URLSearchParams(window.location.search);
@@ -1055,13 +811,17 @@ const OrgAdminDashboard = () => {
             params.delete('dateTo');
         }
         
+        if (tab !== 'reports') params.delete('report');
+
         if (tab !== 'requests') {
             params.delete('view');
         } else {
             params.set('view', requestsView);
         }
         
-        router.replace(`${window.location.pathname}?${params.toString()}`, { scroll: false });
+        const path = dashboardContent !== undefined ? `/${orgSlugOrId}/dashboard` : window.location.pathname;
+        if (dashboardContent !== undefined) router.push(`${path}?${params.toString()}`, { scroll: false });
+        else pushDashboardNavigation(`${path}?${params.toString()}${window.location.hash}`);
     };
 
     // COMMAND CENTER — the body of the Overview tab, and nothing else. This dashboard
@@ -1213,6 +973,16 @@ const OrgAdminDashboard = () => {
                                         <Cpu className="w-4 h-4" />
                                         Agent Console
                                     </button>
+                                    <button
+                                        onClick={() => handleTabChange('wiki')}
+                                        className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'wiki'
+                                            ? 'bg-primary text-text-inverse shadow-sm'
+                                            : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                            }`}
+                                    >
+                                        <BookOpen className="w-4 h-4" />
+                                        Wiki
+                                    </button>
                                 </>
                             )}
                             <button
@@ -1255,6 +1025,7 @@ const OrgAdminDashboard = () => {
                             Management Hub
                         </p>
                         <div className="space-y-1">
+                            <PettyCashNavLink onNavigate={() => setSidebarOpen(false)} />
                             <button
                                 onClick={() => handleTabChange('properties')}
                                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'properties'
@@ -1385,16 +1156,7 @@ const OrgAdminDashboard = () => {
                                 <ShoppingCart className="w-4 h-4" />
                                 Procurement
                             </button>
-                            <button
-                                onClick={() => handleTabChange('procurement', 'all', undefined, undefined, 'urgency-tracker')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'procurement' && searchParams.get('procurement_tab') === 'urgency-tracker'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
-                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
-                                    }`}
-                            >
-                                <Layers className="w-4 h-4" />
-                                Payment Urgency Tracker
-                            </button>
+
                             <button
                                 onClick={() => handleTabChange('procurement', 'all', undefined, undefined, 'payment-tracker')}
                                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'procurement' && searchParams.get('procurement_tab') === 'payment-tracker'
@@ -1405,6 +1167,48 @@ const OrgAdminDashboard = () => {
                                 <IndianRupee className="w-4 h-4" />
                                 Payment Tracker
                             </button>
+                            <button
+                                onClick={() => handleTabChange('procurement', 'all', undefined, undefined, 'invoices')}
+                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'procurement' && searchParams.get('procurement_tab') === 'invoices'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                    }`}
+                            >
+                                <FileCheck2 className="w-4 h-4" />
+                                Invoice Control
+                            </button>
+                            <button
+                                onClick={() => handleTabChange('bounty')}
+                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'bounty'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                    }`}
+                            >
+                                <Target className="w-4 h-4" />
+                                AOP Bounty
+                            </button>
+                            <button
+                                onClick={() => handleTabChange('procurement', 'all', undefined, undefined, 'vendor-discovery')}
+                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'procurement' && searchParams.get('procurement_tab') === 'vendor-discovery'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                    }`}
+                            >
+                                <PhoneCall className="w-4 h-4" />
+                                Vendor Discovery (Meera)
+                            </button>
+                            {org && (
+                                <button
+                                    onClick={() => handleTabChange('meetings')}
+                                    className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'meetings'
+                                        ? 'bg-primary text-text-inverse shadow-sm'
+                                        : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                        }`}
+                                >
+                                    <Mic className="w-4 h-4" />
+                                    Meetings (Ira)
+                                </button>
+                            )}
                             <button
                                 onClick={() => handleTabChange('checklist')}
                                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'checklist'
@@ -1496,17 +1300,6 @@ const OrgAdminDashboard = () => {
                                 <span className="flex-1 text-left">Task Manager</span>
                             </button>
                             <button
-                                onClick={() => handleTabChange('task_testing')}
-                                className={`w-full flex items-center gap-3 px-4 py-2 rounded-xl transition-all duration-200 font-bold text-sm group ${activeTab === 'task_testing'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
-                                    : 'text-text-secondary hover:bg-primary/10 hover:text-primary'
-                                    }`}
-                            >
-                                <FlaskConical className={`w-4 h-4 transition-transform ${activeTab === 'task_testing' ? '' : 'group-hover:scale-110 text-amber-500'}`} />
-                                <span className="flex-1 text-left">Task Testing</span>
-                                <span className="text-[10px] uppercase font-extrabold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400">Beta</span>
-                            </button>
-                            <button
                                 onClick={() => handleTabChange('ai_tickets')}
                                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm group ${activeTab === 'ai_tickets'
                                     ? 'bg-primary text-text-inverse shadow-sm'
@@ -1592,7 +1385,15 @@ const OrgAdminDashboard = () => {
             />
 
             {/* Main Content */}
-            <main id="main-scroll-container" className={`flex-1 min-w-0 w-full lg:ml-72 bg-white transition-all duration-300 overflow-y-auto ${activeTab === 'overview' ? 'p-4 md:p-6 lg:p-8' : activeTab === 'requests' ? 'pt-16 lg:pt-0 lg:p-12' : 'pt-16 lg:pt-0 p-4 md:p-8 lg:p-12'}`}>
+            <main id="main-scroll-container" className={`flex-1 min-w-0 w-full lg:ml-72 bg-white transition-all duration-300 overflow-y-auto ${activeTab === 'overview' ? 'pt-16 px-4 pb-4 md:p-6 lg:p-8' : activeTab === 'requests' ? 'pt-16 lg:pt-0 lg:p-12' : 'pt-16 lg:pt-0 p-4 md:p-8 lg:p-12'}`}>
+                {(showCommandCenter || dashboardContent !== undefined) && (
+                    <div className="lg:hidden fixed top-0 inset-x-0 h-14 bg-white border-b border-border flex items-center gap-3 px-4 z-30">
+                        <button type="button" aria-label="Open menu" onClick={() => setSidebarOpen(true)} className="p-2 text-text-secondary"><Menu className="w-6 h-6" /></button>
+                        <span className="font-semibold">{dashboardContent !== undefined ? 'Petty Cash' : 'Dashboard'}</span>
+                    </div>
+                )}
+                {dashboardContent ?? (<>
+
 
             {/* Overview IS the Command Center board — same tab, same URL, same chrome;
                 only what sits inside <main> changes. It gets its own thin header (not the
@@ -1703,35 +1504,6 @@ const OrgAdminDashboard = () => {
                         exit={{ opacity: 0, y: -10 }}
                         transition={{ duration: 0.2 }}
                     >
-                        <div style={{ display: activeTab === 'overview' ? 'block' : 'none' }}>
-                            <OverviewTab
-                                properties={properties}
-                                orgId={org?.id || ''}
-                                selectedPropertyId={selectedPropertyId}
-                                setSelectedPropertyId={handlePropertyChange}
-                                onMenuToggle={() => setSidebarOpen(true)}
-                                onTabChange={handleTabChange}
-                                ticketSummary={ticketSummary}
-                                setTicketSummary={setTicketSummary}
-                                electricitySummary={electricitySummary}
-                                setElectricitySummary={setElectricitySummary}
-                                vmsSummary={vmsSummary}
-                                setVmsSummary={setVmsSummary}
-                                vendorSummary={vendorSummary}
-                                setVendorSummary={setVendorSummary}
-                                checklistSummary={checklistSummary}
-                                setChecklistSummary={setChecklistSummary}
-                                upcomingPpmTasks={upcomingPpmTasks}
-                                displayDieselStats={displayDieselStats}
-                                timePeriod={timePeriod}
-                                setTimePeriod={setTimePeriod}
-                                ticketPeriod={ticketPeriod}
-                                setTicketPeriod={setTicketPeriod}
-                                electricityPeriod={electricityPeriod}
-                                setElectricityPeriod={setElectricityPeriod}
-                                isSummariesLoading={isSummariesLoading}
-                            />
-                        </div>
                         {/* AGENT PROVIDENCE. Every module tab opens with one line saying which agentic
                             employees are working this module and when they last moved. AgentPulse renders
                             NOTHING when the runtime is unprovisioned or no agent claims the module, so it
@@ -1739,7 +1511,9 @@ const OrgAdminDashboard = () => {
                         {activeTab === 'procurement' && org && (
                             <>
                                 <AgentPulse orgId={org.id} module={AGENT_PULSE_BY_TAB.procurement} consoleTab="agent_console" className="mb-3" />
-                                <ProcurementModule key="procurement-admin" orgId={org.id} isAdmin={true} properties={properties} />
+                                {searchParams.get('procurement_tab') === 'vendor-discovery'
+                                    ? <SatejConsole orgId={org.id} />
+                                    : <ProcurementModule key="procurement-admin" orgId={org.id} isAdmin={true} properties={properties} />}
                             </>
                         )}
                         {activeTab === 'roster' && selectedPropertyId === 'all' && (
@@ -1783,7 +1557,7 @@ const OrgAdminDashboard = () => {
                             </div>
                         )}
                         {activeTab === 'grievance' && (
-                            <HRTicketsContent orgId={org?.id || membership?.org_id || 'org'} />
+                            <HRTicketsContent orgId={org?.id || membership?.org_id || membership?.organization_id || (user as any)?.organization_id || user?.user_metadata?.organization_id || '211e1330-ad83-446d-941f-dcea48396798'} />
                         )}
                         
                         {activeTab === 'water' && (
@@ -1800,9 +1574,22 @@ const OrgAdminDashboard = () => {
                             Registry, sandbox, live activity, uptime, reliability profile, reinforcement
                             and credentials all live behind it. */}
                         {!isOpsSuperAdmin && activeTab === 'agent_console' && <AgentConsole key="agent-console-tab" orgId={org?.id ?? ''} />}
+                        {activeTab === 'bounty' && org && (
+                            <div className="space-y-3">
+                                <div>
+                                    <h2 className="text-xl font-bold text-text-primary">AOP Bounty</h2>
+                                    <p className="text-sm text-text-secondary">What the month&apos;s AOP still needs, who owes it, and how long it has waited.</p>
+                                </div>
+                                <BountyInbox orgId={org.id} />
+                            </div>
+                        )}
+                        {!isOpsSuperAdmin && activeTab === 'wiki' && org && (
+                            <div className="w-full min-h-screen bg-white">
+                                <WikiHome orgId={org.id} />
+                            </div>
+                        )}
                         {activeTab === 'ai_tickets' && <AITicketsDashboard propertyId={selectedPropertyId === 'all' ? undefined : selectedPropertyId} />}
-                        {activeTab === 'tasks' && <TaskManagerSuperuserDashboard orgId={org?.id || ''} />}
-                        {activeTab === 'task_testing' && <TaskManagerTestingDashboard orgId={org?.id || ''} />}
+                        {activeTab === 'tasks' && <TaskManagerSuperuserDashboard orgId={org?.id || ''} underFixedHeader />}
                         {activeTab === 'revenue' && <RevenueTab key="revenue-tab" properties={properties} selectedPropertyId={selectedPropertyId} />}
                         {activeTab === 'properties' && (
                             <PropertiesTab
@@ -1859,11 +1646,32 @@ const OrgAdminDashboard = () => {
 
                         {activeTab === 'reports' && org && (
                             <div key="reports-tab" className="space-y-6">
-                                <AgentPulse orgId={org.id} module={AGENT_PULSE_BY_TAB.reports} consoleTab="agent_console" />
-                                <ImportReportsView
-                                    organizationId={org.id}
-                                    propertyId={selectedPropertyId === 'all' ? undefined : selectedPropertyId}
-                                />
+                                {isOrgSuperAdmin && (
+                                    <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1" role="group" aria-label="Report">
+                                        {([['imports', 'Import reports'], ['app_usage', 'App usage']] as const).map(([id, label]) => (
+                                            <button
+                                                key={id}
+                                                type="button"
+                                                onClick={() => setReportsView(id)}
+                                                aria-pressed={reportsView === id}
+                                                className={`rounded-lg px-4 py-1.5 text-xs font-bold transition ${reportsView === id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                                            >
+                                                {label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                                {reportsView === 'app_usage' ? (
+                                    <AppUsageReport orgId={org.id} />
+                                ) : (
+                                    <>
+                                        <AgentPulse orgId={org.id} module={AGENT_PULSE_BY_TAB.reports} consoleTab="agent_console" />
+                                        <ImportReportsView
+                                            organizationId={org.id}
+                                            propertyId={selectedPropertyId === 'all' ? undefined : selectedPropertyId}
+                                        />
+                                    </>
+                                )}
                             </div>
                         )}
 
@@ -2036,6 +1844,12 @@ const OrgAdminDashboard = () => {
                             </div>
                         )}
 
+                        {activeTab === 'meetings' && org && (
+                            <div className="w-full min-h-screen bg-white">
+                                <MeetingsHome orgId={org.id} embedded />
+                            </div>
+                        )}
+
                         {activeTab === 'vendors' && org && (
                             <div className="w-full min-h-screen bg-white">
                                 <AgentPulse orgId={org.id} module={AGENT_PULSE_BY_TAB.vendors} consoleTab="agent_console" className="mb-3" />
@@ -2131,13 +1945,16 @@ const OrgAdminDashboard = () => {
                 </AnimatePresence>
             </>
             )}
-            </main>
+
+                </>)}
+</main>
 
             {/* Modals — outside the tab branches so they stay mounted on every tab */}
             {
                 (showCreatePropModal || editingProperty) && (
                     <PropertyModal
                         property={editingProperty}
+                        supportsOperationType={properties.some(p => 'operation_type' in p)}
                         onClose={() => { setShowCreatePropModal(false); setEditingProperty(null); }}
                         onSave={(data: any) => editingProperty ? handleUpdateProperty(editingProperty.id, data) : handleCreateProperty(data)}
                     />
@@ -2164,7 +1981,7 @@ const OrgAdminDashboard = () => {
                 properties={properties}
                 onSuccess={() => {
                     fetchOrgUsers();
-                    setActiveTab('users');
+                    handleTabChange('users');
                 }}
             />
 
@@ -2177,6 +1994,14 @@ const OrgAdminDashboard = () => {
                     propertyId={selectedPropertyId === 'all' ? undefined : selectedPropertyId}
                     isAdminMode={true}
                     showInternalToggle={true}
+                    onSuccess={(ticket) => {
+                        invalidateCache('tickets-');
+                        invalidateCache('spoc-dashboard-');
+                        if (typeof window !== 'undefined') {
+                            window.dispatchEvent(new CustomEvent('ticket-created', { detail: { ticket } }));
+                            window.dispatchEvent(new CustomEvent('request-created', { detail: { ticket } }));
+                        }
+                    }}
                     organizations={(() => {
                         const orgs = org ? [org] : [];
                         // If user is from Autopilot Offices but viewing another org, add Autopilot to the list
@@ -2313,798 +2138,7 @@ const DieselSphere = ({ percentage }: { percentage: number }) => {
     );
 };
 
-/** Smooth count-up with ease-in-out-cubic: gentle start, fast middle, smooth landing */
-function useCountUp(target: number, duration = 1400): number {
-    const [display, setDisplay] = useState(0);
-    const raf = useRef<number | null>(null);
-    const startRef = useRef<{ from: number; to: number; startTime: number } | null>(null);
-
-    useEffect(() => {
-        // Always animate from whatever is currently displayed
-        const from = display;
-        startRef.current = { from, to: target, startTime: performance.now() };
-
-        const tick = (now: number) => {
-            if (!startRef.current) return;
-            const { from: f, to, startTime } = startRef.current;
-            const t = Math.min((now - startTime) / duration, 1);
-            // ease-in-out-cubic: slow start → accelerates → slow finish
-            const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-            const current = Math.round(f + (to - f) * eased);
-            setDisplay(current);
-            if (t < 1) raf.current = requestAnimationFrame(tick);
-        };
-
-        if (raf.current) cancelAnimationFrame(raf.current);
-        raf.current = requestAnimationFrame(tick);
-        return () => { if (raf.current) cancelAnimationFrame(raf.current); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [target]);
-
-    return display;
-}
-
 // Sub-components
-const OverviewTab = memo(function OverviewTab({
-    properties,
-    orgId,
-    selectedPropertyId,
-    setSelectedPropertyId,
-    onMenuToggle,
-    onTabChange,
-    ticketSummary,
-    setTicketSummary,
-    electricitySummary,
-    setElectricitySummary,
-    vmsSummary,
-    setVmsSummary,
-    vendorSummary,
-    setVendorSummary,
-    checklistSummary,
-    setChecklistSummary,
-    upcomingPpmTasks,
-    displayDieselStats,
-    timePeriod,
-    setTimePeriod,
-    ticketPeriod,
-    setTicketPeriod,
-    electricityPeriod,
-    setElectricityPeriod,
-    isSummariesLoading
-}: {
-    properties: Property[],
-    orgId: string,
-    selectedPropertyId: string,
-    setSelectedPropertyId: (id: string) => void,
-    onMenuToggle: () => void,
-    onTabChange: (tab: Tab, filter?: string, dateFrom?: string, dateTo?: string) => void,
-    ticketSummary: any,
-    setTicketSummary: any,
-    electricitySummary: any,
-    setElectricitySummary: any,
-    vmsSummary: any,
-    setVmsSummary: any,
-    vendorSummary: any,
-    setVendorSummary: any,
-    checklistSummary: any,
-    setChecklistSummary: any,
-    upcomingPpmTasks: any[],
-    displayDieselStats: any,
-    timePeriod: 'today' | 'month' | 'all',
-    setTimePeriod: (p: 'today' | 'month' | 'all') => void,
-    ticketPeriod: 'today' | 'month' | 'all',
-    setTicketPeriod: (p: 'today' | 'month' | 'all') => void,
-    electricityPeriod: 'today' | 'month',
-    setElectricityPeriod: (p: 'today' | 'month') => void,
-    isSummariesLoading: boolean
-}) {
-    const [isOverviewSelectorOpen, setIsOverviewSelectorOpen] = useState(false);
-    const isLoading = isSummariesLoading && !ticketSummary.total_tickets;
-
-    const handleTicketKPIClick = (filter: string) => {
-        if (ticketPeriod === 'all') {
-            onTabChange('requests', filter);
-            return;
-        }
-        const date = new Date();
-        let dateFrom, dateTo;
-        if (ticketPeriod === 'today') {
-            const todayStr = date.toISOString().split('T')[0];
-            dateFrom = todayStr;
-            dateTo = todayStr;
-        } else if (ticketPeriod === 'month') {
-            const startOfMonth = new Date(date.getFullYear(), date.getMonth(), 1).toISOString().split('T')[0];
-            const endOfMonth = new Date(date.getFullYear(), date.getMonth() + 1, 0).toISOString().split('T')[0];
-            dateFrom = startOfMonth;
-            dateTo = endOfMonth;
-        }
-        onTabChange('requests', filter, dateFrom, dateTo);
-    };
-
-    const activeProperty = selectedPropertyId === 'all'
-        ? null
-        : properties.find(p => p.id === selectedPropertyId);
-
-    // Derive display stats based on selection
-    const displayTicketStats = useMemo(() => {
-        if (selectedPropertyId === 'all') return ticketSummary;
-
-        const propStats = ticketSummary.properties?.find((p: any) => p.property_id === selectedPropertyId);
-        if (!propStats) return {
-            total_tickets: 0,
-            open_tickets: 0,
-            waitlist: 0,
-            in_progress: 0,
-            resolved: 0,
-            pending_validation: 0,
-            validated_closed: 0,
-            urgent_open: 0,
-            sla_breached: 0,
-            avg_resolution_hours: 0,
-            properties_with_validation: ticketSummary.properties_with_validation,
-            properties: ticketSummary.properties,
-            trends: { total: [], resolved: [], active: [], pending: [] },
-        };
-
-        return {
-            total_tickets: propStats.total || 0,
-            open_tickets: propStats.open || 0,
-            waitlist: propStats.waitlist || 0,
-            in_progress: propStats.in_progress || 0,
-            resolved: propStats.resolved || 0,
-            pending_validation: propStats.pending_validation || 0,
-            validated_closed: propStats.validated_closed || 0,
-            urgent_open: propStats.urgent_open || 0,
-            sla_breached: propStats.sla_breached || 0,
-            avg_resolution_hours: ticketSummary.avg_resolution_hours || 0,
-            properties_with_validation: propStats.validation_enabled ? 1 : 0,
-            properties: ticketSummary.properties || [],
-            trends: propStats.trends || { total: [], resolved: [], active: [], pending: [] },
-        };
-    }, [selectedPropertyId, ticketSummary]);
-
-    const displayElectricityStats = useMemo(() => {
-        const isToday = electricityPeriod === 'today';
-        if (selectedPropertyId === 'all') {
-            return {
-                total_units: isToday ? electricitySummary.total_units_today : electricitySummary.total_units,
-                latest_reading: electricitySummary.latest_reading,
-                total_cost: electricitySummary.total_cost,
-                properties: electricitySummary.properties,
-            };
-        }
-        const propsSource = isToday ? electricitySummary.properties_today : electricitySummary.properties;
-        const propStats = propsSource?.find((p: any) => p.property_id === selectedPropertyId);
-        return {
-            total_units: propStats?.units || 0,
-            latest_reading: propStats?.latest || 0,
-            total_cost: 0,
-            properties: electricitySummary.properties,
-        };
-    }, [selectedPropertyId, electricitySummary, electricityPeriod]);
-
-    const displayVmsStats = useMemo(() => {
-        if (selectedPropertyId === 'all') return vmsSummary;
-        const propStats = (vmsSummary as any).properties?.find((p: any) => p.property_id === selectedPropertyId);
-        return {
-            total_visitors: propStats?.total || 0,
-            checked_in: propStats?.checked_in || 0,
-            checked_out: propStats?.checked_out || 0,
-        };
-    }, [selectedPropertyId, vmsSummary]);
-
-    const displayVendorStats = useMemo(() => {
-        if (selectedPropertyId === 'all') return vendorSummary;
-        const propStats = vendorSummary.properties?.find((p: any) => p.property_id === selectedPropertyId);
-        if (!propStats) return { total_revenue: 0, total_commission: 0, total_vendors: 0 };
-        return propStats;
-    }, [vendorSummary, selectedPropertyId]);
-
-    const displayChecklistStats = useMemo(() => {
-        if (selectedPropertyId === 'all') return checklistSummary;
-        const propStats = checklistSummary.properties?.find((p: any) => p.property_id === selectedPropertyId);
-        if (!propStats) return { completed: 0, total: 0, day_total: 0, day_completed: 0, night_total: 0, night_completed: 0 };
-        return propStats;
-    }, [checklistSummary, selectedPropertyId]);
-
-    const validationEnabledCount = selectedPropertyId === 'all'
-        ? displayTicketStats.properties_with_validation
-        : (displayTicketStats.properties_with_validation > 0 ? 1 : 0);
-
-    // trulyClosed = all vendor-done tickets (resolved + pending_validation) when validation is enabled,
-    // or just resolved (closed + satisfied + resolved) when no validation property is selected
-    const trulyClosed = validationEnabledCount > 0
-        ? (displayTicketStats.resolved || 0) + (displayTicketStats.pending_validation || 0)
-        : (displayTicketStats.resolved || 0);
-
-    // Calculated metrics
-    // Open = tickets NOT closed (open, assigned, in_progress, waitlist)
-    // Closed = tickets ARE closed (completed, closed, pending_validation)
-    const closedCount = (displayTicketStats.resolved || 0) + (displayTicketStats.pending_validation || 0);
-    const openCount = (displayTicketStats.total_tickets || 0) - closedCount;
-
-    const completionRate = displayTicketStats.total_tickets > 0
-        ? Math.round((closedCount / displayTicketStats.total_tickets) * 100 * 10) / 10
-        : 0;
-
-    const directResolved = closedCount - displayTicketStats.validated_closed;
-    const validationRate = closedCount > 0
-        ? Math.round((displayTicketStats.validated_closed / closedCount) * 100)
-        : 0;
-    const totalPropertiesCount = selectedPropertyId === 'all' ? properties.length : 1;
-
-    // Animated KPI counters
-    const animatedTotal = useCountUp(displayTicketStats.total_tickets || 0);
-    const animatedOpen = useCountUp(openCount || 0);
-    const animatedClosed = useCountUp(closedCount || 0);
-    const animatedPending = useCountUp(validationEnabledCount > 0 ? displayTicketStats.pending_validation : 0);
-
-    // Animation variants
-    const containerVariants = {
-        hidden: { opacity: 0 },
-        visible: {
-            opacity: 1,
-            transition: {
-                staggerChildren: 0.1
-            }
-        }
-    };
-
-    const cardVariants: any = {
-        hidden: { opacity: 0, y: 20 },
-        visible: { 
-            opacity: 1, 
-            y: 0,
-            transition: { 
-                type: "spring", 
-                stiffness: 100, 
-                damping: 15 
-            }
-        }
-    };
-
-    return (
-        <div className="min-h-screen bg-background">
-            {/* Header Section */}
-            <div className="bg-[#708F96] px-8 lg:px-12 py-4 border-b border-white/10 shadow-lg relative z-30">
-                <div className="flex items-center justify-between gap-x-4 mb-3 relative z-10">
-                    <div className="flex items-center gap-4">
-                        {/* Mobile Menu Toggle */}
-                        <button
-                            onClick={onMenuToggle}
-                            className="p-2 -ml-2 lg:hidden text-white/70 hover:text-white transition-colors"
-                        >
-                            <Menu className="w-6 h-6" />
-                        </button>
-                        <div>
-                            <h1 className="text-2xl md:text-3xl font-display font-semibold text-white tracking-tight capitalize">Unified Dashboard</h1>
-                            <p className="hidden md:block text-white/70 text-xs font-body font-medium mt-1">Manage your organization's resources.</p>
-                        </div>
-
-                        {/* Universal Search - Integrated into Header */}
-                        <div className="hidden lg:block ml-4 xl:ml-8 flex-1 max-w-sm min-w-0">
-                            <UniversalSearch />
-                        </div>
-                    </div>
-                    <div className="flex items-center gap-4 flex-shrink-0">
-                        {/* Dashboard Period Filter */}
-                        <div className="hidden md:flex items-center bg-white/10 rounded-xl p-1 border border-white/10 shadow-sm">
-                            <button
-                                onClick={() => setTimePeriod('today')}
-                                className={`px-3 py-1.5 text-[9px] font-black uppercase tracking-widest rounded-lg transition-all ${timePeriod === 'today'
-                                    ? 'bg-yellow-400 text-slate-900 shadow-lg scale-105'
-                                    : 'text-white/70 hover:text-white'}`}
-                            >
-                                Today
-                            </button>
-                            <button
-                                onClick={() => setTimePeriod('month')}
-                                className={`px-3 py-1.5 text-[9px] font-black uppercase tracking-widest rounded-lg transition-all ${timePeriod === 'month'
-                                    ? 'bg-yellow-400 text-slate-900 shadow-lg scale-105'
-                                    : 'text-white/70 hover:text-white'}`}
-                            >
-                                This Month
-                            </button>
-                            <button
-                                onClick={() => setTimePeriod('all')}
-                                className={`px-3 py-1.5 text-[9px] font-black uppercase tracking-widest rounded-lg transition-all ${timePeriod === 'all'
-                                    ? 'bg-yellow-400 text-slate-900 shadow-lg scale-105'
-                                    : 'text-white/70 hover:text-white'}`}
-                            >
-                                All Time
-                            </button>
-                        </div>
-
-                        {/* Property Selector for Requests/Other tabs */}
-                        {properties.length > 0 && (
-                            <div className="relative">
-                                <button
-                                    onClick={() => setIsOverviewSelectorOpen(!isOverviewSelectorOpen)}
-                                    className="flex items-center gap-3 bg-[#5A737A] text-white border border-white/10 rounded-xl px-4 py-2.5 shadow-sm hover:border-white/50 transition-all group min-w-[220px]"
-                                >
-                                    <div className="w-6 h-6 rounded-lg bg-white/20 flex items-center justify-center overflow-hidden border border-white/10">
-                                        {activeProperty && activeProperty.image_url ? (
-                                            <img src={activeProperty.image_url} alt="" className="w-full h-full object-cover" />
-                                        ) : (
-                                            <Building2 className="w-3.5 h-3.5 text-white/70" />
-                                        )}
-                                    </div>
-                                    <span className="text-sm font-bold flex-1 text-left">
-                                        {selectedPropertyId === 'all' ? 'All Properties' : activeProperty?.name}
-                                    </span>
-                                    <ChevronDown className={`w-4 h-4 text-white/50 transition-transform ${isOverviewSelectorOpen ? 'rotate-180' : ''}`} />
-                                </button>
-
-                                <AnimatePresence>
-                                    {isOverviewSelectorOpen && (
-                                        <>
-                                            <div
-                                                className="fixed inset-0 z-[110]"
-                                                onClick={() => setIsOverviewSelectorOpen(false)}
-                                            />
-                                            <motion.div
-                                                initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                                                animate={{ opacity: 1, y: 0, scale: 1 }}
-                                                exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                                                className="absolute right-0 mt-2 w-80 bg-[#5A737A] rounded-2xl shadow-2xl border border-white/10 z-[120] overflow-hidden"
-                                            >
-                                                <div className="p-2 border-b border-white/10">
-                                                    <button
-                                                        onClick={() => { setSelectedPropertyId('all'); setIsOverviewSelectorOpen(false); }}
-                                                        className={`w-full flex items-center gap-3 p-3 rounded-xl transition-colors ${selectedPropertyId === 'all' ? 'bg-yellow-400 text-slate-900' : 'text-white hover:bg-white/10'}`}
-                                                    >
-                                                        <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center overflow-hidden border border-white/10">
-                                                            <LayoutDashboard className="w-5 h-5" />
-                                                        </div>
-                                                        <div className="text-left">
-                                                            <p className="text-xs font-black uppercase tracking-tight">Show All Properties</p>
-                                                            <p className={`text-[10px] font-bold ${selectedPropertyId === 'all' ? 'text-slate-900/60' : 'text-white/60'}`}>{properties.length} Active Locations</p>
-                                                        </div>
-                                                    </button>
-                                                </div>
-                                                <div className="max-h-80 overflow-y-auto p-2 space-y-1">
-                                                    {properties.map(prop => (
-                                                        <button
-                                                            key={prop.id}
-                                                            onClick={() => { setSelectedPropertyId(prop.id); setIsOverviewSelectorOpen(false); }}
-                                                            className={`w-full flex items-center gap-3 p-3 rounded-xl transition-colors ${selectedPropertyId === prop.id ? 'bg-yellow-400 text-slate-900' : 'text-white hover:bg-white/10'}`}
-                                                        >
-                                                            <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center overflow-hidden border border-white/10">
-                                                                {prop.image_url ? (
-                                                                    <img src={prop.image_url} alt="" className="w-full h-full object-cover" />
-                                                                ) : (
-                                                                    <Building2 className="w-5 h-5 text-white/50" />
-                                                                )}
-                                                            </div>
-                                                            <div className="text-left overflow-hidden">
-                                                                <p className="text-xs font-black uppercase tracking-tight truncate">{prop.name}</p>
-                                                                <p className={`text-[10px] font-bold uppercase tracking-widest ${selectedPropertyId === prop.id ? 'text-slate-900/60' : 'text-white/40'}`}>{prop.code}</p>
-                                                            </div>
-                                                        </button>
-                                                    ))}
-                                                </div>
-                                            </motion.div>
-                                        </>
-                                    )}
-                                </AnimatePresence>
-                            </div>
-                        )}
-                    </div>
-                </div>
-
-                {/* KPI Cards Row */}
-                <motion.div
-                    className={`grid grid-cols-1 sm:grid-cols-2 ${validationEnabledCount > 0 ? 'xl:grid-cols-4' : 'xl:grid-cols-3'} gap-4 mb-5 relative`}
-                    variants={containerVariants}
-                    initial="hidden"
-                    animate="visible"
-                >
-                    {/* Card 1 — Total Tickets */}
-                    <motion.div
-                        variants={cardVariants}
-                        whileHover={{ y: -4, transition: { duration: 0.2 } }}
-                        onClick={() => handleTicketKPIClick('all')}
-                        className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm hover:shadow-md cursor-pointer hover:border-slate-300 transition-all group relative overflow-hidden"
-                    >
-                        <div className="flex items-center justify-between mb-2">
-                            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 group-hover:text-slate-600 transition-colors">Total Tickets</span>
-                            <div className="w-8 h-8 rounded-xl bg-slate-100 flex items-center justify-center">
-                                <Ticket className="w-4 h-4 text-slate-500" />
-                            </div>
-                        </div>
-                        <div className="flex items-baseline gap-2 mb-2">
-                            <span className="text-4xl font-black text-slate-900">{animatedTotal}</span>
-                            <span className="text-xs text-emerald-500 font-bold">{completionRate}% resolved</span>
-                        </div>
-                        <div className="w-full h-1.5 bg-slate-100 rounded-full mb-2 overflow-hidden">
-                            <div
-                                className="h-full bg-emerald-500 rounded-full transition-all duration-500"
-                                style={{ width: `${Math.min(completionRate, 100)}%` }}
-                            />
-                        </div>
-                        <div className="flex items-center justify-between text-[10px] font-bold text-slate-400">
-                            <span>{openCount} open</span>
-                            <span>{Math.round((trulyClosed / Math.max(displayTicketStats.total_tickets, 1)) * 100)}%</span>
-                        </div>
-                    </motion.div>
-
-                    {/* Card 2 — Open */}
-                    <motion.div
-                        variants={cardVariants}
-                        whileHover={{ y: -4, transition: { duration: 0.2 } }}
-                        onClick={() => handleTicketKPIClick('open,assigned,in_progress,blocked,waitlist')}
-                        className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm hover:shadow-md cursor-pointer hover:border-slate-300 transition-all group relative overflow-hidden"
-                    >
-                        <div className="flex items-center justify-between mb-2">
-                            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 group-hover:text-blue-500 transition-colors">Open</span>
-                            <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${displayTicketStats.sla_breached > 0 ? 'bg-rose-50' : 'bg-blue-50'}`}>
-                                <AlertCircle className={`w-4 h-4 ${displayTicketStats.sla_breached > 0 ? 'text-rose-500' : 'text-blue-500'}`} />
-                            </div>
-                        </div>
-                        <div className="flex items-baseline gap-2 mb-2">
-                            <span className="text-4xl font-black text-slate-900">{animatedOpen}</span>
-                            {displayTicketStats.sla_breached > 0 && (
-                                <span className="text-[10px] text-rose-500 font-black uppercase bg-rose-50 px-1.5 py-0.5 rounded-md">{displayTicketStats.sla_breached} SLA BREACH</span>
-                            )}
-                        </div>
-                        <div className="flex flex-wrap gap-2 text-[10px]">
-                            <span className="flex items-center gap-1 font-bold text-slate-500">
-                                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />
-                                {(displayTicketStats as any)?.waitlist || 0} Waitlist
-                            </span>
-                        </div>
-                        {(displayTicketStats.urgent_open || 0) > 0 && (
-                            <div className="mt-2 pt-2 border-t border-slate-100">
-                                <span className="flex items-center gap-1 font-bold text-rose-500 text-[10px]">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-rose-400 inline-block" />
-                                    {(displayTicketStats.urgent_open || 0) - ((displayTicketStats as any)?.waitlist || 0)} High/Urgent
-                                </span>
-                            </div>
-                        )}
-                    </motion.div>
-
-                    {/* Card 3 — Closed */}
-                    <motion.div
-                        variants={cardVariants}
-                        whileHover={{ y: -4, transition: { duration: 0.2 } }}
-                        onClick={() => handleTicketKPIClick('resolved,closed,pending_validation')}
-                        className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm hover:shadow-md cursor-pointer hover:border-slate-300 transition-all group relative overflow-hidden"
-                    >
-                        <div className="flex items-center justify-between mb-2">
-                            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 group-hover:text-slate-600 transition-colors">Closed</span>
-                            <div className="w-8 h-8 rounded-xl bg-emerald-50 flex items-center justify-center">
-                                <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                            </div>
-                        </div>
-                        <div className="flex items-baseline gap-2 mb-2">
-                            <span className="text-4xl font-black text-slate-900">{animatedClosed}</span>
-                            <span className="text-xs text-emerald-500 font-bold">{completionRate}%</span>
-                        </div>
-                        <div className="w-full h-1.5 bg-slate-100 rounded-full mb-2 overflow-hidden">
-                            <div
-                                className="h-full bg-emerald-500 rounded-full transition-all duration-500"
-                                style={{ width: `${completionRate}%` }}
-                            />
-                        </div>
-                        <div className="flex items-center justify-between text-[10px] font-bold text-slate-400">
-                            <span>
-                                <span className="text-emerald-600">{displayTicketStats.resolved} confirmed</span>
-                                {displayTicketStats.pending_validation > 0 && <span className="text-amber-500"> · {displayTicketStats.pending_validation} awaiting</span>}
-                            </span>
-                            <span>{displayTicketStats.avg_resolution_hours > 0 ? `Avg ${displayTicketStats.avg_resolution_hours}h` : ''}</span>
-                        </div>
-                    </motion.div>
-
-                    {/* Card 4 — Needs Review */}
-                    {validationEnabledCount > 0 && (
-                        <motion.div
-                            variants={cardVariants}
-                            whileHover={{ y: -4, transition: { duration: 0.2 } }}
-                            onClick={() => handleTicketKPIClick('pending_validation')}
-                            className="bg-white rounded-2xl p-4 border-l-4 border-b-4 border-amber-400 shadow-sm hover:shadow-md cursor-pointer transition-all group relative overflow-hidden"
-                        >
-                            <div className="flex items-center justify-between mb-2">
-                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 group-hover:text-slate-600 transition-colors">Needs Review</span>
-                                <div className="w-8 h-8 rounded-xl bg-amber-50 flex items-center justify-center">
-                                    <Clock className="w-4 h-4 text-amber-500" />
-                                </div>
-                            </div>
-                            <div className="flex items-baseline gap-2 mb-2">
-                                <span className="text-4xl font-black text-amber-500">{displayTicketStats.pending_validation || 0}</span>
-                            </div>
-                            <div className="mb-2">
-                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-600">
-                                    Needs action
-                                </span>
-                            </div>
-                            <div className="text-[10px] font-bold text-slate-400">
-                                <span>Awaiting tenant sign-off</span>
-                            </div>
-                            <div className="mt-2 text-[10px] font-bold text-slate-400">
-                                <span>Enabled on {validationEnabledCount}/{properties.length} properties</span>
-                            </div>
-                        </motion.div>
-                    )}
-                </motion.div>
-
-                {/* BD Pipeline moved to right column below */}
-            </div>
-
-            {/* Main Content Grid - with padding */}
-            <motion.div 
-                className="px-8 lg:px-12 py-5 space-y-5"
-                variants={containerVariants}
-                initial="hidden"
-                animate="visible"
-            >
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-                    {/* Left Column */}
-                    <div className="lg:col-span-3 space-y-5">
-                        {/* Electricity Consumption */}
-                        <motion.div
-                            variants={cardVariants}
-                            whileHover={{ y: -4, transition: { duration: 0.2 } }}
-                            onClick={() => onTabChange('electricity')}
-                            className="bg-white rounded-3xl p-5 border border-slate-100 shadow-sm relative overflow-hidden group cursor-pointer hover:shadow-md hover:border-yellow-300/50 transition-all"
-                        >
-                            <div className="flex items-center justify-between mb-4">
-                                <h3 className="text-sm font-black text-slate-900">Electricity</h3>
-                                <div className="flex items-center gap-2">
-                                    <div className="flex items-center bg-slate-100 rounded-lg p-0.5" onClick={(e) => e.stopPropagation()}>
-                                        <button
-                                            className={`px-3 py-1 text-[8px] font-black uppercase tracking-tight rounded-md bg-white text-yellow-600 shadow-sm`}
-                                        >
-                                            {timePeriod === 'today' ? 'Today' : timePeriod === 'month' ? 'Month' : 'All Time'}
-                                        </button>
-                                    </div>
-                                    <div className="w-8 h-8 bg-yellow-50 rounded-xl flex items-center justify-center">
-                                        <Zap className="w-4 h-4 text-yellow-500" />
-                                    </div>
-                                </div>
-                            </div>
-                            <div className="text-yellow-600 text-xs font-bold mb-4 flex items-center gap-2">
-                                <span className={`w-2 h-2 rounded-full animate-pulse ${timePeriod === 'today' ? 'bg-blue-400' : 'bg-yellow-500'}`} />
-                                {timePeriod === 'today' ? 'Today' : timePeriod === 'month' ? 'This Month' : 'All Time'}
-                            </div>
-
-                            {/* Electricity Visualization */}
-                            <div className="flex justify-center my-6">
-                                <div className="relative w-[160px] h-[160px]">
-                                    {/* Background ring */}
-                                    <svg className="w-full h-full -rotate-90" viewBox="0 0 120 120">
-                                        <circle cx="60" cy="60" r="52" fill="none" stroke="#f1f5f9" strokeWidth="10" />
-                                        <motion.circle
-                                            cx="60" cy="60" r="52" fill="none"
-                                            stroke="url(#elecGradient)" strokeWidth="10" strokeLinecap="round"
-                                            strokeDasharray={`${Math.min(326, ((displayElectricityStats.total_units || 0) / Math.max(displayElectricityStats.total_units || 0, 1000)) * 326)} 326`}
-                                            initial={{ strokeDasharray: '0 326' }}
-                                            animate={{ strokeDasharray: `${Math.min(326, ((displayElectricityStats.total_units || 0) / Math.max(displayElectricityStats.total_units || 0, 1000)) * 326)} 326` }}
-                                            transition={{ duration: 1.5, ease: 'circOut' }}
-                                        />
-                                        <defs>
-                                            <linearGradient id="elecGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                                                <stop offset="0%" stopColor="#facc15" />
-                                                <stop offset="100%" stopColor="#f59e0b" />
-                                            </linearGradient>
-                                        </defs>
-                                    </svg>
-                                    {/* Center content */}
-                                    <div className="absolute inset-0 flex flex-col items-center justify-center">
-                                        <Zap className="w-6 h-6 text-yellow-500 mb-1" />
-                                        <motion.span
-                                            initial={{ opacity: 0, scale: 0.5 }}
-                                            animate={{ opacity: 1, scale: 1 }}
-                                            className="text-2xl font-black text-slate-900"
-                                        >
-                                            {(displayElectricityStats.total_units || 0).toLocaleString()}
-                                        </motion.span>
-                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">kWh</span>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="space-y-1">
-                                <div className="text-slate-400 text-[10px] font-black uppercase tracking-widest">Main Meter Consumed</div>
-                                <div className="text-3xl font-black text-slate-900 flex items-baseline gap-1">
-                                    {(displayElectricityStats.total_units || 0).toLocaleString()}
-                                    <span className="text-sm text-slate-400 font-bold">kWh</span>
-                                </div>
-                                <div className="text-sm font-bold text-slate-600">
-                                    ₹{displayElectricityStats.total_cost?.toLocaleString()}
-                                </div>
-                                <div className="flex items-center gap-2 pt-2 border-t border-slate-50 mt-2">
-                                    <span className="text-[10px] font-bold text-yellow-600 uppercase flex items-center gap-1 group-hover:underline">
-                                        View Analytics →
-                                    </span>
-                                </div>
-                            </div>
-                        </motion.div>
-
-                        {/* Vendor Revenue */}
-                        <motion.div 
-                            variants={cardVariants}
-                            whileHover={{ y: -4, transition: { duration: 0.2 } }}
-                            className="bg-white rounded-3xl p-5 border border-slate-100 shadow-sm"
-                        >
-                            <h3 className="text-sm font-black text-slate-900 mb-2">Vendor Revenue</h3>
-                            <div className="text-slate-400 text-xs font-bold mb-2">
-                                {timePeriod === 'today' ? 'Today' : timePeriod === 'month' ? 'This Month' : 'All Time'}
-                            </div>
-                            <div className="text-3xl font-black text-slate-900">₹ {(Number(displayVendorStats?.total_revenue) || 0).toLocaleString()}</div>
-                            <div className="text-xs text-slate-500 mt-2">
-                                Commission: ₹ {(Number(displayVendorStats?.total_commission) || 0).toLocaleString()} from {displayVendorStats?.total_vendors || 0} vendors
-                            </div>
-                        </motion.div>
-                    </div>
-
-                    {/* Center Column - Property Card */}
-                    <motion.div 
-                        className="lg:col-span-4"
-                        variants={cardVariants}
-                    >
-                        <div className="bg-yellow-400 rounded-3xl p-5 h-full relative overflow-hidden">
-                            <div className="absolute top-4 right-4 bg-white/20 backdrop-blur-sm rounded-full w-8 h-8 flex items-center justify-center text-white font-bold text-sm">
-                                {properties.length}
-                            </div>
-
-                            <h3 className="text-2xl font-black text-slate-900 mb-2 truncate">
-                                {activeProperty ? activeProperty.name : 'All Properties'}
-                            </h3>
-                            <div className="text-red-600 text-sm font-bold mb-5 truncate">
-                                {activeProperty ? `Property: ${activeProperty.code}` : 'Multi-Property View'}
-                            </div>
-
-                            {/* Building Image */}
-                            <div className="bg-yellow-500/50 rounded-[2rem] h-56 mb-5 flex items-center justify-center overflow-hidden border-4 border-white/30 shadow-2xl group relative">
-                                {activeProperty?.image_url ? (
-                                    <>
-                                        <img
-                                            src={activeProperty.image_url}
-                                            alt={activeProperty.name}
-                                            className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
-                                        />
-                                        <div className="absolute inset-0 bg-gradient-to-t from-yellow-400/20 to-transparent" />
-                                    </>
-                                ) : (
-                                    <div className="flex flex-col items-center gap-2">
-                                        <Building2 className="w-20 h-20 text-yellow-600/30" />
-                                        <span className="text-[10px] font-black text-yellow-700/40 uppercase tracking-widest">Awaiting Visuals</span>
-                                    </div>
-                                )}
-                            </div>
-
-                            <div className="space-y-4">
-                                <div>
-                                    <div className="text-slate-700 text-xs font-bold">Visitors {timePeriod === 'today' ? 'Today' : timePeriod === 'month' ? 'Month' : 'All Time'}</div>
-                                    <div className="text-2xl font-black text-slate-900">{displayVmsStats.total_visitors}</div>
-                                </div>
-                                <div>
-                                    <div className="text-slate-700 text-xs font-bold">Checked In / Out</div>
-                                    <div className="text-2xl font-black text-slate-900">{displayVmsStats.checked_in} / {displayVmsStats.checked_out}</div>
-                                </div>
-                            </div>
-                        </div>
-                    </motion.div>
-
-                    {/* Right Column - Compact View */}
-                    <motion.div
-                        className="lg:col-span-5 space-y-3"
-                        variants={cardVariants}
-                    >
-                        {/* BD Pipeline — compact, source tiles + leads by status */}
-                        <BDQuickStats orgId={orgId} />
-
-                        {/* Checklist Progress */}
-                        <div
-                            onClick={() => onTabChange('checklist')}
-                            className="bg-white rounded-2xl p-3 border border-slate-100 shadow-sm cursor-pointer hover:border-emerald-500/30 transition-colors group"
-                        >
-                            <div className="flex justify-between items-center mb-2">
-                                <div className="flex items-center gap-2">
-                                    <ClipboardCheck className="w-4 h-4 text-emerald-500" />
-                                    <span className="text-xs font-bold text-slate-700">Checklist</span>
-                                </div>
-                                <span className="text-[10px] font-bold text-slate-400">
-                                    {timePeriod === 'today' ? 'Today' : timePeriod === 'month' ? 'Month' : 'All'}
-                                </span>
-                            </div>
-                            <div className="space-y-2">
-                                <div className="flex justify-between items-center text-[9px]">
-                                    <span className="text-amber-600 font-bold">Day</span>
-                                    <span className="text-slate-500">{displayChecklistStats.day_completed}/{displayChecklistStats.day_total}</span>
-                                    <span className="text-amber-600 font-black">{displayChecklistStats.day_total > 0 ? Math.round((displayChecklistStats.day_completed / displayChecklistStats.day_total) * 100) : 0}%</span>
-                                </div>
-                                <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                                    <div className="h-full bg-amber-500 rounded-full" style={{ width: `${displayChecklistStats.day_total > 0 ? (displayChecklistStats.day_completed / displayChecklistStats.day_total) * 100 : 0}%` }} />
-                                </div>
-                                <div className="flex justify-between items-center text-[9px]">
-                                    <span className="text-indigo-600 font-bold">Night</span>
-                                    <span className="text-slate-500">{displayChecklistStats.night_completed}/{displayChecklistStats.night_total}</span>
-                                    <span className="text-indigo-600 font-black">{displayChecklistStats.night_total > 0 ? Math.round((displayChecklistStats.night_completed / displayChecklistStats.night_total) * 100) : 0}%</span>
-                                </div>
-                                <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                                    <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${displayChecklistStats.night_total > 0 ? (displayChecklistStats.night_completed / displayChecklistStats.night_total) * 100 : 0}%` }} />
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Diesel Stats */}
-                        <div
-                            onClick={() => onTabChange('diesel')}
-                            className="bg-white rounded-2xl p-3 border border-slate-100 shadow-sm cursor-pointer hover:border-yellow-500/30 transition-colors group"
-                        >
-                            <div className="flex justify-between items-center mb-3">
-                                <div className="flex items-center gap-2">
-                                    <Fuel className="w-4 h-4 text-yellow-500" />
-                                    <span className="text-xs font-bold text-slate-700">DG Consumption</span>
-                                </div>
-                                <span className="text-[10px] font-bold text-yellow-600 bg-yellow-50 px-2 py-0.5 rounded-full">Live</span>
-                            </div>
-                            
-                            <div className="flex items-center gap-4 px-2">
-                                {/* Visual Tank */}
-                                <div className="relative w-8 h-12 border-2 border-slate-200 rounded-lg overflow-hidden shrink-0 bg-slate-50">
-                                    <div className="absolute bottom-0 left-0 w-full bg-yellow-400 transition-all duration-1000" style={{ height: '65%' }}>
-                                        <div className="w-full h-1 bg-white/30 absolute top-0" />
-                                    </div>
-                                </div>
-                                
-                                <div className="flex-1 space-y-2">
-                                    <div className="flex justify-between items-baseline">
-                                        <span className="text-xl font-black text-slate-900 leading-none">
-                                            {displayDieselStats?.total_units > 0 
-                                                ? displayDieselStats?.total_units?.toLocaleString() 
-                                                : displayDieselStats?.total_litres > 0 ? displayDieselStats?.total_litres?.toLocaleString() : (displayDieselStats?.total_kwh > 0 ? displayDieselStats?.total_kwh?.toLocaleString() : 0)}
-                                            <span className="text-[10px] font-bold text-slate-400 ml-1">
-                                                {(!displayDieselStats?.total_litres && displayDieselStats?.total_kwh > 0) ? 'kWh' : 'L'}
-                                            </span>
-                                        </span>
-                                    </div>
-
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Upcoming PPM Tasks */}
-                        <div
-                            onClick={() => onTabChange('ppm')}
-                            className="bg-white rounded-2xl p-3 border border-slate-100 shadow-sm cursor-pointer hover:border-purple-500/30 transition-colors"
-                        >
-                            <div className="flex justify-between items-center mb-2">
-                                <div className="flex items-center gap-2">
-                                    <Calendar className="w-4 h-4 text-purple-500" />
-                                    <span className="text-xs font-bold text-slate-700">Upcoming PPM</span>
-                                </div>
-                                <span className="text-[10px] font-bold text-purple-600">Tasks</span>
-                            </div>
-                            <div className="space-y-1.5">
-                                {upcomingPpmTasks.length > 0 ? (
-                                    upcomingPpmTasks.map((task, idx) => {
-                                        const date = new Date(task.planned_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
-                                        return (
-                                            <div key={task.id} className={`flex justify-between items-center p-2 rounded-lg ${idx === 0 ? 'bg-purple-50' : 'bg-slate-50'}`}>
-                                                <div className="min-w-0 pr-2">
-                                                    <div className={`text-[10px] font-bold truncate ${idx === 0 ? 'text-slate-900' : 'text-slate-700'}`}>{task.system_name}</div>
-                                                    <div className={`text-[8px] truncate ${idx === 0 ? 'text-purple-600' : 'text-slate-500'}`}>{task.property?.name || 'All Properties'}</div>
-                                                </div>
-                                                <div className={`text-[9px] font-bold shrink-0 ${idx === 0 ? 'text-purple-600' : 'text-slate-500'}`}>{date}</div>
-                                            </div>
-                                        );
-                                    })
-                                ) : (
-                                    <div className="text-center py-4 px-2">
-                                        <p className="text-[10px] font-bold text-slate-400">No upcoming PPM tasks</p>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    </motion.div>
-                </div>
-            </motion.div>
-        </div>
-    );
-});
-
 const PropertiesTab = ({ properties, onCreate, onEdit, onConfigure, onDelete }: any) => (
     <div className="space-y-5">
         <div className="flex justify-between items-center bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
@@ -3181,7 +2215,12 @@ const PropertiesTab = ({ properties, onCreate, onEdit, onConfigure, onDelete }: 
                         </div>
 
                         {/* Validation badge */}
-                        <div className="mb-6">
+                        <div className="mb-6 flex flex-wrap gap-x-2 gap-y-2">
+                            {prop.operation_type === 'capex' && (
+                                <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border bg-amber-50 text-amber-700 border-amber-200">
+                                    CAPEX only
+                                </span>
+                            )}
                             <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border ${prop.validation_enabled !== false ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
                                 <span className={`w-1.5 h-1.5 rounded-full ${prop.validation_enabled !== false ? 'bg-emerald-500' : 'bg-slate-400'}`} />
                                 {prop.validation_enabled !== false ? 'Validation On' : 'Validation Off'}
@@ -3295,8 +2334,9 @@ const UsersTab = ({ users, orgId, allProperties, onEdit, onDelete }: any) => (
     </div>
 );
 
-const PropertyModal = ({ property, onClose, onSave }: any) => {
+const PropertyModal = ({ property, supportsOperationType, onClose, onSave }: any) => {
     const [name, setName] = useState(property?.name || '');
+    const [operationType, setOperationType] = useState<'opex' | 'capex'>(property?.operation_type === 'capex' ? 'capex' : 'opex');
     const [code, setCode] = useState(property?.code || '');
     const [address, setAddress] = useState(property?.address || '');
     const [imageUrl, setImageUrl] = useState(property?.image_url || '');
@@ -3425,6 +2465,31 @@ const PropertyModal = ({ property, onClose, onSave }: any) => {
                         </div>
                     </div>
 
+                    {/* OPEX / CAPEX only. Hidden until the operation_type column exists. */}
+                    {supportsOperationType && (
+                        <div>
+                            <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 block">Property Type</label>
+                            <div className="grid grid-cols-2 gap-2">
+                                {([
+                                    { id: 'opex', label: 'OPEX', hint: 'Operational, uses the app daily' },
+                                    { id: 'capex', label: 'CAPEX only', hint: 'Project or fit-out, no operations' },
+                                ] as const).map(o => (
+                                    <button
+                                        key={o.id}
+                                        type="button"
+                                        onClick={() => setOperationType(o.id)}
+                                        aria-pressed={operationType === o.id}
+                                        className={`text-left px-4 py-3 rounded-2xl border transition-colors ${operationType === o.id ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-100 bg-slate-50 text-slate-700 hover:bg-slate-100'}`}
+                                    >
+                                        <span className="block text-sm font-black">{o.label}</span>
+                                        <span className={`block text-[11px] mt-0.5 ${operationType === o.id ? 'text-slate-300' : 'text-slate-400'}`}>{o.hint}</span>
+                                    </button>
+                                ))}
+                            </div>
+                            <p className="text-[11px] text-slate-400 mt-1.5">CAPEX-only properties are left out of the App usage report.</p>
+                        </div>
+                    )}
+
                     {/* Validation Flow Toggle */}
                     <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
                         <div>
@@ -3442,7 +2507,7 @@ const PropertyModal = ({ property, onClose, onSave }: any) => {
 
                     <div className="flex gap-3 mt-8">
                         <button onClick={onClose} className="flex-1 py-4 font-black text-slate-400 bg-slate-50 rounded-2xl hover:bg-slate-100 transition-colors uppercase text-xs tracking-widest">Cancel</button>
-                        <button onClick={() => onSave({ name, code, address, image_url: imageUrl, validation_enabled: validationEnabled })} className="flex-1 py-4 font-black text-white bg-slate-900 rounded-2xl hover:bg-slate-800 transition-colors shadow-lg shadow-slate-200 uppercase text-xs tracking-widest flex items-center justify-center gap-2">
+                        <button onClick={() => onSave({ name, code, address, image_url: imageUrl, validation_enabled: validationEnabled, ...(supportsOperationType ? { operation_type: operationType } : {}) })} className="flex-1 py-4 font-black text-white bg-slate-900 rounded-2xl hover:bg-slate-800 transition-colors shadow-lg shadow-slate-200 uppercase text-xs tracking-widest flex items-center justify-center gap-2">
                             <Check className="w-4 h-4" /> {property ? 'Update' : 'Create'}
                         </button>
                     </div>
@@ -4223,7 +3288,7 @@ const SuperTenantOrgTab = ({ orgId, properties }: { orgId: string; properties: S
         try {
             const { data: stMems } = await supabase
                 .from('organization_memberships')
-                .select('user_id, users(id, full_name, email)')
+                .select('user_id, users!user_id(id, full_name, email)')
                 .eq('organization_id', orgId)
                 .eq('role', 'super_tenant')
                 .eq('is_active', true);
@@ -4241,7 +3306,7 @@ const SuperTenantOrgTab = ({ orgId, properties }: { orgId: string; properties: S
 
             const { data: members } = await supabase
                 .from('organization_memberships')
-                .select('user_id, role, users(id, full_name, email)')
+                .select('user_id, role, users!user_id(id, full_name, email)')
                 .eq('organization_id', orgId)
                 .eq('is_active', true)
                 .neq('role', 'super_tenant');

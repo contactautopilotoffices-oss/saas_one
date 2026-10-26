@@ -1,7 +1,9 @@
 'use client';
 
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { useAuth } from './AuthContext';
+import { clearSessionCaches } from '@/frontend/lib/dashboard/sessionCaches';
+import { setWidgetDataOwner, clearSavedWidgetData } from '@/frontend/lib/dashboard/useWidgetData';
 
 interface CacheEntry {
     data: any;
@@ -51,7 +53,7 @@ const writeToStorage = (key: string, data: any, ttl?: number) => {
 };
 
 export function DataCacheProvider({ children }: { children: React.ReactNode }) {
-    const { user } = useAuth();
+    const { user, isLoading: isAuthLoading } = useAuth();
     const [cache, setCache] = useState<Record<string, CacheEntry>>({});
 
     // Helper to get user-specific key
@@ -79,17 +81,25 @@ export function DataCacheProvider({ children }: { children: React.ReactNode }) {
         }
     }, [getUserKey]);
 
-    const invalidateCache = useCallback((key?: string) => {
-        if (key) {
-            const userSpecificKey = getUserKey(key);
+    const invalidateCache = useCallback((keyOrPrefix?: string) => {
+        if (keyOrPrefix) {
+            const userSpecificKey = getUserKey(keyOrPrefix);
             setCache(prev => {
-                const next = { ...prev };
-                delete next[userSpecificKey];
+                const next: Record<string, CacheEntry> = {};
+                for (const [k, v] of Object.entries(prev)) {
+                    if (k !== userSpecificKey && !k.includes(keyOrPrefix)) {
+                        next[k] = v;
+                    }
+                }
                 return next;
             });
-            if (isPersistentKey(key)) {
-                try { localStorage.removeItem(`cache:${userSpecificKey}`); } catch {}
-            }
+            try {
+                Object.keys(localStorage)
+                    .filter(k => k.startsWith('cache:') && (k === `cache:${userSpecificKey}` || k.includes(keyOrPrefix)))
+                    .forEach(k => {
+                        try { localStorage.removeItem(k); } catch {}
+                    });
+            } catch {}
         } else {
             setCache({});
             // Clear all cache: keys from localStorage (all users/guests) for absolute safety on logout
@@ -102,6 +112,25 @@ export function DataCacheProvider({ children }: { children: React.ReactNode }) {
             } catch {}
         }
     }, [getUserKey]);
+
+    // Another user signed in (or the user logged out): empty the module-level caches too (dashboard cards, Task Manager).
+    const lastUserId = useRef<string | null | undefined>(undefined);
+    useEffect(() => {
+        const current = user?.id ?? null;
+        if (lastUserId.current !== undefined && lastUserId.current !== current) clearSessionCaches();
+        lastUserId.current = current;
+    }, [user?.id]);
+
+    // Dashboard cards' saved copies (performance plan Phase 5A). Only acts once login has finished loading, so the normal
+    // "nobody yet → user" step on every page load never wipes them. Wiped on logout or when a different user signs in.
+    const lastSavedOwner = useRef<string | null | undefined>(undefined);
+    useEffect(() => {
+        if (isAuthLoading) return;
+        const current = user?.id ?? null;
+        if (lastSavedOwner.current !== undefined && lastSavedOwner.current !== current) clearSavedWidgetData();
+        lastSavedOwner.current = current;
+        setWidgetDataOwner(current);
+    }, [user?.id, isAuthLoading]);
 
     // Handle logout: clear cache when user becomes null
     useEffect(() => {

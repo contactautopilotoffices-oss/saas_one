@@ -27,7 +27,8 @@ export async function GET(request: NextRequest) {
     const tab = sp.get('tab') || 'all';
     const page = Math.max(1, parseInt(sp.get('page') || '1'));
     const pageSize = Math.min(100, Math.max(1, parseInt(sp.get('page_size') || '25')));
-    const search = (sp.get('search') || '').trim();
+    // Commas and brackets break PostgREST's .or() parser (a 500 that read as "nothing found").
+    const search = (sp.get('search') || '').replace(/[,()%*\\]/g, ' ').trim().slice(0, 80);
     const vendor = sp.get('vendor');
     const site = sp.get('site');
     const department = sp.get('department');

@@ -1,22 +1,13 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { Calendar, Download, FileText, CheckCircle2, XCircle, Clock, ChevronRight } from 'lucide-react';
-import { motion } from 'framer-motion';
-import { createClient } from '@/frontend/utils/supabase/client';
+import React, { useState } from 'react';
 import Skeleton from '@/frontend/components/ui/Skeleton';
-import SOPCADOverlayView from './SOPCADOverlayView';
 import { Toast } from '@/frontend/components/ui/Toast';
-
-interface ReportSummary {
-    templateId: string;
-    title: string;
-    category: string;
-    status: 'done' | 'partial' | 'missed';
-    completedSlots: number;
-    totalSlots: number;
-    lastUpdated?: string;
-}
+import { useCADReportData } from './reports/useCADReportData';
+import { CADReportHeader } from './reports/CADReportHeader';
+import { CADFloorPlanViewport } from './reports/CADFloorPlanViewport';
+import { CADAreaInspector } from './reports/CADAreaInspector';
+import { CADReportAnalyticsRow } from './reports/CADReportAnalyticsRow';
 
 interface SOPReportSectionProps {
     propertyId: string;
@@ -24,339 +15,121 @@ interface SOPReportSectionProps {
 }
 
 const SOPReportSection: React.FC<SOPReportSectionProps> = ({ propertyId, isAdmin }) => {
-    // Force initial date to Asia/Kolkata
-    const [selectedDate, setSelectedDate] = useState(() => {
-        const now = new Date();
-        const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }); // en-CA gives YYYY-MM-DD
-        return formatter.format(now);
-    });
-    const [isLoading, setIsLoading] = useState(true);
-    const [summaries, setSummaries] = useState<ReportSummary[]>([]);
-    const [showCADOverlay, setShowCADOverlay] = useState(false);
-    const [aiScoring, setAiScoring] = useState<Record<string, boolean>>({});
-    const [cadOverlayData, setCadOverlayData] = useState<{
-        cadImageUrl: string;
-        areas: any[];
-        items: any[];
-        templateTitle: string;
-    } | null>(null);
-    const supabase = createClient();
-
-    const triggerAIScoring = async (completionItemId: string) => {
-        if (!cadOverlayData) return;
-        const targetItem = cadOverlayData.items.find(i => (i.id === completionItemId || i.checklist_item_id === completionItemId));
-        const completionId = targetItem?.completion_id;
-        const itemId = targetItem?.id || completionItemId;
-        if (!completionId || !itemId) {
-            setToast({ message: 'Cannot score: completion session not found for this item', type: 'error' });
-            return;
-        }
-
-        setAiScoring(prev => ({ ...prev, [completionItemId]: true, [itemId]: true }));
-        try {
-            const res = await fetch(`/api/properties/${propertyId}/sop/completions/${completionId}/score-photo`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ completionItemId: itemId }),
-            });
-            const data = await res.json();
-            if (res.ok) {
-                setCadOverlayData(prev => {
-                    if (!prev) return prev;
-                    return {
-                        ...prev,
-                        items: prev.items.map(mapped =>
-                            (mapped.id === itemId || mapped.checklist_item_id === targetItem?.checklist_item_id)
-                                ? { ...mapped, ai_cleanliness_score: data.score, ai_cleanliness_reason: data.reason }
-                                : mapped
-                        ),
-                    };
-                });
-                setToast({ message: `AI Cleanliness Score: ${data.score}/100`, type: 'success' });
-            } else {
-                setToast({ message: data.error || 'Failed to score photo', type: 'error' });
-            }
-        } catch (err: any) {
-            setToast({ message: err.message || 'Scoring request failed', type: 'error' });
-        } finally {
-            setAiScoring(prev => ({ ...prev, [completionItemId]: false, [itemId]: false }));
-        }
-    };
-
-    const handleDownloadAll = () => {
-        window.open(`/api/properties/${propertyId}/sop/report?date=${selectedDate}`, '_blank');
-    };
-
-    const handleDownloadSingle = (id: string) => {
-        window.open(`/api/properties/${propertyId}/sop/report?templateId=${id}&date=${selectedDate}`, '_blank');
-    };
-
-    const fetchDailyData = async () => {
-        try {
-            setIsLoading(true);
-            // 1. Fetch all active templates
-            const { data: templates } = await supabase
-                .from('sop_templates')
-                .select('*')
-                .eq('property_id', propertyId)
-                .eq('is_active', true);
-
-            if (!templates) return;
-
-            // 2. Fetch completions for selected date
-            const { data: completions } = await supabase
-                .from('sop_completions')
-                .select('*, items:sop_completion_items(id)')
-                .eq('property_id', propertyId)
-                .eq('completion_date', selectedDate);
-
-            const allCompletions = completions || [];
-
-            // 3. Process summaries
-            const processed: ReportSummary[] = templates.map(t => {
-                const templateCompletions = allCompletions.filter(c => c.template_id === t.id);
-                const doneCount = templateCompletions.filter(c => c.status === 'completed').length;
-                
-                // Calculate expected slots
-                // Calculate expected slots (Inclusive of start, exclusive of end if overlap)
-                let expectedSlots = 1;
-                const hourlyMatch = t.frequency?.match(/^every_(\d+)_hours?$/);
-                if (hourlyMatch && t.start_time && t.end_time) {
-                    const intervalH = parseInt(hourlyMatch[1], 10);
-                    const [sH, sM] = t.start_time.split(':').map(Number);
-                    const [eH, eM] = t.end_time.split(':').map(Number);
-                    
-                    const startMins = sH * 60 + sM;
-                    const endMins_raw = eH * 60 + eM;
-                    const isOvernight = endMins_raw <= startMins;
-                    const endMins = isOvernight ? endMins_raw + 1440 : endMins_raw;
-                    
-                    // Count slots where [slotStart, slotStart + interval] fits in window
-                    let count = 0;
-                    for (let t_mins = startMins; t_mins + intervalH * 60 <= endMins; t_mins += intervalH * 60) {
-                        count++;
-                    }
-                    expectedSlots = Math.max(1, count);
-                }
-
-                return {
-                    templateId: t.id,
-                    title: t.title,
-                    category: t.category || 'General',
-                    completedSlots: doneCount,
-                    totalSlots: expectedSlots,
-                    status: doneCount >= expectedSlots ? 'done' : doneCount > 0 ? 'partial' : 'missed',
-                    lastUpdated: templateCompletions.sort((a,b) => b.id.localeCompare(a.id))[0]?.completed_at
-                };
-            });
-
-            setSummaries(processed);
-        } catch (err) {
-            console.error('Error fetching report data:', err);
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    useEffect(() => {
-        fetchDailyData();
-    }, [selectedDate, propertyId]);
-
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
-    const handleCardClick = async (templateId: string, title: string) => {
-        try {
-            // 1. Fetch template CAD info
-            const cadRes = await fetch(`/api/properties/${propertyId}/sop/templates/${templateId}/cad/areas`);
-            const cadData = await cadRes.json();
-            if (!cadRes.ok || !cadData.cadConvertedImageUrl) {
-                setToast({ message: 'No CAD floor plan uploaded for this checklist template', type: 'info' });
-                return;
-            }
+    const {
+        selectedDate,
+        setSelectedDate,
+        dateRangeMode,
+        setDateRangeMode,
+        selectedTemplateId,
+        setSelectedTemplateId,
+        selectedFloor,
+        setSelectedFloor,
+        searchQuery,
+        setSearchQuery,
+        selectedAreaId,
+        setSelectedAreaId,
+        templates,
+        cadTemplate,
+        areaAudits,
+        filteredAreas,
+        selectedArea,
+        overallScore,
+        statusCounts,
+        categoryMetrics,
+        recentAudits,
+        aiInsights,
+        isLoading,
+    } = useCADReportData(propertyId, isAdmin);
 
-            // 2. Fetch latest completion session for this date & template
-            const { data: completions } = await supabase
-                .from('sop_completions')
-                .select(`
-                    id,
-                    items:sop_completion_items(
-                        id,
-                        checklist_item_id,
-                        is_checked,
-                        value,
-                        photo_url,
-                        ai_cleanliness_score,
-                        ai_cleanliness_reason,
-                        checklist_item:sop_checklist_items(title, reference_photo_url)
-                    )
-                `)
-                .eq('template_id', templateId)
-                .eq('property_id', propertyId)
-                .eq('completion_date', selectedDate)
-                .order('created_at', { ascending: false });
+    const handleExportPDF = () => {
+        window.open(
+            `/api/properties/${propertyId}/sop/report?templateId=${selectedTemplateId}&date=${selectedDate}&format=pdf`,
+            '_blank'
+        );
+        setToast({ message: 'Generating PDF Cleanliness Report...', type: 'info' });
+    };
 
-            let mappedItems: any[] = [];
-            const latestComp = (completions || [])[0];
-
-            if (latestComp?.items && latestComp.items.length > 0) {
-                mappedItems = latestComp.items.map((it: any) => ({
-                    id: it.id,
-                    completion_id: latestComp.id,
-                    checklist_item_id: it.checklist_item_id,
-                    title: it.checklist_item?.title || 'Checklist Step',
-                    ai_cleanliness_score: it.ai_cleanliness_score,
-                    ai_cleanliness_reason: it.ai_cleanliness_reason,
-                    photo_url: it.photo_url,
-                    reference_photo_url: it.checklist_item?.reference_photo_url,
-                }));
-            } else {
-                // If no completion session recorded yet for this date, fetch template checklist items so clean reference photos still display
-                const { data: templateItems } = await supabase
-                    .from('sop_checklist_items')
-                    .select('id, title, reference_photo_url')
-                    .eq('template_id', templateId);
-
-                mappedItems = (templateItems || []).map((it: any) => ({
-                    checklist_item_id: it.id,
-                    title: it.title,
-                    ai_cleanliness_score: null,
-                    ai_cleanliness_reason: 'Pending completion for this date',
-                    photo_url: null,
-                    reference_photo_url: it.reference_photo_url,
-                }));
-            }
-
-            setCadOverlayData({
-                cadImageUrl: cadData.cadConvertedImageUrl,
-                areas: cadData.areas || [],
-                items: mappedItems,
-                templateTitle: title,
-            });
-            setShowCADOverlay(true);
-        } catch (err) {
-            console.error('Failed to open CAD report overlay:', err);
-            setToast({ message: 'Error loading CAD report view', type: 'error' });
-        }
+    const handleExportExcel = () => {
+        window.open(
+            `/api/properties/${propertyId}/sop/report?templateId=${selectedTemplateId}&date=${selectedDate}&format=excel`,
+            '_blank'
+        );
+        setToast({ message: 'Exporting audit spreadsheet...', type: 'info' });
     };
 
     return (
-        <div className="space-y-6">
-            {/* Header / Controls */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-primary shadow-sm">
-                        <FileText size={20} />
-                    </div>
-                    <div>
-                        <h3 className="text-sm font-black text-slate-900 tracking-tight">Consolidated Daily Report</h3>
-                        <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Audit Summary & Exports</p>
-                    </div>
-                </div>
+        <div className="space-y-4">
+            {/* Top Navigation & Global Controls Header */}
+            <CADReportHeader
+                templateTitle={cadTemplate?.title || 'D Wing - 1st Floor'}
+                floorName={`${cadTemplate?.title || 'D WING'} • ${selectedFloor.toUpperCase()}`}
+                templates={templates}
+                selectedTemplateId={selectedTemplateId}
+                onSelectTemplate={setSelectedTemplateId}
+                dateRangeMode={dateRangeMode}
+                onSelectDateRange={setDateRangeMode}
+                selectedDate={selectedDate}
+                onChangeDate={setSelectedDate}
+                searchQuery={searchQuery}
+                onSearchChange={setSearchQuery}
+                overallScore={overallScore}
+                onExportPDF={handleExportPDF}
+                onExportExcel={handleExportExcel}
+            />
 
-                <div className="flex items-center gap-2">
-                    <div className="relative">
-                        <Calendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                        <input
-                            type="date"
-                            value={selectedDate}
-                            onChange={(e) => setSelectedDate(e.target.value)}
-                            className="pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
-                        />
-                    </div>
-                    <button
-                        onClick={handleDownloadAll}
-                        className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-xl hover:bg-primary transition-all shadow-lg shadow-slate-900/10 font-black uppercase tracking-widest text-[10px]"
-                    >
-                        <Download size={14} />
-                        Download All
-                    </button>
-                </div>
-            </div>
-
-            {/* Summaries List */}
+            {/* Main Interactive CAD Viewport + Detailed Area Inspector Split */}
             {isLoading ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {[1, 2, 3].map(i => <Skeleton key={i} className="h-32 rounded-2xl" />)}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                    <div className="lg:col-span-7 xl:col-span-7 2xl:col-span-7">
+                        <Skeleton className="h-[640px] rounded-2xl" />
+                    </div>
+                    <div className="lg:col-span-5 xl:col-span-5 2xl:col-span-5">
+                        <Skeleton className="h-[640px] rounded-2xl" />
+                    </div>
                 </div>
             ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {summaries.length > 0 ? summaries.map((s, idx) => (
-                        <motion.div
-                            key={s.templateId}
-                            initial={{ opacity: 0, y: 10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: idx * 0.05 }}
-                            onClick={() => handleCardClick(s.templateId, s.title)}
-                            className="bg-white border border-slate-100 rounded-2xl p-4 shadow-sm hover:shadow-md hover:border-primary/30 transition-all group cursor-pointer"
-                        >
-                            <div className="flex justify-between items-start mb-3">
-                                <div className={`p-2 rounded-xl ${
-                                    s.status === 'done' ? 'bg-emerald-50 text-emerald-600' :
-                                    s.status === 'partial' ? 'bg-amber-50 text-amber-600' :
-                                    'bg-rose-50 text-rose-600'
-                                }`}>
-                                    {s.status === 'done' ? <CheckCircle2 size={16} /> :
-                                     s.status === 'partial' ? <Clock size={16} /> :
-                                     <XCircle size={16} />}
-                                </div>
-                                <button
-                                    onClick={(e) => { e.stopPropagation(); handleDownloadSingle(s.templateId); }}
-                                    className="p-2 text-slate-300 hover:text-primary hover:bg-primary/5 rounded-lg transition-all"
-                                    title="Download Single CSV"
-                                >
-                                    <Download size={14} />
-                                </button>
-                            </div>
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
+                    {/* Left Column: Interactive CAD Floor Plan Viewport (~58% width on desktop) */}
+                    <div className="lg:col-span-7 xl:col-span-7 2xl:col-span-7">
+                        <CADFloorPlanViewport
+                            cadImageUrl={cadTemplate?.cadImageUrl}
+                            areas={cadTemplate?.areas || []}
+                            areaAudits={filteredAreas}
+                            selectedAreaId={selectedAreaId}
+                            onSelectArea={setSelectedAreaId}
+                            selectedFloor={selectedFloor}
+                            onSelectFloor={setSelectedFloor}
+                        />
+                    </div>
 
-                            <h4 className="text-sm font-black text-slate-900 truncate mb-1" title={s.title}>{s.title}</h4>
-                            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-3">{s.category}</p>
-
-                            <div className="flex items-center justify-between border-t border-slate-50 pt-3 mt-auto">
-                                <div>
-                                    <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Status</p>
-                                    <p className={`text-[10px] font-black uppercase tracking-wider ${
-                                        s.status === 'done' ? 'text-emerald-600' :
-                                        s.status === 'partial' ? 'text-amber-600' :
-                                        'text-rose-600'
-                                    }`}>
-                                        {s.completedSlots}/{s.totalSlots} Complete
-                                    </p>
-                                </div>
-                                <ChevronRight size={14} className="text-slate-200 group-hover:text-primary transition-all" />
-                            </div>
-                        </motion.div>
-                    )) : (
-                        <div className="col-span-full py-12 text-center bg-slate-50 rounded-3xl border-2 border-dashed border-slate-200">
-                             <FileText size={40} className="mx-auto text-slate-300 mb-3" />
-                             <p className="text-slate-500 font-bold text-sm">No checklists active for this date</p>
-                        </div>
-                    )}
+                    {/* Right Column: Selected Area Detailed Inspector (~42% width on desktop) */}
+                    <div className="lg:col-span-5 xl:col-span-5 2xl:col-span-5">
+                        <CADAreaInspector
+                            area={selectedArea}
+                            floorName={`${cadTemplate?.title || 'D Wing'} • ${selectedFloor}`}
+                        />
+                    </div>
                 </div>
             )}
 
-            {cadOverlayData && (
-                <SOPCADOverlayView
-                    isOpen={showCADOverlay}
-                    onClose={() => {
-                        setShowCADOverlay(false);
-                        setCadOverlayData(null);
-                    }}
-                    cadImageUrl={cadOverlayData.cadImageUrl}
-                    areas={cadOverlayData.areas}
-                    items={cadOverlayData.items}
-                    templateTitle={cadOverlayData.templateTitle}
-                    onScorePhoto={triggerAIScoring}
-                    aiScoring={aiScoring}
-                />
-            )}
+            {/* Bottom Row: Executive Intelligence & Analytics Cards */}
+            <CADReportAnalyticsRow
+                categoryMetrics={categoryMetrics}
+                statusCounts={statusCounts}
+                recentAudits={recentAudits}
+                aiInsights={aiInsights}
+                onSelectRecentAudit={(id) => setSelectedAreaId(id)}
+            />
 
+            {/* Toast Feedback */}
             {toast && (
                 <Toast
+                    visible={Boolean(toast)}
                     message={toast.message}
-                    type={toast.type === 'info' ? 'info' : toast.type}
-                    visible={true}
+                    type={toast.type}
                     onClose={() => setToast(null)}
-                    duration={3000}
                 />
             )}
         </div>

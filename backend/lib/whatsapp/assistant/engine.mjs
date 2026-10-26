@@ -148,12 +148,12 @@ export async function advance(input, current, deps) {
         if (!slot) return availableSlots(session, deps);
         const credit = await deps.creditSummary(user.id, session.property.id, slot);
         return result({ ...session, step: 'booking_confirm', slot }, 'booking_review',
-            [session.property.name, session.room.name, session.date, slotLabel(slot), credit]);
+            [session.property.name, session.room.name, session.date, slotLabel(slot), credit || 'Not applicable']);
     }
     if (session.step === 'booking_confirm') {
         if (text !== 'confirm booking' && text !== 'confirm' && text !== '1') {
             return result(session, 'booking_review', [session.property.name, session.room.name, session.date, slotLabel(session.slot),
-                await deps.creditSummary(user.id, session.property.id, session.slot)]);
+                await deps.creditSummary(user.id, session.property.id, session.slot) || 'Not applicable']);
         }
         // Database transaction revalidates the room, availability, memberships and credits.
         try {

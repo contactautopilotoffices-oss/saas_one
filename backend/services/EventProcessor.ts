@@ -1,10 +1,17 @@
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { EmailService } from '@/backend/services/EmailService';
 import { EmailRecipientResolver } from '@/backend/services/EmailRecipientResolver';
+import { PettyCashNotificationService } from '@/backend/services/PettyCashNotificationService';
 
 export const EventProcessor = {
     async processEvent(event: any) {
         const { event_type, payload } = event;
+
+        if(event_type?.startsWith('PETTY_CASH_')) {
+            await PettyCashNotificationService.dispatch(event,'email');
+            await PettyCashNotificationService.dispatch(event,'push');
+            return;
+        }
 
         if (['MEETING_ROOM_BOOKED', 'MEETING_ROOM_CANCELLED', 'ROOM_BOOKED', 'ROOM_CANCELLED', 'ROOM_BOOKING_CANCELLED'].includes(event_type)) {
             await this.handleMeetingRoomEvent(event_type, payload);
@@ -1196,4 +1203,3 @@ export const EventProcessor = {
         await NotificationService.afterFacilityRequestCreated(requestId);
     }
 };
-

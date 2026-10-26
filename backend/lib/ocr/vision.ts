@@ -25,7 +25,7 @@ export const ENGY_VISION_MODELS = ['glm-5.3-flash', 'kimi-k3', 'qwen3.8-27b'] as
 
 /** Default: best extraction quality per rupee in testing. */
 export const DEFAULT_VISION_MODEL =
-    process.env.OCR_VISION_MODEL || 'glm-5.3-flash';
+    process.env.OCR_VISION_MODEL || 'qwen3.8-27b';
 
 const TIMEOUT_MS = Number(process.env.OCR_VISION_TIMEOUT_MS || 60_000);
 
@@ -59,14 +59,20 @@ export interface VisionExtractResult {
  */
 export async function visionExtract(input: VisionExtractInput): Promise<VisionExtractResult> {
     const model = input.model || DEFAULT_VISION_MODEL;
-    const { provider, spec, apiKey } = resolveProvider();
+
+    // Prioritize Engy API key when configured in env (engy=sk-engy-... or ENGY_API_KEY)
+    const engyKey = (process.env.ENGY_API_KEY || process.env.engy || '').trim();
+    const resolved = resolveProvider();
+    const apiKey = engyKey || resolved.apiKey;
+    const baseUrl = engyKey ? (process.env.ENGY_BASE_URL || 'https://api.engy.ai/v1') : resolved.spec.baseUrl;
+    const provider = engyKey ? 'engy' : resolved.provider;
 
     const base: Omit<VisionExtractResult, 'ok'> = {
         data: null, text: null, model, provider, usage: null,
     };
 
     if (!apiKey) {
-        return { ...base, ok: false, error: 'No LLM key configured (COUNCIL_API_KEY / GROQ_API_KEY / OPENAI_API_KEY).' };
+        return { ...base, ok: false, error: 'No LLM key configured (ENGY_API_KEY / engy / COUNCIL_API_KEY / GROQ_API_KEY / OPENAI_API_KEY).' };
     }
     if (!input.pages.length) {
         return { ...base, ok: false, error: 'No page images supplied.' };
@@ -92,7 +98,7 @@ export async function visionExtract(input: VisionExtractInput): Promise<VisionEx
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
     try {
-        const res = await fetch(`${spec.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+        const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/chat/completions`, {
             method: 'POST',
             headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
             body: JSON.stringify(body),

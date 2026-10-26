@@ -14,7 +14,7 @@ interface RoomCardProps {
     onDelete?: (id: string) => void;
 }
 
-const RoomCard: React.FC<RoomCardProps> = ({ room, slots = [], selectedDate: _selectedDate, onBook, isAdmin, onEdit, onDelete }) => {
+const RoomCard: React.FC<RoomCardProps> = ({ room, slots = [], selectedDate, onBook, isAdmin, onEdit, onDelete }) => {
     const [showPhoto, setShowPhoto] = useState(false);
     const [isCustomTime, setIsCustomTime] = useState(false);
     const [customStart, setCustomStart] = useState('09:00');
@@ -33,9 +33,40 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, slots = [], selectedDate: _se
         return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:00`;
     };
 
+    const isToday = React.useMemo(() => {
+        if (!selectedDate) return false;
+        const d = new Date();
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return selectedDate === `${y}-${m}-${day}`;
+    }, [selectedDate]);
+
+    const currentMinutes = React.useMemo(() => {
+        const now = new Date();
+        return now.getHours() * 60 + now.getMinutes();
+    }, []);
+
+    // Deduplicate slots by start_time to eliminate conflicting adjacent slots
+    const uniqueSlots = React.useMemo(() => {
+        const map = new Map<string, any>();
+        for (const s of slots || []) {
+            if (!map.has(s.start_time)) {
+                map.set(s.start_time, s);
+            }
+        }
+        return Array.from(map.values()).sort((a, b) => timeToMins(a.start_time) - timeToMins(b.start_time));
+    }, [slots]);
+
     const getSlotAvailability = (start: string, end: string) => {
         const sMins = timeToMins(start);
         const eMins = timeToMins(end);
+
+        // If today and slot end time is already past, mark as PAST
+        if (isToday && eMins <= currentMinutes) {
+            return { type: 'PAST' };
+        }
+
         let freeSegments = [{ start: sMins, end: eMins }];
 
         if (room.bookings) {
@@ -77,7 +108,8 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, slots = [], selectedDate: _se
     };
 
     const checkIsBooked = (start: string, end: string) => {
-        return getSlotAvailability(start, end).type === 'BOOKED';
+        const avail = getSlotAvailability(start, end);
+        return avail.type === 'BOOKED' || avail.type === 'PAST';
     };
 
     const formatTimeForDisplay = (timeString: string) => {
@@ -108,7 +140,7 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, slots = [], selectedDate: _se
         const formattedEnd = `${customEnd}:00`;
 
         if (checkIsBooked(formattedStart, formattedEnd)) {
-            setCustomError('This custom time overlaps with an existing booking.');
+            setCustomError('This custom time overlaps with an existing booking or is in the past.');
             return;
         }
 
@@ -124,13 +156,16 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, slots = [], selectedDate: _se
 
     const handleBookNowClick = () => {
         let targetIndex = selectedSlotIndex;
-        if (targetIndex === null || targetIndex < 0 || targetIndex >= slots.length) {
+        if (targetIndex === null || targetIndex < 0 || targetIndex >= uniqueSlots.length) {
             // Find first available slot
-            const availIdx = slots.findIndex(s => getSlotAvailability(s.start_time, s.end_time).type !== 'BOOKED');
+            const availIdx = uniqueSlots.findIndex(s => {
+                const a = getSlotAvailability(s.start_time, s.end_time);
+                return a.type !== 'BOOKED' && a.type !== 'PAST';
+            });
             if (availIdx !== -1) targetIndex = availIdx;
         }
-        if (targetIndex !== null && targetIndex >= 0 && slots[targetIndex]) {
-            const slot = slots[targetIndex];
+        if (targetIndex !== null && targetIndex >= 0 && uniqueSlots[targetIndex]) {
+            const slot = uniqueSlots[targetIndex];
             const avail = getSlotAvailability(slot.start_time, slot.end_time);
             const timeDisplay = formatTimeForDisplay(slot.start_time);
             if (avail.type === 'PARTIAL') {
@@ -250,17 +285,20 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, slots = [], selectedDate: _se
                                     <div className="space-y-3">
                                         <div className="w-full overflow-x-auto no-scrollbar">
                                             <div className="flex gap-2 min-w-max pb-1">
-                                                {slots.length === 0 ? (
+                                                {uniqueSlots.length === 0 ? (
                                                     <div className="text-xs text-muted-foreground italic py-2">No predefined slots available. Use Custom Time.</div>
-                                                ) : slots.map((slot, i) => {
+                                                ) : uniqueSlots.map((slot, i) => {
                                                     const avail = getSlotAvailability(slot.start_time, slot.end_time);
-                                                    const isBooked = avail.type === 'BOOKED';
+                                                    const isBooked = avail.type === 'BOOKED' || avail.type === 'PAST';
+                                                    const isPast = avail.type === 'PAST';
                                                     const isPartial = avail.type === 'PARTIAL';
                                                     const isSelected = selectedSlotIndex === i;
                                                     const timeDisplay = formatTimeForDisplay(slot.start_time);
                                                     
                                                     let tooltip = '';
-                                                    if (isPartial) {
+                                                    if (isPast) {
+                                                        tooltip = 'Time slot has passed';
+                                                    } else if (isPartial) {
                                                         tooltip = `Partially booked. You can book from ${formatTimeForDisplay(avail.availableTime!.start)} to ${formatTimeForDisplay(avail.availableTime!.end)}`;
                                                     } else if (isBooked) {
                                                         tooltip = 'Fully booked';
@@ -268,7 +306,7 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, slots = [], selectedDate: _se
 
                                                     return (
                                                         <button
-                                                            key={i}
+                                                            key={slot.id || i}
                                                             disabled={isBooked}
                                                             title={tooltip}
                                                             onClick={() => {
@@ -288,7 +326,7 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, slots = [], selectedDate: _se
                                                             }}
                                                             className={`group shrink-0 relative overflow-hidden rounded-xl border-2 transition-all ${
                                                                 isBooked 
-                                                                    ? 'border-slate-200 cursor-not-allowed opacity-70' 
+                                                                    ? 'border-slate-200 cursor-not-allowed opacity-60' 
                                                                     : isSelected
                                                                         ? 'border-primary ring-2 ring-primary/20 shadow-md scale-105'
                                                                         : isPartial 
@@ -331,9 +369,9 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, slots = [], selectedDate: _se
                                             className="w-full py-2.5 px-4 bg-primary hover:bg-primary/90 text-text-inverse rounded-xl text-xs font-black uppercase tracking-widest transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2 active:scale-[0.99]"
                                         >
                                             <span>Book Now</span>
-                                            {selectedSlotIndex !== null && slots[selectedSlotIndex] && (
+                                            {selectedSlotIndex !== null && uniqueSlots[selectedSlotIndex] && (
                                                 <span className="text-[10px] opacity-90 font-medium">
-                                                    ({formatTimeForDisplay(slots[selectedSlotIndex].start_time)})
+                                                    ({formatTimeForDisplay(uniqueSlots[selectedSlotIndex].start_time)})
                                                 </span>
                                             )}
                                         </button>

@@ -60,8 +60,14 @@ export async function POST(
         const bytes = await file.arrayBuffer();
         const buffer = Buffer.from(bytes);
 
+        const originalFileName = (formData.get('originalFileName') as string | null)?.trim() || file.name || 'photo.webp';
+        // Sanitize original filename to preserve its semantic name (e.g. WhatsApp Image... or LIVE_CAPTURE_...)
+        const safeBase = originalFileName
+            .replace(/[^a-zA-Z0-9._\- ]/g, '_')
+            .replace(/\.[^.]+$/, '');
+
         const timestamp = Date.now();
-        const filename = `${completionId}/${completionItemId}-${timestamp}.webp`;
+        const filename = `${completionId}/${completionItemId}-${timestamp}-${safeBase}.webp`;
         const filePath = `sop-photos/${propertyId}/${filename}`;
 
         const { error: uploadError } = await supabaseAdmin.storage

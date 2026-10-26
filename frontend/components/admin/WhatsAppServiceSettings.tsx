@@ -7,31 +7,36 @@ import {
     Send, Info, Server, MessageCircle, ExternalLink, Ticket,
     ShoppingCart, Calendar, UserCheck, Wrench, FileSpreadsheet, ShieldCheck, QrCode
 } from 'lucide-react';
+import PettyCashTemplateDrafts from './PettyCashTemplateDrafts';
+import PettyCashEmailTemplates from './PettyCashEmailTemplates';
+import { PC_NOTIFICATION_EVENTS, PC_EMPTY_CAMPAIGNS, importPcCampaigns } from '@/frontend/lib/notifications/pettyCashTemplates';
 import { createClient } from '@/frontend/utils/supabase/client';
 
 interface WhatsAppTemplate {
     campaign_name: string;
     params: string[];
     is_media?: boolean;
+    confirmed_live?: boolean;
 }
 
 const DEFAULT_WHATSAPP_TEMPLATES: Record<string, WhatsAppTemplate> = {
+    ...PC_EMPTY_CAMPAIGNS,
     // Requisitions & Procurement
     monthly_requisition_uploaded: { campaign_name: 'requisition_submitted_v1', params: ['user_name', 'property', 'month', 'year', 'items_count', 'total_amount', 'requested_by'] },
     requisition_approval_requested: { campaign_name: 'requisition_approval_requested_v1', params: ['approver_name', 'property', 'month', 'year', 'vendor_name', 'total_amount', 'notes'] },
     requisition_status_updated: { campaign_name: 'requisition_status_updated_v1', params: ['user_name', 'property', 'month', 'year', 'status', 'approver_name', 'total_amount', 'remarks'] },
     requisition_po_issued: { campaign_name: 'requisition_po_issued_v1', params: ['user_name', 'month', 'year', 'property', 'vendor_name', 'po_number', 'total_amount'] },
-    material_request_created: { campaign_name: 'material_request_created_v3', params: ['user_name', 'ticket_number', 'property', 'requested_by', 'requester_phone', 'items_summary'] },
-    comparative_approval_requested: { campaign_name: 'comparative_approval_requested_v1', params: ['user_name', 'total_cost', 'uploaded_by', 'ticket_number', 'title', 'property', 'notes'] },
-    comparative_uploaded_info: { campaign_name: 'comparative_uploaded_info_v1', params: ['user_name', 'total_cost', 'uploaded_by', 'ticket_number', 'title', 'property', 'approver_name', 'notes'] },
-    comparative_approved: { campaign_name: 'comparative_approved_v1', params: ['user_name', 'total_cost', 'ticket_number', 'title', 'property', 'approved_by', 'approver_comment'] },
-    comparative_rejected: { campaign_name: 'comparative_rejected_v1', params: ['user_name', 'total_cost', 'ticket_number', 'title', 'property', 'action_by', 'rejection_reason'] },
-    material_delivered: { campaign_name: 'material_delivered_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'delivered_items', 'verified_by'] },
+    material_request_created: { campaign_name: 'material_request_created_v3', params: ['user_name', 'ticket_number', 'property', 'requested_by', 'requester_phone', 'items_summary', 'ticket_id'] },
+    comparative_approval_requested: { campaign_name: 'comparative_approval_requested_v1', params: ['user_name', 'total_cost', 'uploaded_by', 'ticket_number', 'title', 'property', 'notes', 'ticket_id'] },
+    comparative_uploaded_info: { campaign_name: 'comparative_uploaded_info_v1', params: ['user_name', 'total_cost', 'uploaded_by', 'ticket_number', 'title', 'property', 'approver_name', 'notes', 'ticket_id'] },
+    comparative_approved: { campaign_name: 'comparative_approved_v1', params: ['user_name', 'total_cost', 'ticket_number', 'title', 'property', 'approved_by', 'approver_comment', 'ticket_id'] },
+    comparative_rejected: { campaign_name: 'comparative_rejected_v1', params: ['user_name', 'total_cost', 'ticket_number', 'title', 'property', 'action_by', 'rejection_reason', 'ticket_id'] },
+    material_delivered: { campaign_name: 'material_delivered_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'delivered_items', 'verified_by', 'ticket_id'] },
 
     // Tickets & SLA
-    ticket_created: { campaign_name: 'ticket_created_v3', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'] },
-    ticket_created_media: { campaign_name: 'ticket_created_v3_media', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'], is_media: true },
-    ticket_assigned: { campaign_name: 'ticket_assigned_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone'] },
+    ticket_created: { campaign_name: 'ticket_created_v3', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'] },
+    ticket_created_media: { campaign_name: 'ticket_created_v3_media', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'], is_media: true },
+    ticket_assigned: { campaign_name: 'ticket_assigned_v2', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone'] },
     ticket_completed: { campaign_name: 'ticket_completed_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'resolved_by'] },
     ticket_completed_media: { campaign_name: 'ticket_completed_v1_media', params: ['user_name', 'ticket_number', 'title', 'property', 'resolved_by'], is_media: true },
     ticket_updated: { campaign_name: 'ticket_updated', params: ['ticket_number', 'title', 'status'] },
@@ -39,8 +44,11 @@ const DEFAULT_WHATSAPP_TEMPLATES: Record<string, WhatsAppTemplate> = {
 
     // Meeting Rooms
     meeting_room_booked: { campaign_name: 'meeting_room_booked_v3', params: ['user_name', 'room_name', 'property', 'date', 'start_time', 'end_time', 'booker', 'booker_phone'] },
+    meeting_room_booked_v4: { campaign_name: 'meeting_room_booked_v4', params: ['user_name', 'room_name', 'property', 'date', 'start_time', 'end_time', 'booker', 'booker_phone'] },
     meeting_room_cancelled: { campaign_name: 'meeting_room_cancelled_v2', params: ['user_name', 'room_name', 'property', 'date', 'start_time', 'end_time', 'booker'] },
-    reminder_meeting_room: { campaign_name: 'reminder_meeting_room', params: ['room_name', 'date', 'start_time'] },
+    meeting_room_start_reminder: { campaign_name: 'meeting_room_start_reminder_v1', params: ['user_name', 'room_name', 'property', 'remaining_minutes', 'start_time', 'booker'] },
+    meeting_room_end_reminder: { campaign_name: 'meeting_room_end_reminder_v1', params: ['user_name', 'room_name', 'property', 'remaining_minutes', 'end_time', 'booker'] },
+    reminder_meeting_room: { campaign_name: 'meeting_room_start_reminder_v1', params: ['user_name', 'room_name', 'property', 'remaining_minutes', 'start_time', 'booker'] },
 
     // PPM & Maintenance
     reminder_ppm: { campaign_name: 'reminder_ppm', params: ['schedule_name', 'property', 'due_date'] },
@@ -61,6 +69,7 @@ const DEFAULT_WHATSAPP_TEMPLATES: Record<string, WhatsAppTemplate> = {
 };
 
 const TEMPLATE_CATEGORIES = [
+    {title:'Petty Cash',icon:MessageSquare,color:'text-teal-600 bg-teal-50',events:PC_NOTIFICATION_EVENTS.map(event=>({key:event.key,label:event.name}))},
     {
         title: 'User Onboarding & Approvals',
         icon: UserCheck,
@@ -107,9 +116,11 @@ const TEMPLATE_CATEGORIES = [
         icon: Calendar,
         color: 'text-violet-600 bg-violet-50',
         events: [
-            { key: 'meeting_room_booked', label: 'Meeting Room Reservation' },
+            { key: 'meeting_room_booked', label: 'Meeting Room Reservation (Staff & Admins - v3)' },
+            { key: 'meeting_room_booked_v4', label: 'Meeting Room Reservation (Booker & Guests - v4)' },
             { key: 'meeting_room_cancelled', label: 'Meeting Room Cancellation' },
-            { key: 'reminder_meeting_room', label: 'Meeting Room Starting Reminder' },
+            { key: 'meeting_room_start_reminder', label: 'Meeting Room Starting Reminder' },
+            { key: 'meeting_room_end_reminder', label: 'Meeting Room Ending Soon Reminder' },
             { key: 'lead_created', label: 'New CRM Lead' },
             { key: 'lead_assigned', label: 'Lead Assigned to Agent' },
             { key: 'reminder_lead_followup', label: 'Lead Follow-up Reminder' }
@@ -129,10 +140,14 @@ const TEMPLATE_CATEGORIES = [
 
 interface WhatsAppServiceSettingsProps {
     organizationId: string;
+    moduleId?: string;
+    featureKeys?: string[];
 }
 
-export default function WhatsAppServiceSettings({ organizationId }: WhatsAppServiceSettingsProps) {
+export default function WhatsAppServiceSettings({ organizationId, moduleId, featureKeys }: WhatsAppServiceSettingsProps) {
     const supabase = createClient();
+    const [localModule,setLocalModule]=useState('tickets');
+    const selectedModule=moduleId || localModule;
 
     const [isLoading, setIsLoading] = useState<boolean>(true);
     const [isSaving, setIsSaving] = useState<boolean>(false);
@@ -155,12 +170,7 @@ export default function WhatsAppServiceSettings({ organizationId }: WhatsAppServ
                     .eq('organization_id', organizationId)
                     .maybeSingle();
 
-                if (data?.whatsapp_templates) {
-                    setTemplatesMap({
-                        ...DEFAULT_WHATSAPP_TEMPLATES,
-                        ...data.whatsapp_templates
-                    });
-                }
+                setTemplatesMap({...DEFAULT_WHATSAPP_TEMPLATES,...(data?.whatsapp_templates||{})});
             } catch (err) {
                 console.error('Error fetching WhatsApp templates:', err);
             } finally {
@@ -175,6 +185,8 @@ export default function WhatsAppServiceSettings({ organizationId }: WhatsAppServ
         setTemplatesMap(prev => ({
             ...prev,
             [eventKey]: {
+                ...prev[eventKey],
+                ...(eventKey.startsWith('petty_cash_') ? {confirmed_live:true} : {}),
                 campaign_name: campaignName.trim(),
                 params: prev[eventKey]?.params || DEFAULT_WHATSAPP_TEMPLATES[eventKey]?.params || []
             }
@@ -253,7 +265,7 @@ export default function WhatsAppServiceSettings({ organizationId }: WhatsAppServ
             </div>
 
             {/* AiSensy Provider Status Card */}
-            <div className="p-5 bg-white border border-slate-200 rounded-2xl shadow-xs space-y-4">
+            {!moduleId && selectedModule !== 'petty_cash' && <div className="p-5 bg-white border border-slate-200 rounded-2xl shadow-xs space-y-4">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                         <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl border border-emerald-100">
@@ -286,21 +298,24 @@ export default function WhatsAppServiceSettings({ organizationId }: WhatsAppServ
                         <span className="font-bold text-slate-800">&lt; 1 Second (Instant)</span>
                     </div>
                 </div>
-            </div>
+            </div>}
 
+            {!moduleId && <nav aria-label="Template modules" className="flex gap-2"><button type="button" aria-pressed={selectedModule==='tickets'} onClick={()=>setLocalModule('tickets')} className="rounded-lg border px-3 py-2 text-xs">Tickets & other modules</button><button type="button" aria-pressed={selectedModule==='petty_cash'} onClick={()=>setLocalModule('petty_cash')} className="rounded-lg border px-3 py-2 text-xs">Petty Cash</button></nav>}
+            {selectedModule==='petty_cash' && <><PettyCashTemplateDrafts /><button type="button" className="rounded-lg bg-teal-700 px-4 py-2 text-xs text-white" onClick={()=>setTemplatesMap(current=>Object.fromEntries(Object.entries(importPcCampaigns(current)).map(([key,value])=>[key,key.startsWith('petty_cash_')?{...value,confirmed_live:!!value.campaign_name}:value])))}>Import seven live Petty Cash campaign names</button><p className="text-xs text-slate-600">Import assumes API campaign names match the seven template names. Edit any differing names, then Save Campaign Templates. Existing mappings are retained; channels and recipients remain unchanged.</p><PettyCashEmailTemplates organizationId={organizationId} /></>}
             {/* Meta Templates Manager by Category */}
             <div className="space-y-5">
                 <div className="flex items-center justify-between">
                     <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
                         <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                        Meta Approved Campaign Templates
+                        Campaign template mappings
                     </h3>
                     <span className="text-xs text-slate-500">
                         Each campaign name must match the approved template in your AiSensy dashboard.
                     </span>
                 </div>
 
-                {TEMPLATE_CATEGORIES.map((cat, idx) => {
+                {TEMPLATE_CATEGORIES.filter(cat => selectedModule === 'petty_cash' ? cat.title === 'Petty Cash' : cat.title !== 'Petty Cash' && (!moduleId || cat.events.some(event => featureKeys?.includes(event.key)))).map((category, idx) => {
+                    const cat = moduleId && featureKeys ? {...category, events: category.events.filter(event => featureKeys.includes(event.key))} : category;
                     const CatIcon = cat.icon;
                     return (
                         <div key={idx} className="p-5 bg-white border border-slate-200 rounded-2xl shadow-xs space-y-4">
@@ -333,6 +348,7 @@ export default function WhatsAppServiceSettings({ organizationId }: WhatsAppServ
                                                 </span>
                                                 <input
                                                     type="text"
+                                                    aria-label={`AiSensy campaign for ${ev.label}`}
                                                     value={template.campaign_name}
                                                     onChange={(e) => handleTemplateChange(ev.key, e.target.value)}
                                                     placeholder="e.g. requisition_submitted_v1"

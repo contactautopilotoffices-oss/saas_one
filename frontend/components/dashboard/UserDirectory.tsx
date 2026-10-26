@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
     Users, Search, Filter, UserPlus, Trash2, RefreshCw,
     Plus, Mail, Phone, Shield, Building2,
@@ -13,6 +13,7 @@ import InviteMemberModal from './InviteMemberModal'; // This is actually our Add
 import ReliabilityBadge from './ReliabilityBadge';
 import { useAuth } from '@/frontend/context/AuthContext';
 import ClientQRGeneratorModal from '../vms/ClientQRGeneratorModal';
+import { registerSessionCache } from '../../lib/dashboard/sessionCaches';
 
 interface UserWithMembership {
     id: string;
@@ -48,12 +49,30 @@ interface UserDirectoryProps {
     onUserUpdated?: () => void;
 }
 
+// Coming back to the tab (performance plan Phase 7.1): the last list for this signed-in user and scope is shown at once,
+// then refreshed quietly. Memory only, at most 5 minutes old, emptied when the signed-in user changes or logs out.
+// A failed refresh replaces it with the error, exactly as today, and drops the saved copy.
+const DIRECTORY_CACHE_TTL_MS = 5 * 60 * 1000;
+const directoryCache = new Map<string, { users: UserWithMembership[]; at: number }>();
+registerSessionCache(() => directoryCache.clear());
+const directoryCacheKey = (userId: string | undefined, orgId?: string, propertyId?: string) =>
+    userId && (orgId || propertyId) ? `${userId}|${orgId ?? ''}|${propertyId ?? ''}` : null;
+
 const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpdated }: UserDirectoryProps) => {
-    const { membership } = useAuth();
+    const { membership, user: authUser } = useAuth();
+    // A ref, so the signed-in user arriving never re-runs the load (no extra request compared with before).
+    const authUserIdRef = useRef<string | undefined>(authUser?.id);
+    authUserIdRef.current = authUser?.id;
     // Reliability panel is visible to org/ops super admins only (RLS agrees).
     const canViewReliability = membership?.org_role === 'org_super_admin' || membership?.org_role === 'ops_super_admin';
     const [users, setUsers] = useState<UserWithMembership[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
+    const [loadStatus, setLoadStatus] = useState<'waiting' | 'loading' | 'success' | 'error'>('waiting');
+    const [loadError, setLoadError] = useState<string | null>(null);
+    const usersRequestId = useRef(0);
+    const usersAbortController = useRef<AbortController | null>(null);
+    // Which saved-copy key the list on screen belongs to, and when it was fetched (null: nothing to save).
+    const shownCacheKey = useRef<string | null>(null);
+    const shownFetchedAt = useRef(0);
     const [searchQuery, setSearchQuery] = useState('');
     const [roleFilter, setRoleFilter] = useState('all');
     const [statusFilter, setStatusFilter] = useState('all');
@@ -109,36 +128,85 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
         setTimeout(() => setToast(null), 3000);
     };
 
-    useEffect(() => {
-        fetchUsers();
-    }, [orgId, propertyId]);
+    const invalidateUsersRequest = useCallback(() => {
+        ++usersRequestId.current;
+        usersAbortController.current?.abort();
+    }, []);
 
-    const fetchUsers = async () => {
-        setIsLoading(true);
+    // quiet: a saved copy is already on screen, so refresh it without the "Loading users..." panel.
+    const fetchUsers = useCallback(async (quiet = false) => {
+        // The profile table is shared. Never issue an unscoped directory request
+        // while the dashboard is still resolving its organization/property.
+        invalidateUsersRequest();
+        const requestId = usersRequestId.current;
+        if (!orgId && !propertyId) {
+            shownCacheKey.current = null;
+            setUsers([]);
+            setLoadError(null);
+            setLoadStatus('waiting');
+            return;
+        }
+
+        const cacheKey = directoryCacheKey(authUserIdRef.current, orgId, propertyId);
+        const controller = new AbortController();
+        usersAbortController.current = controller;
+        if (!quiet) setLoadStatus('loading');
+        setLoadError(null);
 
         try {
             const params = new URLSearchParams();
             if (propertyId) params.set('propertyId', propertyId);
             if (orgId) params.set('orgId', orgId);
 
-            const response = await fetch(`/api/users/list?${params.toString()}`);
-            if (!response.ok) {
-                const error = await response.json();
-                console.error('Failed to fetch users:', error);
-                setUsers([]);
-                setIsLoading(false);
-                return;
-            }
-
+            const response = await fetch(`/api/users/list?${params.toString()}`, { signal: controller.signal });
             const data = await response.json();
-            setUsers(data.users || []);
+            if (!response.ok) {
+                throw new Error(typeof data?.error === 'string' ? data.error : 'Unable to load users. Please try again.');
+            }
+            if (!Array.isArray(data?.users)) {
+                throw new Error('Unable to load users. Please try again.');
+            }
+            if (requestId !== usersRequestId.current) return;
+            shownCacheKey.current = cacheKey;
+            shownFetchedAt.current = Date.now();
+            setUsers(data.users);
+            setLoadStatus('success');
         } catch (err) {
-            console.error('Error fetching users:', err);
+            // Aborting saves work, but the request ID also protects against
+            // responses that already completed or transports that ignore abort.
+            if (requestId !== usersRequestId.current || controller.signal.aborted) return;
+            // Refused or failed: never show (or keep) the saved copy, e.g. after access was removed.
+            if (cacheKey) directoryCache.delete(cacheKey);
+            shownCacheKey.current = null;
             setUsers([]);
+            setLoadError(err instanceof Error ? err.message : 'Unable to load users. Please try again.');
+            setLoadStatus('error');
         }
+    }, [orgId, propertyId, invalidateUsersRequest]);
 
-        setIsLoading(false);
-    };
+    useEffect(() => {
+        const cacheKey = directoryCacheKey(authUserIdRef.current, orgId, propertyId);
+        let saved = cacheKey ? directoryCache.get(cacheKey) : undefined;
+        if (saved && Date.now() - saved.at > DIRECTORY_CACHE_TTL_MS) {
+            directoryCache.delete(cacheKey!);
+            saved = undefined;
+        }
+        shownCacheKey.current = saved ? cacheKey : null;
+        shownFetchedAt.current = saved ? saved.at : 0;
+        setUsers(saved ? saved.users : []);
+        if (saved) setLoadStatus('success');
+        setSelectedUserForProfile(null);
+        setSuperTenantPropsMap({});
+        setPropAssignPropsMap({});
+        void fetchUsers(!!saved);
+        return invalidateUsersRequest;
+    }, [fetchUsers, invalidateUsersRequest, orgId, propertyId]);
+
+    // Keep the saved copy in step with the list on screen, including approve / reject / role edits made here.
+    useEffect(() => {
+        if (loadStatus !== 'success' || !shownCacheKey.current) return;
+        directoryCache.set(shownCacheKey.current, { users, at: shownFetchedAt.current });
+    }, [users, loadStatus]);
 
     const [approvingUserId, setApprovingUserId] = useState<string | null>(null);
 
@@ -151,7 +219,8 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                 body: JSON.stringify({
                     userId: userToApprove.id,
                     action: 'approve',
-                    propertyId: userToApprove.propertyId || propertyId,
+                    organizationId: orgId || userToApprove.organizationId,
+                    propertyId,
                 })
             });
 
@@ -201,8 +270,9 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                 body: JSON.stringify({
                     userId: userToReject.id,
                     action: 'reject',
+                    organizationId: orgId || userToReject.organizationId,
                     reason,
-                    propertyId: userToReject.propertyId || propertyId,
+                    propertyId,
                 })
             });
 
@@ -444,7 +514,7 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
             }
 
             // For cross-level changes (property ↔ org), refetch all users
-            const ORG_LEVEL_ROLES = ['org_super_admin', 'ops_super_admin', 'procurement', 'hr', 'hr_head'];
+            const ORG_LEVEL_ROLES = ['org_super_admin', 'ops_super_admin', 'procurement', 'accounts', 'hr', 'hr_head', 'tech'];
             const wasPropertyLevel = !!user?.propertyRole && !user?.orgRole;
             const wasOrgLevel = !!user?.orgRole;
             const isNowOrgLevel = ORG_LEVEL_ROLES.includes(newRole);
@@ -513,7 +583,6 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
             'soft_service_supervisor',
             'vendor',
             'procurement',
-            'finance',
         ]
         : [
             'org_super_admin',
@@ -529,7 +598,8 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
             'soft_service_manager',
             'soft_service_supervisor',
             'procurement',
-            'finance',
+            'accounts',
+            'tech',
             'sales',
             'bd_rep',
             'vendor',
@@ -552,6 +622,7 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
         if (lower === 'staff') return 'Staff';
         if (lower === 'procurement' || lower === 'procurement_user') return 'Procurement';
         if (lower === 'finance' || lower === 'accounts') return 'Finance / Accounts';
+        if (lower === 'tech') return 'Tech';
         if (lower === 'sales' || lower === 'sales_executive') return 'Sales / CRM';
         if (lower === 'bd_rep' || lower === 'bd_admin' || lower === 'bd_super_admin') return 'Business Development';
         if (lower === 'security') return 'Security / Front Desk';
@@ -725,10 +796,26 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
 
             {/* User Cards */}
             <div className="space-y-4">
-                {isLoading ? (
+                {loadStatus === 'waiting' ? (
+                    <div role="status" className="bg-white border border-slate-100 rounded-2xl p-12 text-center">
+                        <p className="text-slate-500 font-medium">Waiting for organization or property...</p>
+                    </div>
+                ) : loadStatus === 'loading' ? (
                     <div className="bg-white border border-slate-100 rounded-2xl p-12 text-center">
                         <div className="w-10 h-10 border-4 border-slate-200 border-t-slate-600 rounded-full animate-spin mx-auto mb-4" />
                         <p className="text-slate-500 font-medium">Loading users...</p>
+                    </div>
+                ) : loadStatus === 'error' ? (
+                    <div role="alert" className="bg-white border border-rose-200 rounded-2xl p-12 text-center">
+                        <p className="text-rose-700 font-bold">Unable to load users.</p>
+                        <p className="text-slate-500 font-medium mt-2">{loadError}</p>
+                        <button
+                            onClick={() => void fetchUsers()}
+                            className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-900 text-white font-bold text-sm cursor-pointer"
+                        >
+                            <RefreshCw className="w-4 h-4" />
+                            Retry
+                        </button>
                     </div>
                 ) : filteredUsers.length === 0 ? (
                     <div className="bg-white border border-slate-100 rounded-2xl p-12 text-center">

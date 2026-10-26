@@ -9,12 +9,17 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ModalPortal from '../ui/ModalPortal';
+import { siteEstimatedAmount } from '@/backend/lib/procurement/requisition-approval.mjs';
+import RequisitionApproverSelect, { type RequisitionApprover } from './RequisitionApproverSelect';
 
 interface BulkApproverUploadModalProps {
     isOpen: boolean;
     onClose: () => void;
     requisitions: any[];
-    approvers: any[];
+    approvers: RequisitionApprover[];
+    approversLoading?: boolean;
+    approversError?: string;
+    onRetryApprovers?: () => void;
     organizationId: string;
     currentUser: any;
     onSuccess: () => void;
@@ -30,6 +35,9 @@ export default function BulkApproverUploadModal({
     onClose,
     requisitions = [],
     approvers = [],
+    approversLoading = false,
+    approversError = '',
+    onRetryApprovers,
     organizationId,
     currentUser,
     onSuccess
@@ -39,7 +47,7 @@ export default function BulkApproverUploadModal({
 
     // Form inputs
     const [vendorNotes, setVendorNotes] = useState<string>('');
-    const [selectedApproverId, setSelectedApproverId] = useState<string>(approvers[0]?.id || '');
+    const [selectedApproverId, setSelectedApproverId] = useState<string>('');
     const [quoteFile, setQuoteFile] = useState<File | null>(null);
     const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -53,11 +61,12 @@ export default function BulkApproverUploadModal({
     React.useEffect(() => {
         if (isOpen && eligibleRequisitions.length > 0) {
             setSelectedIds(new Set(eligibleRequisitions.map(r => r.id)));
-            if (approvers.length > 0 && !selectedApproverId) {
-                setSelectedApproverId(approvers[0].id);
-            }
         }
-    }, [isOpen, eligibleRequisitions, approvers]);
+    }, [isOpen, eligibleRequisitions]);
+
+    React.useEffect(() => {
+        setSelectedApproverId(previous => approvers.some(user => user.id === previous) ? previous : '');
+    }, [approvers, organizationId]);
 
     if (!isOpen) return null;
 
@@ -83,7 +92,7 @@ export default function BulkApproverUploadModal({
 
     const selectedRequisitionsList = eligibleRequisitions.filter(r => selectedIds.has(r.id));
     const totalSelectedEstAmount = selectedRequisitionsList.reduce((acc, r) => {
-        return acc + (Number(r.total_estimated_amount) || Number(r.vendor_quotation?.total_quoted_amount) || 0);
+        return acc + siteEstimatedAmount(r);
     }, 0);
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -95,8 +104,8 @@ export default function BulkApproverUploadModal({
             return;
         }
 
-        if (!selectedApproverId) {
-            setErrorMessage('Please select an Approver from the dropdown.');
+        if (approversLoading || approversError || !approvers.some(user => user.id === selectedApproverId)) {
+            setErrorMessage('Please choose an available Org Super Admin or Ops Super Admin approver.');
             return;
         }
 
@@ -106,7 +115,6 @@ export default function BulkApproverUploadModal({
             formData.append('organization_id', organizationId || currentUser?.user_metadata?.organization_id || '');
             formData.append('requisition_ids', JSON.stringify(Array.from(selectedIds)));
             formData.append('vendor_name', 'Vendor Quote');
-            formData.append('total_quoted_amount', String(totalSelectedEstAmount));
             formData.append('vendor_notes', vendorNotes.trim());
             formData.append('target_approver_id', selectedApproverId);
             if (quoteFile) {
@@ -123,7 +131,7 @@ export default function BulkApproverUploadModal({
                 throw new Error(data.error || 'Failed to submit multi-site approval');
             }
 
-            alert(`✅ Request for approval sent to Director / Approver for ${selectedIds.size} sites! Approver has been notified.`);
+            alert(`✅ ${data.updated_count} requisitions sent for individual approval.${data.failed_ids?.length ? ` ${data.failed_ids.length} could not be submitted; refresh and retry those records.` : ''}${data.notification_warning ? ' A notification could not be sent; the requisitions remain available in the app.' : ' One WhatsApp summary was requested for this upload.'}`);
             onSuccess();
             onClose();
         } catch (err: any) {
@@ -217,7 +225,7 @@ export default function BulkApproverUploadModal({
                                         const isSelected = selectedIds.has(req.id);
                                         const monthName = MONTH_NAMES[(req.requisition_month || 1) - 1] || 'Month';
                                         const itemsCount = req.total_items_count || req.items?.length || 0;
-                                        const estAmount = req.total_estimated_amount || req.vendor_quotation?.total_quoted_amount || 0;
+                                        const estAmount = siteEstimatedAmount(req);
 
                                         return (
                                             <div
@@ -326,21 +334,12 @@ export default function BulkApproverUploadModal({
                                 3. Assign Reviewing Approver
                             </h4>
                             <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">
-                                The selected Director / Super Admin will receive the uploaded quote and can approve or reject all selected sites.
+                                The selected Org Super Admin or Ops Super Admin will receive the uploaded quote and will receive one WhatsApp summary and must review and approve or reject each requisition separately.
                             </p>
 
-                            <select
-                                required
-                                value={selectedApproverId}
-                                onChange={e => setSelectedApproverId(e.target.value)}
-                                className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-semibold text-slate-800 dark:text-slate-100 focus:outline-hidden focus:ring-2 focus:ring-sky-500"
-                            >
-                                {approvers.map(a => (
-                                    <option key={a.id} value={a.id}>
-                                        {a.full_name || a.email} ({a.email})
-                                    </option>
-                                ))}
-                            </select>
+                            <RequisitionApproverSelect approvers={approvers} value={selectedApproverId}
+                                onChange={setSelectedApproverId} loading={approversLoading}
+                                error={approversError} onRetry={onRetryApprovers} />
                         </div>
                     </form>
 
@@ -357,7 +356,7 @@ export default function BulkApproverUploadModal({
                         <button
                             type="button"
                             onClick={handleSubmit}
-                            disabled={isSubmitting || selectedIds.size === 0}
+                            disabled={isSubmitting || selectedIds.size === 0 || approversLoading || !!approversError || !selectedApproverId}
                             className="h-9 px-5 inline-flex items-center gap-1.5 bg-gradient-to-r from-sky-600 to-blue-700 hover:from-sky-700 hover:to-blue-800 text-white rounded-xl font-bold text-xs shadow-md shadow-sky-600/20 transition-all cursor-pointer disabled:opacity-50"
                         >
                             {isSubmitting ? (

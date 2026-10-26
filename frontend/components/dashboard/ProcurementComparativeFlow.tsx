@@ -22,6 +22,7 @@ export default function ProcurementComparativeFlow({
     const [approverOptions, setApproverOptions] = useState<any[]>([]);
     const [approverSearchQuery, setApproverSearchQuery] = useState('');
     const [isApproverDropdownOpen, setIsApproverDropdownOpen] = useState(false);
+    const [approverLoadError, setApproverLoadError] = useState<string | null>(null);
     const [currentUserId, setCurrentUserId] = useState<string | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -48,21 +49,43 @@ export default function ProcurementComparativeFlow({
     }, [request.id]);
 
     const fetchEligibleApprovers = async () => {
+        setApproverLoadError(null);
         try {
             const orgId = request.organization_id || request.ticket?.organization_id;
             const propId = request.property_id || request.ticket?.property_id;
-            if (!orgId) return;
+            if (!orgId) {
+                setApproverLoadError('Could not load approvers: this request is not linked to an organization.');
+                return;
+            }
 
-            const res = await fetch(`/api/escalation/employees?organizationId=${orgId}${propId ? `&propertyId=${propId}` : ''}`);
-            const data = await res.json();
-            if (Array.isArray(data)) {
+            // Property members + Org Super Admins, plus the org-level procurement approvers
+            // (Org and Ops Super Admins), who may not be members of this property.
+            const [employeesRes, superAdminsRes] = await Promise.all([
+                fetch(`/api/escalation/employees?organizationId=${orgId}${propId ? `&propertyId=${propId}` : ''}`)
+                    .then(res => res.json()).catch(() => null),
+                fetch(`/api/procurement/requisitions/approvers?organization_id=${orgId}`)
+                    .then(res => res.json()).catch(() => null)
+            ]);
+            const employees = Array.isArray(employeesRes) ? employeesRes : [];
+            const superAdmins = Array.isArray(superAdminsRes?.approvers) ? superAdminsRes.approvers : [];
+            const seen = new Set(employees.map((e: any) => e.id));
+            const data = [
+                ...employees,
+                ...superAdmins
+                    .filter((a: any) => !seen.has(a.id))
+                    .map((a: any) => ({ id: a.id, full_name: a.full_name || a.email, email: a.email, membership_role: a.role }))
+            ];
+            if (data.length > 0 || Array.isArray(employeesRes)) {
                 setApproverOptions(data);
                 if (data.length > 0 && !selectedApproverUid) {
                     setSelectedApproverUid(data[0].id);
                 }
+            } else {
+                setApproverLoadError(employeesRes?.error || superAdminsRes?.error || 'Could not load approvers. Please retry.');
             }
         } catch (err) {
             console.error('Error fetching approvers:', err);
+            setApproverLoadError('Could not load approvers. Please retry.');
         }
     };
 
@@ -309,6 +332,12 @@ export default function ProcurementComparativeFlow({
                                 </span>
                                 <ChevronDown className="w-4 h-4 text-slate-400 flex-shrink-0 ml-2" />
                             </button>
+                            {approverLoadError && (
+                                <p className="mt-1 text-[10px] font-bold text-rose-500">
+                                    {approverLoadError}{' '}
+                                    <button type="button" onClick={fetchEligibleApprovers} className="underline">Retry</button>
+                                </p>
+                            )}
 
                             {isApproverDropdownOpen && (
                                 <div className="absolute z-50 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl max-h-60 overflow-hidden flex flex-col">
