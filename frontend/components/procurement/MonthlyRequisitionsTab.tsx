@@ -59,6 +59,8 @@ interface MonthlyRequisition {
     budget_limit?: number;
     over_budget_amount?: number;
     budget_breakdown?: any;
+    /** From confirmed delivery challans; the status itself stays as approval / Issue PO need it. */
+    delivery?: { state: 'none' | 'partial' | 'delivered'; items_ordered: number; items_complete: number; challans: number } | null;
 }
 
 interface MonthlyRequisitionsTabProps {
@@ -916,6 +918,19 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                                             #{req.po_info.po_number}
                                                         </span>
                                                     )}
+                                                    {req.delivery && (
+                                                        <span
+                                                            className={`inline-flex items-center gap-1 text-[10px] font-bold whitespace-nowrap ${req.delivery.state === 'delivered' ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}
+                                                            title={`${req.delivery.challans} delivery challan${req.delivery.challans === 1 ? '' : 's'} received`}
+                                                        >
+                                                            {req.delivery.state === 'delivered'
+                                                                ? <PackageCheck className="w-3 h-3 shrink-0" />
+                                                                : <Truck className="w-3 h-3 shrink-0" />}
+                                                            {req.delivery.state === 'delivered'
+                                                                ? 'Delivered'
+                                                                : `Partly delivered · ${req.delivery.items_complete} of ${req.delivery.items_ordered} items`}
+                                                        </span>
+                                                    )}
                                                 </div>
                                             </td>
 
@@ -1131,7 +1146,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                     requisitionId={challanModalReq.id}
                     title={`${challanModalReq.property?.name || 'Property'} - ${MONTH_NAMES[(challanModalReq.requisition_month || 1) - 1]} ${challanModalReq.requisition_year}`}
                     onClose={() => setChallanModalReq(null)}
-                    onConfirmed={(message) => alert(message)}
+                    onConfirmed={(message) => { alert(message); fetchRequisitions(); }}
                 />
             )}
 

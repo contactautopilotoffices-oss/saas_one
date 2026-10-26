@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { generateRequisitionExcelWorkbook, RequisitionItemData } from '@/backend/lib/excel/requisitionExcelGenerator';
 import { PricingAndAliasService, normalizeText } from '@/backend/lib/procurement/pricingAndAliasService';
+import { deliverySummaries, type DeliverySummary } from '@/backend/lib/procurement/requisitionDelivery';
 
 const MONTH_NAMES = [
     'January', 'February', 'March', 'April', 'May', 'June',
@@ -97,7 +98,18 @@ export async function GET(request: NextRequest) {
             };
         });
 
-        return NextResponse.json({ requisitions: enriched });
+        // Delivery progress from confirmed challans, shown next to the status
+        // (the status itself stays as approval / Issue PO need it).
+        let deliveries = new Map<string, DeliverySummary>();
+        try {
+            deliveries = await deliverySummaries(adminSupabase, (data || []).filter(r => ['approved', 'ordered'].includes(r.status)));
+        } catch (deliveryErr) {
+            console.warn('[Requisitions GET] Delivery summary unavailable:', deliveryErr);
+        }
+
+        return NextResponse.json({
+            requisitions: enriched.map(req => ({ ...req, delivery: deliveries.get(req.id) || null })),
+        });
     } catch (err: any) {
         console.error('[Requisitions GET Server Error]:', err);
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

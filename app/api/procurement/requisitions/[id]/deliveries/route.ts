@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
-import { requisitionNotes } from '@/backend/lib/procurement/requisition-approval.mjs';
+import { orderedLines } from '@/backend/lib/procurement/requisitionDelivery';
 import { isMissingSchemaError, isProcurementUser } from '@/backend/lib/procurement/catalogAccess';
 import { ensureStockRowsForCatalogItems, getPropertyStockSource, type CatalogItemForStock } from '@/backend/lib/stock/propertyStock';
 import { isValidUuid } from '@/backend/lib/utils';
@@ -49,43 +49,6 @@ async function ensureChallanBucket(admin: ReturnType<typeof createAdminClient>):
 const CHALLAN_STATUSES = ['approved', 'ordered'];
 const MISSING_SCHEMA =
     'Delivery challans have not been set up on this database yet. Run the pending Supabase migration 20261026000001 and try again.';
-
-interface OrderedLine {
-    catalog_item_id: string;
-    item_name: string;
-    unit: string;
-    category: string;
-    ordered_qty: number;
-}
-
-/** The lines a property actually asked for, keyed by catalog item id. */
-function orderedLines(record: Record<string, unknown>): Map<string, OrderedLine> {
-    const notes = requisitionNotes(record) as { items?: unknown };
-    const items = Array.isArray(notes.items) ? notes.items : [];
-    const lines = new Map<string, OrderedLine>();
-
-    for (const raw of items as Record<string, unknown>[]) {
-        const qty = Number(raw?.requested_qty) || 0;
-        if (qty <= 0) continue;
-        const rowId = String(raw?.id || '');
-        const catalogId = String(raw?.catalog_item_id || (rowId.startsWith('cat-') ? rowId.slice(4) : ''));
-        if (!isValidUuid(catalogId)) continue;
-
-        const existing = lines.get(catalogId);
-        if (existing) {
-            existing.ordered_qty += qty;
-            continue;
-        }
-        lines.set(catalogId, {
-            catalog_item_id: catalogId,
-            item_name: String(raw?.name || 'Item'),
-            unit: String(raw?.unit || ''),
-            category: String(raw?.category || ''),
-            ordered_qty: qty,
-        });
-    }
-    return lines;
-}
 
 async function loadContext(requisitionId: string) {
     const supabase = await createClient();
