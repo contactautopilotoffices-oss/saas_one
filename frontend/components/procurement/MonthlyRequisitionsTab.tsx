@@ -969,8 +969,8 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                                         </button>
                                                     )}
 
-                                                    {/* Property admin: delivery challan, from approval onwards */}
-                                                    {isPropertyAdmin && (req.status === 'approved' || req.status === 'ordered') && (
+                                                    {/* Property admin or ops super admin: delivery challan, from approval onwards */}
+                                                    {(isPropertyAdmin || userRoleLower === 'ops_super_admin') && (req.status === 'approved' || req.status === 'ordered') && (
                                                         <button
                                                             onClick={() => setChallanModalReq(req)}
                                                             className="inline-flex items-center gap-1.5 h-8 px-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold whitespace-nowrap transition-all shadow-xs shrink-0 cursor-pointer"

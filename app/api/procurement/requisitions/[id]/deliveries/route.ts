@@ -77,22 +77,33 @@ async function loadContext(requisitionId: string) {
     if (reqError) throw reqError;
     if (!requisition) return { error: NextResponse.json({ error: 'Requisition not found' }, { status: 404 }) };
 
-    const [{ data: propertyMemberships }, { data: profile }] = await Promise.all([
+    const [{ data: propertyMemberships }, { data: orgMembership }, { data: profile }] = await Promise.all([
         admin.from('property_memberships')
             .select('role')
             .eq('user_id', user.id)
             .eq('property_id', requisition.property_id)
             .eq('is_active', true),
+        admin.from('organization_memberships')
+            .select('role')
+            .eq('user_id', user.id)
+            .eq('organization_id', requisition.organization_id)
+            .eq('is_active', true)
+            .maybeSingle(),
         admin.from('users').select('is_master_admin').eq('id', user.id).maybeSingle(),
     ]);
 
-    const isPropertyAdmin = (propertyMemberships || []).some(m => m.role === 'property_admin');
+    // Who may upload: the property's admin, or an ops super admin of the organisation
+    // (held as an org role and as a role on each property it was given).
+    const isOpsSuperAdmin = orgMembership?.role === 'ops_super_admin'
+        || (propertyMemberships || []).some(m => m.role === 'ops_super_admin');
+    const canUpload = isOpsSuperAdmin || (propertyMemberships || []).some(m => m.role === 'property_admin');
     const canView = (propertyMemberships || []).length > 0
+        || isOpsSuperAdmin
         || Boolean(profile?.is_master_admin)
         || await isProcurementUser(user.id, requisition.organization_id);
     if (!canView) return { error: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) };
 
-    return { user, admin, requisition, isPropertyAdmin };
+    return { user, admin, requisition, canUpload };
 }
 
 export async function GET(
@@ -103,7 +114,7 @@ export async function GET(
         const { id } = await params;
         const ctx = await loadContext(id);
         if (ctx.error) return ctx.error;
-        const { admin, requisition, isPropertyAdmin } = ctx;
+        const { admin, requisition, canUpload } = ctx;
 
         const itemSource = await getPropertyStockSource(requisition.property_id);
 
@@ -134,7 +145,7 @@ export async function GET(
         if (schemaMissing) blockedReason = MISSING_SCHEMA;
         else if (!CHALLAN_STATUSES.includes(requisition.status)) blockedReason = 'A challan can be uploaded once the requisition is approved.';
         else if (itemSource !== 'catalog') blockedReason = 'This property is still on its old stock list. Ask procurement to switch it to requisition items in Stock Settings.';
-        else if (!isPropertyAdmin) blockedReason = 'Only the property admin can upload a delivery challan.';
+        else if (!canUpload) blockedReason = 'Only the property admin or an ops super admin can upload a delivery challan.';
         else if (lines.length === 0) blockedReason = 'This requisition has no items from the standard list to receive.';
 
         return NextResponse.json({
@@ -179,10 +190,10 @@ export async function POST(
         const { id } = await params;
         const ctx = await loadContext(id);
         if (ctx.error) return ctx.error;
-        const { user, requisition, isPropertyAdmin } = ctx;
+        const { user, requisition, canUpload } = ctx;
 
-        if (!isPropertyAdmin) {
-            return NextResponse.json({ error: 'Only the property admin can upload a delivery challan.' }, { status: 403 });
+        if (!canUpload) {
+            return NextResponse.json({ error: 'Only the property admin or an ops super admin can upload a delivery challan.' }, { status: 403 });
         }
         if (!CHALLAN_STATUSES.includes(requisition.status)) {
             return NextResponse.json({ error: 'A challan can be uploaded once the requisition is approved.' }, { status: 409 });
