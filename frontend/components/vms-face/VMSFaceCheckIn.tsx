@@ -603,8 +603,9 @@ const VMSFaceCheckInContent: React.FC<VMSFaceCheckInProps> = ({ propertyId, prop
                             <div className="flex gap-2 p-3 bg-slate-50 border border-slate-200 rounded-xl text-[11px] text-slate-600">
                                 <Info className="w-4 h-4 shrink-0 text-slate-400 mt-0.5" />
                                 <p>
-                                    {otp.delivery === 'whatsapp' ? 'A code was sent on WhatsApp' : 'Test mode: the code below would be sent on WhatsApp'} with this message:
-                                    {' '}<span className="italic">&ldquo;{otp.consentText}&rdquo;</span> Ask the visitor to read the code out.
+                                    {otp.delivery === 'whatsapp' ? 'A code was sent to the visitor on WhatsApp.' : 'Test mode: the code below would be sent on WhatsApp.'}
+                                    {' '}Show this notice to the visitor (or read it aloud) before they share the code:
+                                    {' '}<span className="italic font-semibold text-slate-800">&ldquo;{otp.consentText}&rdquo;</span> Then ask the visitor to read the code out.
                                 </p>
                             </div>
                             {otp.testCode && (

@@ -60,7 +60,7 @@ export async function sendOtp(args: {
     if (error) return { ok: false, error: error.message, status: 500 };
 
     if (args.delivery === 'whatsapp') {
-        const sent = await AiSensyService.sendTemplate({ phone: args.mobile, campaignName: campaign!, templateParams: [code] });
+        const sent = await AiSensyService.sendTemplate({ phone: args.mobile, campaignName: campaign!, templateParams: [code], copyCode: code });
         if (!sent.success) {
             await supabaseAdmin.from('vms_face_otp_challenges').update({ expires_at: new Date().toISOString() }).eq('id', challengeId);
             return { ok: false, error: `WhatsApp send failed: ${sent.error || 'unknown error'}`, status: 502 };

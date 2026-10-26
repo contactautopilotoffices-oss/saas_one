@@ -23,7 +23,8 @@ export async function GET(
 
         let query = supabaseAdmin
             .from('property_memberships')
-            .select('user_id, role, user:users!inner(id, full_name, email)')
+            // property_memberships has two links to users (user_id, updated_by), so name the one to use.
+            .select('user_id, role, user:users!user_id!inner(id, full_name, email)')
             .eq('property_id', propertyId)
             .eq('is_active', true);
 
