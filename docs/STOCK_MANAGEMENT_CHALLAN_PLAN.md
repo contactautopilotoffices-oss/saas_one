@@ -1,7 +1,10 @@
 # Stock Management from Monthly Requisition: Plan (v2)
 
 **Branch:** `claude/blissful-gates-n9t0ht`
-**Status:** Plan only. Nothing built yet.
+**Status:** Built (phases 0 to 3). The SQL in
+[20261026000001_stock_from_requisition.sql](../supabase/migrations/20261026000001_stock_from_requisition.sql)
+is run by hand in the Supabase SQL editor. Until it is run, every property behaves exactly as before.
+See section 10 for what changed from this plan while building.
 **Builds on:** [MONTHLY_REQUISITION_STANDARD_CATALOG_PLAN.md](MONTHLY_REQUISITION_STANDARD_CATALOG_PLAN.md) (Phases 1 and 2 done).
 
 ## Decisions taken
@@ -287,3 +290,26 @@ No AI or model call is in this plan, so the Agent Doctrine spec block does not a
 3. **Who else can upload a challan:** only property admins, or also soft service managers /
    site staff of that property?
 4. **QR printing:** plain A4 and cut, or sticker sheets with a fixed label size?
+
+## 10. As built
+
+Decisions taken after v2, and where the build differs from the sections above:
+
+| Topic | As built |
+|---|---|
+| Who uploads a challan | Property admins of that property only (checked on the server against `property_memberships`) |
+| When the button shows | Status `approved`, and still after procurement issues the PO (`ordered`), because goods usually arrive after the PO |
+| Requisition statuses | **Not changed.** No `partially_received` / `received`. Changing the status would break "Issue PO", which needs `approved`. Delivery progress lives in `requisition_deliveries`, and the challan screen shows ordered / already received / pending per item. |
+| Movement action | Received stock is written as a normal `add` movement with `stock_movements.delivery_id` set, so the daily stock report counts it with no change. No `receipt` action. |
+| Old Stock tab | Shown only when the property is on requisition items **and** has real old stock. Rows the removed auto-sync created (`STK-` codes) do not count unless someone recorded a movement on them. A property that never used stock management sees no Old Stock tab. |
+| Requisition submit | No longer writes to stock at all (the name-based sync is deleted). Stock changes only through the stock screens and confirmed challans. |
+| Short delivery | Whatever is not received stays pending for the next challan. A challan can never take an item past what was ordered (enforced in the database). |
+| QR PDF | A4, 4 per row, 5 rows per page, plain QR with the item name under it. The QR holds the item's existing barcode value, so the existing scanner reads it. |
+| Requisition-item list | Items cannot be added, renamed or deleted from the stock screen (they come from procurement). "Update Stock" sets today's count; each change gets a history line. |
+
+Where things are:
+
+- Switch: Procurement > **Stock Settings** (procurement, org super admin, master admin)
+- Stock tab: **QR PDF**, **Update Stock**, and **Old Stock** when applicable
+- Monthly Requisitions list: **Delivery Challan** button on approved / PO-issued requisitions
+- Database test: `node --test tests/stock-from-requisition-db.test.mjs`

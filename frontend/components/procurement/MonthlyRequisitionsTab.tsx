@@ -18,6 +18,7 @@ import { siteVendorQuotation, siteEstimatedAmount } from '@/backend/lib/procurem
 import PropertyBudgetManagerModal from './PropertyBudgetManagerModal';
 import BulkApproverUploadModal from './BulkApproverUploadModal';
 import MonthlyFeedbackFormModal from './MonthlyFeedbackFormModal';
+import DeliveryChallanModal from './DeliveryChallanModal';
 import { SHOW_LEGACY_PER_PROPERTY_CONTROLS } from './procurementFeatureFlags';
 import RequisitionApproverSelect, { type RequisitionApprover } from './RequisitionApproverSelect';
 
@@ -115,6 +116,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
     const [approverModalReq, setApproverModalReq] = useState<MonthlyRequisition | null>(null);
     const [vendorQuoteModalReq, setVendorQuoteModalReq] = useState<MonthlyRequisition | null>(null);
     const [issuePoModalReq, setIssuePoModalReq] = useState<MonthlyRequisition | null>(null);
+    const [challanModalReq, setChallanModalReq] = useState<MonthlyRequisition | null>(null);
     const [showBudgetManagerModal, setShowBudgetManagerModal] = useState<boolean>(false);
     const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState<boolean>(false);
 
@@ -967,6 +969,18 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                                         </button>
                                                     )}
 
+                                                    {/* Property admin: delivery challan, from approval onwards */}
+                                                    {isPropertyAdmin && (req.status === 'approved' || req.status === 'ordered') && (
+                                                        <button
+                                                            onClick={() => setChallanModalReq(req)}
+                                                            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold whitespace-nowrap transition-all shadow-xs shrink-0 cursor-pointer"
+                                                            title="Upload the delivery challan and add received items to stock"
+                                                        >
+                                                            <Truck className="w-3.5 h-3.5 text-white shrink-0" />
+                                                            <span>Delivery Challan</span>
+                                                        </button>
+                                                    )}
+
                                                     {/* Review & Approve / View Details Modal */}
                                                     {(() => {
                                                         const targetApproverId = req.approver_info?.id || req.approver_info?.approver_id || (req as any).target_approver_id;
@@ -1111,6 +1125,15 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                 )}
             </AnimatePresence>
             </ModalPortal>
+
+            {challanModalReq && (
+                <DeliveryChallanModal
+                    requisitionId={challanModalReq.id}
+                    title={`${challanModalReq.property?.name || 'Property'} - ${MONTH_NAMES[(challanModalReq.requisition_month || 1) - 1]} ${challanModalReq.requisition_year}`}
+                    onClose={() => setChallanModalReq(null)}
+                    onConfirmed={(message) => alert(message)}
+                />
+            )}
 
             {/* Modal: Issue Purchase Order (PO) */}
             <ModalPortal>

@@ -6,6 +6,8 @@ import dynamic from 'next/dynamic';
 import { createClient } from '@/frontend/utils/supabase/client';
 import { Toast } from '@/frontend/components/ui/Toast';
 import Skeleton from '@/frontend/components/ui/Skeleton';
+import { usePropertyStockSource } from '@/frontend/hooks/usePropertyStockSource';
+import { liveItems } from '@/frontend/lib/stock/itemSource';
 
 const BarcodeScannerModal = dynamic(
     () => import('./BarcodeScannerModal'),
@@ -99,9 +101,11 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
     const [searchTerm, setSearchTerm] = useState('');
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
     const supabase = React.useMemo(() => createClient(), []);
+    // Only items on the list this property uses can be moved (old items stay frozen).
+    const { itemSource, loading: isLoadingSource } = usePropertyStockSource(propertyId);
 
     useEffect(() => {
-        if (isOpen) {
+        if (isOpen && !isLoadingSource) {
             fetchItems();
             setStep('select');
             setSelectedItem(null);
@@ -112,7 +116,7 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
             setSearchTerm('');
             if (autoOpenScanner) setShowScanModal(true);
         }
-    }, [isOpen, autoOpenScanner]);
+    }, [isOpen, autoOpenScanner, isLoadingSource, itemSource]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
         if (preSelectedItemId && items.length > 0) {
@@ -134,11 +138,11 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
             setIsFetchingItems(true);
             const { data, error } = await supabase
                 .from('stock_items')
-                .select('id, name, item_code, quantity, min_threshold, barcode, category, location, unit')
+                .select('*')
                 .eq('property_id', propertyId)
                 .order('name', { ascending: true });
             if (error) throw error;
-            setItems(data || []);
+            setItems(liveItems(data || [], itemSource));
         } catch (err) {
             setToast({ message: 'Error loading items', type: 'error' });
         } finally {

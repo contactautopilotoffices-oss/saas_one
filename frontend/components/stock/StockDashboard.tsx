@@ -9,8 +9,10 @@ import StockItemList from './StockItemList';
 import StockMovementModal from './StockMovementModal';
 import StockReportView from './StockReportView';
 import { useDataCache } from '@/frontend/context/DataCacheContext';
+import { usePropertyStockSource } from '@/frontend/hooks/usePropertyStockSource';
+import { itemSourceOf, liveItems, movementsForItems } from '@/frontend/lib/stock/itemSource';
 
-type SubTab = 'inventory' | 'movements' | 'reports';
+type SubTab = 'inventory' | 'movements' | 'reports' | 'old';
 
 interface StockDashboardProps {
     propertyId: string;
@@ -45,6 +47,26 @@ const StockDashboard: React.FC<StockDashboardProps> = ({ propertyId, hideReports
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
     const [propertyDetails, setPropertyDetails] = useState<{ name: string; code: string } | null>(null);
     const supabase = React.useMemo(() => createClient(), []);
+    const { itemSource, oldItemCount, loading: isLoadingSource } = usePropertyStockSource(propertyId);
+    // Old Stock only for properties that really kept stock before switching to requisition items.
+    const showOldStock = itemSource === 'catalog' && oldItemCount > 0;
+    const [listVersion, setListVersion] = useState(0);
+
+    // Items procurement added to this property's requisition list since the last visit.
+    useEffect(() => {
+        if (isLoadingSource || itemSource !== 'catalog') return;
+        let cancelled = false;
+        fetch(`/api/properties/${propertyId}/stock/requisition-items`, { method: 'POST' })
+            .then(res => (res.ok ? res.json() : null))
+            .then(data => {
+                if (!cancelled && data?.added > 0) {
+                    invalidateCache('stock-');
+                    setListVersion(v => v + 1);
+                }
+            })
+            .catch(() => { /* the list still shows what is there */ });
+        return () => { cancelled = true; };
+    }, [propertyId, itemSource, isLoadingSource]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const fetchPropertyDetails = useCallback(async () => {
         try {
@@ -62,6 +84,7 @@ const StockDashboard: React.FC<StockDashboardProps> = ({ propertyId, hideReports
     }, [propertyId, supabase]);
 
     const fetchStats = useCallback(async () => {
+        if (isLoadingSource) return;
         try {
             const { data, error } = await supabase
                 .from('stock_items')
@@ -70,7 +93,7 @@ const StockDashboard: React.FC<StockDashboardProps> = ({ propertyId, hideReports
 
             if (error) throw error;
 
-            const items = data || [];
+            const items = liveItems(data || [], itemSource);
             const lowStockCount = items.filter(i => i.quantity < (i.min_threshold || 10)).length;
 
             setStats({
@@ -89,23 +112,30 @@ const StockDashboard: React.FC<StockDashboardProps> = ({ propertyId, hideReports
         } finally {
             setIsLoading(false);
         }
-    }, [propertyId, supabase]);
+    }, [propertyId, supabase, itemSource, isLoadingSource, listVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const fetchMovements = useCallback(async () => {
+        if (isLoadingSource) return;
         try {
             setIsLoadingMovements(true);
             const { data, error } = await supabase
                 .from('stock_movements')
-                .select('id, action, quantity_change, notes, created_at, quantity_before, quantity_after, stock_items:item_id(name, item_code, unit), users:user_id(full_name)')
+                .select('id, action, quantity_change, notes, created_at, quantity_before, quantity_after, item_id, stock_items:item_id(*), users:user_id(full_name)')
                 .eq('property_id', propertyId)
                 .order('created_at', { ascending: false })
                 .limit(50);
 
             if (error) throw error;
-            const processedMovements = (data || []).map((m: any) => ({
+            // Only movements of items on the list this property uses.
+            type RawMovement = { item_id: string | null; quantity_change: number; stock_items: { item_source?: string | null } | null };
+            const rows = (data || []) as unknown as RawMovement[];
+            const liveIds = new Set(rows
+                .filter(m => m.item_id && m.stock_items && itemSourceOf(m.stock_items) === itemSource)
+                .map(m => m.item_id as string));
+            const processedMovements = movementsForItems(rows, liveIds, itemSource).map(m => ({
                 ...m,
                 quantity: Math.abs(m.quantity_change),
-            }));
+            })) as unknown as Movement[];
             setMovements(processedMovements);
             setCachedData(movementsCacheKey, processedMovements);
         } catch (err) {
@@ -113,7 +143,7 @@ const StockDashboard: React.FC<StockDashboardProps> = ({ propertyId, hideReports
         } finally {
             setIsLoadingMovements(false);
         }
-    }, [propertyId, supabase]);
+    }, [propertyId, supabase, itemSource, isLoadingSource]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
         fetchStats();
@@ -216,20 +246,34 @@ const StockDashboard: React.FC<StockDashboardProps> = ({ propertyId, hideReports
                         Reports
                     </button>
                 )}
+                {showOldStock && !hideInventory && (
+                    <button
+                        onClick={() => setActiveSubTab('old')}
+                        className={`flex-shrink-0 px-3 sm:px-5 py-2.5 font-semibold text-xs sm:text-sm transition-colors whitespace-nowrap ${activeSubTab === 'old'
+                            ? 'text-primary border-b-2 border-primary -mb-px'
+                            : 'text-gray-500 hover:text-gray-700'
+                            }`}
+                    >
+                        Old Stock
+                    </button>
+                )}
             </div>
 
             {/* Content */}
             <div className="mt-2">
-                {isLoading ? (
+                {isLoading || isLoadingSource ? (
                     <Skeleton className="h-96" />
                 ) : (
                     <>
                         {activeSubTab === 'inventory' && !hideInventory && (
                             <StockItemList
+                                key={`live-${itemSource}-${listVersion}`}
                                 propertyId={propertyId}
                                 onRefresh={fetchStats}
                                 propertyCode={propertyDetails?.code}
+                                propertyName={propertyDetails?.name}
                                 initialSearch={initialSearch}
+                                itemSource={itemSource}
                             />
                         )}
 
@@ -295,6 +339,20 @@ const StockDashboard: React.FC<StockDashboardProps> = ({ propertyId, hideReports
 
                         {activeSubTab === 'reports' && !hideReports && (
                             <StockReportView propertyId={propertyId} />
+                        )}
+
+                        {activeSubTab === 'old' && showOldStock && (
+                            <div className="space-y-6">
+                                <StockItemList
+                                    key="old-stock"
+                                    propertyId={propertyId}
+                                    propertyCode={propertyDetails?.code}
+                                    propertyName={propertyDetails?.name}
+                                    itemSource="legacy"
+                                    readOnly
+                                />
+                                <StockReportView propertyId={propertyId} propertyName={propertyDetails?.name} itemSource="legacy" />
+                            </div>
                         )}
                     </>
                 )}

@@ -9,11 +9,15 @@ import {
 } from 'lucide-react';
 import { format, subDays, startOfDay, endOfDay, addDays, isSameDay } from 'date-fns';
 import { createClient } from '@/frontend/utils/supabase/client';
+import { usePropertyStockSource } from '@/frontend/hooks/usePropertyStockSource';
+import { liveItems, movementsForItems, type StockItemSource } from '@/frontend/lib/stock/itemSource';
 
 interface StockReportViewProps {
     propertyId?: string;
     orgId?: string;
     propertyName?: string;
+    /** Report on this list instead of the one the property uses (Old Stock tab). */
+    itemSource?: StockItemSource;
 }
 
 interface StockItem {
@@ -37,10 +41,12 @@ interface Movement {
     users: { full_name: string } | null;
 }
 
-const StockReportView: React.FC<StockReportViewProps> = ({ propertyId, propertyName }) => {
+const StockReportView: React.FC<StockReportViewProps> = ({ propertyId, propertyName, itemSource: sourceOverride }) => {
+    const { itemSource: propertySource, loading: isLoadingSource } = usePropertyStockSource(sourceOverride ? undefined : propertyId);
+    const itemSource = sourceOverride ?? propertySource;
     // Coming back to the tab: the default (last 30 days) report is shown at once from memory (per user), then refreshed quietly.
     const { getCachedData, setCachedData } = useDataCache();
-    const cacheKey = `tab-stock-report-${propertyId}`;
+    const cacheKey = `tab-stock-report-${propertyId}-${sourceOverride ?? 'live'}`;
     const initialCached = useMemo(() => (propertyId ? getCachedData(cacheKey) : null), []); // eslint-disable-line react-hooks/exhaustive-deps
     const quietFirstLoad = useRef(!!initialCached);
     const [items, setItems] = useState<StockItem[]>(initialCached?.items ?? []);
@@ -53,16 +59,17 @@ const StockReportView: React.FC<StockReportViewProps> = ({ propertyId, propertyN
     const [isExporting, setIsExporting] = useState(false);
 
     const fetchData = useCallback(async () => {
-        if (!propertyId) return;
+        if (!propertyId || isLoadingSource) return;
         if (quietFirstLoad.current) quietFirstLoad.current = false; else setIsLoading(true);
 
         try {
             // Fetch items
             const { data: itemsData } = await supabase
                 .from('stock_items')
-                .select('id, name, item_code, quantity, min_threshold, category, unit, per_unit_cost')
+                .select('*')
                 .eq('property_id', propertyId)
                 .order('name');
+            const listItems = liveItems(itemsData || [], itemSource);
 
             // Fetch movements with date filter
             let movementQuery = supabase
@@ -100,17 +107,18 @@ const StockReportView: React.FC<StockReportViewProps> = ({ propertyId, propertyN
                     .lte('created_at', end.toISOString());
             }
 
-            const { data: movementsData } = await movementQuery;
+            const { data: allMovements } = await movementQuery;
+            const movementsData = movementsForItems((allMovements as unknown as Movement[]) || [], new Set(listItems.map(i => i.id)), itemSource);
 
-            setItems(itemsData || []);
-            setMovements((movementsData as unknown as Movement[]) || []);
-            if (dateRange === '30d') setCachedData(cacheKey, { items: itemsData || [], movements: movementsData || [] });
+            setItems(listItems);
+            setMovements(movementsData);
+            if (dateRange === '30d') setCachedData(cacheKey, { items: listItems, movements: movementsData });
         } catch (err) {
             console.error('Error fetching report data:', err);
         } finally {
             setIsLoading(false);
         }
-    }, [propertyId, supabase, dateRange, customStart, customEnd, cacheKey, setCachedData]);
+    }, [propertyId, supabase, dateRange, customStart, customEnd, cacheKey, setCachedData, itemSource, isLoadingSource]);
 
     useEffect(() => {
         fetchData();
