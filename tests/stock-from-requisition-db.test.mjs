@@ -19,6 +19,11 @@ const BASE_SCHEMA = `
     CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
     CREATE SCHEMA auth;
     CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql AS $$ SELECT current_setting('test.user_id', true)::uuid $$;
+    -- Supabase's auth.role() reads the request JWT; here a session setting stands in for it.
+    CREATE FUNCTION auth.role() RETURNS text LANGUAGE sql AS $$ SELECT nullif(current_setting('test.role', true), '') $$;
+    -- Like Supabase: new functions in public are executable by anon and authenticated
+    -- unless a migration revokes it explicitly.
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated;
     CREATE FUNCTION public.is_master_admin_v2() RETURNS boolean LANGUAGE sql AS $$ SELECT false $$;
     CREATE FUNCTION public.is_org_admin_v2(uuid) RETURNS boolean LANGUAGE sql AS $$ SELECT false $$;
     CREATE FUNCTION public.is_property_member_v2(uuid) RETURNS boolean LANGUAGE sql AS $$ SELECT true $$;
@@ -48,6 +53,13 @@ const BASE_SCHEMA = `
         VALUES ('${PROP}', '${ORG}', 'OLD-1', 'Bleach 5L', 40, '${CAT_A}');
 `;
 
+const migrations = ['20261026000001_stock_from_requisition.sql', '20261026000002_stock_list_guards.sql'];
+async function migrate(db) {
+    for (const file of migrations) {
+        await db.exec(await readFile(new URL(`../supabase/migrations/${file}`, import.meta.url), 'utf8'));
+    }
+}
+
 const confirm = (key, lines, extra = {}) => ({
     sql: `SELECT public.confirm_requisition_delivery($1, $2, $3, $4, $5, $6, $7, $8::jsonb) AS d`,
     params: [USER, extra.requisition || REQ, extra.number || 'DC-1', '2026-10-26', extra.file ?? 'https://files/dc.pdf', 'dc.pdf', key, JSON.stringify(lines)],
@@ -59,7 +71,7 @@ test('delivery challans add to requisition-item stock only, once, and never past
     const db = new PGlite();
     try {
         await db.exec(BASE_SCHEMA);
-        await db.exec(await readFile(new URL('../supabase/migrations/20261026000001_stock_from_requisition.sql', import.meta.url), 'utf8'));
+        await migrate(db);
 
         // Existing rows become the old list; nothing about them changes.
         const old = (await db.query(`SELECT item_source, quantity FROM stock_items WHERE item_code = 'OLD-1'`)).rows[0];
@@ -80,11 +92,14 @@ test('delivery challans add to requisition-item stock only, once, and never past
             /stock_items_item_source_check/
         );
 
-        // Only the service role (the API) can post a challan.
-        await db.exec('SET ROLE authenticated');
-        const c0 = confirm(KEY_1, [line(CAT_A, 10, 6)]);
-        await assert.rejects(db.query(c0.sql, c0.params), /permission denied/);
-        await db.exec('RESET ROLE');
+        // Only the service role (the API) can post a challan, despite Supabase's default grants.
+        for (const role of ['authenticated', 'anon']) {
+            await db.exec(`SET ROLE ${role}`);
+            const c0 = confirm(KEY_1, [line(CAT_A, 10, 6)]);
+            await assert.rejects(db.query(c0.sql, c0.params), /permission denied/, `${role} must not run the challan function`);
+            await db.exec('RESET ROLE');
+        }
+        await db.exec(`SET test.role = 'service_role'`);
 
         // First challan: 6 of 10 bleach, 0 toilet roll.
         const c1 = confirm(KEY_1, [line(CAT_A, 10, 6), line(CAT_B, 5, 0)]);
@@ -140,8 +155,57 @@ test('delivery challans add to requisition-item stock only, once, and never past
         const c8 = confirm(KEY_3, [line(CAT_B, 9, 1)]);
         await assert.rejects(db.query(c8.sql, c8.params), /Stock item missing/);
 
-        // Running the migration a second time is harmless.
-        await db.exec(await readFile(new URL('../supabase/migrations/20261026000001_stock_from_requisition.sql', import.meta.url), 'utf8'));
+        // Running the migrations a second time is harmless.
+        await db.exec(`SET test.role = ''`);
+        await migrate(db);
         assert.equal(await qty('REQ-A'), 10);
+    } finally { await db.close(); }
+});
+
+test('browser writes cannot break the stock list rules; server writes are unaffected', async () => {
+    const db = new PGlite();
+    try {
+        await db.exec(BASE_SCHEMA);
+        await migrate(db);
+        await db.exec(`INSERT INTO stock_items(property_id, organization_id, item_code, name, catalog_item_id, item_source, quantity)
+            VALUES ('${PROP}', '${ORG}', 'REQ-A', 'Bleach 5 Ltr', '${CAT_A}', 'catalog', 5)`);
+
+        const asUser = sql => db.exec(`SET test.role = 'authenticated'; ${sql}; SET test.role = ''`)
+            .catch(async e => { await db.exec(`SET test.role = ''`); throw e; });
+        const qty = async code => Number((await db.query(`SELECT quantity FROM stock_items WHERE item_code = $1`, [code])).rows[0].quantity);
+
+        // Property still on its old list: the old list works as before.
+        await asUser(`UPDATE stock_items SET quantity = 41 WHERE item_code = 'OLD-1'`);
+        assert.equal(await qty('OLD-1'), 41);
+        await asUser(`INSERT INTO stock_items(property_id, organization_id, item_code, name) VALUES ('${PROP}', '${ORG}', 'OLD-2', 'Broom')`);
+        await asUser(`DELETE FROM stock_items WHERE item_code = 'OLD-2'`);
+        await assert.rejects(
+            asUser(`INSERT INTO stock_items(property_id, organization_id, item_code, name, item_source) VALUES ('${PROP}', '${ORG}', 'X', 'X', 'catalog')`),
+            /added automatically/
+        );
+        await assert.rejects(asUser(`UPDATE stock_items SET quantity = 9 WHERE item_code = 'REQ-A'`), /no longer uses/);
+
+        // Switch the property to requisition items.
+        await db.exec(`INSERT INTO property_stock_settings(property_id, organization_id, item_source) VALUES ('${PROP}', '${ORG}', 'catalog')`);
+
+        await asUser(`UPDATE stock_items SET quantity = 7 WHERE item_code = 'REQ-A'`);
+        assert.equal(await qty('REQ-A'), 7, 'Counting requisition items still works from the browser');
+        await assert.rejects(asUser(`UPDATE stock_items SET quantity = 0 WHERE item_code = 'OLD-1'`), /no longer uses/);
+        await assert.rejects(asUser(`DELETE FROM stock_items WHERE item_code = 'OLD-1'`), /no longer uses/);
+        await assert.rejects(asUser(`UPDATE stock_items SET name = 'Renamed' WHERE item_code = 'REQ-A'`), /come from Manage Items/);
+        await assert.rejects(asUser(`UPDATE stock_items SET unit = 'kg' WHERE item_code = 'REQ-A'`), /come from Manage Items/);
+        await assert.rejects(asUser(`UPDATE stock_items SET catalog_item_id = '${CAT_B}' WHERE item_code = 'REQ-A'`), /cannot be moved/);
+        await assert.rejects(asUser(`UPDATE stock_items SET item_source = 'legacy' WHERE item_code = 'REQ-A'`), /cannot be moved/);
+        await assert.rejects(asUser(`DELETE FROM stock_items WHERE item_code = 'REQ-A'`), /cannot be deleted/);
+        await assert.rejects(
+            asUser(`INSERT INTO stock_items(property_id, organization_id, item_code, name) VALUES ('${PROP}', '${ORG}', 'OLD-3', 'Mop')`),
+            /cannot be added here/
+        );
+        assert.equal(await qty('OLD-1'), 41, 'Old stock is untouched');
+
+        // Server-side writes (service role, SQL editor) are not restricted.
+        await db.exec(`SET test.role = 'service_role'; UPDATE stock_items SET name = 'Bleach Chemical 5 Ltr' WHERE item_code = 'REQ-A'; SET test.role = ''`);
+        await db.exec(`UPDATE stock_items SET quantity = 40 WHERE item_code = 'OLD-1'`);
+        assert.equal(await qty('OLD-1'), 40);
     } finally { await db.close(); }
 });

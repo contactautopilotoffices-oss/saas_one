@@ -10,7 +10,7 @@ import StockMovementModal from './StockMovementModal';
 import StockReportView from './StockReportView';
 import { useDataCache } from '@/frontend/context/DataCacheContext';
 import { usePropertyStockSource } from '@/frontend/hooks/usePropertyStockSource';
-import { itemSourceOf, liveItems, movementsForItems } from '@/frontend/lib/stock/itemSource';
+import { itemSourceOf, liveItems, movementsForItems, withListFilter } from '@/frontend/lib/stock/itemSource';
 
 type SubTab = 'inventory' | 'movements' | 'reports' | 'old';
 
@@ -38,19 +38,23 @@ const StockDashboard: React.FC<StockDashboardProps> = ({ propertyId, hideReports
     const [preSelectedItemId, setPreSelectedItemId] = useState<string | undefined>(undefined);
     const { getCachedData, setCachedData, invalidateCache } = useDataCache();
     const statsCacheKey = `stock-stats-${propertyId}`;
-    const movementsCacheKey = `stock-movements-${propertyId}`;
-    
+
     const [stats, setStats] = useState(() => getCachedData(statsCacheKey) || { totalItems: 0, lowStockCount: 0, totalValue: 0 });
-    const [movements, setMovements] = useState<Movement[]>(() => getCachedData(movementsCacheKey) || []);
+    const [movements, setMovements] = useState<Movement[]>([]);
     const [isLoading, setIsLoading] = useState(!getCachedData(statsCacheKey));
     const [isLoadingMovements, setIsLoadingMovements] = useState(false);
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
     const [propertyDetails, setPropertyDetails] = useState<{ name: string; code: string } | null>(null);
     const supabase = React.useMemo(() => createClient(), []);
-    const { itemSource, oldItemCount, loading: isLoadingSource } = usePropertyStockSource(propertyId);
+    const { itemSource, oldItemCount, loading: isLoadingSource, error: sourceError, reload: reloadSource } = usePropertyStockSource(propertyId);
     // Old Stock only for properties that really kept stock before switching to requisition items.
     const showOldStock = itemSource === 'catalog' && oldItemCount > 0;
     const [listVersion, setListVersion] = useState(0);
+    // Per list, so movements cached before a switch are never shown after it.
+    const movementsCacheKey = `stock-movements-${propertyId}-${itemSource}`;
+    useEffect(() => {
+        if (!isLoadingSource) setMovements(getCachedData(movementsCacheKey) || []);
+    }, [movementsCacheKey, isLoadingSource]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Items procurement added to this property's requisition list since the last visit.
     useEffect(() => {
@@ -84,12 +88,12 @@ const StockDashboard: React.FC<StockDashboardProps> = ({ propertyId, hideReports
     }, [propertyId, supabase]);
 
     const fetchStats = useCallback(async () => {
-        if (isLoadingSource) return;
+        if (isLoadingSource || sourceError) return;
         try {
-            const { data, error } = await supabase
-                .from('stock_items')
-                .select('*')
-                .eq('property_id', propertyId);
+            const { data, error } = await withListFilter(filtered => {
+                const query = supabase.from('stock_items').select('*').eq('property_id', propertyId);
+                return filtered ? query.eq('item_source', itemSource) : query;
+            });
 
             if (error) throw error;
 
@@ -112,18 +116,23 @@ const StockDashboard: React.FC<StockDashboardProps> = ({ propertyId, hideReports
         } finally {
             setIsLoading(false);
         }
-    }, [propertyId, supabase, itemSource, isLoadingSource, listVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [propertyId, supabase, itemSource, isLoadingSource, sourceError, listVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const fetchMovements = useCallback(async () => {
-        if (isLoadingSource) return;
+        if (isLoadingSource || sourceError) return;
         try {
             setIsLoadingMovements(true);
-            const { data, error } = await supabase
-                .from('stock_movements')
-                .select('id, action, quantity_change, notes, created_at, quantity_before, quantity_after, item_id, stock_items:item_id(*), users:user_id(full_name)')
-                .eq('property_id', propertyId)
-                .order('created_at', { ascending: false })
-                .limit(50);
+            // On requisition items, filter in the query so the 50 latest are all from this list.
+            const { data, error } = await withListFilter(filtered => {
+                const listFilter = filtered && itemSource === 'catalog';
+                const query = supabase
+                    .from('stock_movements')
+                    .select(`id, action, quantity_change, notes, created_at, quantity_before, quantity_after, item_id, stock_items:item_id${listFilter ? '!inner' : ''}(*), users:user_id(full_name)`)
+                    .eq('property_id', propertyId);
+                return (listFilter ? query.eq('stock_items.item_source', 'catalog') : query)
+                    .order('created_at', { ascending: false })
+                    .limit(50);
+            });
 
             if (error) throw error;
             // Only movements of items on the list this property uses.
@@ -143,7 +152,7 @@ const StockDashboard: React.FC<StockDashboardProps> = ({ propertyId, hideReports
         } finally {
             setIsLoadingMovements(false);
         }
-    }, [propertyId, supabase, itemSource, isLoadingSource]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [propertyId, supabase, itemSource, isLoadingSource, sourceError]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
         fetchStats();
@@ -261,7 +270,15 @@ const StockDashboard: React.FC<StockDashboardProps> = ({ propertyId, hideReports
 
             {/* Content */}
             <div className="mt-2">
-                {isLoading || isLoadingSource ? (
+                {sourceError ? (
+                    <div className="text-center py-12 space-y-3">
+                        <AlertTriangle size={32} className="mx-auto text-orange-400" />
+                        <p className="text-sm text-gray-600">{sourceError}</p>
+                        <button onClick={() => reloadSource()} className="px-4 py-2 bg-primary text-text-inverse rounded-xl text-sm font-bold">
+                            Try again
+                        </button>
+                    </div>
+                ) : isLoading || isLoadingSource ? (
                     <Skeleton className="h-96" />
                 ) : (
                     <>

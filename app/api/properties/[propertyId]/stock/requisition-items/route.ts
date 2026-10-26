@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { addMissingRequisitionItems, getPropertyStockSource } from '@/backend/lib/stock/propertyStock';
 
 /**
@@ -34,7 +35,10 @@ export async function POST(
             return NextResponse.json({ success: true, added: 0, total: 0 });
         }
 
-        const result = await addMissingRequisitionItems(supabase, {
+        // The caller can see the property (checked above through RLS); the rows
+        // themselves are written server-side, which is the only way the
+        // stock_items guard (20261026000002) lets requisition rows be created.
+        const result = await addMissingRequisitionItems(createAdminClient(), {
             organizationId: property.organization_id,
             propertyId,
             propertyCode: property.code,

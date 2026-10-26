@@ -12,7 +12,7 @@ import { Toast } from '@/frontend/components/ui/Toast';
 import BarcodeGenerator, { downloadBarcode } from './Barcode';
 import StockQRSheetModal from './StockQRSheetModal';
 import CurrentStockModal from './CurrentStockModal';
-import { liveItems, type StockItemSource } from '@/frontend/lib/stock/itemSource';
+import { liveItems, withListFilter, type StockItemSource } from '@/frontend/lib/stock/itemSource';
 
 const BarcodeScannerModal = dynamic(
     () => import('./BarcodeScannerModal'),
@@ -72,11 +72,10 @@ const StockItemList: React.FC<StockItemListProps> = ({ propertyId, onRefresh, pr
     const fetchItems = useCallback(async () => {
         try {
             setIsLoading(true);
-            const { data, error } = await supabase
-                .from('stock_items')
-                .select('*')
-                .eq('property_id', propertyId)
-                .order('name', { ascending: true });
+            const { data, error } = await withListFilter(filtered => {
+                const query = supabase.from('stock_items').select('*').eq('property_id', propertyId);
+                return (filtered ? query.eq('item_source', itemSource) : query).order('name', { ascending: true });
+            });
 
             if (error) throw error;
             setItems(liveItems(data || [], itemSource));

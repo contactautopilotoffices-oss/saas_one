@@ -232,7 +232,7 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.confirm_requisition_delivery(UUID, UUID, TEXT, DATE, TEXT, TEXT, UUID, JSONB) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.confirm_requisition_delivery(UUID, UUID, TEXT, DATE, TEXT, TEXT, UUID, JSONB) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.confirm_requisition_delivery(UUID, UUID, TEXT, DATE, TEXT, TEXT, UUID, JSONB) TO service_role;
 
 COMMIT;

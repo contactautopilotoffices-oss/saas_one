@@ -10,7 +10,7 @@ import {
 import { format, subDays, startOfDay, endOfDay, addDays, isSameDay } from 'date-fns';
 import { createClient } from '@/frontend/utils/supabase/client';
 import { usePropertyStockSource } from '@/frontend/hooks/usePropertyStockSource';
-import { liveItems, movementsForItems, type StockItemSource } from '@/frontend/lib/stock/itemSource';
+import { liveItems, movementsForItems, withListFilter, type StockItemSource } from '@/frontend/lib/stock/itemSource';
 
 interface StockReportViewProps {
     propertyId?: string;
@@ -42,7 +42,7 @@ interface Movement {
 }
 
 const StockReportView: React.FC<StockReportViewProps> = ({ propertyId, propertyName, itemSource: sourceOverride }) => {
-    const { itemSource: propertySource, loading: isLoadingSource } = usePropertyStockSource(sourceOverride ? undefined : propertyId);
+    const { itemSource: propertySource, loading: isLoadingSource, error: sourceError } = usePropertyStockSource(sourceOverride ? undefined : propertyId);
     const itemSource = sourceOverride ?? propertySource;
     // Coming back to the tab: the default (last 30 days) report is shown at once from memory (per user), then refreshed quietly.
     const { getCachedData, setCachedData } = useDataCache();
@@ -59,55 +59,60 @@ const StockReportView: React.FC<StockReportViewProps> = ({ propertyId, propertyN
     const [isExporting, setIsExporting] = useState(false);
 
     const fetchData = useCallback(async () => {
-        if (!propertyId || isLoadingSource) return;
+        // No report on a guessed list: wait for the real one (the dashboard shows the error).
+        if (!propertyId || isLoadingSource || sourceError) return;
         if (quietFirstLoad.current) quietFirstLoad.current = false; else setIsLoading(true);
 
         try {
             // Fetch items
-            const { data: itemsData } = await supabase
-                .from('stock_items')
-                .select('*')
-                .eq('property_id', propertyId)
-                .order('name');
+            const { data: itemsData } = await withListFilter(filtered => {
+                const query = supabase.from('stock_items').select('*').eq('property_id', propertyId);
+                return (filtered ? query.eq('item_source', itemSource) : query).order('name');
+            });
             const listItems = liveItems(itemsData || [], itemSource);
 
             // Fetch movements with date filter
-            let movementQuery = supabase
-                .from('stock_movements')
-                .select('id, action, quantity_change, created_at, item_id, stock_items:item_id(name, item_code, unit), users:user_id(full_name)')
-                .eq('property_id', propertyId)
-                .order('created_at', { ascending: false });
+            // On requisition items, filter in the query so the 1000-row cap of "All" applies to this list only.
+            const buildMovementQuery = (listFilter: boolean) => {
+                let movementQuery = supabase
+                    .from('stock_movements')
+                    .select(`id, action, quantity_change, created_at, item_id, stock_items:item_id${listFilter ? '!inner' : ''}(name, item_code, unit${listFilter ? ', item_source' : ''}), users:user_id(full_name)`)
+                    .eq('property_id', propertyId)
+                    .order('created_at', { ascending: false });
+                if (listFilter) movementQuery = movementQuery.eq('stock_items.item_source', 'catalog');
 
-            // Only limit if it's 'all' or a very small subset without range
-            if (dateRange === 'all') {
-                movementQuery = movementQuery.limit(1000);
-            }
-
-            if (dateRange !== 'all') {
-                let start: Date;
-                let end: Date = endOfDay(new Date());
-
-                if (dateRange === 'today') {
-                    start = startOfDay(new Date());
-                } else if (dateRange === '7d') {
-                    start = startOfDay(subDays(new Date(), 6));
-                } else if (dateRange === '30d') {
-                    start = startOfDay(subDays(new Date(), 29));
-                } else if (dateRange === 'this_month') {
-                    const now = new Date();
-                    start = new Date(now.getFullYear(), now.getMonth(), 1);
-                    end = endOfDay(now);
-                } else { // custom
-                    start = startOfDay(new Date(customStart));
-                    end = endOfDay(new Date(customEnd));
+                // Only limit if it's 'all' or a very small subset without range
+                if (dateRange === 'all') {
+                    movementQuery = movementQuery.limit(1000);
                 }
 
-                movementQuery = movementQuery
-                    .gte('created_at', start.toISOString())
-                    .lte('created_at', end.toISOString());
-            }
+                if (dateRange !== 'all') {
+                    let start: Date;
+                    let end: Date = endOfDay(new Date());
 
-            const { data: allMovements } = await movementQuery;
+                    if (dateRange === 'today') {
+                        start = startOfDay(new Date());
+                    } else if (dateRange === '7d') {
+                        start = startOfDay(subDays(new Date(), 6));
+                    } else if (dateRange === '30d') {
+                        start = startOfDay(subDays(new Date(), 29));
+                    } else if (dateRange === 'this_month') {
+                        const now = new Date();
+                        start = new Date(now.getFullYear(), now.getMonth(), 1);
+                        end = endOfDay(now);
+                    } else { // custom
+                        start = startOfDay(new Date(customStart));
+                        end = endOfDay(new Date(customEnd));
+                    }
+
+                    movementQuery = movementQuery
+                        .gte('created_at', start.toISOString())
+                        .lte('created_at', end.toISOString());
+                }
+                return movementQuery;
+            };
+
+            const { data: allMovements } = await withListFilter(filtered => buildMovementQuery(filtered && itemSource === 'catalog'));
             const movementsData = movementsForItems((allMovements as unknown as Movement[]) || [], new Set(listItems.map(i => i.id)), itemSource);
 
             setItems(listItems);
@@ -118,7 +123,7 @@ const StockReportView: React.FC<StockReportViewProps> = ({ propertyId, propertyN
         } finally {
             setIsLoading(false);
         }
-    }, [propertyId, supabase, dateRange, customStart, customEnd, cacheKey, setCachedData, itemSource, isLoadingSource]);
+    }, [propertyId, supabase, dateRange, customStart, customEnd, cacheKey, setCachedData, itemSource, isLoadingSource, sourceError]);
 
     useEffect(() => {
         fetchData();

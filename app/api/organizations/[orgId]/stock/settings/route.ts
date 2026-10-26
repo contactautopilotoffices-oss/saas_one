@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { isMissingSchemaError, isProcurementUser } from '@/backend/lib/procurement/catalogAccess';
-import { addMissingRequisitionItems } from '@/backend/lib/stock/propertyStock';
-import { AUTO_SYNC_CODE_PREFIX, itemSourceOf, toItemSource } from '@/frontend/lib/stock/itemSource';
+import { addMissingRequisitionItems, countRealOldItems } from '@/backend/lib/stock/propertyStock';
+import { toItemSource } from '@/frontend/lib/stock/itemSource';
 
 const MISSING_STOCK_SCHEMA =
     'The stock switch has not been applied to this database yet. Run the pending Supabase migration 20261026000001 and try again.';
@@ -55,27 +55,23 @@ export async function GET(
         const schemaMissing = isMissingSchemaError(settingsError);
         if (settingsError && !schemaMissing) return NextResponse.json({ error: settingsError.message }, { status: 500 });
 
-        // Paged: PostgREST returns at most 1000 rows per request.
-        const items: Record<string, unknown>[] = [];
-        for (let from = 0; ; from += 1000) {
-            const { data: page, error: itemsError } = await admin
-                .from('stock_items')
-                .select('*')
-                .eq('organization_id', orgId)
-                .order('id')
-                .range(from, from + 999);
-            if (itemsError) return NextResponse.json({ error: itemsError.message }, { status: 500 });
-            items.push(...(page || []));
-            if (!page || page.length < 1000) break;
-        }
-
         const byProperty = new Map((settings || []).map(s => [s.property_id, s]));
+
+        // Same rule as the property's own Old Stock tab (countRealOldItems), and a
+        // head-only count for requisition rows, so nothing is capped at 1000 rows.
         const counts = new Map<string, { old: number; requisition: number }>();
-        for (const item of items as { property_id: string; item_code?: string; item_source?: string }[]) {
-            const c = counts.get(item.property_id) || { old: 0, requisition: 0 };
-            if (itemSourceOf(item) === 'catalog') c.requisition++;
-            else if (!String(item.item_code || '').startsWith(AUTO_SYNC_CODE_PREFIX)) c.old++;
-            counts.set(item.property_id, c);
+        if (!schemaMissing) {
+            await Promise.all((properties || []).map(async p => {
+                const [old, requisition] = await Promise.all([
+                    countRealOldItems(admin, p.id),
+                    admin.from('stock_items')
+                        .select('id', { count: 'exact', head: true })
+                        .eq('property_id', p.id)
+                        .eq('item_source', 'catalog'),
+                ]);
+                if (requisition.error) throw requisition.error;
+                counts.set(p.id, { old, requisition: requisition.count || 0 });
+            }));
         }
 
         return NextResponse.json({

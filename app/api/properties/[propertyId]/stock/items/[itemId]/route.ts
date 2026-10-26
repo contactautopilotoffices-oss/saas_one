@@ -56,6 +56,12 @@ export async function PUT(
         const body = await request.json();
         const { name, category, unit, min_threshold, location, description } = body;
 
+        if (existing?.item_source === 'catalog' && (
+            (name && name !== existing.name) || (category && category !== existing.category) || (unit && unit !== existing.unit)
+        )) {
+            return NextResponse.json({ error: 'Name, unit and category of requisition stock items come from Manage Items and cannot be changed here.' }, { status: 409 });
+        }
+
         const { data: item, error: updateError } = await supabase
             .from('stock_items')
             .update({

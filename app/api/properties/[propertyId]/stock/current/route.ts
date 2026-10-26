@@ -52,6 +52,11 @@ export async function POST(
         }
 
         const liveItems = (items || []).filter(i => itemSourceOf(i) === source);
+        if (liveItems.length !== wanted.size) {
+            return NextResponse.json({
+                error: 'Your stock list has changed since this screen was opened. Refresh and enter the counts again.',
+            }, { status: 409 });
+        }
         const changed = liveItems.filter(i => Number(i.quantity) !== wanted.get(i.id));
         if (changed.length === 0) {
             return NextResponse.json({ success: true, updated: 0 });

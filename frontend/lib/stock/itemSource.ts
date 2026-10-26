@@ -40,6 +40,17 @@ export function movementsForItems<T extends { item_id?: string | null }>(
     return movements.filter(m => (m.item_id ? liveItemIds.has(m.item_id) : source === 'legacy'));
 }
 
+/**
+ * Run a query with the list filter in the query itself (so row limits apply to
+ * the right list), and once more without it if that fails, e.g. on a database
+ * without 20261026000001, which has no item_source column. Callers still filter
+ * in JavaScript, so both paths show the same rows.
+ */
+export async function withListFilter<R extends { error: unknown }>(run: (filtered: boolean) => PromiseLike<R>): Promise<R> {
+    const filtered = await run(true);
+    return filtered.error ? run(false) : filtered;
+}
+
 /** Stock item code for a requisition item: stable, and never clashes with old codes. */
 export function requisitionStockCode(catalogItem: { id: string; item_code?: string | null }): string {
     const base = catalogItem.item_code || `ITM-${catalogItem.id.replace(/-/g, '').slice(0, 8).toUpperCase()}`;
