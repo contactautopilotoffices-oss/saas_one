@@ -19,20 +19,23 @@ interface Props {
     onClose: () => void;
 }
 
-// A4 sheet: 4 columns, 5 rows, 20 codes per page, item name under each QR.
+// A4 sheet, grouped by category: a heading per category, then its codes 4 per
+// row with the item name under each QR. A heading plus 5 rows fits one page.
 const COLS = 4;
-const ROWS = 5;
 const PAGE_W = 210;
 const PAGE_H = 297;
 const MARGIN = 8;
 const HEADER_H = 8;
+const SECTION_H = 9;
 const CELL_W = (PAGE_W - MARGIN * 2) / COLS;
-const CELL_H = (PAGE_H - MARGIN * 2 - HEADER_H) / ROWS;
+const CELL_H = 50;
 const QR_SIZE_MM = 34;
 const QR_PX = 400;
 const CARD_BORDER: [number, number, number] = [225, 225, 230];
 const TEXT_DARK: [number, number, number] = [20, 20, 24];
 const TEXT_MUTED: [number, number, number] = [130, 130, 138];
+const SECTION_FILL: [number, number, number] = [241, 245, 249];
+const NO_CATEGORY = 'Other';
 
 /** What the stock scanner reads: the item's barcode, or its code if it has none. */
 const qrValue = (item: QRSheetItem) => item.barcode || item.item_code;
@@ -85,6 +88,19 @@ export default function StockQRSheetModal({ items, propertyName, onClose }: Prop
         [items, category]
     );
 
+    /** Categories in alphabetical order ('Other' last), items by name inside each. */
+    const groups = useMemo(() => {
+        const byCategory = new Map<string, QRSheetItem[]>();
+        for (const item of selected) {
+            const key = item.category || NO_CATEGORY;
+            if (!byCategory.has(key)) byCategory.set(key, []);
+            byCategory.get(key)!.push(item);
+        }
+        return [...byCategory.entries()]
+            .sort(([a], [b]) => (a === NO_CATEGORY ? 1 : b === NO_CATEGORY ? -1 : a.localeCompare(b)))
+            .map(([name, rows]) => [name, [...rows].sort((a, b) => a.name.localeCompare(b.name))] as const);
+    }, [selected]);
+
     const handleDownload = async () => {
         setGenerating(true);
         setProgress(0);
@@ -93,9 +109,76 @@ export default function StockQRSheetModal({ items, propertyName, onClose }: Prop
             const doc = new jsPDF('p', 'mm', 'a4');
             const title = `${propertyName || 'Property'} - Stock QR Codes${category ? ` (${category})` : ''}`;
             const dateText = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-            const pages = Math.max(1, Math.ceil(selected.length / (COLS * ROWS)));
+            const top = MARGIN + HEADER_H;
+            const bottom = PAGE_H - MARGIN;
+            let y = top;
+            let done = 0;
 
-            const drawHeader = (page: number) => {
+            const drawSection = (name: string, count: number, continued: boolean) => {
+                doc.setFillColor(...SECTION_FILL);
+                doc.roundedRect(MARGIN + 1, y + 1, PAGE_W - MARGIN * 2 - 2, SECTION_H - 2, 1.5, 1.5, 'F');
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(9);
+                doc.setTextColor(...TEXT_DARK);
+                doc.text(`${name}${continued ? ' (continued)' : ''}`, MARGIN + 4, y + SECTION_H / 2 + 1.2);
+                doc.setFont('helvetica', 'normal');
+                doc.setFontSize(7.5);
+                doc.setTextColor(...TEXT_MUTED);
+                doc.text(`${count} item${count === 1 ? '' : 's'}`, PAGE_W - MARGIN - 4, y + SECTION_H / 2 + 1.2, { align: 'right' });
+                y += SECTION_H;
+            };
+
+            for (const [name, rows] of groups) {
+                // Never leave a heading alone at the bottom of a page.
+                if (y + SECTION_H + CELL_H > bottom) {
+                    doc.addPage();
+                    y = top;
+                }
+                drawSection(name, rows.length, false);
+
+                for (let i = 0; i < rows.length; i++) {
+                    const col = i % COLS;
+                    if (col === 0 && i > 0) y += CELL_H;
+                    if (col === 0 && y + CELL_H > bottom) {
+                        doc.addPage();
+                        y = top;
+                        drawSection(name, rows.length, true);
+                    }
+
+                    const item = rows[i];
+                    const x = MARGIN + col * CELL_W;
+
+                    doc.setDrawColor(...CARD_BORDER);
+                    doc.setLineWidth(0.25);
+                    doc.roundedRect(x + 1, y + 1, CELL_W - 2, CELL_H - 2, 2, 2, 'S');
+
+                    const svgEl = document.getElementById(`stock-qr-${item.id}`) as unknown as SVGSVGElement | null;
+                    if (svgEl) {
+                        const png = await svgToPng(svgEl);
+                        // 'FAST' compresses the image; raw pixels would make a huge file.
+                        doc.addImage(png, 'PNG', x + (CELL_W - QR_SIZE_MM) / 2, y + 2.5, QR_SIZE_MM, QR_SIZE_MM, undefined, 'FAST');
+                    }
+
+                    doc.setFont('helvetica', 'bold');
+                    doc.setFontSize(8);
+                    doc.setTextColor(...TEXT_DARK);
+                    doc.text(nameLines(doc, item.name, CELL_W - 6), x + CELL_W / 2, y + 2.5 + QR_SIZE_MM + 3.5, { align: 'center' });
+
+                    doc.setFont('helvetica', 'normal');
+                    doc.setFontSize(6);
+                    doc.setTextColor(...TEXT_MUTED);
+                    doc.text(item.item_code, x + CELL_W / 2, y + CELL_H - 2.5, { align: 'center' });
+
+                    done++;
+                    setProgress(Math.round((done / selected.length) * 100));
+                }
+                y += CELL_H;
+            }
+
+            // Page headers last, once the page count is known.
+            const pages = doc.getNumberOfPages();
+            for (let page = 1; page <= pages; page++) {
+                doc.setPage(page);
                 doc.setFont('helvetica', 'bold');
                 doc.setFontSize(10);
                 doc.setTextColor(...TEXT_DARK);
@@ -104,44 +187,6 @@ export default function StockQRSheetModal({ items, propertyName, onClose }: Prop
                 doc.setFontSize(8);
                 doc.setTextColor(...TEXT_MUTED);
                 doc.text(`${dateText}  |  Page ${page} of ${pages}`, PAGE_W - MARGIN, MARGIN + 4, { align: 'right' });
-            };
-
-            drawHeader(1);
-            for (let i = 0; i < selected.length; i++) {
-                const item = selected[i];
-                const slot = i % (COLS * ROWS);
-                if (i > 0 && slot === 0) {
-                    doc.addPage();
-                    drawHeader(i / (COLS * ROWS) + 1);
-                }
-                const col = slot % COLS;
-                const row = Math.floor(slot / COLS);
-                const x = MARGIN + col * CELL_W;
-                const y = MARGIN + HEADER_H + row * CELL_H;
-
-                doc.setDrawColor(...CARD_BORDER);
-                doc.setLineWidth(0.25);
-                doc.roundedRect(x + 1, y + 1, CELL_W - 2, CELL_H - 2, 2, 2, 'S');
-
-                const svgEl = document.getElementById(`stock-qr-${item.id}`) as unknown as SVGSVGElement | null;
-                if (svgEl) {
-                    const png = await svgToPng(svgEl);
-                    // 'FAST' compresses the image; raw pixels would make a huge file.
-                    doc.addImage(png, 'PNG', x + (CELL_W - QR_SIZE_MM) / 2, y + 3, QR_SIZE_MM, QR_SIZE_MM, undefined, 'FAST');
-                }
-
-                doc.setFont('helvetica', 'bold');
-                doc.setFontSize(8);
-                doc.setTextColor(...TEXT_DARK);
-                const lines = nameLines(doc, item.name, CELL_W - 6);
-                doc.text(lines, x + CELL_W / 2, y + 3 + QR_SIZE_MM + 4, { align: 'center' });
-
-                doc.setFont('helvetica', 'normal');
-                doc.setFontSize(6);
-                doc.setTextColor(...TEXT_MUTED);
-                doc.text(item.item_code, x + CELL_W / 2, y + CELL_H - 3.5, { align: 'center' });
-
-                setProgress(Math.round(((i + 1) / selected.length) * 100));
             }
 
             const safe = (propertyName || 'property').replace(/[^a-zA-Z0-9]+/g, '_');
@@ -184,7 +229,7 @@ export default function StockQRSheetModal({ items, propertyName, onClose }: Prop
                         </label>
                     )}
                     <p className="text-sm text-slate-600">
-                        One A4 PDF, {COLS} QR codes per row, item name below each. Print it, cut along the boxes and stick each code where the item is kept.
+                        One A4 PDF grouped by category, {COLS} QR codes per row, item name below each. Print it, cut along the boxes and stick each code where the item is kept.
                     </p>
                     {generating && (
                         <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
