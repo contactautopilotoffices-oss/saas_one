@@ -7,7 +7,7 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
     Building2, ChevronDown, ClipboardList, Droplets, FlaskConical, Fuel, GitBranch, Layers, LayoutDashboard, LogOut,
-    Menu, TrendingUp, Gauge, UserCircle, Users, Wrench, X, Zap,
+    Menu, ScanFace, TrendingUp, Gauge, UserCircle, Users, Wrench, X, Zap,
 } from 'lucide-react';
 import { createClient } from '@/frontend/utils/supabase/client';
 import { useAuth } from '@/frontend/context/AuthContext';
@@ -30,11 +30,12 @@ const ElectricityStaffDashboard = dynamic(() => import('../electricity/Electrici
 const OrgProgressTracker = dynamic(() => import('@/frontend/components/org-efficiency/OrgProgressTracker'), { loading: TabLoading });
 const OrgEfficiencyMeter = dynamic(() => import('@/frontend/components/org-efficiency/OrgEfficiencyMeter'), { loading: TabLoading });
 const VMSOrgVisitorDashboard = dynamic(() => import('@/frontend/components/vms/VMSOrgVisitorDashboard'), { loading: TabLoading });
+const VMSFaceDashboard = dynamic(() => import('@/frontend/components/vms-face/VMSFaceDashboard'), { loading: TabLoading });
 const EscalationHierarchyBuilder = dynamic(() => import('@/frontend/components/escalation/EscalationHierarchyBuilder'), { loading: TabLoading });
 const PPMModule = dynamic(() => import('@/frontend/components/ppm/PPMModule'), { loading: TabLoading });
 
 type TechTab =
-    | 'tasks' | 'control_centre'
+    | 'tasks' | 'control_centre' | 'vms_face'
     | 'water_logger' | 'water' | 'diesel_logger' | 'diesel' | 'electricity_logger' | 'ppm'
     | 'org_progress' | 'org_efficiency' | 'visitors' | 'escalation'
     | 'profile';
@@ -47,6 +48,7 @@ const NAV: Array<{ section: string; items: NavItem[] }> = [
         items: [
             { id: 'tasks', label: 'Task Manager', icon: ClipboardList },
             { id: 'control_centre', label: 'Control Centre', icon: FlaskConical },
+            { id: 'vms_face', label: 'VMS Face (Testing)', icon: ScanFace },
         ],
     },
     {
@@ -83,6 +85,7 @@ const NEEDS_PROPERTY: Partial<Record<TechTab, string>> = {
     water_logger: 'water logs',
     diesel_logger: 'diesel logs',
     electricity_logger: 'electricity logs',
+    vms_face: 'the face VMS',
 };
 
 interface Property { id: string; name: string; code: string; image_url?: string }
@@ -251,6 +254,7 @@ export default function TechDashboard() {
                         <>
                             {activeTab === 'tasks' && <TaskManagerSuperuserDashboard orgId={org?.id || ''} />}
                             {activeTab === 'control_centre' && <TaskManagerTestingDashboard orgId={org?.id || ''} />}
+                            {activeTab === 'vms_face' && propertyFilter && <VMSFaceDashboard key={propertyFilter} propertyId={propertyFilter} propertyName={activeProperty?.name || ''} />}
                             {activeTab === 'water_logger' && propertyFilter && <WaterDashboard propertyId={propertyFilter} />}
                             {activeTab === 'water' && <WaterAnalyticsDashboard key="water-analytics-tab" propertyId={propertyFilter} orgId={org?.id} properties={properties} />}
                             {activeTab === 'diesel_logger' && propertyFilter && <DieselStaffDashboard propertyId={propertyFilter} />}
