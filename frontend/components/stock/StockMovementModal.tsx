@@ -58,6 +58,15 @@ const UNIT_CONVERSIONS: Record<string, { label: string; subUnit: string; subLabe
     'cm': { label: 'cm', subUnit: 'meter', subLabel: 'Meter', factor: 100 },
     'centimeter': { label: 'cm', subUnit: 'meter', subLabel: 'Meter', factor: 100 },
     'centimeters': { label: 'cm', subUnit: 'meter', subLabel: 'Meter', factor: 100 },
+    // Short spellings used in older item lists
+    'ltr': { label: 'Ltr', subUnit: 'ml', subLabel: 'ml', factor: 1000 },
+    'ltrs': { label: 'Ltr', subUnit: 'ml', subLabel: 'ml', factor: 1000 },
+    'lt': { label: 'Ltr', subUnit: 'ml', subLabel: 'ml', factor: 1000 },
+    'kgs': { label: 'Kg', subUnit: 'grams', subLabel: 'Grams', factor: 1000 },
+    'gm': { label: 'g', subUnit: 'kg', subLabel: 'Kg', factor: 1000 },
+    'gms': { label: 'g', subUnit: 'kg', subLabel: 'Kg', factor: 1000 },
+    'mtr': { label: 'm', subUnit: 'cm', subLabel: 'cm', factor: 100 },
+    'mtrs': { label: 'm', subUnit: 'cm', subLabel: 'cm', factor: 100 },
 };
 
 function cleanUnitLabel(unit: string | undefined): string {
@@ -71,9 +80,9 @@ function getUnitConversion(unit: string | undefined) {
     if (UNIT_CONVERSIONS[normalized]) return UNIT_CONVERSIONS[normalized];
     const stripped = normalized.replace(/^[\d.,\s]+/, '').trim();
     if (UNIT_CONVERSIONS[stripped]) return UNIT_CONVERSIONS[stripped];
-    for (const key of Object.keys(UNIT_CONVERSIONS)) {
-        if (normalized.includes(key)) return UNIT_CONVERSIONS[key];
-    }
+    // Only a unit that IS a measure gets a sub-unit. Matching on "contains" made
+    // Roll a litre (l), Bag a gram (g) and Ream a metre (m); pack units such as
+    // "5 L Can" are counted as bought, so they get none either.
     return null;
 }
 
