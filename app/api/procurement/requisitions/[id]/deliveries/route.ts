@@ -253,11 +253,19 @@ export async function POST(
 
         // Every received item needs a requisition-list stock row to land in, even
         // one procurement has since taken off this property's list.
+        // Requisition lines are saved as the browser sent them, so a line's catalog
+        // id is only trusted once it is found in this organisation's catalog.
         const { data: catalogRows, error: catalogError } = await admin
             .from('procurement_catalog')
             .select('id, name, item_code, category, unit')
+            .eq('organization_id', requisition.organization_id)
             .in('id', lines.map(l => l.catalog_item_id));
         if (catalogError) throw catalogError;
+        const known = new Set((catalogRows || []).map(c => c.id as string));
+        const unknown = lines.find(l => !known.has(l.catalog_item_id));
+        if (unknown) {
+            return NextResponse.json({ error: `${unknown.item_name} is not an item in this organisation's catalog.` }, { status: 400 });
+        }
 
         const property = requisition.property as unknown as { code?: string | null } | null;
         await ensureStockRowsForCatalogItems(admin, {

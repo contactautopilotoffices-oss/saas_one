@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
-import { PricingAndAliasService } from '@/backend/lib/procurement/pricingAndAliasService';
+import { isMissingSchemaError } from '@/backend/lib/procurement/catalogAccess';
 import {
     AUTO_SYNC_CODE_PREFIX,
     itemSourceOf,
@@ -29,8 +29,11 @@ export async function getPropertyStockSource(propertyId: string): Promise<StockI
         .eq('property_id', propertyId)
         .maybeSingle();
 
-    // Missing table (migration not run) or no row: the property is on its old list.
-    if (error || !data) return 'legacy';
+    // Migration not run, or no row: the property is on its old list. Any other
+    // error must not be guessed at: guessing 'legacy' would unlock deleting a
+    // switched property's requisition items.
+    if (error && !isMissingSchemaError(error)) throw error;
+    if (!data) return 'legacy';
     return toItemSource(data.item_source);
 }
 
@@ -53,12 +56,18 @@ export async function getStockSourcesByProperty(propertyIds: string[]): Promise<
     const sources = new Map<string, StockItemSource>();
     if (propertyIds.length === 0) return sources;
 
-    const { data, error } = await createAdminClient()
-        .from('property_stock_settings')
-        .select('property_id, item_source')
-        .in('property_id', propertyIds);
+    // Chunked so a large organisation does not overflow the request URL.
+    const admin = createAdminClient();
+    for (let i = 0; i < propertyIds.length; i += 100) {
+        const { data, error } = await admin
+            .from('property_stock_settings')
+            .select('property_id, item_source')
+            .in('property_id', propertyIds.slice(i, i + 100));
 
-    if (!error) {
+        if (error) {
+            if (isMissingSchemaError(error)) return sources;
+            throw error;
+        }
         for (const row of data || []) sources.set(row.property_id, toItemSource(row.item_source));
     }
     return sources;
@@ -181,7 +190,37 @@ export async function addMissingRequisitionItems(
     supabase: SupabaseClient,
     input: StockRowsInput
 ): Promise<{ added: number; total: number }> {
-    const catalog: CatalogItemForStock[] = await PricingAndAliasService.getCatalogWithSitePrices(input.organizationId, input.propertyId);
+    const catalog = await getRequisitionCatalog(input.organizationId, input.propertyId);
     const added = await ensureStockRowsForCatalogItems(supabase, input, catalog);
     return { added, total: catalog.length };
+}
+
+/**
+ * The items a property sees on its monthly requisition, with the same rule as
+ * the requisition sheet (getCatalogWithSitePrices): active, on the standard
+ * list, and assigned to the property or to everyone. Read here rather than
+ * through that helper because it returns [] on a query error, and an empty
+ * list must never be mistaken for "no items".
+ */
+export async function getRequisitionCatalog(organizationId: string, propertyId: string): Promise<CatalogItemForStock[]> {
+    const { data, error } = await createAdminClient()
+        .from('procurement_catalog')
+        .select('*')
+        .eq('organization_id', organizationId)
+        .eq('is_active', true);
+    if (error) throw error;
+
+    return (data || [])
+        .filter((item: { lifecycle?: string; assigned_property_ids?: string[] | null }) => {
+            if (item.lifecycle && item.lifecycle !== 'standard') return false;
+            const assigned = Array.isArray(item.assigned_property_ids) ? item.assigned_property_ids : [];
+            return assigned.length === 0 || assigned.includes('ALL') || assigned.includes(propertyId);
+        })
+        .map((item: { id: string; name: string; item_code?: string | null; category?: string | null; unit?: string | null }) => ({
+            id: item.id,
+            name: item.name,
+            item_code: item.item_code ?? null,
+            category: item.category || 'HK',
+            unit: item.unit || 'pcs',
+        }));
 }

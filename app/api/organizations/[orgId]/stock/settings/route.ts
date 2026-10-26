@@ -55,15 +55,23 @@ export async function GET(
         const schemaMissing = isMissingSchemaError(settingsError);
         if (settingsError && !schemaMissing) return NextResponse.json({ error: settingsError.message }, { status: 500 });
 
-        const { data: items, error: itemsError } = await admin
-            .from('stock_items')
-            .select('*')
-            .eq('organization_id', orgId);
-        if (itemsError) return NextResponse.json({ error: itemsError.message }, { status: 500 });
+        // Paged: PostgREST returns at most 1000 rows per request.
+        const items: Record<string, unknown>[] = [];
+        for (let from = 0; ; from += 1000) {
+            const { data: page, error: itemsError } = await admin
+                .from('stock_items')
+                .select('*')
+                .eq('organization_id', orgId)
+                .order('id')
+                .range(from, from + 999);
+            if (itemsError) return NextResponse.json({ error: itemsError.message }, { status: 500 });
+            items.push(...(page || []));
+            if (!page || page.length < 1000) break;
+        }
 
         const byProperty = new Map((settings || []).map(s => [s.property_id, s]));
         const counts = new Map<string, { old: number; requisition: number }>();
-        for (const item of items || []) {
+        for (const item of items as { property_id: string; item_code?: string; item_source?: string }[]) {
             const c = counts.get(item.property_id) || { old: 0, requisition: 0 };
             if (itemSourceOf(item) === 'catalog') c.requisition++;
             else if (!String(item.item_code || '').startsWith(AUTO_SYNC_CODE_PREFIX)) c.old++;
@@ -138,6 +146,11 @@ export async function PUT(
                 userId: auth.user.id,
             });
             added = result.added;
+            if (result.total === 0) {
+                return NextResponse.json({
+                    error: 'This property has no items on its monthly requisition list yet. Assign items to it in Manage Items Master first.',
+                }, { status: 409 });
+            }
         }
 
         const { error: upsertError } = await admin

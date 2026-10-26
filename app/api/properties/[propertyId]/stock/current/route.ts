@@ -31,7 +31,8 @@ export async function POST(
 
         const wanted = new Map<string, number>();
         for (const c of counts) {
-            const qty = Number(c?.quantity);
+            const raw = c?.quantity as unknown;
+            const qty = typeof raw === 'number' || (typeof raw === 'string' && raw.trim() !== '') ? Number(raw) : NaN;
             if (!c?.itemId || !Number.isFinite(qty) || qty < 0) {
                 return NextResponse.json({ error: 'Each count needs an item and a quantity of 0 or more' }, { status: 400 });
             }
