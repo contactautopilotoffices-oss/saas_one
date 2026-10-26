@@ -4,14 +4,18 @@ import React, { useState, useRef, useCallback } from 'react';
 import { Camera, RotateCcw, Check } from 'lucide-react';
 
 interface CameraCaptureProps {
-    onCapture: (imageUrl: string, blob: Blob) => void;
+    /** jpegDataUrl is a JPEG copy of the same photo for BioFRQ, which does not accept WebP. */
+    onCapture: (imageUrl: string, blob: Blob, jpegDataUrl: string) => void;
     onCancel?: () => void;
+    /** Text on the confirm button, e.g. "Scan Face". */
+    confirmLabel?: string;
 }
 
-const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onCancel }) => {
+const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onCancel, confirmLabel = 'Confirm' }) => {
     const [isCameraActive, setIsCameraActive] = useState(false);
     const [capturedImage, setCapturedImage] = useState<string | null>(null);
     const [capturedBlob, setCapturedBlob] = useState<Blob | null>(null);
+    const [capturedJpeg, setCapturedJpeg] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const videoRef = useRef<HTMLVideoElement>(null);
@@ -145,18 +149,20 @@ const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onCancel }) =>
 
         setCapturedImage(imageUrl);
         setCapturedBlob(blob);
+        setCapturedJpeg(canvas.toDataURL('image/jpeg', 0.9));
         stopCamera();
     };
 
     const retakePhoto = () => {
         setCapturedImage(null);
         setCapturedBlob(null);
+        setCapturedJpeg(null);
         // Don't auto-start camera, let user choose between Camera and Upload
     };
 
     const confirmPhoto = () => {
-        if (capturedImage && capturedBlob) {
-            onCapture(capturedImage, capturedBlob);
+        if (capturedImage && capturedBlob && capturedJpeg) {
+            onCapture(capturedImage, capturedBlob, capturedJpeg);
         }
     };
 
@@ -198,6 +204,7 @@ const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onCancel }) =>
 
                 setCapturedImage(dataUrl);
                 setCapturedBlob(blob);
+                setCapturedJpeg(canvas.toDataURL('image/jpeg', 0.9));
                 stopCamera();
                 setIsLoading(false);
             };
@@ -322,7 +329,7 @@ const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onCancel }) =>
                             className="flex items-center gap-2 px-6 py-3 bg-emerald-600 text-white rounded-xl font-black uppercase tracking-widest text-xs hover:bg-emerald-700 transition-all shadow-md"
                         >
                             <Check className="w-4 h-4" />
-                            Confirm
+                            {confirmLabel}
                         </button>
                     </>
                 )}

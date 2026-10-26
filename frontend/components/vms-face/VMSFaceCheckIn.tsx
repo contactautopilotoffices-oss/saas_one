@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { X, User, Truck, Building2, ArrowRight, ArrowLeft, LogIn, LogOut, Check } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { User, Truck, Building2, ArrowRight, ArrowLeft, LogIn, LogOut, Check, ScanFace, ShieldCheck, Info } from 'lucide-react';
+import { motion } from 'framer-motion';
 import CameraCapture from './CameraCapture';
 import HostAutoComplete from './HostAutoComplete';
 
@@ -23,7 +23,19 @@ interface VMSFaceCheckInProps {
 }
 
 type Category = 'visitor' | 'vendor' | 'other';
-type KioskStep = 'home' | 'category' | 'form' | 'success' | 'checkout' | 'checkout_success';
+type KioskStep = 'home' | 'category' | 'visitor_type' | 'mobile' | 'verify_face' | 'consent' | 'enroll_photo' | 'form' | 'success' | 'checkout' | 'checkout_success';
+
+// Face flow, consent first. Reception asks "Have you visited before?"
+//   Returning → photo only → found among saved (consented) faces → fixed details pre-filled.
+//   New → mobile → WhatsApp OTP consent → only then the photo is taken and saved.
+// Declined or not found → manual check-in.
+interface OtpState {
+    challengeId: string;
+    delivery: 'screen_test' | 'whatsapp';
+    testCode?: string;
+    consentText: string;
+    verified: boolean;
+}
 
 interface FormData {
     name: string;
@@ -60,6 +72,11 @@ const VMSFaceCheckInContent: React.FC<VMSFaceCheckInProps> = ({ propertyId, prop
     const [checkoutName, setCheckoutName] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState('');
+    const [faceProfileId, setFaceProfileId] = useState<string | null>(null);
+    const [faceScore, setFaceScore] = useState<number | null>(null);
+    const [faceNotice, setFaceNotice] = useState('');
+    const [otp, setOtp] = useState<OtpState | null>(null);
+    const [otpCode, setOtpCode] = useState('');
 
     // Reset to home after 30 seconds of inactivity on success screens
     useEffect(() => {
@@ -79,11 +96,168 @@ const VMSFaceCheckInContent: React.FC<VMSFaceCheckInProps> = ({ propertyId, prop
         setCheckoutId('');
         setCheckoutName('');
         setError('');
+        setFaceProfileId(null);
+        setFaceScore(null);
+        setFaceNotice('');
+        setOtp(null);
+        setOtpCode('');
     };
 
     const handlePhotoCapture = (imageUrl: string, blob: Blob) => {
         setFormData(prev => ({ ...prev, photo_url: imageUrl }));
         setPhotoBlob(blob);
+    };
+
+    const postJson = async (path: string, body: unknown) => {
+        const res = await fetch(`/api/vms-face/${propertyId}${path}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        const data = await res.json().catch(() => ({}));
+        return { ok: res.ok, status: res.status, data };
+    };
+
+    const toManualForm = (notice: string) => {
+        setError('');
+        setFaceNotice(notice);
+        setStep('form');
+    };
+
+    // Step 1, before any photo: does this mobile already have a saved face (consent on file)?
+    const handleLookup = async () => {
+        if (formData.mobile.length !== 10) { setError('Enter the visitor\'s 10-digit mobile number'); return; }
+        setIsSubmitting(true);
+        setError('');
+        try {
+            const { ok, data } = await postJson('/face/lookup', { mobile: formData.mobile });
+            if (!ok) throw new Error(data.error || 'Lookup failed');
+            if (data.status === 'returning') setStep('verify_face');
+            else if (data.status === 'new') setStep('consent');
+            else toManualForm('Face recognition is off. Check in manually.');
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Lookup failed');
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    // Returning visitor: compare the photo with the one face saved for this mobile.
+    // A match pre-fills only the fixed details; purpose and host stay empty.
+    const handleVerifyFace = async (imageUrl: string, blob: Blob, jpeg: string) => {
+        handlePhotoCapture(imageUrl, blob);
+        setIsSubmitting(true);
+        setError('');
+        try {
+            // With a mobile (came from the new-visitor path), compare with that mobile's face only.
+            const byMobile = formData.mobile.length === 10;
+            const { ok, data } = await postJson('/face/verify', { image: jpeg, ...(byMobile ? { mobile: formData.mobile } : {}) });
+            if (!ok) throw new Error(data.error || 'Face check failed');
+
+            if (data.status === 'match') {
+                setFormData(prev => ({
+                    ...prev,
+                    name: data.profile.name || '',
+                    mobile: String(data.profile.mobile || '').replace(/^\+91/, ''),
+                    coming_from: data.profile.coming_from || '',
+                }));
+                setFaceProfileId(data.profile.id);
+                setFaceScore(typeof data.score === 'number' ? data.score : null);
+                toManualForm(`Returning visitor verified${typeof data.score === 'number' ? ` (match ${(data.score * 100).toFixed(0)}%)` : ''}. Check the details, then pick purpose and host.`);
+            } else if (data.status === 'no_match' && !byMobile) {
+                // Not among saved faces: treat as a new visitor (consent first). Don't keep the photo.
+                setFormData(prev => ({ ...prev, photo_url: '' }));
+                setPhotoBlob(null);
+                setStep('mobile');
+                setError('Face not found among saved visitors. Continue as a new visitor.');
+            } else if (data.status === 'no_match') {
+                toManualForm('The face did not match the face saved for this number. Check in manually.');
+            } else if (data.status === 'no_profile') {
+                setFormData(prev => ({ ...prev, photo_url: '' }));
+                setStep('consent');
+            } else if (data.status === 'no_face') {
+                setFormData(prev => ({ ...prev, photo_url: '' }));
+                setError('No face found in the photo. Retake it facing the camera.');
+            } else if (data.status === 'spoof') {
+                setFormData(prev => ({ ...prev, photo_url: '' }));
+                setError('The photo looks like a screen or a print. Take a live photo of the visitor.');
+            } else if (data.status === 'disabled') {
+                toManualForm('Face recognition is off. Check in manually.');
+            } else {
+                toManualForm('Face service unavailable right now. Check in manually.');
+            }
+        } catch (err) {
+            console.error('Face verify error:', err);
+            toManualForm('Face check failed. Check in manually.');
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    const handleSendOtp = async () => {
+        if (!formData.name.trim()) { setError('Enter the visitor\'s name'); return; }
+        setIsSubmitting(true);
+        setError('');
+        try {
+            const { ok, data } = await postJson('/face/otp', { action: 'send', mobile: formData.mobile });
+            if (!ok) throw new Error(data.error || 'Could not send the code');
+            setOtp({ challengeId: data.challenge_id, delivery: data.delivery, testCode: data.test_code, consentText: data.consent_text, verified: false });
+            setOtpCode('');
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Could not send the code');
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    // The code the visitor read out is their consent. Only after this is the photo taken.
+    const handleVerifyOtp = async () => {
+        if (!otp) return;
+        setIsSubmitting(true);
+        setError('');
+        try {
+            const { ok, data } = await postJson('/face/otp', { action: 'verify', challenge_id: otp.challengeId, code: otpCode });
+            if (!ok) {
+                const left = data.attempts_left;
+                throw new Error(`${data.error || 'Wrong code'}${typeof left === 'number' ? ` ${left} attempt(s) left.` : ''}`);
+            }
+            setOtp(prev => prev ? { ...prev, verified: true } : prev);
+            setStep('enroll_photo');
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Verification failed');
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    // Consent verified: take the photo and save the face.
+    const handleEnrollPhoto = async (imageUrl: string, blob: Blob, jpeg: string) => {
+        if (!otp?.verified) return;
+        handlePhotoCapture(imageUrl, blob);
+        setIsSubmitting(true);
+        setError('');
+        try {
+            const enroll = await postJson('/face/enroll', {
+                challenge_id: otp.challengeId,
+                image: jpeg,
+                name: formData.name.trim(),
+                coming_from: formData.coming_from.trim(),
+            });
+            if (enroll.status === 503) { toManualForm('Consent verified, but the face service is unavailable. Face not saved; check in manually.'); return; }
+            if (enroll.status === 409) { toManualForm(enroll.data.error || 'Face not saved. Check in manually.'); return; }
+            if (!enroll.ok) {
+                setFormData(prev => ({ ...prev, photo_url: '' }));
+                throw new Error(enroll.data.error || 'Could not save the face');
+            }
+            setFaceProfileId(enroll.data.profile.id);
+            toManualForm(enroll.data.status === 'already_enrolled'
+                ? 'Consent verified. This face was already saved; details updated.'
+                : 'Consent verified and face saved. Next visit will be recognised.');
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Could not save the face');
+        } finally {
+            setIsSubmitting(false);
+        }
     };
 
     const handleCheckin = async () => {
@@ -112,6 +286,8 @@ const VMSFaceCheckInContent: React.FC<VMSFaceCheckInProps> = ({ propertyId, prop
                     whom_to_meet: formData.whom_to_meet,
                     purpose: formData.purpose,
                     host_id: hostId,
+                    face_profile_id: faceProfileId,
+                    face_match_score: faceScore,
                 }),
             });
 
@@ -270,13 +446,207 @@ const VMSFaceCheckInContent: React.FC<VMSFaceCheckInProps> = ({ propertyId, prop
                     </div>
 
                     <button
-                        onClick={() => setStep('form')}
+                        onClick={() => { setError(''); setStep('visitor_type'); }}
                         className="w-full py-3.5 sm:py-4 bg-primary hover:bg-primary-dark text-white rounded-2xl font-black flex items-center justify-center gap-2 transition-all shadow-lg shadow-primary/20 text-sm sm:text-base"
                     >
                         Continue <ArrowRight className="w-5 h-5" />
                     </button>
                 </div>
             </div>
+        );
+    }
+
+    const panel = (children: React.ReactNode, onBack: () => void, backLabel = 'Back') => (
+        <div className="h-full w-full bg-[#ebf5f4] relative flex flex-col items-center justify-center overflow-hidden sm:p-8 sm:rounded-[2.5rem]">
+            <div className="bg-white sm:rounded-[2rem] shadow-2xl p-5 sm:p-8 w-full h-full sm:h-auto sm:max-w-md sm:max-h-[92vh] relative z-10 overflow-y-auto">
+                <button
+                    onClick={() => { setError(''); onBack(); }}
+                    className="flex items-center gap-2 text-slate-700 hover:text-slate-900 mb-4 text-sm sm:text-base font-medium transition-colors"
+                >
+                    <ArrowLeft className="w-5 h-5" /> {backLabel}
+                </button>
+                {error && (
+                    <div role="alert" className="bg-rose-50 border border-rose-200 text-rose-600 p-2.5 rounded-xl mb-3 text-[11px] sm:text-sm">
+                        {error}
+                    </div>
+                )}
+                {children}
+            </div>
+        </div>
+    );
+
+    const spinner = (label: string) => (
+        <div className="flex flex-col items-center gap-3 py-12" aria-live="polite">
+            <div className="w-8 h-8 border-2 border-slate-200 border-t-primary rounded-full animate-spin" />
+            <p className="text-xs font-black uppercase tracking-widest text-slate-500">{label}</p>
+        </div>
+    );
+
+    const skipButton = (label: string, notice: string) => (
+        <button
+            type="button"
+            onClick={() => { setOtp(null); toManualForm(notice); }}
+            disabled={isSubmitting}
+            className="w-full mt-4 py-3 border border-slate-200 rounded-2xl text-xs font-black uppercase tracking-widest text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+        >
+            {label}
+        </button>
+    );
+
+    // STEP 1 — "Have you visited before?"
+    if (step === 'visitor_type') {
+        return panel(
+            <>
+                <div className="text-center mb-5">
+                    <ScanFace className="w-10 h-10 text-primary mx-auto mb-2" />
+                    <h2 className="text-lg sm:text-xl font-black text-slate-900 leading-tight">Have you visited before?</h2>
+                    <p className="text-xs text-slate-500 mt-1">Ask the visitor. Returning visitors only need a photo.</p>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                    <button type="button" onClick={() => { setFormData(prev => ({ ...prev, mobile: '' })); setStep('verify_face'); }}
+                        className="flex flex-col items-center justify-center gap-2 p-5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl font-black transition-all active:scale-95">
+                        <ShieldCheck className="w-7 h-7" />
+                        <span className="text-sm">Returning visitor</span>
+                    </button>
+                    <button type="button" onClick={() => setStep('mobile')}
+                        className="flex flex-col items-center justify-center gap-2 p-5 bg-primary hover:bg-primary-dark text-white rounded-2xl font-black transition-all active:scale-95">
+                        <User className="w-7 h-7" />
+                        <span className="text-sm">New visitor</span>
+                    </button>
+                </div>
+                {skipButton('Skip face — manual check-in', 'Face check skipped. Check in manually.')}
+            </>,
+            () => setStep('category'),
+        );
+    }
+
+    // NEW VISITOR — MOBILE NUMBER (before any photo)
+    if (step === 'mobile') {
+        return panel(
+            <>
+                <div className="text-center mb-5">
+                    <ScanFace className="w-10 h-10 text-primary mx-auto mb-2" />
+                    <h2 className="text-lg sm:text-xl font-black text-slate-900 leading-tight">Visitor&apos;s Mobile Number</h2>
+                    <p className="text-xs text-slate-500 mt-1">The consent code is sent to this number. No photo is taken until the visitor agrees.</p>
+                </div>
+                <label htmlFor="fv-mobile" className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Mobile (WhatsApp) *</label>
+                <div className="flex rounded-2xl overflow-hidden border border-slate-200 focus-within:border-indigo-500 mb-4">
+                    <span className="px-3 py-3 bg-slate-100 border-r border-slate-200 text-slate-500 font-medium text-sm">+91</span>
+                    <input id="fv-mobile" type="tel" inputMode="numeric" autoFocus value={formData.mobile}
+                        onChange={(e) => setFormData(prev => ({ ...prev, mobile: e.target.value.replace(/\D/g, '').slice(0, 10) }))}
+                        onKeyDown={(e) => { if (e.key === 'Enter' && formData.mobile.length === 10) handleLookup(); }}
+                        placeholder="10 digit"
+                        className="flex-1 px-4 py-3 bg-slate-50 text-slate-900 font-medium focus:outline-none" />
+                </div>
+                <button type="button" onClick={handleLookup} disabled={isSubmitting || formData.mobile.length !== 10}
+                    className="w-full py-3.5 bg-primary hover:bg-primary-dark text-white rounded-2xl font-black flex items-center justify-center gap-2 disabled:opacity-50">
+                    {isSubmitting ? <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" /> : <>Continue <ArrowRight className="w-5 h-5" /></>}
+                </button>
+                {skipButton('Skip face — manual check-in', 'Face check skipped. Check in manually.')}
+            </>,
+            () => setStep('visitor_type'),
+        );
+    }
+
+    // RETURNING VISITOR — photo only (or, from the new-visitor path, compare with that mobile's face)
+    if (step === 'verify_face') {
+        return panel(
+            <>
+                <div className="text-center mb-4">
+                    <ShieldCheck className="w-10 h-10 text-emerald-600 mx-auto mb-2" />
+                    <h2 className="text-lg sm:text-xl font-black text-slate-900 leading-tight">Returning Visitor</h2>
+                    <p className="text-xs text-slate-500 mt-1">
+                        {formData.mobile.length === 10
+                            ? <>+91 {formData.mobile} already has a saved face. Scan to verify it&apos;s them.</>
+                            : <>Take the visitor&apos;s photo. Their details fill in automatically.</>}
+                    </p>
+                </div>
+                {isSubmitting ? spinner('Checking face…') : <CameraCapture onCapture={handleVerifyFace} confirmLabel="Verify Face" />}
+                {skipButton('Skip — manual check-in', 'Face check skipped. Check in manually.')}
+            </>,
+            () => setStep(formData.mobile.length === 10 ? 'mobile' : 'visitor_type'),
+        );
+    }
+
+    // NEW VISITOR — consent by WhatsApp OTP, before any photo
+    if (step === 'consent') {
+        return panel(
+            <>
+                <div className="mb-4">
+                    <h2 className="text-lg font-black text-slate-900 leading-tight">New Visitor — Consent</h2>
+                    <p className="text-xs text-slate-500 mt-1">Ask if they agree to save their face for faster visits. No photo is taken until they agree.</p>
+                </div>
+                <div className="space-y-3">
+                    <div>
+                        <label htmlFor="fv-name" className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Name *</label>
+                        <input id="fv-name" type="text" value={formData.name} disabled={!!otp}
+                            onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+                            placeholder="Full name"
+                            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-slate-900 font-medium focus:border-indigo-500 focus:ring-0 disabled:opacity-60" />
+                    </div>
+                    <div>
+                        <label htmlFor="fv-company" className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Coming From</label>
+                        <input id="fv-company" type="text" value={formData.coming_from} disabled={!!otp}
+                            onChange={(e) => setFormData(prev => ({ ...prev, coming_from: e.target.value }))}
+                            placeholder="Company or address"
+                            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-slate-900 font-medium focus:border-indigo-500 focus:ring-0 disabled:opacity-60" />
+                    </div>
+                    <p className="text-xs text-slate-600">Mobile: <span className="font-bold">+91 {formData.mobile}</span></p>
+
+                    {!otp ? (
+                        <button type="button" onClick={handleSendOtp} disabled={isSubmitting || !formData.name.trim()}
+                            className="w-full py-3.5 bg-primary hover:bg-primary-dark text-white rounded-2xl font-black flex items-center justify-center gap-2 disabled:opacity-50">
+                            {isSubmitting ? <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" /> : <>Send consent code</>}
+                        </button>
+                    ) : (
+                        <div className="space-y-3 pt-1">
+                            <div className="flex gap-2 p-3 bg-slate-50 border border-slate-200 rounded-xl text-[11px] text-slate-600">
+                                <Info className="w-4 h-4 shrink-0 text-slate-400 mt-0.5" />
+                                <p>
+                                    {otp.delivery === 'whatsapp' ? 'A code was sent on WhatsApp' : 'Test mode: the code below would be sent on WhatsApp'} with this message:
+                                    {' '}<span className="italic">&ldquo;{otp.consentText}&rdquo;</span> Ask the visitor to read the code out.
+                                </p>
+                            </div>
+                            {otp.testCode && (
+                                <p className="text-center text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-xl py-2" aria-live="polite">
+                                    Test code: <span className="font-mono text-base tracking-[0.3em]">{otp.testCode}</span>
+                                </p>
+                            )}
+                            <label htmlFor="fv-otp" className="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Code read out by visitor</label>
+                            <input id="fv-otp" type="text" inputMode="numeric" autoComplete="one-time-code" value={otpCode}
+                                onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                                placeholder="6 digits"
+                                className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl text-slate-900 font-bold text-lg text-center tracking-[0.4em] focus:border-indigo-500 focus:ring-0" />
+                            <button type="button" onClick={handleVerifyOtp} disabled={isSubmitting || otpCode.length !== 6}
+                                className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-black flex items-center justify-center gap-2 disabled:opacity-50">
+                                {isSubmitting ? <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" /> : <><ShieldCheck className="w-5 h-5" /> Verify consent</>}
+                            </button>
+                            <button type="button" onClick={handleSendOtp} disabled={isSubmitting}
+                                className="w-full text-[11px] font-bold text-slate-500 hover:text-slate-800 disabled:opacity-50">
+                                Send a new code
+                            </button>
+                        </div>
+                    )}
+                </div>
+                {skipButton('Visitor declines — check in without saving face', 'Visitor declined. Face not saved.')}
+            </>,
+            () => { setOtp(null); setStep('mobile'); },
+        );
+    }
+
+    // NEW VISITOR — consent verified, now take the photo and save the face
+    if (step === 'enroll_photo') {
+        return panel(
+            <>
+                <div className="text-center mb-4">
+                    <ShieldCheck className="w-10 h-10 text-emerald-600 mx-auto mb-2" />
+                    <h2 className="text-lg sm:text-xl font-black text-slate-900 leading-tight">Consent Verified</h2>
+                    <p className="text-xs text-slate-500 mt-1">Now take {formData.name.trim() || 'the visitor'}&apos;s photo to save their face.</p>
+                </div>
+                {isSubmitting ? spinner('Saving face…') : <CameraCapture onCapture={handleEnrollPhoto} confirmLabel="Save Face" />}
+                {skipButton('Skip — check in without saving face', 'Face not saved. Check in manually.')}
+            </>,
+            () => { setOtp(null); setStep('consent'); },
         );
     }
 
@@ -297,6 +667,15 @@ const VMSFaceCheckInContent: React.FC<VMSFaceCheckInProps> = ({ propertyId, prop
                     </button>
 
                     <h2 className="text-lg sm:text-xl font-black text-slate-900 mb-4 sm:mb-6 leading-tight">Visitor Form</h2>
+
+                    {faceNotice && (
+                        <div aria-live="polite" className={`flex gap-2 p-2.5 rounded-xl mb-3 text-[11px] sm:text-sm border ${faceProfileId
+                            ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                            : 'bg-slate-50 border-slate-200 text-slate-600'}`}>
+                            {faceProfileId ? <ShieldCheck className="w-4 h-4 shrink-0 mt-0.5" /> : <Info className="w-4 h-4 shrink-0 mt-0.5" />}
+                            <span>{faceNotice}</span>
+                        </div>
+                    )}
 
                     {error && (
                         <div className="bg-rose-50 border border-rose-200 text-rose-600 p-2.5 rounded-xl mb-3 text-[11px] sm:text-sm">
@@ -448,7 +827,9 @@ const VMSFaceCheckInContent: React.FC<VMSFaceCheckInProps> = ({ propertyId, prop
                         <p className="text-4xl font-black tracking-wider">{visitorId}</p>
                     </div>
 
-                    <p className="text-emerald-100 text-sm mb-4">Please remember this ID for check-out.</p>
+                    <p className="text-emerald-100 text-sm mb-4">
+                        Please remember this ID for check-out.
+                    </p>
 
                     <button
                         onClick={resetKiosk}

@@ -3,10 +3,19 @@
 import React, { useState, useEffect } from 'react';
 import {
     Users, Clock, LogIn, LogOut, Search, FileDown,
-    CheckCircle2, User, Truck, Building2, X, ChevronDown, Plus
+    CheckCircle2, User, Truck, Building2, X, ChevronDown, Plus, PhoneCall, ScanFace, Settings2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import VMSFaceCheckIn from './VMSFaceCheckIn';
+import VMSFaceAdminPanel from './VMSFaceAdminPanel';
+
+// What reception sees about the host voice call on a pending visit.
+const HOST_CALL_LABELS: Record<string, string> = {
+    calling: 'Calling host…',
+    no_answer: 'Host not answering',
+    failed: 'Host call failed',
+    answered: 'Host answered — unclear',
+};
 
 // VMS Face (testing) — copy of vms/VMSAdminDashboard.tsx for the Tech Team. Reads and writes
 // /api/vms-face (table vms_face_visits), never the live VMS. See docs/VMS_BIOFRQ_PLAN.md.
@@ -17,6 +26,7 @@ const PURPOSE_LABELS: Record<string, string> = {
 };
 
 interface VMSFaceDashboardProps {
+    orgId: string;
     propertyId: string;
     propertyName: string;
 }
@@ -38,16 +48,21 @@ interface VisitorLog {
     checkout_time: string | null;
     status: string;
     approval_status?: 'pending' | 'approved' | 'rejected' | string;
+    approved_via?: 'auto' | 'reception' | 'voice_call' | null;
+    face_profile_id?: string | null;
+    host_call_status?: string;
+    host_call_attempts?: number;
 }
 
 type DateFilter = 'today' | 'yesterday' | 'week' | 'month' | 'custom' | 'all';
 
-const VMSFaceDashboard: React.FC<VMSFaceDashboardProps> = ({ propertyId, propertyName }) => {
+const VMSFaceDashboard: React.FC<VMSFaceDashboardProps> = ({ orgId, propertyId, propertyName }) => {
     const [visitors, setVisitors] = useState<VisitorLog[]>([]);
     const [stats, setStats] = useState({ total_today: 0, checked_in: 0, checked_out: 0 });
+    const [showAdminPanel, setShowAdminPanel] = useState(false);
 
-    // Testing module: the Tech operator approves on the host's behalf until Bolna voice approval lands (Phase 4).
-    const isUserHost = (_visitor: VisitorLog) => true;
+    // Testing module: the Tech operator can always approve or reject by hand, whatever the host call says.
+    const isUserHost = (visitor: VisitorLog) => !!visitor;
     const [isLoading, setIsLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
     const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -159,6 +174,28 @@ const VMSFaceDashboard: React.FC<VMSFaceDashboardProps> = ({ propertyId, propert
             }
         } catch (err) {
             console.error('Approval status update error:', err);
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    const handleCallHost = async (visitor: VisitorLog) => {
+        setActionLoading(true);
+        try {
+            const response = await fetch(`/api/vms-face/${propertyId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ visitor_id: visitor.id, action: 'call_host' }),
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                alert(data.error || 'Could not call the host');
+            } else {
+                setSelectedVisitor(prev => prev && prev.id === visitor.id ? { ...prev, host_call_status: 'calling' } : prev);
+                fetchVisitors();
+            }
+        } catch (err) {
+            console.error('Call host error:', err);
         } finally {
             setActionLoading(false);
         }
@@ -450,6 +487,14 @@ const VMSFaceDashboard: React.FC<VMSFaceDashboardProps> = ({ propertyId, propert
                             <FileDown className="w-4 h-4" /> Export
                         </button>
 
+                        {/* Face settings + saved faces */}
+                        <button
+                            onClick={() => setShowAdminPanel(true)}
+                            className="flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 rounded-xl text-sm font-bold hover:bg-slate-200 transition-all"
+                        >
+                            <Settings2 className="w-4 h-4" /> Face Settings
+                        </button>
+
                         {/* Check-In Visitor Button */}
                         <button
                             onClick={() => setShowCheckInModal(true)}
@@ -558,6 +603,21 @@ const VMSFaceDashboard: React.FC<VMSFaceDashboardProps> = ({ propertyId, propert
                                                         ? 'Rejected'
                                                         : 'On Premise'}
                                                 </span>
+                                                {visitor.status === 'checked_in' && visitor.approval_status === 'pending' && HOST_CALL_LABELS[visitor.host_call_status || ''] && (
+                                                    <span className={`inline-flex items-center gap-1 text-[10px] font-bold ${visitor.host_call_status === 'calling' ? 'text-indigo-600' : 'text-rose-600'}`}>
+                                                        <PhoneCall className="w-3 h-3" /> {HOST_CALL_LABELS[visitor.host_call_status || '']}
+                                                    </span>
+                                                )}
+                                                {visitor.approved_via === 'voice_call' && (
+                                                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-500">
+                                                        <PhoneCall className="w-3 h-3" /> By host call
+                                                    </span>
+                                                )}
+                                                {visitor.face_profile_id && (
+                                                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-500">
+                                                        <ScanFace className="w-3 h-3" /> Face saved
+                                                    </span>
+                                                )}
                                             </div>
                                         </td>
                                         <td className="px-6 py-4 text-center" onClick={(e) => e.stopPropagation()}>
@@ -813,6 +873,24 @@ const VMSFaceDashboard: React.FC<VMSFaceDashboardProps> = ({ propertyId, propert
                                             </div>
                                         )}
 
+                                        {selectedVisitor.approval_status === 'pending' && (
+                                            <div className="space-y-1">
+                                                {HOST_CALL_LABELS[selectedVisitor.host_call_status || ''] && (
+                                                    <p className="text-center text-xs font-bold text-slate-500">
+                                                        {HOST_CALL_LABELS[selectedVisitor.host_call_status || '']}
+                                                        {selectedVisitor.host_call_attempts ? ` · ${selectedVisitor.host_call_attempts} call(s)` : ''}
+                                                    </p>
+                                                )}
+                                                <button
+                                                    onClick={() => handleCallHost(selectedVisitor)}
+                                                    disabled={actionLoading || selectedVisitor.host_call_status === 'calling'}
+                                                    className="w-full py-3 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 rounded-xl font-bold transition-all disabled:opacity-50 text-xs flex items-center justify-center gap-2 cursor-pointer"
+                                                >
+                                                    <PhoneCall className="w-4 h-4" /> Call host again
+                                                </button>
+                                            </div>
+                                        )}
+
                                         <button
                                             onClick={() => handleForceCheckout(selectedVisitor)}
                                             disabled={actionLoading}
@@ -827,6 +905,8 @@ const VMSFaceDashboard: React.FC<VMSFaceDashboardProps> = ({ propertyId, propert
                     </motion.div>
                 )}
             </AnimatePresence>
+
+            <VMSFaceAdminPanel orgId={orgId} isOpen={showAdminPanel} onClose={() => setShowAdminPanel(false)} />
 
             {/* Modal: Check-In Visitor (VMSKiosk) */}
             <AnimatePresence>

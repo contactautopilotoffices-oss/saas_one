@@ -254,7 +254,7 @@ export default function TechDashboard() {
                         <>
                             {activeTab === 'tasks' && <TaskManagerSuperuserDashboard orgId={org?.id || ''} />}
                             {activeTab === 'control_centre' && <TaskManagerTestingDashboard orgId={org?.id || ''} />}
-                            {activeTab === 'vms_face' && propertyFilter && <VMSFaceDashboard key={propertyFilter} propertyId={propertyFilter} propertyName={activeProperty?.name || ''} />}
+                            {activeTab === 'vms_face' && propertyFilter && org && <VMSFaceDashboard key={propertyFilter} orgId={org.id} propertyId={propertyFilter} propertyName={activeProperty?.name || ''} />}
                             {activeTab === 'water_logger' && propertyFilter && <WaterDashboard propertyId={propertyFilter} />}
                             {activeTab === 'water' && <WaterAnalyticsDashboard key="water-analytics-tab" propertyId={propertyFilter} orgId={org?.id} properties={properties} />}
                             {activeTab === 'diesel_logger' && propertyFilter && <DieselStaffDashboard propertyId={propertyFilter} />}

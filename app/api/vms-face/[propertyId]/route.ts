@@ -1,7 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { getISTDateBounds } from '@/backend/utils/timezone';
+import { refreshStaleCalls, startHostCall } from '@/backend/lib/vms-face/hostCall';
 
 /**
  * VMS Face (testing) — Tech Team only. A separate copy of /api/vms/[propertyId] that reads and
@@ -46,6 +47,19 @@ export async function POST(
         const rawHost = String(body.whom_to_meet || '').trim().toLowerCase();
         const isGeneralOrNoHost = !body.host_id && GENERAL_HOSTS.includes(rawHost);
 
+        // A face-recognised (or just-enrolled) visitor: link the visit to their profile.
+        let faceProfileId: string | null = null;
+        if (body.face_profile_id) {
+            const { data: profile } = await supabaseAdmin
+                .from('vms_face_profiles')
+                .select('id')
+                .eq('id', body.face_profile_id)
+                .eq('organization_id', property.organization_id)
+                .maybeSingle();
+            faceProfileId = profile?.id || null;
+        }
+        const score = Number(body.face_match_score);
+
         const insertPayload = {
             property_id: propertyId,
             organization_id: property.organization_id,
@@ -59,6 +73,9 @@ export async function POST(
             created_by: user.id,
             status: 'checked_in',
             approval_status: isGeneralOrNoHost ? 'approved' : 'pending',
+            approved_via: isGeneralOrNoHost ? 'auto' : null,
+            face_profile_id: faceProfileId,
+            face_match_score: faceProfileId && Number.isFinite(score) ? score : null,
         };
 
         // Visitor code: FV-<property code>-<5 digits>. Retry on the rare unique clash.
@@ -72,6 +89,21 @@ export async function POST(
                 .single();
 
             if (!error) {
+                if (faceProfileId) {
+                    // Keep the fixed details current and restart the 12-month retention clock.
+                    await supabaseAdmin.from('vms_face_profiles').update({
+                        name,
+                        ...(insertPayload.mobile ? { mobile: insertPayload.mobile } : {}),
+                        coming_from: insertPayload.coming_from,
+                        last_seen_at: new Date().toISOString(),
+                    }).eq('id', faceProfileId);
+                }
+                if (visitor.approval_status === 'pending') {
+                    after(async () => {
+                        const res = await startHostCall(visitor.id);
+                        if (res.error) console.warn('[VMS Face] Host call:', res.status, res.error);
+                    });
+                }
                 return NextResponse.json({
                     success: true,
                     visitor_id: visitorCode,
@@ -104,6 +136,9 @@ export async function GET(
     const status = searchParams.get('status'); // 'checked_in' | 'checked_out' | 'all'
     const date = searchParams.get('date'); // 'today' | 'yesterday' | 'week' | 'month' | YYYY-MM-DD | 'all'
     const search = (searchParams.get('search') || '').replace(/[,()%]/g, '').trim();
+
+    // The dashboard refreshes every 30s; use that to catch host-call webhooks that never arrived.
+    await refreshStaleCalls(propertyId);
 
     type DatePreset = 'today' | 'yesterday' | 'week' | 'month';
     // Postgrest builder types differ between select and count queries; both share these filter methods.
@@ -189,12 +224,23 @@ export async function PATCH(
         }
         const { data: updated, error } = await supabaseAdmin
             .from(TABLE)
-            .update({ approval_status: body.approval_status })
+            .update({ approval_status: body.approval_status, approved_via: body.approval_status === 'pending' ? null : 'reception' })
             .eq('id', visitor.id)
             .select()
             .single();
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
         return NextResponse.json({ success: true, message: `Visitor entry ${body.approval_status}.`, visitor: updated });
+    }
+
+    // Reception asks to ring the host again (only while the visit is still pending).
+    if (body.action === 'call_host') {
+        if (visitor.status !== 'checked_in' || visitor.approval_status !== 'pending') {
+            return NextResponse.json({ error: 'Only a pending visit can call the host' }, { status: 400 });
+        }
+        await supabaseAdmin.from(TABLE).update({ host_call_attempts: 0, host_call_status: 'not_started' }).eq('id', visitor.id);
+        const res = await startHostCall(visitor.id);
+        if (res.status !== 'calling') return NextResponse.json({ error: res.error || `Call ${res.status}` }, { status: 409 });
+        return NextResponse.json({ success: true, message: 'Calling the host…' });
     }
 
     if (visitor.status === 'checked_out') {

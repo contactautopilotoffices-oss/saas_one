@@ -1,14 +1,43 @@
 # VMS + BioFRQ face verification — plan
 
-Status: **plan only — nothing built.** Agreed with the owner 2026-10-16, revised 2026-10-26.
-Each phase stops for approval. The owner applies every migration; no DB writes by the agent.
+Status: **Phases 1–5 built (2026-10-26), not yet run end to end.** Phase 0 (security) dropped for
+the testing module by the owner. Phase 6 (trial) is operational. Agreed with the owner 2026-10-16,
+revised 2026-10-26. The owner applies every migration; no DB writes by the agent.
 
 ## Goal
 
 Add face verification to a **testing VMS inside the Tech Team dashboard** so reception can
 recognise returning visitors, pre-fill their fixed details and check them out by face.
 First-time visitors give consent by a **WhatsApp OTP** before their face is stored.
-Host approval moves to a Bolna voice call the host can answer by voice or keypad.
+Host approval moves to a Bolna voice call the host answers by voice (keypad not built, see Phase 4).
+
+## What was built
+
+| Piece | Where |
+|---|---|
+| Migrations (owner applies, in order) | `supabase/migrations/20261026000001_vms_face_visits.sql`, `20261026000002_vms_face_phase2.sql` |
+| BioFRQ client | `backend/services/BioFrqService.ts` |
+| Face, OTP, host call, settings | `backend/lib/vms-face/` |
+| API | `app/api/vms-face/**`, `app/api/cron/vms-face-retention` |
+| UI | `frontend/components/vms-face/` — tab "VMS Face (Testing)" in `TechDashboard` |
+| Voice agent spec block | `docs/vms-face/AGENT_SPEC.md` |
+| Voice agent creation (owner runs) | `scripts/vms-face-create-bolna-agent.ts` |
+| Tests | `tests/vms-face/hostDecision.test.ts` (`npx tsx --test tests/vms-face/*.test.ts`) |
+
+### Setup checklist (owner)
+
+1. Apply both migrations.
+2. Env: `BIOFRQ_API_KEY`. Face recognition stays off until it is set.
+3. WhatsApp OTP: once the AiSensy authentication template is approved, set `VMS_FACE_OTP_CAMPAIGN`
+   (one variable: the 6-digit code) and switch **Send OTP on WhatsApp** on in *Face Settings*.
+   Until then the OTP is shown on the Tech screen and the consent row is flagged `is_test_delivery`.
+4. Host call (optional): set `VMS_FACE_BOLNA_WEBHOOK_TOKEN` (long random string) and
+   `VMS_FACE_PUBLIC_BASE_URL`, run the script with `--create`, set `VMS_FACE_BOLNA_AGENT_ID`,
+   then switch **Call host for approval** on. Optional `VMS_FACE_BOLNA_FROM_NUMBER`.
+5. Host WhatsApp fallback (optional): an AiSensy template with 5 variables
+   (host name, visitor name, company, purpose, building) as `VMS_FACE_HOST_WA_CAMPAIGN`.
+6. Retention cron: add `{ "path": "/api/cron/vms-face-retention", "schedule": "0 21 * * *" }` to
+   `vercel.json` (not added by the agent — deployment config).
 
 ## Decisions
 
@@ -32,20 +61,27 @@ Host approval moves to a Bolna voice call the host can answer by voice or keypad
 
 ## Process flow
 
-**First visit (no face match)**
-1. Reception captures photo → BioFRQ identify within `org:<id>` → no match.
-2. Reception enters the visitor's mobile → WhatsApp OTP sent, message carries the consent line.
-3. Visitor reads the OTP out → reception enters it.
-4. OTP correct → consent recorded → face enrolled, `subjectId` saved.
-5. Reception fills name, company, purpose, host → send for approval.
-6. Visitor declines / OTP wrong 3 times / no WhatsApp → manual check-in, no face stored.
+**Consent comes before any photo of a new visitor** (owner, 2026-10-26). Reception first asks
+"Have you visited before?". Only people who say yes, and so already consented, are scanned straight
+away, like DigiYatra, where only enrolled travellers use the face gate.
 
-**Return visit (face match)**
-1. Capture photo → match → name, mobile, company pre-filled.
-2. Reception picks purpose + host → send for approval. No OTP.
+**Returning visitor** (button *Returning visitor*)
+1. Take the photo → BioFRQ searches this organisation's saved faces (all consented).
+2. Found → name, mobile, company pre-filled. Reception picks purpose + host → send. No phone number, no OTP.
+3. Not found → the photo is discarded and the visitor continues as a new visitor (below).
 
-**Check-out**
-Capture photo → match → find the open visit → check out.
+**First visit** (button *New visitor*)
+1. Reception types the mobile. If that mobile already has a saved face, the visitor is verified
+   against that one face instead (1:1); no match → manual check-in.
+2. Otherwise reception enters name and company → WhatsApp OTP sent; the message carries the consent line.
+3. Visitor reads the OTP out → reception enters it → consent verified.
+4. **Only now** the photo is taken → face enrolled, `subjectId` saved, consent recorded.
+5. Reception picks purpose + host → send for approval.
+6. Visitor declines / OTP fails / no WhatsApp → manual check-in; a normal log photo only, nothing sent to BioFRQ.
+
+**Check-out:** reception clicks **Check Out** in the visitor list, or enters the Visitor ID. No face
+check-out (removed 2026-10-26: reception can do it in one click, and it would send faces of people
+who never consented).
 
 ## OTP rules
 
@@ -80,7 +116,10 @@ Docs: [enroll](https://biofrq.com/docs/api-reference/enroll/) ·
 
 ## Phases
 
-### Phase 0 — Security lockdown
+### Phase 0 — Security lockdown — **dropped for the testing module (owner, 2026-10-26)**
+The `vms-face` routes require a login but do not check the `tech` role. Revisit before rollout.
+The original item, for the live VMS, is kept below for reference.
+
 Today most `app/api/vms/**` routes use the service-role client with no auth check.
 
 - **Require login + active `property_memberships` for the property (or org admin):**
@@ -91,13 +130,19 @@ Today most `app/api/vms/**` routes use the service-role client with no auth chec
 - RLS `OR true` on `visitor_logs` stays for now (kiosk depends on it).
 - Verify with `api-route-reviewer` and `rbac-auditor`; test on localhost.
 
-### Phase 1 — Purpose of visit + live status
+### Phase 1 — Purpose of visit + live status — **built**
+- Built on the new table `vms_face_visits.purpose`, not `visitor_logs` (live VMS untouched).
+  Host notifications: the host voice call says the purpose.
 - New nullable `purpose` column on `visitor_logs` (**migration — owner applies**).
 - Purpose picker in the **Tech Team testing VMS only**; existing VMS and kiosk untouched.
 - Purpose shown in the visitor list and in host notifications.
 - Live status after "Send for approval": Pending → Approved / Rejected / Host not answering.
 
-### Phase 2 — Groundwork (no visible change)
+### Phase 2 — Groundwork (no visible change) — **built**
+- As built, tables are `vms_face_settings`, `vms_face_profiles`, `vms_face_otp_challenges`,
+  `vms_face_consents`, `vms_face_deletions` (prefix `vms_face_`). RLS on, service role only.
+  Settings default: face recognition **on** (the tab exists only for testing), liveness off,
+  OTP `screen_test`, host call off.
 - `backend/services/BioFrqService.ts` — server-only wrapper: identify, enroll, deleteSubject, liveness.
   Timeouts, retry on 429/503, never blocks check-in.
 - New table `visitor_face_profiles` (**migration — owner applies**):
@@ -113,26 +158,28 @@ Today most `app/api/vms/**` routes use the service-role client with no auth chec
 - Camera produces a JPEG copy for BioFRQ; stored photo stays WebP.
 - API key read from env `BIOFRQ_API_KEY` server-side only.
 
-### Phase 3 — Face VMS tab in the Tech Team dashboard
-New tab in `TechDashboard` with **New visitor (face)** and **Check out (face)**.
+### Phase 3 — Face VMS tab in the Tech Team dashboard — **built**
+New tab "VMS Face (Testing)" in `TechDashboard`. Flow as in *Process flow* above.
 
-- **Check-in:** capture → (liveness if toggle on) → identify within `org:<id>`.
-  - Match → pre-fill name / mobile / company; reception picks purpose + host → send.
-  - No match → mobile → WhatsApp OTP → reception enters it → consent recorded → enroll → details → send.
-  - Declined / OTP failed → manual check-in, no enrollment.
-  - BioFRQ down / out of credit → manual form, with a small notice.
-- **Check-out:** capture → identify → find the open visit → check out.
-- Existing check-in / check-out API routes reused; new server routes for face + OTP actions,
-  login + `tech` role required.
+- Routes: `face/lookup` (mobile → has a saved face or not), `face/verify` (returning visitor: search saved faces, or 1:1 with a mobile), `face/otp`
+  (send / verify consent code), `face/enroll` (only with a verified, unused OTP; one face per mobile).
+- BioFRQ down / out of credit → manual form, with a small notice.
+- No face check-out; check-out stays manual.
+- Existing check-in / check-out API routes reused; routes require a login (no `tech` role check — Phase 0 dropped).
 
-### Phase 4 — Host approval by Bolna voice agent
+### Phase 4 — Host approval by Bolna voice agent — **built (voice only)**
+- As built: a **new** Bolna agent with its own webhook `app/api/vms-face/bolna?token=` (not the existing
+  voice webhook). The server reads only the agent's fixed final sentence; unclear = never approved.
+  Spec block: `docs/vms-face/AGENT_SPEC.md`.
+- **Keypad `1#` / `2#` not built:** calls go out on Plivo, but nothing in the repo uses Bolna DTMF and the
+  webhook payload has no keypad field to read. Voice only.
 - Call script includes visitor name, company and purpose; host says approve/reject or presses `1#` / `2#`.
 - Result arrives at the existing voice webhook, is verified, and updates **only that visit**.
 - No answer → one retry → WhatsApp → reception sees "Host not answering".
 - **Agent Spec Block** required (docs/AGENT_DOCTRINE.md §3).
 - Pre-check: Bolna DTMF works only on Plivo / Twilio lines — confirm `BOLNA_TELEPHONY`.
 
-### Phase 5 — Privacy and retention
+### Phase 5 — Privacy and retention — **built** (cron entry still to be added to `vercel.json`)
 - Daily job: delete faces with `last_seen_at` older than 12 months (BioFRQ + our table).
 - Admin "Delete face" button for visitor requests.
 - Deletion log kept for audit (BioFRQ returns a `deletionId`).
@@ -144,7 +191,7 @@ New tab in `TechDashboard` with **New visitor (face)** and **Check out (face)**.
 
 ## Open checks
 
-- Bolna telephony provider (Plivo / Twilio needed for keypad input).
+- Bolna telephony: Plivo (`BOLNA_TELEPHONY`). Keypad input still unverified on Bolna, so voice only.
 - Final consent wording (DPDP Act 2023).
 - Meta approval of the WhatsApp OTP authentication template.
 - Which property the Tech Team trial runs on.
