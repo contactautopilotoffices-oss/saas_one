@@ -1,209 +1,218 @@
-# Stock Management from Monthly Requisition: Plan
+# Stock Management from Monthly Requisition: Plan (v2)
 
 **Branch:** `claude/blissful-gates-n9t0ht`
-**Status:** Plan only. Nothing built yet. Waiting on the open questions in section 10.
-**Builds on:** [MONTHLY_REQUISITION_STANDARD_CATALOG_PLAN.md](MONTHLY_REQUISITION_STANDARD_CATALOG_PLAN.md) (Phases 1 and 2 done; this document is the detailed version of its Phase 3).
+**Status:** Plan only. Nothing built yet.
+**Builds on:** [MONTHLY_REQUISITION_STANDARD_CATALOG_PLAN.md](MONTHLY_REQUISITION_STANDARD_CATALOG_PLAN.md) (Phases 1 and 2 done).
+
+## Decisions taken
+
+| Question | Decision |
+|---|---|
+| When does the challan button appear? | **Right after approval** (status `approved`) |
+| How do ETPL and SS Plaza move to the new item names? | **No mapping, no sync.** Flip a switch. The requisition items appear as their stock list. The old list is kept untouched as a read-only "Old Stock" view. |
+| Is the requisition unit the counting unit? | **Yes.** No unit conversion is built. |
+
+This replaces section 7 of v1 (mapping wizard, merges, aliases). None of that is built.
 
 ---
 
-## 1. What we want
+## 1. The idea in one line
 
-1. A monthly requisition gets approved.
-2. The property admin of that property gets an **Upload Delivery Challan** option on it.
-3. They upload the challan, check the received quantity of each item, and press **Confirm**.
-4. The received quantities are added to that property's **Stock Management**.
-5. Properties that never used stock management get a stock list made automatically from the
-   items they can see in their monthly requisition. They type in today's stock once.
-6. Every property can download **one PDF with the QR code of every item**: 4 per row, item
-   name under each QR.
-7. ETPL and SS Plaza already run stock management with their own item names. From next month
-   they switch to the requisition item names **without losing their current quantities,
-   barcodes or movement history**.
-8. All of this is switched on property by property, from a setting, not hard coded.
+Every stock row gets a label saying where it came from: **old list** or **requisition list**.
+A per-property switch decides which list the property sees. Nothing is ever matched by name,
+copied across, renamed or deleted.
 
----
+```
+                 property switch = "Requisition items"
+                               │
+   stock_items rows ───────────┼──────────────────────────────
+   item_source = 'legacy'      │   item_source = 'catalog'
+   (old names, old qty,        │   (requisition names, one row per
+    old barcodes, history)     │    catalog item, qty entered fresh)
+   ── shown as read-only       │   ── shown as the live stock list
+      "Old Stock" tab          │
+```
 
-## 2. What already exists (reuse, do not rebuild)
-
-| Piece | Where | Note |
-|---|---|---|
-| Standard item list | `procurement_catalog` | `lifecycle = 'standard'` items are what a requisition shows |
-| Which property sees which item | `procurement_catalog.assigned_property_ids` (empty or `'ALL'` = everyone) | The filter lives in `getCatalogWithSitePrices` in [pricingAndAliasService.ts](../backend/lib/procurement/pricingAndAliasService.ts). Stock must reuse this same function so "what you can request" and "what you count" never drift. |
-| Requisition record | `property_monthly_requisitions` | Line items are stored in `notes.items` (JSON). Each row id is `cat-<catalog id>`, so the catalog item of every ordered line is recoverable. |
-| Approval | [approve/route.ts](../app/api/procurement/requisitions/[id]/approve/route.ts) | `pending_approval` → `approved`; procurement then issues PO → `ordered` |
-| Stock tables | `stock_items`, `stock_movements`, `stock_reports` | Quantity is `NUMERIC`. Movement actions today: `add`, `remove`, `adjust`, `initial`. |
-| Stock ↔ catalog link | `stock_items.catalog_item_id` (nullable FK) | Exists, mostly empty today. This is the hinge for everything below. |
-| QR per item | `stock_items.barcode`, [barcode/route.ts](../app/api/properties/[propertyId]/stock/items/[itemId]/barcode/route.ts), single PNG download in [StockItemList.tsx](../frontend/components/stock/StockItemList.tsx) | Scanner already resolves an item by `barcode` |
-| PDF and QR libraries | `jspdf`, `qrcode` in `package.json` | Already installed. No new library needed. |
-| PO paperwork storage | [backend/lib/accounts/documents.ts](../backend/lib/accounts/documents.ts) | Already stores challans and GRNs against POs. Reuse its upload pattern. |
-| Stock tab for property admin | `PropertyAdminDashboard.tsx` → `StockDashboard` | Already visible to property admins |
+Switch it back and the old list is the live list again, exactly as it was.
 
 ---
 
-## 3. A problem to fix before anything else
+## 2. What already exists (reuse)
 
-[requisitions/route.ts:436-510](../app/api/procurement/requisitions/route.ts) runs a background
-"sync" every time a requisition is submitted. It:
+| Piece | Where |
+|---|---|
+| Items each property can request | `procurement_catalog`, filtered by `lifecycle = 'standard'` and `assigned_property_ids` in `getCatalogWithSitePrices` ([pricingAndAliasService.ts](../backend/lib/procurement/pricingAndAliasService.ts)). Stock reuses this exact function. |
+| Requisition and its line items | `property_monthly_requisitions`, items in `notes.items`; each row id is `cat-<catalog id>` so ordered items map to catalog items with no guessing |
+| Approval | [approve/route.ts](../app/api/procurement/requisitions/[id]/approve/route.ts): `pending_approval` → `approved` |
+| Stock tables | `stock_items` (has `catalog_item_id`), `stock_movements`, `stock_reports` |
+| QR per item | `stock_items.barcode`, scan page resolves by row id |
+| PDF + QR libraries | `jspdf`, `qrcode` already in `package.json` |
+| Challan file storage pattern | [backend/lib/accounts/documents.ts](../backend/lib/accounts/documents.ts) |
 
-- matches the requisition line to `stock_items` **by name only**,
-- if the name matches, **overwrites `stock_items.quantity`** with the "Avail. Qty" typed on the
-  sheet, with **no `stock_movements` row**, so the history no longer adds up,
-- if the name does not match, **inserts a new stock item** with an `STK-xxxxx` code.
+---
 
-For ETPL and SS Plaza, whose names differ from the requisition names, every submit since the
-catalog-only sheet went live has likely created a second copy of each item (the `STK-` rows)
-next to their real ones. For other properties it is quietly creating stock rows they never
-asked for.
+## 3. Phase 0: switch off the existing auto sync
 
-**Fix (Phase 0):** only run this sync for properties whose stock setting is `catalog` mode
-(section 4), match on `catalog_item_id` instead of name, and write the change as an `adjust`
-movement. For everyone else it does nothing.
+[requisitions/route.ts:436-510](../app/api/procurement/requisitions/route.ts) runs on every
+requisition submit. It matches requisition lines to stock **by name**, overwrites stock
+quantity with the typed "Avail. Qty" without a history row, and inserts new `STK-xxxxx` items
+when a name does not match. This is the kind of sync that causes problems, and it has
+probably already created extra rows at ETPL and SS Plaza.
 
-**Check first (read only, run by a human):**
+**Change:** remove this block. Submitting a requisition stops writing to stock at all. Stock
+changes only through stock screens and challan confirmations.
+
+Any `STK-` rows it already created are marked `legacy` by the Phase 1 migration like every
+other existing row, so they disappear from the live list when a property switches over. They
+are not deleted.
+
+Read-only check (for a human to run, to see how many exist):
 
 ```sql
-SELECT p.name, count(*) AS auto_created_rows, min(s.created_at), max(s.created_at)
+SELECT p.name, count(*) AS auto_created_rows
 FROM stock_items s JOIN properties p ON p.id = s.property_id
 WHERE s.item_code LIKE 'STK-%'
 GROUP BY p.name ORDER BY auto_created_rows DESC;
 ```
 
-If ETPL or SS Plaza show rows here, the mapping step in section 7 handles them: they are listed
-as "auto-created duplicates" and retired (hidden, never deleted).
-
 ---
 
-## 4. The setting that makes it configurable
+## 4. Phase 1: the switch
 
-One new table, one row per property. This is the `property_catalog_adoption` table already
-specified in the earlier plan, with three fields added.
+### 4.1 Database (additive only)
 
 ```sql
+-- Every existing row becomes 'legacy' automatically through the default.
+ALTER TABLE stock_items
+  ADD COLUMN IF NOT EXISTS item_source text NOT NULL DEFAULT 'legacy'
+    CHECK (item_source IN ('legacy', 'catalog'));
+
+-- One requisition-list row per item per property, so creating rows can be re-run safely.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_items_catalog_per_property
+  ON stock_items (property_id, catalog_item_id)
+  WHERE item_source = 'catalog';
+
 CREATE TABLE property_stock_settings (
-  property_id          uuid PRIMARY KEY REFERENCES properties(id) ON DELETE CASCADE,
-  organization_id      uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  stock_enabled        boolean NOT NULL DEFAULT false,
-  item_source          text NOT NULL DEFAULT 'catalog'
-                         CHECK (item_source IN ('legacy', 'catalog')),
-  adoption_status      text NOT NULL DEFAULT 'not_started'
-                         CHECK (adoption_status IN ('not_started', 'mapping', 'active')),
-  cutover_month        date,          -- first month the property sees catalog names
-  challan_required     boolean NOT NULL DEFAULT true,
-  challan_unlock_status text NOT NULL DEFAULT 'approved'
-                         CHECK (challan_unlock_status IN ('approved', 'ordered')),
-  updated_by           uuid REFERENCES users(id),
-  updated_at           timestamptz DEFAULT now()
+  property_id      uuid PRIMARY KEY REFERENCES properties(id) ON DELETE CASCADE,
+  organization_id  uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  item_source      text NOT NULL DEFAULT 'legacy' CHECK (item_source IN ('legacy', 'catalog')),
+  switched_at      timestamptz,
+  switched_by      uuid REFERENCES users(id),
+  updated_at       timestamptz DEFAULT now()
 );
 ```
 
-What each setting means:
+A property with no settings row behaves as `legacy`, which is exactly today's behaviour. So
+the migration changes nothing anyone can see until someone flips a switch.
 
-| Setting | Values | Effect |
-|---|---|---|
-| `stock_enabled` | on / off | Shows the Stock tab and the challan option for that property |
-| `item_source` | `legacy` / `catalog` | `legacy` = keep today's own item list (ETPL, SS Plaza until cutover). `catalog` = items come from the monthly requisition list. |
-| `adoption_status` | `not_started` → `mapping` → `active` | Where the property is in the switch-over. Only `active` gets the automatic links. |
-| `cutover_month` | e.g. `2026-12-01` | From this month the property sees the catalog names |
-| `challan_unlock_status` | `approved` / `ordered` | Whether the challan button appears right after approval or only after PO is issued |
+### 4.2 The settings screen
 
-Starting values:
+**Stock Settings** panel (org admin / master admin / procurement), one line per property:
 
-| Property | stock_enabled | item_source | adoption_status | cutover_month |
-|---|---|---|---|---|
-| ETPL | on | legacy | mapping | next month |
-| SS Plaza | on | legacy | mapping | next month |
-| Every other property | on (or off until they are ready) | catalog | active | none |
+| Property | Stock list | Items | Switched on |
+|---|---|---|---|
+| ETPL | ( ) Old list  (•) Requisition items | 92 | 1 Dec 2026 by ... |
+| SS Plaza | (•) Old list  ( ) Requisition items | 140 old | |
+| Property X | ( ) Old list  (•) Requisition items | 87 | |
 
-Where it is edited: a small **Stock Settings** panel for `org_super_admin` / `master_admin`
-(and procurement, if you want), listing every property with these toggles. No property admin
-can change it. A property with no row behaves exactly as today, so the migration changes
-nothing on day one.
+Turning a property to **Requisition items** shows a confirmation:
 
----
+> "87 requisition items will become SS Plaza's stock list, starting at quantity 0. The current
+> 140 items move to **Old Stock** (read only, nothing deleted). Staff should enter current
+> stock after switching and print the new QR codes."
 
-## 5. Flow A: properties new to stock management (the easy case)
+### 4.3 What happens when the switch is turned on
 
-### 5.1 Building their stock list
+1. For every item the property sees in its monthly requisition, a stock row is created with
+   `item_source = 'catalog'`, `catalog_item_id` set, name / unit / category copied from the
+   catalog, `quantity = 0`, and a new barcode.
+2. Old rows are **not touched**: same quantity, barcode, history.
+3. Rows that already exist are skipped (the unique index), so turning it on twice is harmless.
 
-When a property is `catalog` + `active`, the Stock tab shows:
+Later, when procurement assigns a new item to the property, the stock list adds it at 0 the
+next time it loads. This only ever **adds** requisition items; it never looks at old items, so
+it cannot mix the two lists. If an item is taken off the property's requisition list, its stock
+row stays (with its quantity) under "Not on requisition list any more" until it reaches 0.
 
-> "Your stock list is built from your monthly requisition items. 87 items. **Set up stock**"
+### 4.4 Screens that must respect the switch
 
-Pressing it creates one `stock_items` row per item that property can see (same filter as the
-requisition: standard lifecycle + `assigned_property_ids`), with:
+Every place that reads `stock_items` filters by the property's current `item_source`:
 
-- `catalog_item_id` set, `name` / `unit` / `category` copied from the catalog,
-- `quantity = 0`,
-- a barcode generated with the same logic as the existing barcode route, so scanning works.
+- [stock/items/route.ts](../app/api/properties/[propertyId]/stock/items/route.ts) (the stock list)
+- stock movements and the movement modal (only live items can be moved)
+- [generate-stock-reports cron](../app/api/cron/generate-stock-reports/route.ts) (daily report counts live items only)
+- the stock widget on dashboards, the org-level stock report
 
-It is idempotent: pressing it again only adds items that are missing. When procurement later
-assigns a new item to the property, the Stock tab shows "3 new items from your requisition
-list, **Add**". Items removed from the property's list are not deleted; they are hidden from
-new entry once quantity is zero.
+### 4.5 Old Stock tab (ETPL, SS Plaza, anyone who switches)
 
-### 5.2 Entering current stock
-
-An **Opening Stock** screen: one table of all items (grouped by category, same order as the
-requisition sheet), a "Current Qty" box per row, one **Save** button. Saving writes one
-`initial` movement per item that changed, so history starts clean. The existing Bulk Import
-(Excel) stays available for sites that prefer a sheet.
-
-### 5.3 QR code PDF (all properties, including ETPL and SS Plaza)
-
-A **Download QR Codes (PDF)** button on the Stock tab.
-
-- A4 portrait, **4 columns**, as many rows as fit (about 5 per page), page breaks automatic.
-- Each cell: the QR code, the item name under it (wrapped to 2 lines), and the item code small
-  underneath. Property name and date in the page header.
-- The QR content is the item's existing `barcode` value. For ETPL and SS Plaza this means
-  **stickers they already printed keep working**; nothing is regenerated.
-- Items without a barcode get one generated first.
-- Filters before download: all items, one category, or ticked items only (to reprint a few).
-- Built in the browser with `jspdf` + `qrcode`, which are already installed. No server load,
-  no new library.
+- Read only: name, last quantity, unit, full movement history, old reports.
+- No add / remove / delete on old items.
+- Old daily `stock_reports` rows stay as they are.
+- Scanning an old QR sticker opens the item with a banner: "This is an old item. Print the
+  new QR codes from the Stock tab."
 
 ---
 
-## 6. Flow B: delivery challan to stock (all properties)
+## 5. Phase 2: enter current stock + QR code PDF
 
-### 6.1 Who sees it and when
+### 5.1 Opening stock
 
-On the property admin's requisition list, a requisition shows **Upload Delivery Challan** when:
+**Update Current Stock** screen on the Stock tab: one table of all live items, grouped by
+category in the same order as the requisition sheet, a "Current Qty" box per row, one
+**Save**. Saving writes an `initial` movement for each first entry and an `adjust` movement
+for any later recount, so every number has a history line. The existing Excel Bulk Import
+remains for sites that prefer a sheet.
 
-- its status is `approved` (or `ordered`, per `challan_unlock_status`), and
-- the property has `stock_enabled = true`, and
-- the user is a property admin of **that** property.
+### 5.2 QR code PDF
 
-### 6.2 Upload and confirm
+**Download QR Codes (PDF)** on the Stock tab:
 
-1. Upload the challan (photo or PDF) plus challan number and date.
-2. The screen lists every item from that requisition with `requested_qty > 0`:
-   Item, Unit, Ordered Qty, Already Received, **Received Now** (pre-filled with what is still
-   pending), Remarks.
-3. The admin corrects anything that did not arrive or arrived short.
-4. **Confirm** shows a summary ("12 items, 340 units will be added to stock") and then posts.
+- A4, **4 columns**, rows fill the page, automatic page breaks.
+- Each cell: QR code, **item name below** (up to 2 lines), item code in small text.
+- Page header: property name and date.
+- Options: all items, one category, or ticked items only (for reprints).
+- Built in the browser with the already-installed `jspdf` and `qrcode`. No new library.
 
-Partial deliveries are allowed: a second challan can be uploaded for what is still pending.
-The requisition moves to `partially_received`, then `received` when everything ordered has
-arrived (or the admin marks the rest "not coming").
+---
+
+## 6. Phase 3: delivery challan to stock
+
+### 6.1 Who sees the button and when
+
+On the property admin's requisition list, **Upload Delivery Challan** appears when:
+
+- the requisition status is `approved` (right after approval), and
+- the property is on **Requisition items** (catalog mode), and
+- the user is a property admin of that property.
+
+ETPL and SS Plaza get the button once they are switched over, which is what we want: receipts
+must land in the requisition-item list, not the old list.
+
+### 6.2 The flow
+
+1. Upload the challan (photo or PDF), challan number, challan date.
+2. A table lists every item in that requisition with `requested_qty > 0`:
+   **Item · Unit · Ordered · Already received · Received now · Remarks**.
+   "Received now" is pre-filled with what is still pending.
+3. The admin corrects short or missing items.
+4. **Confirm** shows "12 items, 340 units will be added to stock", then posts.
+
+Partial deliveries: a second challan can be uploaded for what is still pending. The requisition
+moves to `partially_received`, then `received` once everything has arrived (or the admin marks
+the rest "not coming").
 
 ### 6.3 What Confirm writes
 
-All in one database function (so it is all or nothing, and pressing Confirm twice cannot add
-stock twice):
+In one database function, so it is all or nothing and a double click cannot add stock twice:
 
-- one `stock_movements` row per line, new action **`receipt`**, linked to the challan,
-- `stock_items.quantity` increased by the received amount,
-- the challan marked `confirmed` with who and when,
-- if a catalog item has no stock row yet at that property, the row is created first at 0.
+- for each line, find the live stock row by `catalog_item_id` (create it at 0 if missing),
+- add the received quantity and write a `stock_movements` row with new action `receipt`,
+  linked to the challan,
+- mark the challan `confirmed` with who and when, update the requisition status.
 
-Matching is **by `catalog_item_id` only, never by name.**
+Matching is by catalog item id from the requisition line. **Never by name.**
 
-For a property still in `mapping` (ETPL, SS Plaza before cutover), any line whose catalog item
-is not yet linked asks the admin to pick which of their existing items it is, or "new item".
-That choice is saved as the mapping, so the mapping fills itself in as deliveries arrive.
-
-### 6.4 New tables
+### 6.4 New tables and columns (additive)
 
 ```sql
 CREATE TABLE requisition_deliveries (
@@ -226,7 +235,7 @@ CREATE TABLE requisition_delivery_items (
   delivery_id      uuid NOT NULL REFERENCES requisition_deliveries(id) ON DELETE CASCADE,
   catalog_item_id  uuid REFERENCES procurement_catalog(id),
   stock_item_id    uuid REFERENCES stock_items(id),
-  item_name        text NOT NULL,      -- snapshot, never changes later
+  item_name        text NOT NULL,   -- snapshot
   unit             text,
   ordered_qty      numeric NOT NULL DEFAULT 0,
   received_qty     numeric NOT NULL DEFAULT 0,
@@ -235,142 +244,46 @@ CREATE TABLE requisition_delivery_items (
 );
 ```
 
-Plus, additive only:
-
-- `stock_movements.action` CHECK extended with `receipt` (and `merge`, see 7.4),
-- `stock_movements.delivery_id` nullable column,
-- requisition status CHECK extended with `partially_received` and `received`.
-
-Challan files go in the existing `procurement_requisitions` storage bucket under
+Plus: `receipt` added to the `stock_movements.action` CHECK, a nullable
+`stock_movements.delivery_id`, and `partially_received` / `received` added to the requisition
+status CHECK. Challan files go in the existing `procurement_requisitions` bucket under
 `deliveries/<property>/<requisition>/`.
 
 ---
 
-## 7. Flow C: ETPL and SS Plaza, switching names without losing data
+## 7. Rollout
 
-### 7.1 The one rule
-
-**`catalog_item_id` is the item's identity. The name is only a label.**
-
-Their existing `stock_items` rows are kept as they are. We **link** each one to its catalog
-item; we do not create new rows next to them. Because the row is the same row:
-
-- quantity stays,
-- barcode stays (printed QR stickers keep working),
-- every past `stock_movements` row stays attached,
-- reports before and after cutover are continuous.
-
-### 7.2 New columns on `stock_items` (additive, nothing dropped)
-
-```sql
-ALTER TABLE stock_items
-  ADD COLUMN IF NOT EXISTS local_name        text,     -- their old name, kept forever
-  ADD COLUMN IF NOT EXISTS is_site_specific  boolean DEFAULT false,
-  ADD COLUMN IF NOT EXISTS is_retired        boolean DEFAULT false,
-  ADD COLUMN IF NOT EXISTS merged_into_id    uuid REFERENCES stock_items(id);
-```
-
-And a mapping history table so the whole mapping can be undone:
-
-```sql
-CREATE TABLE stock_mapping_log (
-  id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  property_id        uuid NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
-  stock_item_id      uuid NOT NULL REFERENCES stock_items(id),
-  action             text NOT NULL,   -- link | keep_site_specific | retire | merge | create
-  previous_name      text,
-  previous_catalog_item_id uuid,
-  new_catalog_item_id      uuid,
-  done_by            uuid REFERENCES users(id),
-  done_at            timestamptz DEFAULT now(),
-  undone_at          timestamptz
-);
-```
-
-### 7.3 The mapping screen (one time, per property)
-
-Run this month, while the property is still in `mapping` and still sees its old names.
-
-Two columns side by side: **their current item** (name, unit, qty) and **the requisition item**
-it should become. The system pre-fills suggestions; a person confirms every line. Five buckets:
-
-| Bucket | What the system suggests | What confirming does |
+| When | Who | What |
 |---|---|---|
-| **Sure match** | Same name after cleaning (case, spaces, "ltr"/"l") and same unit | Pre-ticked. Links the row: sets `catalog_item_id`, saves old name in `local_name`. |
-| **Possible match** | Similar name, shown with both units | Admin picks. If units differ (e.g. "Box" vs "pcs") it will not link until that is sorted out. |
-| **No requisition equivalent** | Their item is not on the catalog | **Keep as site-specific** (stays countable) or **Retire** (hidden, history kept) |
-| **Auto-created duplicates** | The `STK-` rows from section 3 | Retire. If one has a real quantity, merge it (7.4). |
-| **Catalog items they have no row for** | Requisition item with no match | Created at quantity 0 on confirm |
+| Now | Dev | Phases 0 to 3 built and deployed. All properties still on **Old list**, so nothing changes for anyone. |
+| Now | Admin | Switch on the properties that never used stock. They enter current stock and print QR codes. |
+| 1st of next month | Admin | Switch ETPL and SS Plaza. Their old items move to Old Stock (kept). They enter current stock on the new list and print new QR codes. |
+| After that | Property admins | Every approved requisition: upload challan, confirm, stock goes up. |
 
-Nothing is written until the admin presses **Save mapping**. Every change goes into
-`stock_mapping_log`, and **Undo mapping** reverts all of it. There is no `DELETE` anywhere and
-no quantity is changed in this step (except merges, below).
-
-Who runs it: suggested procurement or org admin prepares it, the property admin confirms
-(they know their own items). See open question 3.
-
-### 7.4 The only case that changes a number: two old items, one catalog item
-
-Example: "Bleach 5L" (qty 40) and "Bleach Chemical 5 Ltr" (qty 12) are the same thing. One row
-survives, the other gets `merged_into_id` and is retired, and the survivor gets a `merge`
-movement of +12 so the ledger still adds up. The confirm box states the result ("Bleach
-Chemical 5 Ltr will show 52"). This is the only place the plan touches a quantity the site
-owns, so it is explicit.
-
-### 7.5 Cutover
-
-On `cutover_month` (or when the admin flips it after mapping is done):
-
-- `item_source` becomes `catalog`, `adoption_status` becomes `active`,
-- the Stock tab shows the catalog name; the old name shows small underneath for one or two
-  months ("was: Toilet Roll Big") so staff are not confused,
-- scanning an old sticker still opens the right item,
-- they do one stock count on the Opening Stock screen (5.2). Differences are written as
-  `adjust` movements, so the change is visible in history, not hidden.
-
-If something looks wrong, the admin sets `item_source` back to `legacy`: the old names come
-back because `local_name` was never lost.
-
----
+If anything goes wrong at a property, switch it back to **Old list**: the old items return as
+they were, and the requisition-item rows stay hidden until it is switched on again.
 
 ## 8. Build order
 
-| Phase | What | Why this order |
-|---|---|---|
-| **0** | Gate the name-based stock sync in `requisitions/route.ts` (section 3). Run the read-only `STK-` check. | Stops new damage to ETPL / SS Plaza data before anything else |
-| **1** | `property_stock_settings` table + settings panel. QR code PDF download. | Settings are needed by everything. The PDF is useful to everyone right away and is low risk. |
-| **2** | Flow A: "Set up stock" from requisition items + Opening Stock screen | Proves the catalog link on properties with no old data |
-| **3** | Flow B: challan upload, confirm, `receipt` movements, new requisition statuses | Needs the links from Phase 2 to post into |
-| **4** | Flow C: mapping screen, merge, undo, cutover for ETPL then SS Plaza | Done this month so next month's requisition can switch |
-| **5** | Requisition sheet's "Avail. Qty" pre-filled from stock (for `active` properties) | Closes the loop: requested, received, counted all on one item |
+| Phase | Scope |
+|---|---|
+| **0** | Remove the name-based auto sync from requisition submit |
+| **1** | `item_source` column, `property_stock_settings`, Stock Settings panel, all stock reads filtered, Old Stock tab |
+| **2** | Update Current Stock screen, QR code PDF |
+| **3** | Delivery challan upload, confirm, `receipt` movements, new requisition statuses |
+| **4** (later) | Requisition sheet "Avail. Qty" pre-filled from live stock |
 
-Each phase is shippable alone. Migrations are all additive (new tables, new nullable columns,
-widened CHECK lists). No column is dropped and no existing row is rewritten by a migration.
-Per repo rules, migrations are written in this branch but applied by a human.
+All migrations add tables, nullable columns or wider CHECK lists. Nothing is dropped, no
+existing row is rewritten by a migration. Per repo rules, migrations are written here and
+applied by a human.
 
-## 9. Files expected to change
+No AI or model call is in this plan, so the Agent Doctrine spec block does not apply.
 
-- `app/api/procurement/requisitions/route.ts` (Phase 0 gate only)
-- New: `supabase/migrations/2026xxxx_property_stock_settings.sql`, `..._requisition_deliveries.sql`, `..._stock_items_catalog_identity.sql`
-- New API routes under `app/api/properties/[propertyId]/stock/` (`setup`, `opening`, `qr-pdf` data, `mapping`) and `app/api/procurement/requisitions/[id]/deliveries/`
-- New components in `frontend/components/stock/` (`OpeningStockSheet`, `QrCodeSheetButton`, `StockMappingWizard`) and `frontend/components/procurement/` (`DeliveryChallanModal`)
-- Small additions to `StockDashboard.tsx`, `StockItemList.tsx`, `MonthlyRequisitionsTab.tsx`
+## 9. Still open
 
-No AI or model call is part of this plan, so the Agent Doctrine spec block does not apply. If
-we later want the challan read automatically (OCR), that is an agent and gets its own spec.
-
-## 10. Open questions
-
-1. **Unit:** is the requisition unit also the counting unit? (You buy a "5 L Can", you count
-   cans.) Recommended yes. If some items are bought in boxes but counted in pieces, we need a
-   conversion per item, which adds real work.
-2. **When does the challan button appear:** right after approval, or only after procurement
-   issues the PO (`ordered`)?
-3. **Who does the ETPL / SS Plaza mapping:** procurement / org admin, the property admin, or
-   prepared by one and confirmed by the other?
-4. **Should other properties get stock switched on for all at once**, or one by one from the
-   settings panel?
-5. **Short delivery:** if a challan has less than ordered, should the pending quantity stay
-   open for a later challan (recommended), or close the requisition?
-6. **QR label size:** 4 across on A4 gives roughly 4.5 cm QR codes. Are they printing on plain
-   A4 and cutting, or on a sticker sheet with a fixed label size?
+1. **Phase 0:** OK to stop requisition submit from writing to stock completely?
+2. **Short delivery:** keep the pending quantity open for a later challan (recommended), or
+   close the requisition at the first challan?
+3. **Who else can upload a challan:** only property admins, or also soft service managers /
+   site staff of that property?
+4. **QR printing:** plain A4 and cut, or sticker sheets with a fixed label size?
