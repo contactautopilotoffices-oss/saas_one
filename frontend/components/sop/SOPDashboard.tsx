@@ -82,6 +82,7 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
         try {
             sessionStorage.setItem(`sop_active_view_${propertyId || 'global'}`, activeView);
 
+            window.dispatchEvent(new CustomEvent('sop-view-change', { detail: { view: activeView } }));
             const url = new URL(window.location.href);
             if (url.searchParams.get('tab') === 'checklist') {
                 url.searchParams.set('view', activeView);
@@ -187,7 +188,7 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
         setActiveView('runner');
     };
 
-    const handleChecklistComplete = () => {
+    const handleChecklistComplete = useCallback(() => {
         setToast({ message: 'Checklist completed successfully!', type: 'success' });
         // Invalidate all SOP caches for this property
         Object.keys(localStorage)
@@ -205,7 +206,23 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
         setSelectedTemplateId(null);
         setSelectedCompletionId(null);
         setSelectedCompletionDate(null);
-    };
+    }, [propertyId, invalidateCache]);
+
+    const handleSessionStarted = useCallback((createdId: string) => {
+        setSelectedCompletionId(createdId);
+        try {
+            const runnerState = {
+                templateId: selectedTemplateId,
+                propertyId: viewingPropertyId || propertyId,
+                completionId: createdId,
+                completionDate: selectedCompletionDate
+            };
+            sessionStorage.setItem(`sop_runner_state_${propertyId || 'global'}`, JSON.stringify(runnerState));
+            const url = new URL(window.location.href);
+            url.searchParams.set('completionId', createdId);
+            window.history.replaceState(window.history.state, '', url.toString());
+        } catch {}
+    }, [selectedTemplateId, viewingPropertyId, propertyId, selectedCompletionDate]);
 
     const handleViewDetail = useCallback((id: string, templateId: string, propId: string) => {
         setViewingCompletionTemplateId(templateId);
@@ -233,9 +250,9 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
     }
 
     return (
-        <div className="w-full min-h-screen bg-slate-50/50 rounded-xl md:rounded-[2rem] p-0">
+        <div className={`w-full min-h-screen ${activeView === 'reports' ? 'bg-[#f4f7fb]' : 'bg-slate-50/50 rounded-xl md:rounded-[2rem]'} p-0`}>
 
-            <div className="max-w-7xl mx-auto space-y-2 md:space-y-3">
+            <div className={activeView === 'reports' ? 'w-full px-2 sm:px-4 py-2 space-y-3' : 'max-w-7xl mx-auto space-y-2 md:space-y-3'}>
                 {/* Compact Header */}
                 <div className="flex items-center justify-between gap-2 px-3 pt-2 md:px-2 md:pt-0">
                     {/* Left: icon + title (hidden when propertySelector provided) */}
@@ -349,9 +366,9 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
 
                 {/* Content Area */}
                 <motion.div
-                    className="bg-white border border-slate-200 rounded-xl md:rounded-[2rem] shadow-sm overflow-hidden"
+                    className={activeView === 'reports' ? 'w-full' : 'bg-white border border-slate-200 rounded-xl md:rounded-[2rem] shadow-sm overflow-hidden'}
                 >
-                    <div className="p-2 md:p-6">
+                    <div className={activeView === 'reports' ? 'p-0 w-full' : 'p-2 md:p-6'}>
                         <AnimatePresence mode="wait">
                             <motion.div
                                 key={activeView}
@@ -426,12 +443,13 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
                                 {activeView === 'runner' && selectedTemplateId && (
                                     <div className="max-w-3xl mx-auto py-2 md:py-8">
                                         <SOPChecklistRunner
-                                            key={`${selectedTemplateId}-${selectedCompletionId || 'new'}-${selectedCompletionDate || 'now'}`}
+                                            key={`sop-runner-${selectedTemplateId}-${selectedCompletionDate || 'active'}`}
                                             templateId={selectedTemplateId}
                                             completionId={selectedCompletionId || undefined}
                                             completionDate={selectedCompletionDate || undefined}
                                             isSuperAdmin={['property_admin', 'org_admin', 'org_super_admin', 'master_admin'].includes(userRole.toLowerCase())}
                                             propertyId={viewingPropertyId!}
+                                            onSessionStarted={handleSessionStarted}
                                             onComplete={handleChecklistComplete}
                                             onCancel={() => {
                                                 try {

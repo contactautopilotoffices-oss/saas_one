@@ -354,7 +354,7 @@ CORE AUDIT RULES:
    - "overall_score" (0 to 100):
      * If all benchmarks have matching clean photos, award high score (80-95).
      * If any required benchmark photo is MISSING, overall score must be capped (max 60) and pass MUST be false.
-     * STALE IMAGE VETO: If any photo has an invalid watermark or is an old gallery upload, overall_score capped at 15-20, pass: false.
+     * STALE IMAGE VETO: Set pass: false ONLY if a photo is from a past date or is a photo taken of a screen. Photos taken on the scheduled inspection date [${allowedDates.join(', ')}] (via live camera or gallery) are valid and must be evaluated on cleanliness.
    - "pass": true ONLY if ALL benchmarks have a matched photo AND every matched area is clean (cleanliness_score >= 70) AND no stale images.
 
 3. PARAMETERS AS ADVISORY (DO NOT PENALIZE UNSEEN ITEMS):
@@ -363,7 +363,7 @@ CORE AUDIT RULES:
    - "not_in_frame" parameters MUST NEVER reduce overall_score!
 
 4. TIMESTAMP & WATERMARK:
-   - Check bottom-right corner of field photos for timestamp watermark.
+   - Check field photos for any visible timestamp watermark. Photos taken on [${allowedDates.join(', ')}] are valid.
 
 5. CONSTRUCTIVE EXPLANATION:
    - "overall_reason": Clear, friendly summary for on-site staff. If any photo is missing, explicitly state: "Missing photo for: [Benchmark Name]. Please tap '+ Add Photo' to capture it."
@@ -420,7 +420,7 @@ CORE AUDIT RULES:
    - ZOOM & FOV TOLERANCE: Image 1 (benchmark) may be captured in ultra-wide (0.5x) zoom, while Image 2 (field photo) may be in standard 1x zoom or closer crop. NEVER penalize or fail Image 2 for zoom differences, narrower framing, or focal length differences. If the visible space shown in Image 2 is clean, cleared, and tidy, award a high visual score (80-95).
    - If Image 2 is clean, cleared, and tidy matching Image 1, award a high visual score (80-95).
    - If the main space is visibly dirty, littered, or cluttered with left-behind items (e.g. laptops, bags, wires on table), score accordingly (25-50).
-   - STALE IMAGE VETO: If "is_stale_image" is true (missing watermark, wrong date, or gallery re-upload), the audit MUST FAIL (overall_score capped at 15-20, pass: false).
+   - STALE IMAGE VETO: Set pass: false ONLY if a photo is from a past date or is a photo taken of a screen. Photos taken on scheduled inspection dates [${allowedDates.join(', ')}] (via live camera or gallery) are valid and must be evaluated on cleanliness.
 
 2. PARAMETERS AS ADVISORY INSPECTION CHECKPOINTS (DO NOT PENALIZE UNSEEN ITEMS):
    - You are also given these specific checklist checkpoints to observe:
@@ -439,12 +439,13 @@ ${paramList}
      * "reason": Concise 1-sentence observation.
 
 3. TIMESTAMP & ANTI-SPOOFING VERIFICATION:
-   - Check the bottom-right corner of Image 2 for the stamped verification watermark (format: DD/MM/YYYY HH:mm:ss or LIVE AUDIT: DD/MM/YYYY HH:mm:ss).
-   - "timestamp_detected": The exact watermark string read from the bottom-right corner (or "missing" if not visible).
-   - "is_stale_image": Set to true if:
-     * The watermark date does NOT match any of the allowed shift dates: [${allowedDates.join(', ')}], OR
-     * The watermark timestamp is missing, cut off, or illegible, OR
-     * The image appears to be an old photo, gallery re-upload, or a photo taken of a computer screen.
+   - Check Image 2 for any visible timestamp watermark.
+   - Photos taken with in-app camera or uploaded from gallery on the scheduled inspection date [${allowedDates.join(', ')}] are completely VALID.
+   - "timestamp_detected": The exact watermark string read from the image (or "none" if not visible).
+   - "is_stale_image": Set to true ONLY if:
+     * A visible watermark clearly displays an old/different date that does NOT match any shift dates: [${allowedDates.join(', ')}], OR
+     * The image is visibly a photo taken of a computer screen / monitor (screen moiré, bezel).
+   - Do NOT mark gallery photos taken on today's inspection date as stale.
 
 4. HELPFUL REASONING:
    - "overall_reason": Write a friendly, constructive explanation for on-site staff.
@@ -483,15 +484,16 @@ CORE AUDIT RULES:
    - ZOOM & FOV TOLERANCE: Image 1 may be captured in 0.5x ultra-wide zoom, while Image 2 may be in 1x standard zoom or closer crop. NEVER penalize or fail for zoom or framing differences.
    - If Image 2 is clean, cleared, and tidy matching Image 1, award a high score (80-95).
    - If the main space is visibly dirty, littered, or cluttered with left-behind items (e.g. laptops, bags, wires on table), score accordingly (25-50).
-   - STALE IMAGE VETO: If "is_stale_image" is true (missing watermark, wrong date, or gallery re-upload), the audit MUST FAIL (overall_score capped at 15-20, pass: false).
+   - STALE IMAGE VETO: Set pass: false ONLY if "is_stale_image" is truly an outdated photo from a past date or a photo of a screen. Valid photos taken on scheduled dates [${allowedDates.join(', ')}] must be evaluated on cleanliness.
 
 2. TIMESTAMP & ANTI-SPOOFING VERIFICATION:
-   - Check the bottom-right corner of Image 2 for the stamped verification watermark (format: DD/MM/YYYY HH:mm:ss or LIVE AUDIT: DD/MM/YYYY HH:mm:ss).
-   - "timestamp_detected": The exact watermark string read from the bottom-right corner (or "missing" if not visible).
-   - "is_stale_image": Set to true if:
-     * The watermark date does NOT match any of the allowed shift dates: [${allowedDates.join(', ')}], OR
-     * The watermark timestamp is missing, cut off, or illegible, OR
-     * The image appears to be an old photo, gallery re-upload, or a photo taken of a computer screen.
+   - Check Image 2 for any visible timestamp watermark.
+   - Photos taken with in-app camera or uploaded from gallery on the scheduled inspection date [${allowedDates.join(', ')}] are completely VALID.
+   - "timestamp_detected": The exact watermark string read from the image (or "none" if not visible).
+   - "is_stale_image": Set to true ONLY if:
+     * A visible watermark clearly displays an old/different date that does NOT match any shift dates: [${allowedDates.join(', ')}], OR
+     * The image is visibly a photo taken of a computer screen / monitor (screen moiré, bezel).
+   - Do NOT mark gallery photos taken on today's inspection date as stale.
 
 3. HELPFUL REASONING:
    - "overall_reason": Write a friendly, constructive explanation for on-site staff.
@@ -679,6 +681,19 @@ Respond ONLY with raw JSON:
         );
 
         const watermarkMatchesExpected = hasVisibleWatermark && typeof rawWatermark === 'string' && allowedDates.some(d => rawWatermark.includes(d));
+
+        // Evaluate whether photo was captured on the scheduled inspection date (via camera watermark, filename date, or lastModified)
+        const photoDateToTest = actualImageInfo?.date || (completionItem.checked_at ? new Date(completionItem.checked_at) : null);
+        let isSameDayCapture = false;
+        if (photoDateToTest && !isNaN(photoDateToTest.getTime())) {
+            const pad = (n: number) => String(n).padStart(2, '0');
+            const photoDateStr = `${pad(photoDateToTest.getDate())}/${pad(photoDateToTest.getMonth() + 1)}/${photoDateToTest.getFullYear()}`;
+            isSameDayCapture = allowedDates.includes(photoDateStr);
+        } else {
+            // Default to allowed if no conflicting date is found and it was not flagged programmatically stale
+            isSameDayCapture = !isProgrammaticallyStale;
+        }
+
         const isLiveVerified = hasVisibleWatermark && watermarkMatchesExpected && !parsed?.is_stale_image && !isProgrammaticallyStale;
 
         let detectedWatermark: string | null = null;
@@ -692,21 +707,27 @@ Respond ONLY with raw JSON:
         } else if (isLiveVerified) {
             isStale = false;
             detectedWatermark = rawWatermark;
+        } else if (isSameDayCapture && !isProgrammaticallyStale && !parsed?.is_stale_image) {
+            // Gallery upload or unwatermarked capture taken on the scheduled inspection date
+            isStale = false;
+            detectedWatermark = actualImageInfo?.timestampStr
+                ? `${actualImageInfo.timestampStr} (Verified Capture)`
+                : `${expectedDateStr} (Verified Capture)`;
         } else {
-            // Gallery upload or outdated photo
+            // Truly outdated photo from past date or explicitly stale
             isStale = true;
-            if (actualImageInfo?.timestampStr) {
-                detectedWatermark = `${actualImageInfo.timestampStr} (Gallery Upload)`;
-                staleReasonMessage = `Gallery upload (Taken: ${actualImageInfo.timestampStr}) · Live camera capture required`;
-            } else if (isProgrammaticallyStale) {
+            if (isProgrammaticallyStale) {
                 detectedWatermark = 'Outdated Capture Metadata';
-                staleReasonMessage = `Old photo (${programmaticStaleReason}) · Live camera capture required`;
+                staleReasonMessage = `Old photo (${programmaticStaleReason}) · Fresh capture required`;
             } else if (hasVisibleWatermark) {
                 detectedWatermark = `${rawWatermark} (Outdated)`;
                 staleReasonMessage = `Outdated watermark (${rawWatermark}) · Scheduled: ${allowedDates.join(', ')}`;
+            } else if (actualImageInfo?.timestampStr) {
+                detectedWatermark = `${actualImageInfo.timestampStr} (Outdated Date)`;
+                staleReasonMessage = `Outdated photo taken on ${actualImageInfo.timestampStr} · Scheduled: ${allowedDates.join(', ')}`;
             } else {
-                detectedWatermark = 'Gallery Upload (No Live Watermark)';
-                staleReasonMessage = 'Gallery upload without live watermark · Live camera capture required';
+                detectedWatermark = 'Outdated Photo';
+                staleReasonMessage = `Photo date does not match scheduled inspection date (${allowedDates.join(', ')}).`;
             }
         }
 
@@ -785,6 +806,10 @@ Respond ONLY with raw JSON:
         if (isStale) {
             rawScore = Math.min(20, rawScore);
             reasonVal = staleReasonMessage;
+        } else if (reasonVal && /missing watermark|gallery re-upload|watermark/i.test(reasonVal)) {
+            // Clean up any stray prompt references if the model erroneously mentioned watermarks on a valid same-day photo
+            reasonVal = reasonVal.replace(/missing watermark[.,]?/gi, '').replace(/gallery re-upload[.,]?/gi, '').trim();
+            if (!reasonVal) reasonVal = 'Cleanliness evaluation completed successfully.';
         }
 
         const score = rawScore;
