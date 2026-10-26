@@ -2234,11 +2234,21 @@ const SOPTemplateFormModal: React.FC<SOPTemplateFormModalProps> = ({ isOpen, onC
                             propertyId={propertyId}
                             templateId={activeTemplateId}
                             templateTitle={formData.title || template?.title}
-                            items={items.map((it: any) => ({ id: it.id, title: it.title, order_index: it.order_index, reference_photo_url: it.reference_photo_url }))}
+                            items={items.map((it: any) => ({
+                                id: it.id,
+                                title: it.title,
+                                order_index: it.order_index,
+                                reference_photo_url: it.reference_photo_url,
+                                reference_photos: it.reference_photos || [],
+                            }))}
                             onItemsUpdate={(updated) => {
                                 setItems(prev => prev.map(p => {
                                     const match = updated.find(u => u.id === p.id);
-                                    return match ? { ...p, reference_photo_url: match.reference_photo_url } : p;
+                                    return match ? {
+                                        ...p,
+                                        reference_photo_url: match.reference_photo_url,
+                                        reference_photos: match.reference_photos || p.reference_photos,
+                                    } : p;
                                 }));
                             }}
                             onSuccess={() => {
