@@ -48,6 +48,14 @@ export async function POST(request: NextRequest) {
 
         let leadId: string;
 
+        // Resolve default lead source UUID
+        const { data: defaultSource } = await supabaseAdmin
+            .from('crm_lead_sources')
+            .select('id')
+            .or(`organization_id.eq.${orgId},organization_id.is.null`)
+            .limit(1)
+            .maybeSingle();
+
         if (existingLead) {
             leadId = existingLead.id;
             // Reset testing state so the lead is fresh
@@ -82,7 +90,7 @@ export async function POST(request: NextRequest) {
                     seats: 30,
                     status: 'edac5b61-6567-4acb-8fc6-1ccc9d0bd277',
                     priority: 'High',
-                    lead_source: 'outreach_simulator',
+                    lead_source: defaultSource?.id || null,
                     campaign: campaignName,
                     assigned_to: advisorId,
                     created_by: access.user.id,
