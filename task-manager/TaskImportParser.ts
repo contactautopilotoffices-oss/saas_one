@@ -221,6 +221,13 @@ function rowsByPipeTable(text: string): ParsedTask[] | null {
 export const IMPORT_PRIMARY_MODEL = 'qwen3.8-27b';
 export const IMPORT_SECONDARY_MODEL = 'glm-5.3-flash';
 export const IMPORT_MODELS: readonly string[] = [IMPORT_PRIMARY_MODEL, IMPORT_SECONDARY_MODEL];
+/**
+ * Owner 2026-10-27: both steps — READING AN IMAGE (photo / screenshot of a task list) and TURNING TEXT INTO TASKS
+ * (structuring) — go to Claude Sonnet 5.5 first (CLAUDE_API_KEY, the same key the WhatsApp bot uses), then the two models
+ * above if Claude fails, returns nothing / unusable JSON, or cannot take the image (type or size).
+ */
+export const IMPORT_IMAGE_PRIMARY_MODEL = 'anthropic:claude-sonnet-5-5';
+export const IMPORT_IMAGE_MODELS: readonly string[] = [IMPORT_IMAGE_PRIMARY_MODEL, ...IMPORT_MODELS];
 
 const AI_MAX_TOKENS = 4000;
 const AI_TIMEOUT_MS = 60_000;
@@ -248,6 +255,10 @@ export interface EngyTransport {
 const defaultTransport: EngyTransport = {
     // Reuses the repo's existing Engy vision helper (base64 only, never throws, never logs the key).
     async vision(model, image, mimeType, instruction) {
+        if (model.startsWith('anthropic:')) {
+            const { anthropicVision } = await import('./brain/llm');
+            return anthropicVision({ model, image, mimeType, instruction, maxTokens: AI_MAX_TOKENS, timeoutMs: AI_TIMEOUT_MS });
+        }
         const { visionExtract } = await import('@/backend/lib/ocr/vision');
         const r = await visionExtract({
             pages: [{ buffer: image, mime: mimeType as 'image/jpeg' }],
@@ -258,6 +269,10 @@ const defaultTransport: EngyTransport = {
     },
     // Reuses the repo's provider routing (COUNCIL_PROVIDER / COUNCIL_BASE_URL / COUNCIL_API_KEY).
     async chat(model, prompt) {
+        if (model.startsWith('anthropic:')) {
+            const { anthropicComplete } = await import('./brain/llm');
+            return (await anthropicComplete({ model, system: 'Follow the instructions exactly and reply with JSON only.', user: prompt, maxTokens: AI_MAX_TOKENS }, AI_TIMEOUT_MS)).text;
+        }
         const { resolveProvider } = await import('@/backend/lib/council/llm');
         const { spec, apiKey } = resolveProvider();
         if (!apiKey) throw new Error('no AI key is configured');
@@ -296,16 +311,18 @@ function tasksFromModelJson(text: string): unknown {
 
 export function createEngyImportLlm(
     models: readonly string[] = IMPORT_MODELS,
-    transport: EngyTransport = defaultTransport
+    transport: EngyTransport = defaultTransport,
+    /** Models for both steps. Default: Claude first, then `models`; when `models` is given (tests), the same list. */
+    chain: readonly string[] = models === IMPORT_MODELS ? IMPORT_IMAGE_MODELS : models
 ): ImportLlm {
-    const withFallback = async <T>(what: string, run: (model: string) => Promise<T>): Promise<T> => {
+    const withFallback = async <T>(what: string, run: (model: string) => Promise<T>, list: readonly string[] = chain): Promise<T> => {
         let last: unknown = new Error('no model configured');
-        for (let i = 0; i < models.length; i++) {
-            try { return await run(models[i]); }
+        for (let i = 0; i < list.length; i++) {
+            try { return await run(list[i]); }
             catch (err) {
                 last = err;
-                console.warn(`[TaskImportParser] ${what} failed on ${models[i]}: ${err instanceof Error ? err.message : err}` +
-                    (i + 1 < models.length ? ` — trying ${models[i + 1]}` : ' — no more models'));
+                console.warn(`[TaskImportParser] ${what} failed on ${list[i]}: ${err instanceof Error ? err.message : err}` +
+                    (i + 1 < list.length ? ` — trying ${list[i + 1]}` : ' — no more models'));
             }
         }
         throw last;

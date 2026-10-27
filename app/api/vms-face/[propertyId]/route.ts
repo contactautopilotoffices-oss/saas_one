@@ -3,6 +3,8 @@ import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { getISTDateBounds } from '@/backend/utils/timezone';
 import { refreshStaleCalls, startHostCall } from '@/backend/lib/vms-face/hostCall';
+import { deleteFaceProfile } from '@/backend/lib/vms-face/face';
+import { TaskManagerAuth } from '@/app/api/task-manager/_shared/adminGuard';
 
 /**
  * VMS Face (testing) — Tech Team only. A separate copy of /api/vms/[propertyId] that reads and
@@ -260,4 +262,74 @@ export async function PATCH(
         message: `Goodbye ${visitor.name}! Your visit has been logged.`,
         visitor: data,
     });
+}
+
+const isUuid = (s: unknown): s is string => typeof s === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+
+/**
+ * DELETE ?visitId=…[&deleteFace=1] — owner 2026-10-27, testing phase: remove a test visit (and its photo).
+ * Only the Tech team (the 'tech' role in this property's organisation) may do this. With deleteFace=1 the visitor's
+ * enrolled face is deleted too (BioFRQ and our table, logged in vms_face_deletions) — but only when no other visit uses it.
+ * Only VMS Face (Testing) data is touched: never the live VMS tables, and only photos under face-test/<this property>/.
+ */
+export async function DELETE(
+    request: NextRequest,
+    { params }: { params: Promise<{ propertyId: string }> }
+) {
+    const { propertyId } = await params;
+    const user = await getUser();
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+    const visitId = request.nextUrl.searchParams.get('visitId');
+    const deleteFace = request.nextUrl.searchParams.get('deleteFace') === '1';
+    if (!isUuid(propertyId) || !isUuid(visitId)) return NextResponse.json({ error: 'That visit is not valid.' }, { status: 400 });
+
+    try {
+        const { data: property } = await supabaseAdmin.from('properties').select('organization_id').eq('id', propertyId).maybeSingle();
+        if (!property) return NextResponse.json({ error: 'Property not found' }, { status: 404 });
+        if (!(await TaskManagerAuth.isTech(user.id, property.organization_id as string))) {
+            return NextResponse.json({ error: 'Only the Tech team can delete visits while VMS Face is in testing.' }, { status: 403 });
+        }
+
+        const { data: visit, error: readError } = await supabaseAdmin.from(TABLE)
+            .select('id, visitor_code, name, photo_url, face_profile_id').eq('id', visitId).eq('property_id', propertyId).maybeSingle();
+        if (readError) return NextResponse.json({ error: 'Could not read the visit just now.' }, { status: 500 });
+        if (!visit) return NextResponse.json({ error: 'That visit is no longer there.' }, { status: 404 });
+
+        const { error: delError } = await supabaseAdmin.from(TABLE).delete().eq('id', visit.id).eq('property_id', propertyId);
+        if (delError) return NextResponse.json({ error: 'Could not delete the visit just now.' }, { status: 500 });
+
+        // Its photo — only a test photo of this property, and only when no other visit shows the same file
+        let photoRemoved = false;
+        const marker = '/visitor-photos/';
+        const url = String(visit.photo_url || '');
+        const path = url.includes(marker) ? decodeURIComponent(url.slice(url.indexOf(marker) + marker.length).split('?')[0]) : '';
+        if (path.startsWith(`face-test/${propertyId}/`)) {
+            const { count } = await supabaseAdmin.from(TABLE).select('id', { count: 'exact', head: true }).eq('photo_url', visit.photo_url);
+            if ((count ?? 0) === 0) {
+                const { error: photoError } = await supabaseAdmin.storage.from('visitor-photos').remove([path]);
+                if (photoError) console.error('[vms-face] visit deleted, photo not removed:', path, photoError.message);
+                else photoRemoved = true;
+            }
+        }
+
+        // The enrolled face, when asked and nothing else uses it
+        let face: 'not_asked' | 'deleted' | 'kept_used_elsewhere' | 'none' | 'failed' = deleteFace ? 'none' : 'not_asked';
+        let faceError: string | null = null;
+        if (deleteFace && visit.face_profile_id) {
+            const { count } = await supabaseAdmin.from(TABLE).select('id', { count: 'exact', head: true }).eq('face_profile_id', visit.face_profile_id);
+            if ((count ?? 0) > 0) face = 'kept_used_elsewhere';
+            else {
+                const res = await deleteFaceProfile(visit.face_profile_id as string, property.organization_id as string, 'admin', user.id);
+                face = res.ok ? 'deleted' : 'failed';
+                if (!res.ok) faceError = res.error;
+            }
+        }
+
+        console.info('[vms-face] test visit deleted', { visitorCode: visit.visitor_code, propertyId, by: user.id, photoRemoved, face });
+        return NextResponse.json({ success: true, photoRemoved, face, ...(faceError ? { faceError } : {}) });
+    } catch (err) {
+        console.error('[vms-face] delete visit failed:', err);
+        return NextResponse.json({ error: 'Could not delete the visit just now.' }, { status: 500 });
+    }
 }

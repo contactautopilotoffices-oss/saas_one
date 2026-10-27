@@ -12,6 +12,7 @@ import { createClient } from '@/frontend/utils/supabase/client';
 import { useDataCache } from '@/frontend/context/DataCacheContext';
 import { useAuth } from '@/frontend/context/AuthContext';
 import Skeleton from '@/frontend/components/ui/Skeleton';
+import ZoomSafeDragOverlay from '@/frontend/components/ui/ZoomSafeDragOverlay';
 import {
     DndContext,
     PointerSensor,
@@ -21,7 +22,6 @@ import {
     useSensors,
     DragEndEvent,
     DragStartEvent,
-    DragOverlay,
     useDroppable,
     closestCenter,
 } from '@dnd-kit/core';
@@ -814,7 +814,7 @@ export default function TicketFlowMap({
                 tickets={derivedFlowData?.mstGroups.find(g => g.mst.id === selectedMst?.id)?.tickets || []}
             />
 
-            <DragOverlay dropAnimation={null}>
+            <ZoomSafeDragOverlay dropAnimation={null}>
                 {activeTicket ? (
                     <div className="opacity-80 scale-110 pointer-events-none">
                         <TicketNode
@@ -827,7 +827,7 @@ export default function TicketFlowMap({
                         />
                     </div>
                 ) : null}
-            </DragOverlay>
+            </ZoomSafeDragOverlay>
 
             {/* DEV TOOLS (Simulations) */}
             <div className={`fixed bottom-4 right-4 z-[9999] transition-all bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden ${showDevTools ? 'w-64' : 'w-10 h-10 rounded-full'}`}>

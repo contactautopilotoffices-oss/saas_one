@@ -2,6 +2,7 @@
 
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { unzoomTransform, useAppZoom } from '@/frontend/hooks/useAppZoom';
 import { motion } from 'framer-motion';
 import { Clock, User, Wrench, Zap, Droplets, Sparkles, GripVertical } from 'lucide-react';
 
@@ -62,9 +63,10 @@ export default function KanbanCard({ ticket, isDragging = false }: KanbanCardPro
         transition,
         isDragging: isSortableDragging,
     } = useSortable({ id: ticket.id });
+    const zoom = useAppZoom();
 
     const style = {
-        transform: CSS.Transform.toString(transform),
+        transform: CSS.Transform.toString(unzoomTransform(transform, zoom)),
         transition,
     };
 

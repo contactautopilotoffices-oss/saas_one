@@ -25,13 +25,12 @@ type Who = 'me' | 'team';
 
 function Row({ task, onEdit, onDelete, onRemind }: {
     task: AssignedTask;
-    onEdit: (id: string, title: string, description: string) => Promise<boolean>;
+    onEdit: (id: string, title: string, description?: string) => Promise<boolean>;
     onDelete: (id: string) => Promise<boolean>;
     onRemind: (ids: string[]) => Promise<void>;
 }) {
     const [mode, setMode] = useState<'view' | 'edit' | 'confirm'>('view');
     const [title, setTitle] = useState(task.title);
-    const [details, setDetails] = useState(task.description || '');
     const [busy, setBusy] = useState(false);
     const [reminding, setReminding] = useState(false);
     const done = task.status === 'completed';
@@ -45,7 +44,7 @@ function Row({ task, onEdit, onDelete, onRemind }: {
     const save = async () => {
         if (!title.trim() || busy) return;
         setBusy(true);
-        const ok = await onEdit(task.id, title.trim(), details.trim());
+        const ok = await onEdit(task.id, title.trim());   // owner 2026-10-27: the name only; notes are kept
         setBusy(false);
         if (ok) setMode('view');
     };
@@ -74,15 +73,11 @@ function Row({ task, onEdit, onDelete, onRemind }: {
                         value={title} onChange={e => setTitle(e.target.value)} maxLength={200} aria-label="Task name"
                         className="w-full rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm font-bold text-zinc-900 outline-none focus:border-indigo-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                     />
-                    <textarea
-                        value={details} onChange={e => setDetails(e.target.value)} maxLength={900} placeholder="Details (optional)" aria-label="Task details"
-                        className="h-16 w-full resize-none rounded-xl border border-zinc-300 bg-white px-3 py-2 text-xs text-zinc-800 outline-none focus:border-indigo-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200"
-                    />
                     <div className="flex items-center gap-2">
                         <button type="button" onClick={save} disabled={busy || !title.trim()} className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-[11px] font-black text-white hover:bg-indigo-700 disabled:opacity-60">
                             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} Save
                         </button>
-                        <button type="button" onClick={() => { setTitle(task.title); setDetails(task.description || ''); setMode('view'); }} disabled={busy} className="rounded-lg border border-zinc-200 px-3 py-1.5 text-[11px] font-bold text-zinc-600 hover:bg-zinc-100 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800">
+                        <button type="button" onClick={() => { setTitle(task.title); setMode('view'); }} disabled={busy} className="rounded-lg border border-zinc-200 px-3 py-1.5 text-[11px] font-bold text-zinc-600 hover:bg-zinc-100 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800">
                             Cancel
                         </button>
                     </div>
@@ -155,7 +150,7 @@ function Row({ task, onEdit, onDelete, onRemind }: {
 export default function AssignedView({ from, to, onEdit, onDelete }: {
     from: string;
     to: string;
-    onEdit: (id: string, title: string, description: string) => Promise<boolean>;
+    onEdit: (id: string, title: string, description?: string) => Promise<boolean>;
     onDelete: (id: string) => Promise<boolean>;
 }) {
     const reduce = !!useReducedMotion();
@@ -187,7 +182,7 @@ export default function AssignedView({ from, to, onEdit, onDelete }: {
     const teamList = useMemo(() => (tasks || []).filter(t => !t.mine), [tasks]);
     const shown = who === 'me' || teamList.length === 0 ? mineList : teamList;
 
-    const edit = async (id: string, title: string, description: string) => {
+    const edit = async (id: string, title: string, description?: string) => {
         const ok = await onEdit(id, title, description);
         if (ok) load();
         return ok;

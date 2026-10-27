@@ -6,6 +6,7 @@ import { TaskMessagingService } from '@/task-manager/TaskMessagingService';
 import { evaluateRuleSchedule } from '@/task-manager/NotificationSchedule';
 import { SuperuserPingService } from '@/task-manager/SuperuserPingService';
 import { runBotHousekeeping } from '@/task-manager/NeverSilentWatchdog';
+import { runDueReminders } from '@/task-manager/TaskDueService';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -102,6 +103,9 @@ async function handleRequest(request: NextRequest) {
 
         // Locked (personal fixed) tasks come back on their days whatever the notification rules are. Idempotent; never throws.
         if (!dryRun) await TaskDailyGeneratorService.generatePersonalFixedTasks({ date: todayIST });
+        // Owner 2026-10-27: one "due soon" reminder per task with a deadline, for departments with the Due dates switch ON.
+        // Does nothing while every team has it OFF or before its SQL file is applied. Never throws.
+        if (!dryRun) await runDueReminders();
 
         const targetRuleId = request.nextUrl.searchParams.get('ruleId') || undefined;
 

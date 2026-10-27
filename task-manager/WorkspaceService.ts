@@ -1,13 +1,19 @@
+import { randomUUID } from 'node:crypto';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { MAX_CARRY_DAYS, TaskDatabaseService, carryDaysOf } from './TaskDatabaseService';
 import { ALL_TIME_FROM } from './dateRange';
 import { TaskAccessService } from './TaskAccessService';
-import { PermissionService } from './PermissionService';
+import { PermissionDeniedError, PermissionService } from './PermissionService';
 import { HierarchyService } from './HierarchyService';
 import { personLabel, sendTaskAssigned, sendTaskDependency, sendTaskHandover, sendTaskReminder } from './taskAlerts';
 import { shortList, taskBell } from './taskBell';
 import { notifyGiversOfCompletion } from './completionNotice';
 import { Employee, TaskAssignment, TaskStatus } from './types';
+import { NO_EXTRAS, linkTasks, loadTaskExtras } from './TaskLinks';
+import { similarOpenTasks } from './taskSimilarity';
+import { aiDuplicateEnabled, aiSameTask, liveDuplicateLlm } from './aiDuplicate';
+import { TaskDue, checkDue, dueLabel, shortTime } from './dueDates';
+import { openWithinDue, setTaskDue } from './TaskDueService';
 
 /**
  * Step 5 — backend for the Procurement "Tasks" tab (board + team + assign).
@@ -48,6 +54,30 @@ export interface WorkspaceTask {
     completedAt: string | null;
     /** A task given by someone else can only be deleted by the person who gave it (or a superuser). */
     canDelete: boolean;
+    /** Owner 2026-10-26: the person who gave it (or a superuser) may edit its name, details, date and person. */
+    canEdit: boolean;
+    /** Owner 2026-10-26: the task this one follows up ("Create follow-up"). */
+    followUpOf: { id: string; title: string } | null;
+    /** Owner 2026-10-26: the other people given the same task at once (each finishes their own copy). */
+    alsoWith: Array<{ name: string; status: TaskStatus }>;
+    /** Owner 2026-10-26: how many documents or screenshots are attached. */
+    attachmentCount: number;
+    /** Owner 2026-10-26: made by accepting a support request from another department. */
+    supportRequest: boolean;
+    /** Owner 2026-10-27: the deadline; null = due on its start date (as before), no countdown. */
+    due: TaskDue | null;
+    /** Owner 2026-10-27: my own personal task (I hold it and nobody else gave it) — I may edit or delete its notes. */
+    canEditNotes: boolean;
+}
+
+/** Owner 2026-10-26: an open task that looks like the one about to be given (the "Duplicate task alert"). */
+export interface DuplicateMatch {
+    userId: string;
+    name: string;
+    /** Only shown when the actor may see that person's tasks (or gave the task); otherwise null. */
+    title: string | null;
+    assignedDate: string;
+    status: TaskStatus;
 }
 
 /** One row of the "Assigned by me" tab: a task I gave, or (view only) one given by someone below me. */
@@ -95,7 +125,7 @@ export type WorkspaceResponse =
          *  Empty when the "Pending on…" switch is OFF for my department. */
         dependencyPeople: Array<{ userId: string; name: string }>;
         /** Owner 2026-10-19: per-team switches the screen needs (from the Control Center). */
-        features: { assignedTab: boolean; pendingOn: boolean };
+        features: { assignedTab: boolean; pendingOn: boolean; dueDates: boolean };
     };
 
 /** One row of the superuser's cross-department console. `department` is the OTHER person's department. */
@@ -137,6 +167,10 @@ export function todayIST(): string {
 }
 
 const isDate = (s: unknown): s is string => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
+/** Owner 2026-10-26: ids sent by the browser must look like ids before they reach a query. */
+export const isUuid = (s: unknown): s is string => typeof s === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+/** Only messages written for people are passed on; anything else (a database error) becomes a plain sentence. */
+const userMessage = (err: unknown, fallback: string) => (err instanceof WorkspaceError || err instanceof PermissionDeniedError ? err.message : fallback);
 
 /** Only the person holding a task may give it away, and only while it is not finished. (Not even a superuser.) */
 export function canHandOverTask(task: { employee_id: string; status: string }, actorId: string): boolean {
@@ -172,6 +206,22 @@ export function handedOverByOf(description: string | null | undefined): string |
 }
 
 /** The description without the "Given by …" trail (that is shown as a badge on the card instead). */
+/** Owner 2026-10-27: a personal task = I hold it and nobody else gave it. Only then may I edit or delete its notes. */
+export function isPersonalTask(row: { employee_id: string; assigned_by?: string | null }, actorId: string): boolean {
+    return row.employee_id === actorId && (!row.assigned_by || row.assigned_by === actorId);
+}
+
+/**
+ * Owner 2026-10-27: the note lines of a description, as the task window lists them (the "Given by …" trail is not a note),
+ * each with its line number in the stored text and its text without the "Remark:" prefix.
+ */
+export function noteLines(description: string | null | undefined): Array<{ line: number; text: string; prefixed: boolean }> {
+    return String(description || '').split('\n')
+        .map((raw, line) => ({ raw: raw.trim(), line }))
+        .filter(x => x.raw && !x.raw.startsWith(HANDOVER_NOTE_PREFIX))
+        .map(x => ({ line: x.line, text: x.raw.replace(/^Remark:\s*/i, ''), prefixed: /^Remark:/i.test(x.raw) }));
+}
+
 export function withoutHandoverNotes(description: string | null | undefined): string | null {
     const kept = String(description || '').split('\n').filter(l => !l.trim().startsWith(HANDOVER_NOTE_PREFIX)).join('\n').trim();
     return kept || null;
@@ -188,6 +238,31 @@ export const isGivenByOther = (task: { assigned_by?: string | null; employee_id:
  */
 export function mayRemoveGivenTask(task: { assigned_by?: string | null; employee_id: string }, actor: { id: string; role: string }, actorIsAboveGiver = false): boolean {
     return !isGivenByOther(task) || task.assigned_by === actor.id || actor.role === 'superuser' || actorIsAboveGiver;
+}
+
+/**
+ * Owner 2026-10-26, "Duplicate task alert": for each person, the open task that looks like `title`. First the strict word
+ * check; then, only for people without a word match (at most 5, side by side), the cheap AI check for the same work in
+ * other words (aiDuplicate.ts). The AI part never throws and gives up after a few seconds.
+ */
+export async function duplicateHits<T extends { title: string }>(title: string, people: Array<{ id: string; open: T[] }>): Promise<Map<string, T>> {
+    const hits = new Map<string, T>();
+    const rest: Array<{ id: string; open: T[] }> = [];
+    for (const p of people) {
+        const hit = similarOpenTasks(title, p.open)[0];
+        if (hit) hits.set(p.id, hit);
+        else if (p.open.length) rest.push(p);
+    }
+    if (rest.length && aiDuplicateEnabled()) {
+        try {
+            const llm = await liveDuplicateLlm();
+            const found = await Promise.all(rest.slice(0, 5).map(async p => ({ p, i: await aiSameTask(llm, title, p.open.map(t => t.title)) })));
+            for (const { p, i } of found) if (i !== null && p.open[i]) hits.set(p.id, p.open[i]);
+        } catch (err) {
+            console.warn('[WorkspaceService] AI duplicate check skipped:', err instanceof Error ? err.message : err);
+        }
+    }
+    return hits;
 }
 
 /** Start of a day in India time, as an ISO timestamp. */
@@ -281,18 +356,26 @@ export class WorkspaceService {
                 const days = daysByDept.get(byId.get(r.employee_id)?.department_id ?? null) ?? 0;
                 return days > 0 && r.assigned_date >= addDays(date, -days);
             };
-            rows = [...(today.data || []), ...(carried.data || []).filter(keepCarried), ...(carriedDone.data || [])];
+            // Owner 2026-10-27: a task that takes several days stays on the board until its due date (empty until the
+            // due-date SQL file is applied). Listed once even when it is also a carried-forward task.
+            const withinDue = await openWithinDue(ids, date, select);
+            const seen = new Set<string>();
+            rows = [...(today.data || []), ...(carried.data || []).filter(keepCarried), ...(carriedDone.data || []), ...withinDue]
+                .filter(r => (seen.has(r.id) ? false : (seen.add(r.id), true)));
         }
 
         const templates = await this.templateInfo(rows.map(r => r.task_template_id));
         const { hierarchy } = await HierarchyService.load();
         const below = new Set(hierarchy.allReports(actor.id).map(p => p.userId));
+        // Owner 2026-10-26: follow-up link, others on the same task, attachment count (empty until the migration runs)
+        const extras = await loadTaskExtras(rows.map(r => r.id as string), id => pool.find(e => e.id === id)?.name || 'Someone');
         // Owner 2026-10-19: per-team switches. "Protect given tasks" follows the HOLDER's department.
         const feats = await TaskAccessService.getTeamFeatures();
         const protectedFor = (holderId: string) => feats.protectGiven.has(byId.get(holderId)?.department_id ?? '');
         const myFeatures = {
             assignedTab: actor.role === 'superuser' || (!!actor.department_id && feats.assignedTab.has(actor.department_id)),
             pendingOn: !!actor.department_id && feats.pendingOn.has(actor.department_id),
+            dueDates: await this.mayUseDueDates(actor),
         };
         const canChange = (ownerId: string) => actor.role === 'superuser' || ownerId === actor.id || below.has(ownerId);
         const nameOf = (id: string | null | undefined) => (id ? pool.find(e => e.id === id)?.name || 'Someone' : null);
@@ -306,7 +389,8 @@ export class WorkspaceService {
                 ownerName: byId.get(r.employee_id)?.name || 'Unknown',
                 status: r.status as TaskStatus,
                 assignedDate: r.assigned_date as string,
-                isCarriedForward: (r.assigned_date as string) < date,
+                // Not "carried forward" while it is still within its deadline (it shows "Day 3 of 5" instead)
+                isCarriedForward: (r.assigned_date as string) < date && !((extras.get(r.id as string)?.due?.date ?? '') >= date),
                 canChange: canChange(r.employee_id),
                 canHandOver: canHandOverTask(r, actor.id),
                 locked: isLockedFor(templates.get(r.task_template_id), r.employee_id as string),
@@ -316,6 +400,9 @@ export class WorkspaceService {
                 createdAt: r.created_at as string,
                 completedAt: (r.completed_at as string) || null,
                 canDelete: canChange(r.employee_id) && (!protectedFor(r.employee_id) || mayRemoveGivenTask(r, actor, !!r.assigned_by && below.has(r.assigned_by))),
+                canEdit: (r.assigned_by === actor.id || actor.role === 'superuser') && !isLockedFor(templates.get(r.task_template_id), r.employee_id as string),
+                canEditNotes: isPersonalTask(r, actor.id),
+                ...(extras.get(r.id as string) ?? NO_EXTRAS),
                 _created: r.created_at as string,
             }))
             .sort((a, b) => (a.isCarriedForward === b.isCarriedForward ? a._created.localeCompare(b._created) : a.isCarriedForward ? -1 : 1))
@@ -445,7 +532,22 @@ export class WorkspaceService {
         await sendTaskAssigned(target.phone_number, { titles, fromLabel: personLabel(actor.name, actor.department_name), date, departmentId: target.department_id || undefined });
     }
 
-    static async assign(actorUserId: string, input: { targetUserId?: string; title?: string; description?: string; date?: string; notify?: boolean; note?: string }): Promise<TaskAssignment> {
+    /** Owner 2026-10-27: may this person set due dates? Their department's "Due dates" switch; superusers always. */
+    private static async mayUseDueDates(actor: Employee): Promise<boolean> {
+        return actor.role === 'superuser' || await TaskAccessService.isDueDatesEnabled(actor.department_id);
+    }
+
+    /** A deadline sent by the browser: checked against the start date and the actor's switch. null = none. */
+    private static async dueFor(actor: Employee, startDate: string, dueDate: unknown, dueTime: unknown): Promise<TaskDue | null> {
+        const checked = checkDue(startDate, dueDate, dueTime);
+        if (!checked.ok) throw new WorkspaceError(400, checked.error);
+        if (checked.due && !(await this.mayUseDueDates(actor))) throw new WorkspaceError(403, 'Due dates are switched off for your team.', 'DUE_OFF');
+        // e.g. a superuser before the due-date SQL file is applied: say so before anything is saved
+        if (checked.due && (await TaskAccessService.getDueDatesDepartments()).columnMissing) throw new WorkspaceError(503, 'Due dates are not set up yet. Please ask the admin to apply the latest database update.', 'NOT_READY');
+        return checked.due;
+    }
+
+    static async assign(actorUserId: string, input: { targetUserId?: string; title?: string; description?: string; date?: string; notify?: boolean; note?: string; dueDate?: unknown; dueTime?: unknown }): Promise<TaskAssignment> {
         const title = (input.title || '').trim();
         if (title.length < 1 || title.length > 200) throw new WorkspaceError(400, 'Task title must be 1 to 200 characters.');
         // Owner 2026-10-21: an optional note is saved as a "Remark:" line and shown in the alert.
@@ -456,6 +558,7 @@ export class WorkspaceService {
         const date = isDate(input.date) ? input.date : todayIST();
 
         const actor = await this.requireUnlockedActor(actorUserId);
+        const due = await this.dueFor(actor, date, input.dueDate, input.dueTime);
 
         // Throws PermissionDeniedError when this person may not assign to that person
         const { target } = await PermissionService.assertCanAssignTask(actor.id, input.targetUserId);
@@ -472,19 +575,22 @@ export class WorkspaceService {
             assignedDate: date,
             assignedBy: actor.id,
         });
+        // The task is saved either way; the deadline is only announced when it was really stored
+        const dueSaved = due && (await setTaskDue([task.id], due)) ? due : null;
+        if (due && !dueSaved) console.warn('[WorkspaceService] task saved without its due date:', task.id);
 
         await TaskDatabaseService.logAudit({
             eventType: 'task_assigned',
             actorId: actor.id,
             targetEmployeeId: target.id,
             taskId: task.id,
-            details: { title: task.title, assignedDate: task.assigned_date, via: 'web_tasks_tab' },
+            details: { title: task.title, assignedDate: task.assigned_date, ...(dueSaved ? { dueDate: dueSaved.date, dueTime: dueSaved.time } : {}), ...(due && !dueSaved ? { dueNotSaved: true } : {}), via: 'web_tasks_tab' },
         });
 
         // Tell the assignee (never for your own list) with the approved template. Goes through the safety gate, so nothing is
         // sent in Pretend Mode. notify:false = the caller sends ONE grouped alert for several tasks (alertAssigned).
         if (input.notify !== false && target.id !== actor.id) {
-            void taskBell({ userId: target.id, kind: 'TASK_ASSIGNED', title: `New task from ${actor.name}`, message: `${actor.name} gave you: ${withNoteLabel(task.title, note)}`, departmentName: target.department_name });
+            void taskBell({ userId: target.id, kind: 'TASK_ASSIGNED', title: `New task from ${actor.name}`, message: `${actor.name} gave you: ${withNoteLabel(task.title, note)}${dueSaved ? ` (due ${dueLabel(dueSaved)})` : ''}`, departmentName: target.department_name });
             void sendTaskAssigned(target.phone_number, { titles: [withNoteLabel(task.title, note)], fromLabel: personLabel(actor.name, actor.department_name), date: task.assigned_date, departmentId: target.department_id || undefined });
         }
 
@@ -499,7 +605,7 @@ export class WorkspaceService {
      * (the shared PermissionService rule) and be unlocked for the Task Manager · the move is one conditional
      * update, so two clicks at the same moment cannot both win.
      */
-    static async handOver(actorUserId: string, input: { taskId?: string; targetUserId?: string; note?: string }): Promise<{ task: TaskAssignment; toName: string }> {
+    static async handOver(actorUserId: string, input: { taskId?: string; targetUserId?: string; note?: string; dueDate?: unknown; dueTime?: unknown }): Promise<{ task: TaskAssignment; toName: string }> {
         if (!input.taskId) throw new WorkspaceError(400, 'Missing task.');
         if (!input.targetUserId) throw new WorkspaceError(400, 'Choose who to give the task to.');
         const giveNote = cleanNote(input.note);       // owner 2026-10-21: optional note for the new holder
@@ -525,6 +631,10 @@ export class WorkspaceService {
             throw new WorkspaceError(409, `Cannot give a task to ${target.name}: ${targetAccess.message}`, 'TARGET_LOCKED');
         }
 
+        // Owner 2026-10-27: an optional deadline set while giving it (Due dates switch); not sent = the deadline stays as it is
+        const dueSent = input.dueDate !== undefined && input.dueDate !== null && input.dueDate !== '';
+        const due = dueSent ? await this.dueFor(actor, row.assigned_date as string, input.dueDate, input.dueTime) : null;
+
         // The new holder has not started it, so "in progress" goes back to "to do". Keep a short trail on the card.
         const newStatus: TaskStatus = row.status === 'in_progress' ? 'pending' : (row.status as TaskStatus);
         const note = `${HANDOVER_NOTE_PREFIX}${actor.name} on ${shortDay(todayIST())}`;
@@ -534,7 +644,8 @@ export class WorkspaceService {
 
         const { data: moved, error: moveError } = await supabaseAdmin
             .from('task_assignments')
-            .update({ employee_id: target.id, status: newStatus, description, updated_at: new Date().toISOString() })
+            .update({ employee_id: target.id, status: newStatus, description, updated_at: new Date().toISOString(),
+                ...(due ? { due_date: due.date, due_time: due.time, due_reminded_at: null } : {}) })
             .eq('id', row.id)
             .eq('employee_id', actor.id)      // still mine…
             .neq('status', 'completed')       // …and still not finished
@@ -557,12 +668,12 @@ export class WorkspaceService {
             actorId: actor.id,
             targetEmployeeId: target.id,
             taskId: row.id,
-            details: { title: row.title, assignedDate: row.assigned_date, fromUserId: actor.id, toUserId: target.id, fromStatus: row.status, toStatus: newStatus, via: 'web_tasks_tab', ...(giveNote ? { note: giveNote } : {}) },
+            details: { title: row.title, assignedDate: row.assigned_date, fromUserId: actor.id, toUserId: target.id, fromStatus: row.status, toStatus: newStatus, via: 'web_tasks_tab', ...(giveNote ? { note: giveNote } : {}), ...(due ? { dueDate: due.date, dueTime: due.time } : {}) },
         });
 
         // Tell the receiver who gave it (names only; gated, so nothing is sent in Pretend Mode). Never blocks the hand-over.
         // Approved template, so it reaches people outside WhatsApp's 24-hour window too.
-        void taskBell({ userId: target.id, kind: 'TASK_HANDOVER', title: `Task handed over by ${actor.name}`, message: `${actor.name} handed over: ${withNoteLabel(row.title, giveNote)}`, departmentName: target.department_name });
+        void taskBell({ userId: target.id, kind: 'TASK_HANDOVER', title: `Task handed over by ${actor.name}`, message: `${actor.name} handed over: ${withNoteLabel(row.title, giveNote)}${due ? ` (due ${dueLabel(due)})` : ''}`, departmentName: target.department_name });
         void sendTaskHandover(target.phone_number, {
             recipientName: target.name, fromLabel: personLabel(actor.name, actor.department_name), titles: [withNoteLabel(row.title as string, giveNote)], date: row.assigned_date,
             departmentId: target.department_id || undefined,
@@ -638,7 +749,51 @@ export class WorkspaceService {
      * Allowed for the person who holds the task, the person who gave it, anyone above the holder, or a superuser. A note
      * removes nothing, so "Protect given tasks" does not block it. The "Given by …" trail is kept as it is.
      */
-    static async addNote(actorUserId: string, input: { taskId?: string; note?: string; via?: string }): Promise<{ id: string }> {
+    /**
+     * Owner 2026-10-27: edit (text) or delete (text null) one note of MY personal task. `index` is the note's place in the task
+     * window's list and `expected` its text there, so a note that changed meanwhile is never overwritten. The update only goes
+     * through if the stored text is still the one just read.
+     */
+    static async changeNote(actorUserId: string, input: { taskId?: unknown; index?: unknown; expected?: unknown; text?: unknown }): Promise<{ id: string }> {
+        if (!isUuid(input.taskId)) throw new WorkspaceError(400, 'That task is not valid.');
+        if (typeof input.index !== 'number' || !Number.isInteger(input.index) || input.index < 0 || typeof input.expected !== 'string') throw new WorkspaceError(400, 'That note is not valid.');
+        const remove = input.text === null;
+        const text = remove ? '' : String(input.text ?? '').replace(/\s+/g, ' ').trim();
+        if (!remove && !text) throw new WorkspaceError(400, 'The note is empty. Delete it instead.');
+        if (text.length > 300) throw new WorkspaceError(400, 'The note is too long (300 characters at most).');
+        const actor = await this.requireUnlockedActor(actorUserId);
+
+        const { data: row, error } = await supabaseAdmin.from('task_assignments').select('*').eq('id', input.taskId).maybeSingle();
+        if (error || !row) throw new WorkspaceError(404, 'Task not found.');
+        if (!isPersonalTask(row as { employee_id: string; assigned_by: string | null }, actor.id)) {
+            throw new WorkspaceError(403, 'Notes can only be changed on your own personal tasks.', 'NOT_PERSONAL');
+        }
+        const notes = noteLines(row.description as string | null);
+        const target = notes[input.index];
+        if (!target || target.text !== input.expected.trim()) throw new WorkspaceError(409, 'This note changed just now. Please refresh and try again.', 'CHANGED');
+
+        const lines = String(row.description).split('\n');
+        if (remove) lines.splice(target.line, 1);
+        else lines[target.line] = target.prefixed ? `Remark: ${text}` : text;
+        const description = lines.join('\n').trim() || null;
+
+        const { data: saved, error: upError } = await supabaseAdmin.from('task_assignments')
+            .update({ description, updated_at: new Date().toISOString() })
+            .eq('id', row.id).eq('employee_id', actor.id).eq('description', row.description as string).select('id').maybeSingle();
+        if (upError) {
+            console.error('[WorkspaceService] note change failed:', upError);
+            throw new WorkspaceError(500, 'Could not save the note just now. Please try again.');
+        }
+        if (!saved) throw new WorkspaceError(409, 'This task changed just now. Please refresh and try again.', 'CHANGED');
+        await TaskDatabaseService.logAudit({
+            eventType: remove ? 'task_note_deleted' : 'task_note_edited',
+            actorId: actor.id, targetEmployeeId: row.employee_id, taskId: row.id,
+            details: { title: row.title, from: target.text, ...(remove ? {} : { to: text }), via: 'web_tasks_tab' },
+        });
+        return { id: row.id as string };
+    }
+
+    static async addNote(actorUserId: string, input: { taskId?: string; note?: string; via?: string; tellGiver?: boolean }): Promise<{ id: string }> {
         if (!input.taskId) throw new WorkspaceError(400, 'Missing task.');
         const note = String(input.note ?? '').replace(/\s+/g, ' ').trim();
         if (!note) throw new WorkspaceError(400, 'The note is empty.');
@@ -666,6 +821,12 @@ export class WorkspaceService {
             details: { title: row.title, note, assignedDate: row.assigned_date, via: input.via ?? 'web_tasks_tab' },
         });
         await this.bellHolderOfChange(actor, row, `${actor.name} added a note to "${row.title}": ${note}`);
+        // Owner 2026-10-26: a remark the holder adds (e.g. after finishing) also reaches the person who gave the task, in the
+        // app. Not on WhatsApp: the approved "task done" template has no place for it.
+        if (input.tellGiver && row.employee_id === actor.id && row.assigned_by && row.assigned_by !== actor.id) {
+            const giver = await TaskDatabaseService.getEmployeeById(row.assigned_by as string).catch(() => null);
+            if (giver?.active) void taskBell({ userId: giver.id, kind: 'TASK_UPDATE', title: `Remark from ${actor.name}`, message: `${actor.name} on "${row.title}": ${note}`, departmentName: giver.department_name });
+        }
         return { id: row.id as string };
     }
 
@@ -790,20 +951,35 @@ export class WorkspaceService {
         return { tasks };
     }
 
-    /** Owner 2026-10-19: the person who gave a task (or a superuser) changes its name and details from "Assigned by me". */
-    static async editTask(actorUserId: string, input: { taskId?: string; title?: string; description?: string }): Promise<{ id: string }> {
+    /**
+     * Owner 2026-10-19: the person who gave a task (or a superuser) changes its name and details ("Assigned by me").
+     * Owner 2026-10-26: also its date and the person doing it (the task window's Edit). A new person must be someone the
+     * giver may assign to and who can use the Task Manager; they are told like any new task, and the old holder gets a bell.
+     */
+    /** Owner 2026-10-27: `dueDate` undefined = keep the deadline; null or '' = remove it; `dueTime` goes with it. */
+    static async editTask(actorUserId: string, input: { taskId?: string; title?: string; description?: string; date?: string; targetUserId?: string; via?: string; dueDate?: unknown; dueTime?: unknown }): Promise<{ id: string }> {
         if (!input.taskId) throw new WorkspaceError(400, 'Missing task.');
-        const title = String(input.title ?? '').replace(/\s+/g, ' ').trim();
-        if (!title) throw new WorkspaceError(400, 'The task name is empty.');
-        if (title.length > 200) throw new WorkspaceError(400, 'The task name is too long (200 characters at most).');
+        // Owner 2026-10-26: a name or details not sent stay as they are (WhatsApp changes only the date or the person)
+        const keepTitle = input.title === undefined, keepDetails = input.description === undefined;
+        const newTitle = String(input.title ?? '').replace(/\s+/g, ' ').trim();
+        if (!keepTitle && !newTitle) throw new WorkspaceError(400, 'The task name is empty.');
+        if (newTitle.length > 200) throw new WorkspaceError(400, 'The task name is too long (200 characters at most).');
         const details = String(input.description ?? '').trim();
         if (details.length > 900) throw new WorkspaceError(400, 'Details can be at most 900 characters.');
+        if (input.date && !isDate(input.date)) throw new WorkspaceError(400, 'That date is not valid.');
+        if (!isUuid(input.taskId) || (input.targetUserId && !isUuid(input.targetUserId))) throw new WorkspaceError(400, 'That task or person is not valid.');
         const actor = await this.requireUnlockedActor(actorUserId);
 
         const { data: row, error } = await supabaseAdmin.from('task_assignments').select('*').eq('id', input.taskId).maybeSingle();
         if (error || !row) throw new WorkspaceError(404, 'Task not found.');
+        const title = keepTitle ? (row.title as string) : newTitle;
         if (row.assigned_by !== actor.id && actor.role !== 'superuser') {
             throw new WorkspaceError(403, 'Only the person who gave this task can edit it.', 'NOT_GIVER');
+        }
+        // Owner 2026-10-22: superusers keep their tasks private from each other, so one never edits or moves the other's
+        if (row.assigned_by !== actor.id) {
+            const holder = await TaskDatabaseService.getEmployeeById(row.employee_id as string);
+            if (holder && PermissionService.hiddenFrom(actor, holder)) throw new WorkspaceError(403, 'Only the person who gave this task can edit it.', 'NOT_GIVER');
         }
         if (row.task_template_id) {
             const info = (await this.templateInfo([row.task_template_id])).get(row.task_template_id as string);
@@ -811,26 +987,166 @@ export class WorkspaceService {
                 throw new WorkspaceError(409, 'This task repeats every working day. It has to be unlocked before it can be edited.', 'LOCKED');
             }
         }
+
+        // A different person: the same checks as giving them a new task
+        let target: Employee | null = null;
+        if (input.targetUserId && input.targetUserId !== row.employee_id) {
+            if (row.status === 'completed') throw new WorkspaceError(409, 'This task is already done, so it cannot move to someone else.', 'ALREADY_DONE');
+            ({ target } = await PermissionService.assertCanAssignTask(actor.id, input.targetUserId));
+            const targetAccess = await TaskAccessService.check({ userId: target.id, departmentId: target.department_id });
+            if (!targetAccess.allowed) throw new WorkspaceError(409, `Cannot give a task to ${target.name}: ${targetAccess.message}`, 'TARGET_LOCKED');
+        }
+        const date = isDate(input.date) ? input.date : (row.assigned_date as string);
+
+        // The deadline: changed only when sent; never before the (new) start date
+        const oldDue: TaskDue | null = row.due_date ? { date: row.due_date as string, time: shortTime(row.due_time as string | null) } : null;
+        const dueSent = input.dueDate !== undefined;
+        const newDue = dueSent ? await this.dueFor(actor, date, input.dueDate, input.dueTime) : oldDue;
+        if (!dueSent && oldDue && oldDue.date < date) throw new WorkspaceError(400, 'The due date cannot be before the start date. Change the due date too.');
+        const dueChanged = (oldDue?.date ?? null) !== (newDue?.date ?? null) || (oldDue?.time ?? null) !== (newDue?.time ?? null);
+
         // Keep the "Given by …" trail, so the holder's card still shows who handed it over.
         const trail = String(row.description || '').split('\n').filter(l => l.trim().startsWith(HANDOVER_NOTE_PREFIX));
-        const description = [details, ...trail].filter(Boolean).join('\n').slice(0, 1000) || null;
+        const description = keepDetails ? ((row.description as string | null) ?? null) : ([details, ...trail].filter(Boolean).join('\n').slice(0, 1000) || null);
 
-        const { error: upError } = await supabaseAdmin.from('task_assignments')
-            .update({ title, description, updated_at: new Date().toISOString() }).eq('id', row.id);
+        const update: Record<string, unknown> = { title, description, assigned_date: date, updated_at: new Date().toISOString() };
+        if (dueChanged) Object.assign(update, { due_date: newDue?.date ?? null, due_time: newDue?.time ?? null, due_reminded_at: null });
+        // The new person has not started it, so "in progress" goes back to "to do" (same as a hand-over)
+        if (target) Object.assign(update, { employee_id: target.id, status: row.status === 'in_progress' ? 'pending' : row.status });
+
+        // Only if nobody changed the task meanwhile (e.g. the holder just finished it): never undo their change
+        const { data: saved, error: upError } = await supabaseAdmin.from('task_assignments').update(update)
+            .eq('id', row.id).eq('employee_id', row.employee_id).eq('status', row.status).select('id').maybeSingle();
         if (upError) {
             if ((upError as { code?: string }).code === '23505') throw new WorkspaceError(409, 'That person already has a task with this name for that day.', 'ALREADY_THERE');
             console.error('[WorkspaceService] edit failed:', upError);
             throw new WorkspaceError(500, 'Could not save the task just now. Please try again.');
         }
+        if (!saved) throw new WorkspaceError(409, 'This task changed just now. Please refresh and try again.', 'CHANGED');
         await TaskDatabaseService.logAudit({
             eventType: 'task_edited',
             actorId: actor.id,
-            targetEmployeeId: row.employee_id,
+            targetEmployeeId: target?.id ?? row.employee_id,
             taskId: row.id,
-            details: { fromTitle: row.title, toTitle: title, assignedDate: row.assigned_date, via: 'web_tasks_tab' },
+            details: {
+                fromTitle: row.title, toTitle: title, assignedDate: row.assigned_date,
+                ...(date !== row.assigned_date ? { toDate: date } : {}),
+                ...(dueChanged ? { fromDue: oldDue, toDue: newDue } : {}),
+                ...(target ? { fromUserId: row.employee_id, toUserId: target.id } : {}),
+                via: input.via ?? 'web_tasks_tab',
+            },
         });
-        await this.bellHolderOfChange(actor, row, `${actor.name} edited your task "${row.title}"${title !== row.title ? ` (now "${title}")` : ''}.`);
+
+        if (target) {
+            // The new person is told like any new task (approved template; gated, so nothing is sent in Pretend Mode)
+            if (target.id !== actor.id) {
+                void taskBell({ userId: target.id, kind: 'TASK_ASSIGNED', title: `New task from ${actor.name}`, message: `${actor.name} gave you: ${title}`, departmentName: target.department_name });
+                void sendTaskAssigned(target.phone_number, { titles: [title], fromLabel: personLabel(actor.name, actor.department_name), date, departmentId: target.department_id || undefined });
+            }
+            await this.bellHolderOfChange(actor, row, `${actor.name} moved your task "${row.title}" to ${target.name}.`);
+        } else {
+            const changes = [
+                title !== row.title ? `now "${title}"` : '', date !== row.assigned_date ? `date ${shortDay(date)}` : '',
+                dueChanged ? (newDue ? `due ${dueLabel(newDue)}` : 'no due date') : '',
+            ].filter(Boolean).join(', ');
+            await this.bellHolderOfChange(actor, row, `${actor.name} edited your task "${row.title}"${changes ? ` (${changes})` : ''}.`);
+        }
         return { id: row.id as string };
+    }
+
+    /**
+     * Owner 2026-10-26, "Duplicate task alert": for each person, their open tasks that look like this title. The title of
+     * the matching task is only returned when the actor may see that person's tasks (themself, someone below them, a
+     * superuser) or gave that task; otherwise only the fact that one exists.
+     */
+    static async findDuplicates(actorUserId: string, input: { targetUserIds?: unknown; title?: string }): Promise<{ matches: DuplicateMatch[] }> {
+        const title = String(input.title ?? '').trim().slice(0, 200);
+        const ids = Array.isArray(input.targetUserIds) ? [...new Set(input.targetUserIds.filter(isUuid))] : [];
+        if (!title || ids.length === 0) return { matches: [] };
+        if (ids.length > 50) throw new WorkspaceError(400, 'At most 50 people at a time.');
+        const actor = await this.requireUnlockedActor(actorUserId);
+
+        // Only people this actor may give work to (the same rule as assigning); never another superuser's private tasks
+        const pool = await TaskDatabaseService.getAllEmployees();
+        const allowed = new Set((await PermissionService.assignableTo(actor, pool.filter(e => ids.includes(e.id)))).map(e => e.id));
+        const people = pool.filter(e => allowed.has(e.id) && !PermissionService.hiddenFrom(actor, e));
+        if (people.length === 0) return { matches: [] };
+
+        const { data, error } = await supabaseAdmin.from('task_assignments').select('id, title, employee_id, assigned_by, assigned_date, status')
+            .in('employee_id', people.map(p => p.id)).neq('status', 'completed').gte('assigned_date', addDays(todayIST(), -30))
+            .order('assigned_date', { ascending: false }).limit(1000);
+        if (error) {
+            console.error('[WorkspaceService] duplicate check failed:', error);
+            throw new WorkspaceError(500, 'Could not check for similar tasks just now.');
+        }
+
+        const { hierarchy } = await HierarchyService.load();
+        const below = new Set(hierarchy.allReports(actor.id).map(p => p.userId));
+        type OpenRow = { title: string; assigned_by: string | null; assigned_date: string; status: TaskStatus };
+        const openOf = (id: string) => (data || []).filter(r => r.employee_id === id) as OpenRow[];
+        const hits = await duplicateHits(title, people.map(p => ({ id: p.id, open: openOf(p.id) })));
+        const matches: DuplicateMatch[] = [];
+        for (const person of people) {
+            const hit = hits.get(person.id);
+            if (!hit) continue;
+            const mayRead = person.id === actor.id || actor.role === 'superuser' || below.has(person.id) || hit.assigned_by === actor.id;
+            matches.push({ userId: person.id, name: person.name, title: mayRead ? hit.title : null, assignedDate: hit.assigned_date, status: hit.status });
+        }
+        return { matches };
+    }
+
+    /**
+     * Owner 2026-10-26: one task for several people (each gets their own copy and finishes it separately), optionally as a
+     * follow-up of an earlier task. Each copy goes through `assign` (same permission checks and alerts as one task). One
+     * person failing does not stop the others; the caller is told who got it and who did not.
+     */
+    static async assignMany(actorUserId: string, input: { targetUserIds?: unknown; title?: string; description?: string; date?: string; followUpOf?: string | null; via?: string; dueDate?: unknown; dueTime?: unknown }): Promise<{
+        created: Array<{ id: string; userId: string; name: string }>;
+        failed: Array<{ userId: string; name: string; error: string }>;
+        linked: boolean;
+    }> {
+        const ids = Array.isArray(input.targetUserIds) ? [...new Set(input.targetUserIds.filter(isUuid))] : [];
+        if (ids.length === 0) throw new WorkspaceError(400, 'Choose who the task is for.');
+        if (input.followUpOf && !isUuid(input.followUpOf)) throw new WorkspaceError(400, 'The task this follows up is not valid.');
+        if (ids.length > 50) throw new WorkspaceError(400, 'At most 50 people at a time.');
+        const actor = await this.requireUnlockedActor(actorUserId);
+
+        // A follow-up must point at a task this person may see: theirs, one they gave, or one they may change.
+        let followUpOf: string | null = null;
+        if (input.followUpOf) {
+            const { data: parent, error: parentError } = await supabaseAdmin.from('task_assignments').select('*').eq('id', input.followUpOf).maybeSingle();
+            if (parentError) throw new WorkspaceError(500, 'Could not read the task this follows up just now. Please try again.');
+            if (!parent) throw new WorkspaceError(404, 'The task this follows up no longer exists.');
+            if (parent.assigned_by !== actor.id) await PermissionService.assertCanCompleteTask(actor.id, parent as TaskAssignment);
+            followUpOf = parent.id as string;
+        }
+
+        const created: Array<{ id: string; userId: string; name: string }> = [];
+        const failed: Array<{ userId: string; name: string; error: string }> = [];
+        for (const userId of ids) {
+            try {
+                const task = await this.assign(actor.id, { targetUserId: userId, title: input.title, description: input.description, date: input.date, dueDate: input.dueDate, dueTime: input.dueTime });
+                const who = await TaskDatabaseService.getEmployeeById(userId);
+                created.push({ id: task.id, userId, name: who?.name || 'Someone' });
+            } catch (err) {
+                // Bad input fails the same way for everyone: stop at once instead of repeating it per person
+                if (err instanceof WorkspaceError && err.status === 400) throw err;
+                const who = await TaskDatabaseService.getEmployeeById(userId).catch(() => null);
+                if (!(err instanceof WorkspaceError || err instanceof PermissionDeniedError)) console.error('[WorkspaceService] assign failed:', err);
+                failed.push({ userId, name: who?.name || 'Someone', error: userMessage(err, 'Could not give the task just now.') });
+            }
+        }
+
+        const groupId = created.length > 1 ? randomUUID() : null;
+        const linked = await linkTasks(created.map(c => c.id), { followUpOf, groupId });
+        if (created.length && (followUpOf || groupId)) {
+            await TaskDatabaseService.logAudit({
+                eventType: 'task_assigned_group',
+                actorId: actor.id,
+                details: { title: input.title, taskIds: created.map(c => c.id), followUpOf, groupId, linked, via: input.via ?? 'web_tasks_tab' },
+            });
+        }
+        return { created, failed, linked };
     }
 
     /**
@@ -890,13 +1206,13 @@ export class WorkspaceService {
      * (a superuser: any open task given to someone). Each task at most once an hour. ONE in-app notice and ONE WhatsApp
      * message per person, listing their tasks ("Onboarding (given 19 Oct, 1 day overdue)"). Nothing about the tasks changes.
      */
-    static async remindTasks(actorUserId: string, input: { taskIds?: unknown; via?: string }): Promise<{ reminded: Array<{ name: string; count: number }>; skipped: Array<{ title: string; why: string }> }> {
+    static async remindTasks(actorUserId: string, input: { taskIds?: unknown; via?: string; /** Owner 2026-10-26: server-only, set by CollaborationService after it checked that every task was given by the actor to someone in another department. */ crossDepartment?: boolean }): Promise<{ reminded: Array<{ name: string; count: number }>; skipped: Array<{ title: string; why: string }> }> {
         const ids = Array.isArray(input.taskIds) ? [...new Set(input.taskIds.filter((x): x is string => typeof x === 'string' && x.length > 0))] : [];
         if (!ids.length) throw new WorkspaceError(400, 'Choose at least one task to remind about.');
         if (ids.length > 50) throw new WorkspaceError(400, 'At most 50 tasks at a time.');
         const actor = await this.requireUnlockedActor(actorUserId);
         const isSuper = actor.role === 'superuser';
-        if (!isSuper && !(await TaskAccessService.teamFeaturesFor(actor.department_id)).assignedTab) {
+        if (!isSuper && !input.crossDepartment && !(await TaskAccessService.teamFeaturesFor(actor.department_id)).assignedTab) {
             throw new WorkspaceError(403, 'Reminders come with the "Assigned by me" tab, which is not switched on for your team.', 'FEATURE_OFF');
         }
 

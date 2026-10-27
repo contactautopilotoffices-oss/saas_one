@@ -53,14 +53,25 @@ export function buildTeamTaskList(members: TeamMemberTasks[]): string {
     const late = (m: TeamMemberTasks) => m.tasks.filter(t => t.status !== 'completed' && t.isCarriedForward).length;
     const ordered = [...members].sort((a, b) => late(b) - late(a) || open(b) - open(a) || a.name.localeCompare(b.name));
     const total = members.reduce((n, m) => n + m.tasks.length, 0);
+    // Owner 2026-10-27: the whole team's to do / in progress / carried forward / done at a glance, and each person's open
+    // work first (carried forward, then in progress, then to do), finished tasks last.
+    const all = members.flatMap(m => m.tasks);
+    const count = (f: (t: TeamMemberTasks['tasks'][number]) => boolean) => all.filter(f).length;
+    const summary = [
+        `To do: ${count(t => t.status === 'pending')}`,
+        `In progress: ${count(t => t.status === 'in_progress')}`,
+        `Carried forward: ${count(t => t.status !== 'completed' && !!t.isCarriedForward)}`,
+        `Done: ${count(t => t.status === 'completed')}`,
+    ].join(' · ');
+    const rank = (t: TeamMemberTasks['tasks'][number]) => (t.status === 'completed' ? 3 : t.isCarriedForward ? 0 : t.status === 'in_progress' ? 1 : 2);
     const blocks = ordered.map(m => {
         if (!m.tasks.length) return `*${m.name}*: no tasks today`;
-        const lines = m.tasks.map(t => {
+        const lines = [...m.tasks].sort((a, b) => rank(a) - rank(b)).map(t => {
             const from = t.isCarriedForward ? dayLabel(t.assignedDate) : null;
             const status = t.isCarriedForward && t.status !== 'completed' ? `${STATUS_WORD[t.status]}, from ${from ?? 'an earlier day'}` : STATUS_WORD[t.status];
             return `• ${t.title || 'Untitled task'}: ${status}`;
         });
         return `*${m.name}* (${m.tasks.length})\n${lines.join('\n')}`;
     });
-    return `Your team today: ${members.length} ${members.length === 1 ? 'person' : 'people'}, ${total} ${total === 1 ? 'task' : 'tasks'}.\n\n${blocks.join('\n\n')}`;
+    return `Your team today: ${members.length} ${members.length === 1 ? 'person' : 'people'}, ${total} ${total === 1 ? 'task' : 'tasks'}.\n${summary}\n\n${blocks.join('\n\n')}`;
 }

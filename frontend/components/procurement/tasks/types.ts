@@ -32,6 +32,52 @@ export interface WTask {
     completedAt?: string | null;
     /** Server decision. A task given by someone else can only be deleted by them. Missing = old behaviour (allowed). */
     canDelete?: boolean;
+    /** Owner 2026-10-26: the person who gave it (or a superuser) may edit its name, details, date and person. */
+    canEdit?: boolean;
+    /** Owner 2026-10-26: the task this one follows up. */
+    followUpOf?: { id: string; title: string } | null;
+    /** Owner 2026-10-26: the other people given the same task at once (each finishes their own copy). */
+    alsoWith?: Array<{ name: string; status: Status }>;
+    /** Owner 2026-10-26: how many files are attached. */
+    attachmentCount?: number;
+    /** Owner 2026-10-26: made by accepting a support request from another department. */
+    supportRequest?: boolean;
+    /** Owner 2026-10-27: the deadline (time optional, IST). Missing = due on its start date, no countdown. */
+    due?: { date: string; time: string | null } | null;
+    /** Owner 2026-10-27: my own personal task — I may edit or delete its notes. */
+    canEditNotes?: boolean;
+}
+
+/** Owner 2026-10-26: a file on a task, with a download link that works for 10 minutes. */
+export interface WAttachment {
+    id: string;
+    fileName: string;
+    fileType: string;
+    fileSize: number;
+    uploadedByName: string;
+    createdAt: string;
+    url: string | null;
+    /** Owner 2026-10-27: the server says I may remove it (I attached it, or I am a superuser). */
+    canDelete?: boolean;
+}
+
+/** Owner 2026-10-26: an open task that looks like the one about to be given. `title` is null when it may not be shown. */
+export interface WDuplicate {
+    userId: string;
+    name: string;
+    title: string | null;
+    assignedDate: string;
+    status: Status;
+}
+
+/** Files that can be attached (checked again on the server, by content). */
+export const ATTACH_ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp,.docx,.xlsx,application/pdf,image/png,image/jpeg,image/webp';
+export const ATTACH_MAX_BYTES = 10 * 1024 * 1024;
+
+export function fileSizeLabel(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 /** One row of "Assigned by me". `mine` = I gave it, so I may edit and delete it; otherwise view only (given by my team). */
@@ -78,7 +124,7 @@ export interface WorkspaceOk {
     /** Colleagues I can tell "this task of mine is pending on you". */
     dependencyPeople?: Array<{ userId: string; name: string }>;
     /** Per-team switches from the Control Center. */
-    features?: { assignedTab: boolean; pendingOn: boolean };
+    features?: { assignedTab: boolean; pendingOn: boolean; dueDates?: boolean };
 }
 
 export type Workspace =

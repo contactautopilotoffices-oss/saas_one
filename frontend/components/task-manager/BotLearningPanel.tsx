@@ -106,7 +106,7 @@ export default function BotLearningPanel({ orgId }: { orgId?: string }) {
               </> : <p className="text-xs text-slate-500">Health data needs the Phase 5 migration.</p>}
               <h4 className="text-xs font-black pt-2">Alert recipients</h4>
               <p className="text-[11px] text-slate-500">Enter as &ldquo;Name, Phone&rdquo; (one per line)</p>
-              <textarea className="w-full border rounded-xl p-2 text-xs" rows={3} placeholder="Name, Phone" value={alertAdminsText} onChange={e => setAlertAdminsText(e.target.value)} />
+              <textarea className="w-full border rounded-xl p-2 text-xs" rows={3} value={alertAdminsText} onChange={e => setAlertAdminsText(e.target.value)} />
               <button
                 disabled={busy}
                 onClick={() => {

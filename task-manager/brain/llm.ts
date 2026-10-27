@@ -197,6 +197,52 @@ export async function anthropicComplete(req: LlmRequest, timeoutMs = TIMEOUT_MS)
     throw new Error(`Claude failed (${problems.join('; ')})`);
 }
 
+/** Image types Claude accepts, and its per-image size limit (base64 is ~4/3 of this). */
+const CLAUDE_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+const CLAUDE_IMAGE_MAX_BYTES = 3_750_000;
+
+/**
+ * Owner 2026-10-27: read an image with Claude (task import from a photo / screenshot). Same key handling as
+ * anthropicComplete: tried in order, never logged. Throws on any problem (wrong type, too big, error, empty), so the caller
+ * moves on to its backup model.
+ */
+export async function anthropicVision(input: { model: string; image: Buffer; mimeType: string; instruction: string; maxTokens: number; timeoutMs: number }): Promise<string> {
+    const keys = botAnthropicKeys();
+    if (!keys.length) throw new Error('CLAUDE_API_KEY is not set');
+    const mime = input.mimeType.toLowerCase().split(';')[0].trim();
+    if (!CLAUDE_IMAGE_TYPES.has(mime)) throw new Error(`Claude cannot read ${mime || 'this file type'}`);
+    if (input.image.length > CLAUDE_IMAGE_MAX_BYTES) throw new Error('the image is too large for Claude');
+    const body = JSON.stringify({
+        model: input.model.startsWith(ANTHROPIC_PREFIX) ? input.model.slice(ANTHROPIC_PREFIX.length) : input.model,
+        max_tokens: input.maxTokens + CLAUDE_THINKING_ROOM,
+        messages: [{ role: 'user', content: [
+            { type: 'image', source: { type: 'base64', media_type: mime, data: input.image.toString('base64') } },
+            { type: 'text', text: input.instruction },
+        ] }],
+    });
+    const problems: string[] = [];
+    for (let k = 0; k < keys.length; k++) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), input.timeoutMs);
+        let res: Response;
+        try {
+            res = await fetch(ANTHROPIC_URL, { method: 'POST', headers: { 'x-api-key': keys[k], 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }, body, signal: controller.signal });
+        } catch (err) {
+            clearTimeout(timer);
+            problems.push(`key ${k + 1}: ${err instanceof Error && err.name === 'AbortError' ? 'timeout' : 'network error'}`);
+            continue;
+        }
+        clearTimeout(timer);
+        if (res.status === 429 || res.status === 401 || res.status === 403 || res.status >= 500) { problems.push(`key ${k + 1}: HTTP ${res.status}`); continue; }
+        if (!res.ok) throw new Error(`Claude HTTP ${res.status}`);
+        const j = await res.json() as { content?: Array<{ type?: string; text?: string }>; stop_reason?: string };
+        const text = (j?.content ?? []).filter(b => b?.type === 'text').map(b => b.text ?? '').join('');
+        if (!text.trim()) throw new Error(`Claude returned nothing (stop_reason=${j?.stop_reason ?? 'unknown'})`);
+        return text;
+    }
+    throw new Error(`Claude failed (${problems.join('; ')})`);
+}
+
 /** Pull one JSON object out of a model reply (tolerates code fences and a little prose around it). */
 export function extractJson(text: string): unknown {
     const m = text.match(/\{[\s\S]*\}/);

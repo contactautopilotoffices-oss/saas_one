@@ -89,7 +89,7 @@ async function run() {
     check('the global switch is gone from the settings type and the database service', !/taskImportEnabled/.test(fs.readFileSync(path.join(__dirname, '../types.ts'), 'utf8')) && !/taskImportEnabled|setTaskImport\b/.test(fs.readFileSync(path.join(__dirname, '../TaskDatabaseService.ts'), 'utf8')));
     check('the panel has no global switch and has the per-department button', (() => {
         const panel = fs.readFileSync(path.join(__dirname, '../../frontend/components/task-manager/TaskAccessPanel.tsx'), 'utf8');
-        return !/useState\(false\);\s*\n?.*const \[taskImport,/.test(panel) && !/'task-import'/.test(panel) && /Task import: \{d\.taskImportEnabled/.test(panel) && /action: 'set_task_import', departmentId/.test(panel);
+        return !/useState\(false\);\s*\n?.*const \[taskImport,/.test(panel) && !/'task-import'/.test(panel) && /label: 'Task import'[^}]*on: d\.taskImportEnabled/.test(panel) && /action: 'set_task_import', departmentId/.test(panel);
     })());
 
     console.log(failures === 0 ? '\n🎉 TASK IMPORT DEPARTMENT SWITCH TESTS PASSED\n' : `\n❌ ${failures} FAILED\n`);

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Status, WAssignable, Workspace, WorkspaceOk, columnLabel } from './types';
+import { Status, WAssignable, WAttachment, WDuplicate, Workspace, WorkspaceOk, columnLabel } from './types';
 
 const messageOf = (err: unknown, fallback: string) => (err instanceof Error && err.message ? err.message : fallback);
 
@@ -9,6 +9,8 @@ export interface Toast {
     id: number;
     kind: 'success' | 'error';
     text: string;
+    /** Owner 2026-10-26: an optional button on the message, e.g. "Add remark" after a task is marked done. */
+    action?: { label: string; taskId: string };
 }
 
 /**
@@ -29,10 +31,11 @@ export function useWorkspace(date: string, departmentName: string, to: string = 
     wsRef.current = ws;
     const toastId = useRef(0);
 
-    const toast = useCallback((kind: Toast['kind'], text: string) => {
+    const toast = useCallback((kind: Toast['kind'], text: string, action?: Toast['action']) => {
         const id = ++toastId.current;
-        setToasts(t => [...t.slice(-2), { id, kind, text }]);
-        setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 3600);
+        setToasts(t => [...t.slice(-2), { id, kind, text, action }]);
+        // A message with a button stays a little longer, so there is time to use it
+        setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), action ? 8000 : 3600);
     }, []);
 
     const dismissToast = useCallback((id: number) => setToasts(t => t.filter(x => x.id !== id)), []);
@@ -63,6 +66,7 @@ export function useWorkspace(date: string, departmentName: string, to: string = 
         });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'That did not work');
+        return data;
     }, []);
 
     const moveTask = useCallback(async (taskId: string, status: Status) => {
@@ -77,7 +81,9 @@ export function useWorkspace(date: string, departmentName: string, to: string = 
         // 2. confirm with the server; undo on refusal
         try {
             await post({ action: 'set_status', taskId, status });
-            toast('success', `Moved to ${columnLabel(status)}`);
+            // Owner 2026-10-26: a remark is optional, so it is offered on the message instead of a pop-up
+            const mine = task.ownerId === before.actor.userId;
+            toast('success', `Moved to ${columnLabel(status)}`, status === 'completed' && mine ? { label: 'Add remark', taskId } : undefined);
             load();
         } catch (err) {
             setWs(before);
@@ -152,10 +158,11 @@ export function useWorkspace(date: string, departmentName: string, to: string = 
         }
     }, [post, toast]);
 
-    /** Edits a task I gave (name and details). Used by "Assigned by me". */
-    const editTask = useCallback(async (taskId: string, title: string, description: string) => {
+    /** Edits a task I gave (name and details; owner 2026-10-26: also date and person). Used by "Assigned by me" and the task window. */
+    // Owner 2026-10-27: no Details box any more — `description` is left out, so the server keeps the task's notes as they are
+    const editTask = useCallback(async (taskId: string, title: string, description?: string, extra?: { date?: string; targetUserId?: string; dueDate?: string | null; dueTime?: string | null }) => {
         try {
-            await post({ action: 'edit_task', taskId, title, description });
+            await post({ action: 'edit_task', taskId, title, ...(description !== undefined ? { description } : {}), ...extra });
             toast('success', 'Task saved');
             load();
             return true;
@@ -170,7 +177,7 @@ export function useWorkspace(date: string, departmentName: string, to: string = 
      * One person → hand over (the task moves). Several → everyone after the first gets their own copy first,
      * then the task moves to the first person, so a failed copy leaves the task safely with me.
      */
-    const giveMany = useCallback(async (taskId: string, people: WAssignable[], note: string) => {
+    const giveMany = useCallback(async (taskId: string, people: WAssignable[], note: string, due?: { dueDate?: string | null; dueTime?: string | null }) => {
         const cur = wsRef.current;
         const task = cur && cur.state === 'ok' ? cur.tasks.find(t => t.id === taskId) : undefined;
         if (!task || people.length === 0) return false;
@@ -178,10 +185,10 @@ export function useWorkspace(date: string, departmentName: string, to: string = 
         let copied = 0;
         try {
             for (const p of rest) {
-                await post({ action: 'assign', targetUserId: p.userId, title: task.title, description: task.description || undefined, note: note || undefined });
+                await post({ action: 'assign', targetUserId: p.userId, title: task.title, description: task.description || undefined, note: note || undefined, ...due });
                 copied++;
             }
-            await post({ action: 'hand_over', taskId, targetUserId: first.userId, note: note || undefined });
+            await post({ action: 'hand_over', taskId, targetUserId: first.userId, note: note || undefined, ...due });
             toast('success', people.length === 1 ? `Given to ${first.name}` : `Given to ${people.length} people`);
             await load();
             return true;
@@ -206,6 +213,105 @@ export function useWorkspace(date: string, departmentName: string, to: string = 
         }
     }, [load, post, toast]);
 
+    /** Owner 2026-10-27: edit (text) or delete (null) one note of my personal task. `index` / `expected` = as listed. */
+    const editNote = useCallback(async (taskId: string, index: number, expected: string, text: string | null) => {
+        try {
+            await post(text === null ? { action: 'delete_note', taskId, index, expected } : { action: 'edit_note', taskId, index, expected, text });
+            toast('success', text === null ? 'Note deleted' : 'Note saved');
+            await load();
+            return true;
+        } catch (err) {
+            toast('error', messageOf(err, text === null ? 'Could not delete the note' : 'Could not save the note'));
+            return false;
+        }
+    }, [load, post, toast]);
+
+    /** Owner 2026-10-26: an optional remark on one of MY tasks (saved like a note; the person who gave it is told in the app). */
+    const addRemark = useCallback(async (taskId: string, note: string) => {
+        try {
+            await post({ action: 'add_note', taskId, note, tellGiver: true });
+            toast('success', 'Remark added');
+            await load();
+            return true;
+        } catch (err) {
+            toast('error', messageOf(err, 'Could not add the remark'));
+            return false;
+        }
+    }, [load, post, toast]);
+
+    /** Owner 2026-10-26: open tasks that look like this one, for each person. Never blocks giving the task (errors → none). */
+    const checkDuplicates = useCallback(async (targetUserIds: string[], title: string): Promise<WDuplicate[]> => {
+        try {
+            const data = await post({ action: 'check_duplicates', targetUserIds, title });
+            return (data.matches || []) as WDuplicate[];
+        } catch {
+            return [];
+        }
+    }, [post]);
+
+    /** Owner 2026-10-26: attaches each file to the given tasks. Returns how many files were saved. */
+    const uploadFiles = useCallback(async (taskIds: string[], files: File[]) => {
+        let saved = 0;
+        for (const file of files) {
+            const form = new FormData();
+            form.append('file', file);
+            taskIds.forEach(id => form.append('taskId', id));
+            try {
+                const res = await fetch('/api/task-manager/attachments', { method: 'POST', body: form });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || !data.success) throw new Error(data.error || 'Could not attach the file');
+                saved++;
+            } catch (err) {
+                toast('error', `${file.name}: ${messageOf(err, 'could not attach the file')}`);
+            }
+        }
+        return saved;
+    }, [toast]);
+
+    /** Owner 2026-10-26: the files on a task (download links work for 10 minutes). */
+    /** Owner 2026-10-27: removes a file attached by mistake (the server checks who may). */
+    const removeAttachment = useCallback(async (attachmentId: string): Promise<boolean> => {
+        try {
+            const res = await fetch(`/api/task-manager/attachments?id=${encodeURIComponent(attachmentId)}`, { method: 'DELETE' });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.success) throw new Error(data.error || 'Could not remove the file');
+            toast('success', 'File removed');
+            load();
+            return true;
+        } catch (err) {
+            toast('error', messageOf(err, 'Could not remove the file'));
+            return false;
+        }
+    }, [load, toast]);
+
+    const listAttachments = useCallback(async (taskId: string): Promise<WAttachment[]> => {
+        const res = await fetch(`/api/task-manager/attachments?taskId=${encodeURIComponent(taskId)}`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) throw new Error(data.error || 'Could not load the files');
+        return data.attachments as WAttachment[];
+    }, []);
+
+    /**
+     * Owner 2026-10-26: one task for one or more people (each gets their own copy), optionally a follow-up of another
+     * task, with optional files attached to every copy.
+     */
+    const addTasks = useCallback(async (input: { targetUserIds: string[]; title: string; description?: string; date?: string; followUpOf?: string | null; files?: File[]; dueDate?: string | null; dueTime?: string | null }) => {
+        try {
+            const { files, ...rest } = input;
+            const data = await post({ action: 'assign_many', ...rest });
+            const created = (data.created || []) as Array<{ id: string; name: string }>;
+            const failed = (data.failed || []) as Array<{ name: string; error: string }>;
+            if (created.length && files?.length) await uploadFiles(created.map(c => c.id), files);
+            if (created.length) toast('success', created.length === 1 ? 'Task added' : `Task given to ${created.length} people`);
+            failed.forEach(f => toast('error', `${f.name}: ${f.error}`));
+            await load();
+            return created.length > 0;
+        } catch (err) {
+            toast('error', messageOf(err, 'Could not add the task'));
+            return false;
+        }
+    }, [load, post, toast, uploadFiles]);
+
     const ok: WorkspaceOk | null = ws && ws.state === 'ok' ? ws : null;
-    return { ws, ok, loading, refreshing, error, toasts, dismissToast, toast, reload: load, moveTask, addTask, giveTask, deleteTask, setLocked, flagDependency, editTask, giveMany, addNote };
+    return { ws, ok, loading, refreshing, error, toasts, dismissToast, toast, reload: load, moveTask, addTask, addTasks, giveTask, deleteTask, setLocked, flagDependency, editTask, giveMany, addNote, addRemark, checkDuplicates, uploadFiles, listAttachments, removeAttachment, editNote };
 }

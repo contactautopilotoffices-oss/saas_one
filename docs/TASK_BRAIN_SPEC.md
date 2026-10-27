@@ -365,3 +365,94 @@ Sher wrote "add task follow up regarding Checklist" and got two questions ("your
 - **Long replies**: split between lines into messages of at most 3,800 characters (`splitLongReply`), in order.
 - **Evaluation**: `task-manager/tests/test_brain_direct_add.ts` (Sher's exact message, 27 checks); `test_brain_hr_requests.ts`
   section 5 updated to the new rule; all brain tests pass. **L2** knowingly open: scripted model only.
+
+### Changes 2026-10-26: remark with "done", change date / person, follow-ups, duplicate warning
+
+Owner's Task Manager upgrade list (website and WhatsApp). Still a **workflow**: no new AI call, no tools, no loop; the AI
+only fills new slots, code validates and decides, the same checked server functions do the work. `[BAA pp.104, 115]`
+
+- **Remark with "done"** `[BAA p.105]`: `complete_tasks` gets an optional `note` ("done 1: shared on the HR group"). It must
+  be the person's own words (grounding, like notes); an invented remark → not grounded → nothing happens. After the tasks are
+  marked done, the remark is saved on each one through `WorkspaceService.addNote` with `tellGiver` (the giver gets an in-app
+  bell; no WhatsApp: the approved "task done" template has no place for it). A reply to a superuser's request passes the
+  remark on as the relayed note. Optional by design: "done 1" alone never asks for one (owner: no pop-ups).
+- **`change_task`** (new intent) `[BAA pp.93, 107]`: "move Sanil's vendor task to Friday", "give the onboarding task to
+  Neeti instead". The intent description says when NOT to use it (renaming → `rename_task`; giving away one's own task →
+  `hand_over_task`). Resolved like notes (own list by number, or words among own tasks and the open tasks they gave; a name
+  only narrows whose task). New person checked with the existing rule (refused, never guessed); no date and no person →
+  asks. Always previewed, then YES. Carried out by `WorkspaceService.editTask` (only the giver or a superuser; the new person
+  is checked like a new task and told; fields not sent stay as they are). Errors come back as the reply text, never thrown.
+- **Follow-ups** `[BAA p.105]`: `create_tasks` gets `follow_up` (a number from their list or words of the task name). Code
+  resolves it to ONE existing task (asks when several fit) and links the new task(s) after they are created
+  (`TaskLinks.linkTasks`; skipped, logged once, until migration `20261026000003` runs — the task itself is saved either way).
+- **Duplicate warning** `[BAA p.112]`: before adding, each new task is compared (`taskSimilarity.isSimilarTitle`, strict:
+  near-identical wording only) with that person's open tasks the bot already knows: the sender's own list, or open tasks the
+  sender gave that person. A match → always previewed first (even while direct adds are on), with the similar task shown
+  by the system. Cost of a false positive: low (one extra question); of a miss: a duplicate task, as before.
+- **Not on WhatsApp: file attachments.** Images and files sent to the bot already mean "import this task list" or "facility
+  ticket"; a third meaning needs an owner decision on how to tell them apart. Attachments are website-only for now.
+- **Evaluation** `[BAA pp.94–95, 118–119]`: `task-manager/tests/test_upgrades_2026_10_26.ts` (offline, scripted model; also
+  covers the similarity rule, page scale, and attachment type checks). **L2 / L5 knowingly open:** no head-to-head on real
+  messages and no rubric run for the new slots yet; `cases_real.ts` has no "done N: remark", change or follow-up cases.
+  Before relying on it widely, add those cases and run `run_eval.ts` against the real model.
+
+### Changes 2026-10-26 (b): answering support requests on WhatsApp; AI second pass for the duplicate alert
+
+- **`answer_request`** (new intent) `[BAA pp.104, 107]`: someone in another department sent a SUPPORT REQUEST (Send tab,
+  `CollaborationService`); the receiver answers in their own words ("haan kar dunga", "can't, payroll is with the vendor").
+  The waiting requests are added to the AI's context only when there are some (`support_requests_waiting_for_answer`), so
+  everyone else's prompt is unchanged. The description says when NOT to use it (never a new task). Code picks the request
+  (never guesses between several), a decline needs a reason in the person's own words (grounding; asked for when missing),
+  always previewed then YES, carried out by `CollaborationService.respond` (only the receiver, only while waiting,
+  conditional claim). Errors come back as reply text.
+- **AI duplicate check** (`task-manager/aiDuplicate.ts`) — still a **workflow**: one call, no tools `[BAA p.104]`.
+  Justification (a) `[BAA p.115]`: "same work in other words" cannot be hard-coded; the word check stays first and the AI is
+  asked only when it finds nothing. Cost of a false positive: **low** (one extra "are you sure?") → the cheap models
+  `qwen3.8-27b` → `glm-5.3-flash` `[BAA p.112]`. Prompt: 4 numbered steps, explicit no-skip clause, one worked example,
+  JSON with `reasoning` before `match` `[BAA pp.97, 105, 114]`. Never throws; 4 s timeout; any odd answer = no match
+  `[BAA pp.93–94]`. At most 5 people per check, side by side. Off switch: `TASK_AI_DUPLICATE_CHECK=off`. Web only (New task
+  window and Send tab); the WhatsApp bot keeps the word check (its decision step is plain synchronous code).
+- **Evaluation** `[BAA pp.94–95, 118–119]`: offline only (`test_upgrades_2026_10_26.ts` sections 4e, 5). **L2 / L5 / L6
+  knowingly open:** no head-to-head of word-only vs word+AI on real titles, no rubric, no real-model run of
+  `answer_request`. Before relying on them widely: collect ~50 real pairs of titles (same / not same) and measure both
+  checks, and add Hinglish accept/decline cases to `cases_real.ts`.
+
+### Changes 2026-10-27: the team list shows only people who use the Task Manager
+
+"Show my team's tasks" listed 40 people with "no tasks today" while only 3 were active: the team was everyone in a
+department with the Task Manager ON, cut at 40 by name, so the active people fell past the cut.
+
+- **Who is in "my team"** `[BAA p.104]` (workflow, no AI change): `readTeam` keeps the same permission rule
+  (`visibleAndAssignable`, superusers hidden from each other), then only people who are **unlocked**
+  (`TaskAccessService.partition`: department ON and kickoff recorded), and only then the 40-person cap. Applies to both
+  `buildTeamTaskList` ("what is my team doing?") and `buildTeamReport` ("how is my team doing?").
+- **The list** (`buildTeamTaskList`, pure): a second line sums up `To do · In progress · Carried forward · Done`; each
+  person's tasks are ordered carried forward → in progress → to do → done. Same tasks as before (today + carried forward,
+  each person's numbered list); no new data is read.
+- **Evaluation**: `test_brain_direct_add.ts` section 6 (+3 checks, all pass). Prompt, intents and tools are unchanged, so
+  no prompt evaluation was needed. **L2** stays knowingly open as before (scripted model only).
+
+### Changes 2026-10-27 (b): task import uses Claude Sonnet 5.5 for both steps
+
+- **Owner decision:** reading a photo or screenshot of a task list (`TaskImportParser.imageToText`) now tries
+  `anthropic:claude-sonnet-5-5` first (`CLAUDE_API_KEY`, the bot's key), then `qwen3.8-27b`, then `glm-5.3-flash` (the
+  previous chain) `[BAA p.112]`. Still a **workflow**: one call per model, no tools `[BAA p.104]`. Owner follow-up the
+  same day: turning the text into tasks (`structureText`, text and Excel imports too) uses the same chain, through
+  `anthropicComplete`; an unusable JSON reply moves on to Qwen. The preview and YES before saving are unchanged.
+- **Failure handling** `[BAA pp.93–94]`: `anthropicVision` throws before any network call when the key is missing, the
+  type is not JPEG / PNG / GIF / WebP, or the image is over 3.75 MB, and on any HTTP error or empty reply, so the next
+  model reads it. Keys are never logged.
+- **Evaluation:** `test_import_parser_stage1.ts` (+3 checks; all four import test files pass). **L2 knowingly open:** no
+  measured head-to-head of Sonnet vs Qwen on real task-list photos (the Qwen choice came from the Stage 1 image test).
+  Before relying on it: run the Stage 1 sample images through both and compare field accuracy and cost.
+
+### Changes 2026-10-27 (c): the reason for "can't do it" is optional
+
+- **Owner decision** `[BAA p.107]`: declining a request from another department no longer needs a reason (website,
+  server and WhatsApp). `decideAnswer` no longer asks for one; a reason the person does give is still kept and still
+  grounded in their own words (`checkGrounding`), so the AI cannot invent one. **One YES still confirms** either answer
+  (accept or decline) — a stray tap never answers a request on its own `[BAA p.115]`.
+- **Template** `task_support_request_v1` ends "Tap Accept, or Can't do it." with two quick-reply buttons; a tap reaches
+  the bot as that text and goes through the same `answer_request` path (natural-language users only).
+- **Evaluation**: `test_upgrades_2026_10_26.ts` section 5 updated ("Can't do it" with no reason → one YES → declined
+  without a reason; +2 source checks). Prompt and intents unchanged. **L2** knowingly open (scripted model only).

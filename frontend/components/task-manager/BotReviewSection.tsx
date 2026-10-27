@@ -242,7 +242,7 @@ export default function BotReviewSection({ reviews: allReviews, developerItems, 
                         <div className="space-y-2">
                           <label htmlFor="bot-review-fix" className="text-[11px] font-black uppercase tracking-wider text-slate-500">What should the bot have done?</label>
                           <textarea id="bot-review-fix" rows={3} value={fixText} onChange={e => setFixText(e.target.value)} className="w-full border border-slate-300 rounded-xl p-2.5 text-sm"
-                            placeholder="e.g. the user wanted his teammates' carry-forward tasks, the bot should have shown those instead of today's" />
+                          />
                           <p className="text-xs text-slate-500">Write it the way you&apos;d say it. The AI will rewrite the summary above for you to check again.</p>
                           <div className="flex flex-wrap gap-2">
                             <button type="button" disabled={busy || !fixText.trim()} onClick={rewrite} className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-sm font-bold disabled:opacity-50">{busy ? 'Rewriting…' : 'Rewrite summary'}</button>

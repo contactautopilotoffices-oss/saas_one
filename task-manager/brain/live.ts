@@ -674,6 +674,8 @@ export async function defaultLiveIO(): Promise<LiveIO> {
     const { TaskAccessService } = await import('../TaskAccessService');
     const { TaskMessagingService } = await import('../TaskMessagingService');
     const { WorkspaceService, todayIST } = await import('../WorkspaceService');
+    const { linkTasks } = await import('../TaskLinks');
+    const { CollaborationService } = await import('../CollaborationService');
     const { PermissionService } = await import('../PermissionService');
     const { SuperuserInsights } = await import('../SuperuserInsights');
     const { getConversationRoutingState } = await import('@/backend/lib/whatsapp/interpreter/context');
@@ -693,12 +695,18 @@ export async function defaultLiveIO(): Promise<LiveIO> {
     const exec: ExecIO = {
         async setStatus(actorId, taskId, status, opts) { await WorkspaceService.setStatus(actorId, { taskId, status, notifyGiver: opts?.notifyGiver }); },
         async notifyCompleted(_actorId, taskIds) { await WorkspaceService.notifyCompleted(taskIds); },
-        async assign(actorId, i) { await WorkspaceService.assign(actorId, { targetUserId: i.targetUserId, title: i.title, description: i.description, date: i.date, notify: i.notify, note: i.note }); },
+        async assign(actorId, i) {
+            const task = await WorkspaceService.assign(actorId, { targetUserId: i.targetUserId, title: i.title, description: i.description, date: i.date, notify: i.notify, note: i.note });
+            // Owner 2026-10-26: "follow up on task 2: …" — the task exists either way; the link is skipped until the migration runs
+            if (i.followUpOf) await linkTasks([task.id], { followUpOf: i.followUpOf });
+        },
         async alertAssigned(actorId, targetUserId, titles, date) { await WorkspaceService.alertAssigned(actorId, targetUserId, titles, date); },
         async handOver(actorId, taskId, toId, note) { const r = await WorkspaceService.handOver(actorId, { taskId, targetUserId: toId, note }); return { toName: r.toName }; },
         async deleteTask(actorId, taskId) { await WorkspaceService.deleteTask(actorId, { taskId, via: 'whatsapp' }); },
         async renameTask(actorId, taskId, title) { await WorkspaceService.renameTask(actorId, { taskId, title, via: 'whatsapp' }); },
-        async addNote(actorId, taskId, note) { await WorkspaceService.addNote(actorId, { taskId, note, via: 'whatsapp' }); },
+        async addNote(actorId, taskId, note, opts) { await WorkspaceService.addNote(actorId, { taskId, note, via: 'whatsapp', tellGiver: opts?.tellGiver }); },
+        async answerRequest(actorId, requestId, accept, why) { await CollaborationService.respond(actorId, { requestId, accept, reason: why ?? undefined, via: 'whatsapp' }); },
+        async changeTask(actorId, taskId, change) { await WorkspaceService.editTask(actorId, { taskId, date: change.date, targetUserId: change.toId, via: 'whatsapp' }); },
         remindTasks: (actorId, taskIds) => WorkspaceService.remindTasks(actorId, { taskIds, via: 'whatsapp' }),
         async setLocked(actorId, taskId, locked) { await WorkspaceService.setLocked(actorId, { taskId, locked }); },
         async readPerson(actorId, personId) {
@@ -716,8 +724,11 @@ export async function defaultLiveIO(): Promise<LiveIO> {
             if (!actor) return null;
             // Only departments where the Task Manager is switched ON (owner 2026-10-12): a superuser no longer sees all 86 people.
             const [pool, active] = await Promise.all([TaskDatabaseService.getAllEmployees(), TaskAccessService.activeDepartmentIds()]);
-            const team = (await PermissionService.visibleAndAssignable(actor, pool))
-                .filter(e => e.id !== actor.id && e.active !== false && !!e.department_id && active.has(e.department_id) && !PermissionService.hiddenFrom(actor, e)).slice(0, 40);
+            const candidates = (await PermissionService.visibleAndAssignable(actor, pool))
+                .filter(e => e.id !== actor.id && e.active !== false && !!e.department_id && active.has(e.department_id) && !PermissionService.hiddenFrom(actor, e));
+            // Owner 2026-10-27: only people who are UNLOCKED (department ON and kickoff recorded) — the ones actually using the
+            // Task Manager. Before, everyone in the department was listed and the 40-person cut-off hid the active ones.
+            const team = (await TaskAccessService.partition(candidates)).allowed.slice(0, 40);
             if (!team.length) return null;
             const date = todayIST();
             // Owner 2026-10-21: each person's numbered list (today + carried forward, the same list they see), not today's only.
