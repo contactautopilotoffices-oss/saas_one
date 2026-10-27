@@ -48,7 +48,7 @@ async function ensureChallanBucket(admin: ReturnType<typeof createAdminClient>):
 }
 const CHALLAN_STATUSES = ['approved', 'ordered'];
 const MISSING_SCHEMA =
-    'Delivery challans have not been set up on this database yet. Run the pending Supabase migration 20261026000001 and try again.';
+    'Delivery challans have not been set up on this database yet. Run the pending Supabase migration 20261026100001 and try again.';
 
 async function loadContext(requisitionId: string) {
     const supabase = await createClient();

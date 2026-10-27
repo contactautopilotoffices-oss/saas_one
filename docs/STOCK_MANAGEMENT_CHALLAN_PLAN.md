@@ -2,7 +2,7 @@
 
 **Branch:** `claude/blissful-gates-n9t0ht`
 **Status:** Built (phases 0 to 3). The SQL in
-[20261026000001_stock_from_requisition.sql](../supabase/migrations/20261026000001_stock_from_requisition.sql)
+[20261026100001_stock_from_requisition.sql](../supabase/migrations/20261026100001_stock_from_requisition.sql)
 is run by hand in the Supabase SQL editor. Until it is run, every property behaves exactly as before.
 See section 10 for what changed from this plan while building.
 **Builds on:** [MONTHLY_REQUISITION_STANDARD_CATALOG_PLAN.md](MONTHLY_REQUISITION_STANDARD_CATALOG_PLAN.md) (Phases 1 and 2 done).

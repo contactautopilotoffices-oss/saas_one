@@ -6,7 +6,7 @@ import { addMissingRequisitionItems, countRealOldItems } from '@/backend/lib/sto
 import { toItemSource } from '@/frontend/lib/stock/itemSource';
 
 const MISSING_STOCK_SCHEMA =
-    'The stock switch has not been applied to this database yet. Run the pending Supabase migration 20261026000001 and try again.';
+    'The stock switch has not been applied to this database yet. Run the pending Supabase migration 20261026100001 and try again.';
 
 /** Same people who manage the requisition item list: procurement, org super admin, master admin. */
 async function canManageStockSettings(userId: string, orgId: string): Promise<boolean> {

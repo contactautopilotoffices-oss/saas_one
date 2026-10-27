@@ -1,5 +1,5 @@
--- Migration: 20261026000002_stock_list_guards.sql
--- Description: Follow-up to 20261026000001_stock_from_requisition.sql. Run after it.
+-- Migration: 20261026100002_stock_list_guards.sql
+-- Description: Follow-up to 20261026100001_stock_from_requisition.sql. Run after it.
 --
 --   1. confirm_requisition_delivery() could still be called by signed-in users:
 --      Supabase grants EXECUTE on new public functions to anon and authenticated by

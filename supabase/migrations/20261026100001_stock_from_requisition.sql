@@ -1,4 +1,4 @@
--- Migration: 20261026000001_stock_from_requisition.sql
+-- Migration: 20261026100001_stock_from_requisition.sql
 -- Description: Stock management driven by the monthly requisition item list.
 --
 --   1. stock_items.item_source: 'legacy' (a property's own old list) or 'catalog'

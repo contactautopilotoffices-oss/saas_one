@@ -53,7 +53,7 @@ const BASE_SCHEMA = `
         VALUES ('${PROP}', '${ORG}', 'OLD-1', 'Bleach 5L', 40, '${CAT_A}');
 `;
 
-const migrations = ['20261026000001_stock_from_requisition.sql', '20261026000002_stock_list_guards.sql'];
+const migrations = ['20261026100001_stock_from_requisition.sql', '20261026100002_stock_list_guards.sql'];
 async function migrate(db) {
     for (const file of migrations) {
         await db.exec(await readFile(new URL(`../supabase/migrations/${file}`, import.meta.url), 'utf8'));

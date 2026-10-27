@@ -7,7 +7,7 @@
  * Both kinds live in stock_items, told apart by stock_items.item_source. A property
  * only ever works with one of them; the other is kept untouched. Every helper here
  * treats a missing column or setting as 'legacy', so a database that has not had
- * 20261026000001 yet behaves exactly as before.
+ * 20261026100001 yet behaves exactly as before.
  */
 
 export type StockItemSource = 'legacy' | 'catalog';
@@ -43,7 +43,7 @@ export function movementsForItems<T extends { item_id?: string | null }>(
 /**
  * Run a query with the list filter in the query itself (so row limits apply to
  * the right list), and once more without it if that fails, e.g. on a database
- * without 20261026000001, which has no item_source column. Callers still filter
+ * without 20261026100001, which has no item_source column. Callers still filter
  * in JavaScript, so both paths show the same rows.
  */
 export async function withListFilter<R extends { error: unknown }>(run: (filtered: boolean) => PromiseLike<R>): Promise<R> {

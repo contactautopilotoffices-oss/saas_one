@@ -37,7 +37,7 @@ export async function POST(
 
         // The caller can see the property (checked above through RLS); the rows
         // themselves are written server-side, which is the only way the
-        // stock_items guard (20261026000002) lets requisition rows be created.
+        // stock_items guard (20261026100002) lets requisition rows be created.
         const result = await addMissingRequisitionItems(createAdminClient(), {
             organizationId: property.organization_id,
             propertyId,

@@ -98,7 +98,7 @@ export default function StockSettingsPanel({ organizationId }: Props) {
             {!schemaReady && (
                 <div className="flex items-start gap-2 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3">
                     <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-                    The database has not had the stock migration (20261026000001) yet. Switching will work once it is applied.
+                    The database has not had the stock migration (20261026100001) yet. Switching will work once it is applied.
                 </div>
             )}
 
