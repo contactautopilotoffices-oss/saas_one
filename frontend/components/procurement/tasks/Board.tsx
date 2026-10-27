@@ -25,7 +25,7 @@ interface GiveProps {
     /** Owner 2026-10-21: add a note to a task. */
     onAddNote?: (taskId: string, note: string) => Promise<boolean>;
     /** Owner 2026-10-26: edit, follow-up and files in the task window (see TaskViewActions). */
-    extra?: Pick<TaskViewActions, 'onEdit' | 'editPeople' | 'onFollowUp' | 'listFiles' | 'uploadFiles' | 'removeFile' | 'dueDates'>;
+    extra?: Pick<TaskViewActions, 'onEdit' | 'editPeople' | 'onFollowUp' | 'listFiles' | 'uploadFiles' | 'removeFile' | 'dueDates' | 'onEditNote'>;
 }
 
 /** "Pending on…" (owner 2026-10-19): colleagues I can tell that one of my tasks is waiting on them. */

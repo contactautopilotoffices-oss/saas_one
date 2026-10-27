@@ -159,9 +159,10 @@ export function useWorkspace(date: string, departmentName: string, to: string = 
     }, [post, toast]);
 
     /** Edits a task I gave (name and details; owner 2026-10-26: also date and person). Used by "Assigned by me" and the task window. */
-    const editTask = useCallback(async (taskId: string, title: string, description: string, extra?: { date?: string; targetUserId?: string; dueDate?: string | null; dueTime?: string | null }) => {
+    // Owner 2026-10-27: no Details box any more — `description` is left out, so the server keeps the task's notes as they are
+    const editTask = useCallback(async (taskId: string, title: string, description?: string, extra?: { date?: string; targetUserId?: string; dueDate?: string | null; dueTime?: string | null }) => {
         try {
-            await post({ action: 'edit_task', taskId, title, description, ...extra });
+            await post({ action: 'edit_task', taskId, title, ...(description !== undefined ? { description } : {}), ...extra });
             toast('success', 'Task saved');
             load();
             return true;
@@ -176,7 +177,7 @@ export function useWorkspace(date: string, departmentName: string, to: string = 
      * One person → hand over (the task moves). Several → everyone after the first gets their own copy first,
      * then the task moves to the first person, so a failed copy leaves the task safely with me.
      */
-    const giveMany = useCallback(async (taskId: string, people: WAssignable[], note: string) => {
+    const giveMany = useCallback(async (taskId: string, people: WAssignable[], note: string, due?: { dueDate?: string | null; dueTime?: string | null }) => {
         const cur = wsRef.current;
         const task = cur && cur.state === 'ok' ? cur.tasks.find(t => t.id === taskId) : undefined;
         if (!task || people.length === 0) return false;
@@ -184,10 +185,10 @@ export function useWorkspace(date: string, departmentName: string, to: string = 
         let copied = 0;
         try {
             for (const p of rest) {
-                await post({ action: 'assign', targetUserId: p.userId, title: task.title, description: task.description || undefined, note: note || undefined });
+                await post({ action: 'assign', targetUserId: p.userId, title: task.title, description: task.description || undefined, note: note || undefined, ...due });
                 copied++;
             }
-            await post({ action: 'hand_over', taskId, targetUserId: first.userId, note: note || undefined });
+            await post({ action: 'hand_over', taskId, targetUserId: first.userId, note: note || undefined, ...due });
             toast('success', people.length === 1 ? `Given to ${first.name}` : `Given to ${people.length} people`);
             await load();
             return true;
@@ -208,6 +209,19 @@ export function useWorkspace(date: string, departmentName: string, to: string = 
             return true;
         } catch (err) {
             toast('error', messageOf(err, 'Could not add the note'));
+            return false;
+        }
+    }, [load, post, toast]);
+
+    /** Owner 2026-10-27: edit (text) or delete (null) one note of my personal task. `index` / `expected` = as listed. */
+    const editNote = useCallback(async (taskId: string, index: number, expected: string, text: string | null) => {
+        try {
+            await post(text === null ? { action: 'delete_note', taskId, index, expected } : { action: 'edit_note', taskId, index, expected, text });
+            toast('success', text === null ? 'Note deleted' : 'Note saved');
+            await load();
+            return true;
+        } catch (err) {
+            toast('error', messageOf(err, text === null ? 'Could not delete the note' : 'Could not save the note'));
             return false;
         }
     }, [load, post, toast]);
@@ -299,5 +313,5 @@ export function useWorkspace(date: string, departmentName: string, to: string = 
     }, [load, post, toast, uploadFiles]);
 
     const ok: WorkspaceOk | null = ws && ws.state === 'ok' ? ws : null;
-    return { ws, ok, loading, refreshing, error, toasts, dismissToast, toast, reload: load, moveTask, addTask, addTasks, giveTask, deleteTask, setLocked, flagDependency, editTask, giveMany, addNote, addRemark, checkDuplicates, uploadFiles, listAttachments, removeAttachment };
+    return { ws, ok, loading, refreshing, error, toasts, dismissToast, toast, reload: load, moveTask, addTask, addTasks, giveTask, deleteTask, setLocked, flagDependency, editTask, giveMany, addNote, addRemark, checkDuplicates, uploadFiles, listAttachments, removeAttachment, editNote };
 }

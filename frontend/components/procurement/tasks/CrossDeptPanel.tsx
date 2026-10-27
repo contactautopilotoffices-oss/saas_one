@@ -184,8 +184,8 @@ export default function CrossDeptPanel({ collab, me, uploadFiles, onChanged, due
                     <label className="block"><span className={label}>Task</span>
                         <textarea rows={2} maxLength={200} value={title} onChange={e => { setTitle(e.target.value); setDuplicate(null); }}className={`${field} resize-none`} />
                     </label>
-                    <label className="block"><span className={label}>Details (optional)</span>
-                        <textarea rows={2} maxLength={1000} value={details} onChange={e => setDetails(e.target.value)}className={`${field} resize-none`} />
+                    <label className="block"><span className={label}>Note (optional)</span>
+                        <textarea rows={2} maxLength={1000} value={details} onChange={e => setDetails(e.target.value)} className={`${field} resize-none`} />
                     </label>
                     <div className="grid grid-cols-1 gap-3 @2xl:grid-cols-2">
                         {dueDates && kind !== 'support' ? (

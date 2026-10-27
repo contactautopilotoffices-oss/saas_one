@@ -222,6 +222,19 @@ async function run() {
     check('server: a decline without a reason is accepted (only a too-long reason is refused)', /if \(!input\.accept && reason\.length > 300\)/.test(respondSrc) && /decline_reason: reason \|\| null/.test(respondSrc));
     check('website: "Send" works with the reason box empty', /disabled=\{busy === r\.id\} onClick=\{\(\) => void answer\(r\.id, false\)\}/.test(read('frontend/components/procurement/tasks/CrossDeptPanel.tsx')));
 
+    console.log('\n8b. Notes on my own tasks, no Details box, a deadline when giving (owner 2026-10-27)');
+    const WS = await import('../WorkspaceService');
+    const desc = 'Collect quotes\nRemark: vendor A called\nGiven by Harsh on 27 Oct\nRemark: waiting for B';
+    const nl = WS.noteLines(desc);
+    check('notes are listed like the task window (the "Given by" trail is not a note; "Remark:" is hidden)', JSON.stringify(nl.map(n => n.text)) === JSON.stringify(['Collect quotes', 'vendor A called', 'waiting for B']) && nl[2].line === 3 && nl[1].prefixed && !nl[0].prefixed, nl);
+    check('personal task = I hold it and nobody else gave it', WS.isPersonalTask({ employee_id: 'me', assigned_by: null }, 'me') && WS.isPersonalTask({ employee_id: 'me', assigned_by: 'me' }, 'me') && !WS.isPersonalTask({ employee_id: 'me', assigned_by: 'boss' }, 'me') && !WS.isPersonalTask({ employee_id: 'other', assigned_by: 'me' }, 'me'));
+    const wsSrc8 = read('task-manager/WorkspaceService.ts');
+    const cn = wsSrc8.slice(wsSrc8.indexOf('static async changeNote('), wsSrc8.indexOf('static async addNote('));
+    check('edit / delete a note: only on my personal task, only if the note is still the one shown, and only if nothing changed meanwhile', /isPersonalTask\(/.test(cn) && /target\.text !== input\.expected\.trim\(\)/.test(cn) && /\.eq\('description', row\.description as string\)/.test(cn) && /task_note_deleted/.test(cn));
+    const tv8 = read('frontend/components/procurement/tasks/TaskView.tsx');
+    check('the Edit window has no Details box and never sends details (notes cannot be wiped by editing)', !/>Details<\/span>/.test(tv8) && /await onSave\(title\.trim\(\), undefined,/.test(tv8) && /\.\.\.\(description !== undefined \? \{ description \} : \{\}\)/.test(read('frontend/components/procurement/tasks/useWorkspace.ts')));
+    check('Give to: a deadline picker (Due dates switch); the hand-over saves it only when one was chosen', /actions\?\.dueDates && <DuePicker start=\{giveStart\}/.test(tv8) && /dueSent \? await this\.dueFor\(actor, row\.assigned_date as string, input\.dueDate, input\.dueTime\)/.test(wsSrc8));
+
     console.log('\n9. "Work with other departments" switch, and no grey example text (owner 2026-10-27)');
     const xsql = read('supabase/migrations/20261027000002_task_manager_cross_department_switch.sql');
     check('migration: one column, ON by default, additive', /ADD COLUMN IF NOT EXISTS cross_dept_collab BOOLEAN NOT NULL DEFAULT true/.test(xsql) && !/^\s*(DROP|DELETE|UPDATE|TRUNCATE)\b/im.test(xsql.split('\n').filter(l => !l.trim().startsWith('--')).join('\n')));

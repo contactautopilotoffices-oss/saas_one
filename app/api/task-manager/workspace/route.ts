@@ -106,7 +106,7 @@ export async function POST(request: NextRequest) {
         }
 
         if (body.action === 'hand_over') {
-            const result = await WorkspaceService.handOver(userId, { taskId: body.taskId, targetUserId: body.targetUserId, note: body.note });
+            const result = await WorkspaceService.handOver(userId, { taskId: body.taskId, targetUserId: body.targetUserId, note: body.note, dueDate: body.dueDate, dueTime: body.dueTime });
             return NextResponse.json({ success: true, task: result.task, toName: result.toName });
         }
 
@@ -136,6 +136,12 @@ export async function POST(request: NextRequest) {
 
         if (body.action === 'add_note') {
             const result = await WorkspaceService.addNote(userId, { taskId: body.taskId, note: body.note, tellGiver: body.tellGiver === true });
+            return NextResponse.json({ success: true, id: result.id });
+        }
+
+        // Owner 2026-10-27: edit or delete one note of my own personal task
+        if (body.action === 'edit_note' || body.action === 'delete_note') {
+            const result = await WorkspaceService.changeNote(userId, { taskId: body.taskId, index: body.index, expected: body.expected, text: body.action === 'delete_note' ? null : body.text });
             return NextResponse.json({ success: true, id: result.id });
         }
 

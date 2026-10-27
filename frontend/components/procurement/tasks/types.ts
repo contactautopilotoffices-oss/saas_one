@@ -44,6 +44,8 @@ export interface WTask {
     supportRequest?: boolean;
     /** Owner 2026-10-27: the deadline (time optional, IST). Missing = due on its start date, no countdown. */
     due?: { date: string; time: string | null } | null;
+    /** Owner 2026-10-27: my own personal task — I may edit or delete its notes. */
+    canEditNotes?: boolean;
 }
 
 /** Owner 2026-10-26: a file on a task, with a download link that works for 10 minutes. */

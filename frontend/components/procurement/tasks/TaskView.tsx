@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { ArrowRightLeft, Check, CircleDot, CornerDownRight, FileText, Loader2, Paperclip, Pencil, RotateCcw, Send, StickyNote, Trash2, Users, X } from 'lucide-react';
+import { ArrowRightLeft, Check, CircleDot, CornerDownRight, FileText, Loader2, MoreHorizontal, Paperclip, Pencil, RotateCcw, Send, StickyNote, Trash2, Users, X } from 'lucide-react';
 import { ATTACH_ACCEPT, ATTACH_MAX_BYTES, COLUMNS, EASE, Status, WAssignable, WAttachment, WTask, avatarGradient, columnLabel, fileSizeLabel, initials, shortDate, shortDateTime } from './types';
 import { DueChips, DuePicker, DueValue, dueBody, dueValueOf, useNow } from './due';
 import { dueLabel } from '@/task-manager/dueDates';
@@ -18,11 +18,13 @@ export interface TaskViewActions {
     /** Teammates this person may give work to (not themself). */
     people: WAssignable[];
     /** Give to one or more people with an optional note. Absent → no "Give to" section. */
-    onGive?: (taskId: string, people: WAssignable[], note: string) => Promise<boolean>;
+    onGive?: (taskId: string, people: WAssignable[], note: string, due?: { dueDate?: string | null; dueTime?: string | null }) => Promise<boolean>;
     /** Add a note to the task. Absent → no "Add note" button. */
     onAddNote?: (taskId: string, note: string) => Promise<boolean>;
     /** Owner 2026-10-26: edit name, details, date and person (only offered when the server says `canEdit`). */
-    onEdit?: (taskId: string, title: string, description: string, extra: EditExtra) => Promise<boolean>;
+    onEdit?: (taskId: string, title: string, description: string | undefined, extra: EditExtra) => Promise<boolean>;
+    /** Owner 2026-10-27: edit (text) or delete (null) a note of my personal task (offered when the server says `canEditNotes`). */
+    onEditNote?: (taskId: string, index: number, expected: string, text: string | null) => Promise<boolean>;
     /** Everyone the task can be moved to while editing, me included. */
     editPeople?: WAssignable[];
     /** Owner 2026-10-26: opens the New task window as a follow-up of this task. */
@@ -129,6 +131,16 @@ function TaskViewBody({ task, meId, onClose, onMove, actions }: {
     const [adding, setAdding] = useState(false);
     const [newNote, setNewNote] = useState('');
     const [saving, setSaving] = useState(false);
+    // Owner 2026-10-27: a deadline while giving (Due dates switch), counted from today (or the task's start, if later)
+    const [giveDue, setGiveDue] = useState<DueValue | null>(null);
+    const todayIso = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    const giveStart = task.assignedDate > todayIso ? task.assignedDate : todayIso;
+    // Owner 2026-10-27: the ⋯ menu on a note of my personal task
+    const [noteMenu, setNoteMenu] = useState<number | null>(null);
+    const [editingNote, setEditingNote] = useState<number | null>(null);
+    const [noteText, setNoteText] = useState('');
+    const [noteBusy, setNoteBusy] = useState(false);
+    const canEditNotes = !!(task.canEditNotes && actions?.onEditNote);
     const mine = task.ownerId === meId;
     const notes = notesOf(task.description);
     const canGive = !!(task && actions?.onGive && task.canHandOver && task.status !== 'completed' && actions.people.length > 0);
@@ -139,7 +151,7 @@ function TaskViewBody({ task, meId, onClose, onMove, actions }: {
     const give = async () => {
         if (!task || !actions?.onGive || picked.length === 0 || giving) return;
         setGiving(true);
-        const ok = await actions.onGive(task.id, picked, note.trim());
+        const ok = await actions.onGive(task.id, picked, note.trim(), actions.dueDates && giveDue ? dueBody(giveDue) : undefined);
         setGiving(false);
         if (ok) onClose();       // the task has left this person's list
     };
@@ -149,6 +161,21 @@ function TaskViewBody({ task, meId, onClose, onMove, actions }: {
         const ok = await actions.onAddNote(task.id, newNote.trim());
         setSaving(false);
         if (ok) { setAdding(false); setNewNote(''); }
+    };
+
+    const saveNoteEdit = async (i: number, before: string) => {
+        if (!actions?.onEditNote || !noteText.trim() || noteBusy) return;
+        setNoteBusy(true);
+        const ok = await actions.onEditNote(task.id, i, before, noteText.trim());
+        setNoteBusy(false);
+        if (ok) setEditingNote(null);
+    };
+    const deleteNote = async (i: number, before: string) => {
+        setNoteMenu(null);
+        if (!actions?.onEditNote || noteBusy || !window.confirm('Delete this note?')) return;
+        setNoteBusy(true);
+        await actions.onEditNote(task.id, i, before, null);
+        setNoteBusy(false);
     };
 
     const [editing, setEditing] = useState(false);
@@ -218,8 +245,45 @@ function TaskViewBody({ task, meId, onClose, onMove, actions }: {
                                 </div>
                                 {notes.length > 0 ? (
                                     <ul className="space-y-2">
-                                        {notes.map((n, i) => (
-                                            <li key={i} className="whitespace-pre-wrap break-words rounded-xl bg-zinc-100 px-3 py-2.5 text-sm leading-relaxed text-zinc-800 dark:bg-zinc-800 dark:text-zinc-100">{n}</li>
+                                        {notes.map((n, i) => editingNote === i ? (
+                                            <li key={i} className="space-y-2">
+                                                <label htmlFor={`task-view-edit-note-${i}`} className="sr-only">Edit note</label>
+                                                <textarea
+                                                    id={`task-view-edit-note-${i}`} value={noteText} onChange={e => setNoteText(e.target.value)} maxLength={300} rows={2} autoFocus
+                                                    className="w-full resize-y rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-indigo-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                                                />
+                                                <div className="flex gap-2">
+                                                    <button type="button" onClick={() => void saveNoteEdit(i, n)} disabled={noteBusy || !noteText.trim()} className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-black text-white hover:bg-indigo-700 disabled:opacity-50">
+                                                        {noteBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} Save
+                                                    </button>
+                                                    <button type="button" onClick={() => setEditingNote(null)} disabled={noteBusy} className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-bold text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800">Cancel</button>
+                                                </div>
+                                            </li>
+                                        ) : (
+                                            <li key={i} className="relative flex items-start gap-2 rounded-xl bg-zinc-100 px-3 py-2.5 text-sm leading-relaxed text-zinc-800 dark:bg-zinc-800 dark:text-zinc-100">
+                                                <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{n}</span>
+                                                {canEditNotes && (
+                                                    <>
+                                                        <button
+                                                            type="button" onClick={() => setNoteMenu(noteMenu === i ? null : i)} disabled={noteBusy}
+                                                            aria-label="Note options" aria-haspopup="menu" aria-expanded={noteMenu === i}
+                                                            className="-mr-1 -mt-0.5 shrink-0 rounded-lg p-1 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-800 disabled:opacity-50 dark:hover:bg-zinc-700 dark:hover:text-zinc-100"
+                                                        >
+                                                            <MoreHorizontal className="h-4 w-4" />
+                                                        </button>
+                                                        {noteMenu === i && (
+                                                            <div role="menu" className="absolute right-2 top-9 z-10 w-32 overflow-hidden rounded-xl border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+                                                                <button type="button" role="menuitem" onClick={() => { setNoteMenu(null); setNoteText(n); setEditingNote(i); }} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs font-bold text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800">
+                                                                    <Pencil className="h-3.5 w-3.5" /> Edit
+                                                                </button>
+                                                                <button type="button" role="menuitem" onClick={() => void deleteNote(i, n)} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs font-bold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40">
+                                                                    <Trash2 className="h-3.5 w-3.5" /> Delete
+                                                                </button>
+                                                            </div>
+                                                        )}
+                                                    </>
+                                                )}
+                                            </li>
                                         ))}
                                     </ul>
                                 ) : !adding && <p className="text-sm text-zinc-500 dark:text-zinc-400">No notes on this task.</p>}
@@ -267,6 +331,7 @@ function TaskViewBody({ task, meId, onClose, onMove, actions }: {
                                             className="w-full resize-y rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-indigo-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                                         />
                                     </div>
+                                    {actions?.dueDates && <DuePicker start={giveStart} value={giveDue} onChange={setGiveDue} idPrefix={`give-${task.id}`} />}
                                     <div className="flex flex-wrap items-center gap-3">
                                         <button
                                             type="button" onClick={give} disabled={picked.length === 0 || giving}
@@ -331,7 +396,7 @@ function TaskViewBody({ task, meId, onClose, onMove, actions }: {
 }
 
 /**
- * Owner 2026-10-26: the task window's Edit — name, details, date and person. Moving it to someone else tells them like a
+ * Owner 2026-10-26: the task window's Edit — name, date and person (owner 2026-10-27: no Details box; notes are kept). Moving it to someone else tells them like a
  * new task (the server checks who may get it).
  */
 /** Owner 2026-10-27: the live countdown / on-time label next to "Due". */
@@ -348,11 +413,10 @@ function EditTaskForm({ task, people, onCancel, onSave, listFiles, uploadFiles, 
     listFiles?: (taskId: string) => Promise<WAttachment[]>;
     uploadFiles?: (taskIds: string[], files: File[]) => Promise<number>;
     removeFile?: (attachmentId: string) => Promise<boolean>;
-    onSave: (title: string, description: string, extra: EditExtra) => Promise<boolean>;
+    onSave: (title: string, description: string | undefined, extra: EditExtra) => Promise<boolean>;
     dueDates?: boolean;
 }) {
     const [title, setTitle] = useState(task.title);
-    const [details, setDetails] = useState(task.description || '');
     const [date, setDate] = useState(task.assignedDate);
     const [person, setPerson] = useState(task.ownerId);
     const [due, setDue] = useState<DueValue | null>(dueValueOf(task.due));
@@ -368,7 +432,7 @@ function EditTaskForm({ task, people, onCancel, onSave, listFiles, uploadFiles, 
         // The deadline is sent only when it changed (null = removed)
         const before = dueValueOf(task.due);
         const dueChanged = dueDates && (before?.date ?? '') + (before?.time ?? '') !== (due?.date ?? '') + (due?.time ?? '');
-        await onSave(title.trim(), details.trim(), { date: date !== task.assignedDate ? date : undefined, targetUserId: moving ? person : undefined, ...(dueChanged ? dueBody(due, true) : {}) });
+        await onSave(title.trim(), undefined, { date: date !== task.assignedDate ? date : undefined, targetUserId: moving ? person : undefined, ...(dueChanged ? dueBody(due, true) : {}) });
         setSaving(false);
     };
 
@@ -379,10 +443,6 @@ function EditTaskForm({ task, people, onCancel, onSave, listFiles, uploadFiles, 
             <label className="block">
                 <span className={label}>Task</span>
                 <textarea value={title} onChange={e => setTitle(e.target.value)} maxLength={200} rows={2} required className={`${field} resize-y`} />
-            </label>
-            <label className="block">
-                <span className={label}>Details</span>
-                <textarea value={details} onChange={e => setDetails(e.target.value)} maxLength={900} rows={3} className={`${field} resize-y`} />
             </label>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <label className="block">

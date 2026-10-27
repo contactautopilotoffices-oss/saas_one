@@ -66,6 +66,8 @@ export interface WorkspaceTask {
     supportRequest: boolean;
     /** Owner 2026-10-27: the deadline; null = due on its start date (as before), no countdown. */
     due: TaskDue | null;
+    /** Owner 2026-10-27: my own personal task (I hold it and nobody else gave it) — I may edit or delete its notes. */
+    canEditNotes: boolean;
 }
 
 /** Owner 2026-10-26: an open task that looks like the one about to be given (the "Duplicate task alert"). */
@@ -204,6 +206,22 @@ export function handedOverByOf(description: string | null | undefined): string |
 }
 
 /** The description without the "Given by …" trail (that is shown as a badge on the card instead). */
+/** Owner 2026-10-27: a personal task = I hold it and nobody else gave it. Only then may I edit or delete its notes. */
+export function isPersonalTask(row: { employee_id: string; assigned_by?: string | null }, actorId: string): boolean {
+    return row.employee_id === actorId && (!row.assigned_by || row.assigned_by === actorId);
+}
+
+/**
+ * Owner 2026-10-27: the note lines of a description, as the task window lists them (the "Given by …" trail is not a note),
+ * each with its line number in the stored text and its text without the "Remark:" prefix.
+ */
+export function noteLines(description: string | null | undefined): Array<{ line: number; text: string; prefixed: boolean }> {
+    return String(description || '').split('\n')
+        .map((raw, line) => ({ raw: raw.trim(), line }))
+        .filter(x => x.raw && !x.raw.startsWith(HANDOVER_NOTE_PREFIX))
+        .map(x => ({ line: x.line, text: x.raw.replace(/^Remark:\s*/i, ''), prefixed: /^Remark:/i.test(x.raw) }));
+}
+
 export function withoutHandoverNotes(description: string | null | undefined): string | null {
     const kept = String(description || '').split('\n').filter(l => !l.trim().startsWith(HANDOVER_NOTE_PREFIX)).join('\n').trim();
     return kept || null;
@@ -383,6 +401,7 @@ export class WorkspaceService {
                 completedAt: (r.completed_at as string) || null,
                 canDelete: canChange(r.employee_id) && (!protectedFor(r.employee_id) || mayRemoveGivenTask(r, actor, !!r.assigned_by && below.has(r.assigned_by))),
                 canEdit: (r.assigned_by === actor.id || actor.role === 'superuser') && !isLockedFor(templates.get(r.task_template_id), r.employee_id as string),
+                canEditNotes: isPersonalTask(r, actor.id),
                 ...(extras.get(r.id as string) ?? NO_EXTRAS),
                 _created: r.created_at as string,
             }))
@@ -586,7 +605,7 @@ export class WorkspaceService {
      * (the shared PermissionService rule) and be unlocked for the Task Manager · the move is one conditional
      * update, so two clicks at the same moment cannot both win.
      */
-    static async handOver(actorUserId: string, input: { taskId?: string; targetUserId?: string; note?: string }): Promise<{ task: TaskAssignment; toName: string }> {
+    static async handOver(actorUserId: string, input: { taskId?: string; targetUserId?: string; note?: string; dueDate?: unknown; dueTime?: unknown }): Promise<{ task: TaskAssignment; toName: string }> {
         if (!input.taskId) throw new WorkspaceError(400, 'Missing task.');
         if (!input.targetUserId) throw new WorkspaceError(400, 'Choose who to give the task to.');
         const giveNote = cleanNote(input.note);       // owner 2026-10-21: optional note for the new holder
@@ -612,6 +631,10 @@ export class WorkspaceService {
             throw new WorkspaceError(409, `Cannot give a task to ${target.name}: ${targetAccess.message}`, 'TARGET_LOCKED');
         }
 
+        // Owner 2026-10-27: an optional deadline set while giving it (Due dates switch); not sent = the deadline stays as it is
+        const dueSent = input.dueDate !== undefined && input.dueDate !== null && input.dueDate !== '';
+        const due = dueSent ? await this.dueFor(actor, row.assigned_date as string, input.dueDate, input.dueTime) : null;
+
         // The new holder has not started it, so "in progress" goes back to "to do". Keep a short trail on the card.
         const newStatus: TaskStatus = row.status === 'in_progress' ? 'pending' : (row.status as TaskStatus);
         const note = `${HANDOVER_NOTE_PREFIX}${actor.name} on ${shortDay(todayIST())}`;
@@ -621,7 +644,8 @@ export class WorkspaceService {
 
         const { data: moved, error: moveError } = await supabaseAdmin
             .from('task_assignments')
-            .update({ employee_id: target.id, status: newStatus, description, updated_at: new Date().toISOString() })
+            .update({ employee_id: target.id, status: newStatus, description, updated_at: new Date().toISOString(),
+                ...(due ? { due_date: due.date, due_time: due.time, due_reminded_at: null } : {}) })
             .eq('id', row.id)
             .eq('employee_id', actor.id)      // still mine…
             .neq('status', 'completed')       // …and still not finished
@@ -644,12 +668,12 @@ export class WorkspaceService {
             actorId: actor.id,
             targetEmployeeId: target.id,
             taskId: row.id,
-            details: { title: row.title, assignedDate: row.assigned_date, fromUserId: actor.id, toUserId: target.id, fromStatus: row.status, toStatus: newStatus, via: 'web_tasks_tab', ...(giveNote ? { note: giveNote } : {}) },
+            details: { title: row.title, assignedDate: row.assigned_date, fromUserId: actor.id, toUserId: target.id, fromStatus: row.status, toStatus: newStatus, via: 'web_tasks_tab', ...(giveNote ? { note: giveNote } : {}), ...(due ? { dueDate: due.date, dueTime: due.time } : {}) },
         });
 
         // Tell the receiver who gave it (names only; gated, so nothing is sent in Pretend Mode). Never blocks the hand-over.
         // Approved template, so it reaches people outside WhatsApp's 24-hour window too.
-        void taskBell({ userId: target.id, kind: 'TASK_HANDOVER', title: `Task handed over by ${actor.name}`, message: `${actor.name} handed over: ${withNoteLabel(row.title, giveNote)}`, departmentName: target.department_name });
+        void taskBell({ userId: target.id, kind: 'TASK_HANDOVER', title: `Task handed over by ${actor.name}`, message: `${actor.name} handed over: ${withNoteLabel(row.title, giveNote)}${due ? ` (due ${dueLabel(due)})` : ''}`, departmentName: target.department_name });
         void sendTaskHandover(target.phone_number, {
             recipientName: target.name, fromLabel: personLabel(actor.name, actor.department_name), titles: [withNoteLabel(row.title as string, giveNote)], date: row.assigned_date,
             departmentId: target.department_id || undefined,
@@ -725,6 +749,50 @@ export class WorkspaceService {
      * Allowed for the person who holds the task, the person who gave it, anyone above the holder, or a superuser. A note
      * removes nothing, so "Protect given tasks" does not block it. The "Given by …" trail is kept as it is.
      */
+    /**
+     * Owner 2026-10-27: edit (text) or delete (text null) one note of MY personal task. `index` is the note's place in the task
+     * window's list and `expected` its text there, so a note that changed meanwhile is never overwritten. The update only goes
+     * through if the stored text is still the one just read.
+     */
+    static async changeNote(actorUserId: string, input: { taskId?: unknown; index?: unknown; expected?: unknown; text?: unknown }): Promise<{ id: string }> {
+        if (!isUuid(input.taskId)) throw new WorkspaceError(400, 'That task is not valid.');
+        if (typeof input.index !== 'number' || !Number.isInteger(input.index) || input.index < 0 || typeof input.expected !== 'string') throw new WorkspaceError(400, 'That note is not valid.');
+        const remove = input.text === null;
+        const text = remove ? '' : String(input.text ?? '').replace(/\s+/g, ' ').trim();
+        if (!remove && !text) throw new WorkspaceError(400, 'The note is empty. Delete it instead.');
+        if (text.length > 300) throw new WorkspaceError(400, 'The note is too long (300 characters at most).');
+        const actor = await this.requireUnlockedActor(actorUserId);
+
+        const { data: row, error } = await supabaseAdmin.from('task_assignments').select('*').eq('id', input.taskId).maybeSingle();
+        if (error || !row) throw new WorkspaceError(404, 'Task not found.');
+        if (!isPersonalTask(row as { employee_id: string; assigned_by: string | null }, actor.id)) {
+            throw new WorkspaceError(403, 'Notes can only be changed on your own personal tasks.', 'NOT_PERSONAL');
+        }
+        const notes = noteLines(row.description as string | null);
+        const target = notes[input.index];
+        if (!target || target.text !== input.expected.trim()) throw new WorkspaceError(409, 'This note changed just now. Please refresh and try again.', 'CHANGED');
+
+        const lines = String(row.description).split('\n');
+        if (remove) lines.splice(target.line, 1);
+        else lines[target.line] = target.prefixed ? `Remark: ${text}` : text;
+        const description = lines.join('\n').trim() || null;
+
+        const { data: saved, error: upError } = await supabaseAdmin.from('task_assignments')
+            .update({ description, updated_at: new Date().toISOString() })
+            .eq('id', row.id).eq('employee_id', actor.id).eq('description', row.description as string).select('id').maybeSingle();
+        if (upError) {
+            console.error('[WorkspaceService] note change failed:', upError);
+            throw new WorkspaceError(500, 'Could not save the note just now. Please try again.');
+        }
+        if (!saved) throw new WorkspaceError(409, 'This task changed just now. Please refresh and try again.', 'CHANGED');
+        await TaskDatabaseService.logAudit({
+            eventType: remove ? 'task_note_deleted' : 'task_note_edited',
+            actorId: actor.id, targetEmployeeId: row.employee_id, taskId: row.id,
+            details: { title: row.title, from: target.text, ...(remove ? {} : { to: text }), via: 'web_tasks_tab' },
+        });
+        return { id: row.id as string };
+    }
+
     static async addNote(actorUserId: string, input: { taskId?: string; note?: string; via?: string; tellGiver?: boolean }): Promise<{ id: string }> {
         if (!input.taskId) throw new WorkspaceError(400, 'Missing task.');
         const note = String(input.note ?? '').replace(/\s+/g, ' ').trim();

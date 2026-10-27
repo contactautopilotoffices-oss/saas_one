@@ -209,8 +209,8 @@ className={`${field} max-h-40 resize-none overflow-y-auto`}
                             </label>
 
                             <label className="block">
-                                <span className={label}>Details (optional)</span>
-                                <textarea id="task-details" rows={3} maxLength={1000} value={description} onChange={e => setDescription(e.target.value)}className={`${field} resize-none`} />
+                                <span className={label}>Note (optional)</span>
+                                <textarea id="task-details" rows={3} maxLength={1000} value={description} onChange={e => setDescription(e.target.value)} className={`${field} resize-none`} />
                             </label>
 
                             <label className="block">

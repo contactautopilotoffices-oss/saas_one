@@ -105,7 +105,7 @@ export default function ProcurementTasksTab({ departmentName = 'Procurement' }: 
     // Owner 2026-10-26: cross-department collaboration (support requests waiting for me show on the board too)
     const collab = useCollaboration(true);
 
-    const { ws, ok, loading, refreshing, error, toasts, dismissToast, toast, reload, moveTask, addTask, addTasks, giveTask, deleteTask, setLocked, flagDependency, editTask, giveMany, addNote, addRemark, checkDuplicates, uploadFiles, listAttachments, removeAttachment } = useWorkspace(range.from, departmentName, range.to);
+    const { ws, ok, loading, refreshing, error, toasts, dismissToast, toast, reload, moveTask, addTask, addTasks, giveTask, deleteTask, setLocked, flagDependency, editTask, giveMany, addNote, addRemark, checkDuplicates, uploadFiles, listAttachments, removeAttachment, editNote } = useWorkspace(range.from, departmentName, range.to);
 
     // The board shows only MY tasks; the Team tab is where other people's tasks live.
     const mine: WTask[] = useMemo(() => (ok ? ok.tasks.filter(t => t.ownerId === ok.actor.userId) : []), [ok]);
@@ -167,7 +167,7 @@ export default function ProcurementTasksTab({ departmentName = 'Procurement' }: 
     const give = {
         people: ok.assignable.filter(a => !a.isMe), onGive: giveTask, onGiveMany: giveMany, onAddNote: addNote,
         extra: {
-            onEdit: editTask, editPeople: ok.assignable, listFiles: listAttachments, uploadFiles, removeFile: removeAttachment, dueDates: ok.features?.dueDates === true,
+            onEdit: editTask, editPeople: ok.assignable, listFiles: listAttachments, uploadFiles, removeFile: removeAttachment, onEditNote: editNote, dueDates: ok.features?.dueDates === true,
             onFollowUp: (task: WTask) => setDialog({ open: true, target: task.ownerId, followUp: { id: task.id, title: task.title } }),
         },
     };

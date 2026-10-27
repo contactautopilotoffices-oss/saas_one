@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import {
     Users, Clock, LogIn, LogOut, Search, FileDown,
-    CheckCircle2, User, Truck, Building2, X, ChevronDown, Plus, PhoneCall, ScanFace, Settings2
+    CheckCircle2, User, Truck, Building2, X, ChevronDown, Plus, PhoneCall, ScanFace, Settings2, Trash2, Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import VMSFaceCheckIn from './VMSFaceCheckIn';
@@ -71,6 +71,11 @@ const VMSFaceDashboard: React.FC<VMSFaceDashboardProps> = ({ orgId, propertyId, 
     const [customDate, setCustomDate] = useState('');
     const [selectedVisitor, setSelectedVisitor] = useState<VisitorLog | null>(null);
     const [actionLoading, setActionLoading] = useState(false);
+    // Owner 2026-10-27 (testing phase): delete a test visit, optionally with the visitor's enrolled face. Tech team only (server).
+    const [deleting, setDeleting] = useState<VisitorLog | null>(null);
+    const [deleteFace, setDeleteFace] = useState(false);
+    const [deleteBusy, setDeleteBusy] = useState(false);
+    const [deleteError, setDeleteError] = useState<string | null>(null);
     const [showCheckInModal, setShowCheckInModal] = useState(false);
 
     // Debounce search query - wait 300ms after user stops typing before searching
@@ -148,6 +153,32 @@ const VMSFaceDashboard: React.FC<VMSFaceDashboardProps> = ({ orgId, propertyId, 
             console.error('Force checkout error:', err);
         } finally {
             setActionLoading(false);
+        }
+    };
+
+    const openDelete = (visitor: VisitorLog) => {
+        setDeleting(visitor); setDeleteFace(false); setDeleteError(null);
+    };
+
+    const confirmDelete = async () => {
+        if (!deleting || deleteBusy) return;
+        setDeleteBusy(true);
+        setDeleteError(null);
+        try {
+            const qs = new URLSearchParams({ visitId: deleting.id, ...(deleteFace ? { deleteFace: '1' } : {}) });
+            const response = await fetch(`/api/vms-face/${propertyId}?${qs}`, { method: 'DELETE' });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) { setDeleteError(data.error || 'Could not delete the visit.'); return; }
+            // The visit is gone; say so if the face could not be removed with it
+            if (data.face === 'kept_used_elsewhere') alert('Visit deleted. The face was kept because another visit still uses it.');
+            else if (data.face === 'failed') alert(`Visit deleted, but the face could not be deleted: ${data.faceError || 'unknown error'}`);
+            setDeleting(null);
+            if (selectedVisitor?.id === deleting.id) setSelectedVisitor(null);
+            fetchVisitors();
+        } catch {
+            setDeleteError('Could not delete the visit.');
+        } finally {
+            setDeleteBusy(false);
         }
     };
 
@@ -651,6 +682,15 @@ const VMSFaceDashboard: React.FC<VMSFaceDashboardProps> = ({ orgId, propertyId, 
                                                         <LogOut className="w-3.5 h-3.5" /> Check Out
                                                     </button>
                                                 )}
+                                                <button
+                                                    onClick={() => openDelete(visitor)}
+                                                    disabled={actionLoading}
+                                                    title="Delete this visit (testing)"
+                                                    aria-label={`Delete visit of ${visitor.name}`}
+                                                    className="inline-flex items-center justify-center p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all disabled:opacity-50 cursor-pointer"
+                                                >
+                                                    <Trash2 className="w-4 h-4" />
+                                                </button>
                                             </div>
                                         </td>
                                     </tr>
@@ -940,6 +980,37 @@ const VMSFaceDashboard: React.FC<VMSFaceDashboardProps> = ({ orgId, propertyId, 
                     </div>
                 )}
             </AnimatePresence>
+
+            {/* Owner 2026-10-27: delete a test visit */}
+            {deleting && (
+                <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+                    <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-[2px]" onClick={() => !deleteBusy && setDeleting(null)} aria-hidden="true" />
+                    <div role="dialog" aria-modal="true" aria-labelledby="vms-delete-title" className="relative w-full max-w-sm space-y-4 rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900">
+                        <div className="space-y-1">
+                            <h3 id="vms-delete-title" className="text-base font-black text-slate-900 dark:text-white">Delete this visit?</h3>
+                            <p className="text-sm text-slate-600 dark:text-slate-300">
+                                <strong>{deleting.name}</strong> · {deleting.visitor_id}. The visit and its photo are deleted. This cannot be undone.
+                            </p>
+                        </div>
+                        {deleting.face_profile_id && (
+                            <label className="flex cursor-pointer items-start gap-2.5 rounded-2xl border border-slate-200 p-3 text-sm dark:border-slate-700">
+                                <input type="checkbox" checked={deleteFace} onChange={e => setDeleteFace(e.target.checked)} className="mt-0.5 h-4 w-4 accent-rose-600" />
+                                <span>
+                                    <span className="block font-bold text-slate-900 dark:text-white">Also delete their enrolled face</span>
+                                    <span className="block text-xs text-slate-500">Removed from BioFRQ too, so they enrol again next time. Kept if another visit still uses it.</span>
+                                </span>
+                            </label>
+                        )}
+                        {deleteError && <p className="text-xs font-semibold text-rose-600">{deleteError}</p>}
+                        <div className="flex gap-2">
+                            <button type="button" onClick={() => setDeleting(null)} disabled={deleteBusy} className="flex-1 rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">Cancel</button>
+                            <button type="button" onClick={() => void confirmDelete()} disabled={deleteBusy} className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-black text-white hover:bg-rose-700 disabled:opacity-50">
+                                {deleteBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />} Delete
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
