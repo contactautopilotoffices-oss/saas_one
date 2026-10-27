@@ -733,7 +733,7 @@ export class NotificationService {
         try {
             const { data: completion } = await supabaseAdmin
                 .from('sop_completions')
-                .select('id, property_id, organization_id, completed_by, template:sop_templates(title, frequency)')
+                .select('id, property_id, organization_id, completed_by, completed_at, template:sop_templates(title, frequency)')
                 .eq('id', completionId)
                 .single();
 
@@ -803,6 +803,7 @@ export class NotificationService {
                     completion_id: completionId,
                     template_title: templateTitle,
                     completed_by: completion.completed_by,
+                    completed_at: completion.completed_at,
                     approver_id: approverId
                 }
             });

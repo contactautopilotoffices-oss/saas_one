@@ -1780,6 +1780,21 @@ export const WhatsAppEventProcessor = {
             }
         }
 
+        // Resolve completion timestamp in local timezone (Asia/Kolkata)
+        let completedAt = payload.completed_at;
+        if (!completedAt && payload.completion_id) {
+            const { data: comp } = await supabaseAdmin
+                .from('sop_completions')
+                .select('completed_at')
+                .eq('id', payload.completion_id)
+                .maybeSingle();
+            if (comp?.completed_at) {
+                completedAt = comp.completed_at;
+            }
+        }
+
+        const completionTime = formatWhatsAppTime(completedAt || new Date());
+
         await this.dispatch({
             featureKey: 'checklist_completed',
             templateEventKey: 'checklist_completed',
@@ -1791,7 +1806,7 @@ export const WhatsAppEventProcessor = {
                 checklist_name: payload.template_title || 'SOP Checklist',
                 property: propertyName,
                 completed_by: completedBy.name,
-                time: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })
+                time: completionTime
             },
             summaryMessage: `Checklist "${payload.template_title}" completed at ${propertyName} by ${completedBy.name}`,
             contextualUserIds: { requesterId: payload.completed_by, approverId }

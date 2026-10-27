@@ -217,6 +217,10 @@ const UnifiedDashboard = () => {
     }
 
     if (role === 'org_super_admin' || role === 'org_admin') {
+        const isFromCrm = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('from') === 'crm';
+        if (dashboardContent !== undefined && isFromCrm) {
+            return <GenericPettyCashDashboard>{dashboardContent}</GenericPettyCashDashboard>;
+        }
         // OrgAdminDashboard includes BDQuickStats card — fetches its own CRM data
         return <OrgAdminDashboard />;
     }

@@ -8,6 +8,7 @@ import {
     sanitizeSearchTerm,
 } from '@/backend/lib/crm/access';
 import { NotificationService } from '@/backend/services/NotificationService';
+import { LeadOutreachService } from '@/backend/services/LeadOutreachService';
 import { EmailService } from '@/backend/services/EmailService';
 import { cityFilterOr } from '@/backend/lib/crm/cityGroups';
 import { parseSeatCount, isMissingColumnError } from '@/backend/lib/crm/seatRequirement';
@@ -222,6 +223,7 @@ export async function POST(request: NextRequest) {
 
     if (data?.id) {
         NotificationService.afterLeadCreated(data.id).catch(e => console.error('[CRM Lead CREATE] Push error:', e));
+        LeadOutreachService.sendLeadFollowupOutreach(data.id).catch(e => console.error('[CRM Lead CREATE] Lead outreach error:', e));
     }
 
     // The 'created' activity is written by the crm_auto_activity DB trigger.

@@ -2,7 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { usePathname, useParams } from 'next/navigation';
+import { usePathname, useParams, useSearchParams } from 'next/navigation';
 import { ArrowLeftRight, LayoutDashboard, Building2 } from 'lucide-react';
 import { useAuth } from '@/frontend/context/AuthContext';
 import { isBdSuperAdmin } from '@/frontend/constants/bdSuperAdmins';
@@ -18,12 +18,13 @@ import { isBdSuperAdmin } from '@/frontend/constants/bdSuperAdmins';
 export default function ModuleSwitch() {
     const { user, membership } = useAuth();
     const pathname = usePathname();
+    const searchParams = useSearchParams();
     const params = useParams();
     const orgId = params?.orgId as string;
 
     if (!orgId || !isBdSuperAdmin(user?.email, membership?.org_role)) return null;
 
-    const inCrm = !!pathname?.includes('/crm');
+    const inCrm = !!pathname?.includes('/crm') || searchParams?.get('from') === 'crm';
     const target = inCrm ? `/${orgId}/dashboard` : `/${orgId}/crm`;
     const label = inCrm ? 'Switch to FMS' : 'Switch to CRM';
     const Icon = inCrm ? Building2 : LayoutDashboard;
