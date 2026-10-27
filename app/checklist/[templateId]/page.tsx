@@ -164,6 +164,7 @@ export default function ChecklistDeepLinkPage() {
                 <SOPChecklistRunner
                     templateId={templateId}
                     completionId={completionId}
+                    propertyId={template?.property_id}
                     onSessionStarted={(createdId) => {
                         try {
                             const url = new URL(window.location.href);

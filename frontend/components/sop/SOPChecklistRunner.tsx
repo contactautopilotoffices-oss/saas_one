@@ -23,7 +23,7 @@ interface SOPChecklistRunnerProps {
     templateId: string;
     completionId?: string;
     isSuperAdmin?: boolean;
-    propertyId: string;
+    propertyId?: string;
     completionDate?: string; // e.g. YYYY-MM-DD for historical completion
     onSessionStarted?: (completionId: string) => void;
     onComplete?: () => void;
@@ -416,6 +416,9 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({
 
         console.log(`[SOP Debug] handleItemToggle initiated for itemId: ${itemId}`);
 
+        let previousItem: any = null;
+        const previousItemValues = { ...itemValues };
+
         try {
             const findContext = (comp: any, temp: any) => {
                 const tItem = temp?.items?.find((i: any) =>
@@ -439,6 +442,8 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({
                 setToast({ message: 'Session out of sync. Please refresh the checklist.', type: 'error' });
                 return;
             }
+
+            previousItem = { ...item };
 
             const newValue = value !== null ? value : !item.is_checked;
             const isChecked = templateItem.type === 'checkbox' ? !!newValue : true;
@@ -550,16 +555,18 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({
         } catch (err) {
             console.error('[SOP Debug] handleItemToggle Exception:', err);
             // Revert just this item on sync failure
-            setCompletion((prev: any) => {
-                if (!prev) return prev;
-                return {
-                    ...prev,
-                    items: prev.items.map((i: any) =>
-                        String(i.checklist_item_id).toLowerCase() === String(itemId).toLowerCase() ? item : i
-                    )
-                };
-            });
-            setItemValues(itemValues);
+            if (previousItem) {
+                setCompletion((prev: any) => {
+                    if (!prev) return prev;
+                    return {
+                        ...prev,
+                        items: prev.items.map((i: any) =>
+                            String(i.checklist_item_id).toLowerCase() === String(itemId).toLowerCase() ? previousItem : i
+                        )
+                    };
+                });
+            }
+            setItemValues(previousItemValues);
             setToast({ message: 'Sync failed. Reverting changes...', type: 'error' });
         }
     };
