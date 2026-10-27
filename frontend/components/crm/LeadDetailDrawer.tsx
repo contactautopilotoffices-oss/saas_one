@@ -151,7 +151,16 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
                     seats: 'Seat Requirement'
                 };
                 const labelName = fieldNames[field as string] || String(field).replace(/_/g, ' ');
-                showToast(`${labelName} updated successfully!`);
+                if (data?.seats_detail_saved === false) {
+                    // The database has no seats_detail column yet, so only the number
+                    // was kept — don't claim the typed text was saved.
+                    showToast(
+                        'Saved the seat count only. Storing the full text needs the crm_leads.seats_detail migration.',
+                        'info'
+                    );
+                } else {
+                    showToast(`${labelName} updated successfully!`);
+                }
             } else {
                 showToast('Failed to update field', 'error');
             }

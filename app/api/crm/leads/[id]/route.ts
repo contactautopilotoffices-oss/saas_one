@@ -164,8 +164,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         .single();
 
     // seats_detail arrived with a migration the team runs by hand. If this
-    // deployment hasn't run it yet, save the rest of the edit instead of failing.
+    // deployment hasn't run it yet, save the rest of the edit instead of failing —
+    // but say so, instead of quietly dropping the text the rep typed.
+    let seatsDetailStored = true;
     if (error && isMissingColumnError(error, 'seats_detail') && 'seats_detail' in updateData) {
+        seatsDetailStored = updateData.seats_detail == null;
         const { seats_detail, ...withoutSeatsDetail } = updateData;
         if (Object.keys(withoutSeatsDetail).length === 0) {
             return NextResponse.json(
@@ -187,7 +190,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }
 
     // status_changed / assigned activity is written by the DB trigger; no manual insert.
-    return NextResponse.json({ lead: data });
+    return NextResponse.json(
+        seatsDetailStored ? { lead: data } : { lead: data, seats_detail_saved: false }
+    );
 }
 
 // DELETE /api/crm/leads/[id] - soft-archive by default; ?hard=true purges (admin only)

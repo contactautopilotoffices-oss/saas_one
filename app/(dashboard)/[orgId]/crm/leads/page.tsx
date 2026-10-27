@@ -162,9 +162,14 @@ export default function LeadsPage() {
         }
         setRefreshTrigger(prev => prev + 1);
 
+        // When the database has no seats_detail column yet only the seat count is
+        // kept, so don't report the typed seat requirement as saved.
+        const seatTextDropped = resData?.seats_detail_saved === false;
         setToast({
-            message: isCreate ? 'Lead created successfully' : 'Lead updated successfully',
-            type: 'success',
+            message: seatTextDropped
+                ? `${isCreate ? 'Lead created' : 'Lead updated'} — seat count saved, but the full seat requirement text needs the crm_leads.seats_detail migration.`
+                : (isCreate ? 'Lead created successfully' : 'Lead updated successfully'),
+            type: seatTextDropped ? 'error' : 'success',
             visible: true,
         });
     };

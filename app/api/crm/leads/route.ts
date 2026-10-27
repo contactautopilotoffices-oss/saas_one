@@ -206,8 +206,11 @@ export async function POST(request: NextRequest) {
         .single();
 
     // seats_detail arrived with a migration the team runs by hand. If this
-    // deployment hasn't run it yet, keep the lead rather than losing the create.
+    // deployment hasn't run it yet, keep the lead rather than losing the create —
+    // but say so, instead of quietly dropping the text the rep typed.
+    let seatsDetailStored = true;
     if (error && isMissingColumnError(error, 'seats_detail')) {
+        seatsDetailStored = leadData.seats_detail == null;
         const { seats_detail, ...withoutSeatsDetail } = leadData;
         ({ data, error } = await supabaseAdmin
             .from('crm_leads')
@@ -227,5 +230,8 @@ export async function POST(request: NextRequest) {
     }
 
     // The 'created' activity is written by the crm_auto_activity DB trigger.
-    return NextResponse.json({ lead: data }, { status: 201 });
+    return NextResponse.json(
+        seatsDetailStored ? { lead: data } : { lead: data, seats_detail_saved: false },
+        { status: 201 }
+    );
 }
