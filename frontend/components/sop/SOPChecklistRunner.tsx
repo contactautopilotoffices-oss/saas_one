@@ -23,8 +23,9 @@ interface SOPChecklistRunnerProps {
     templateId: string;
     completionId?: string;
     isSuperAdmin?: boolean;
-    propertyId: string;
+    propertyId?: string;
     completionDate?: string; // e.g. YYYY-MM-DD for historical completion
+    onSessionStarted?: (completionId: string) => void;
     onComplete?: () => void;
     onCancel?: () => void;
 }
@@ -38,7 +39,16 @@ function fmt12Step(hhmm: string): string {
     return `${h12}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
-const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, completionId, isSuperAdmin = false, propertyId, completionDate, onComplete, onCancel }) => {
+const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({
+    templateId,
+    completionId,
+    isSuperAdmin = false,
+    propertyId,
+    completionDate,
+    onSessionStarted,
+    onComplete,
+    onCancel
+}) => {
     const [completion, setCompletion] = useState<any>(null);
     const [template, setTemplate] = useState<any>(null);
     const [isLoading, setIsLoading] = useState(true);
@@ -57,6 +67,20 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
     const [liveNow, setLiveNow] = useState(() => new Date());
     const supabase = React.useMemo(() => createClient(), []);
     const hasInitialized = React.useRef(false);
+    const onCompleteRef = useRef(onComplete);
+    useEffect(() => {
+        onCompleteRef.current = onComplete;
+    }, [onComplete]);
+    const isSubmittingRef = useRef(false);
+
+    const saveDraftValues = (updatedValues: Record<string, any>, targetCompId?: string) => {
+        try {
+            const cid = targetCompId || completion?.id;
+            if (cid && templateId) {
+                localStorage.setItem(`sop_draft_${templateId}_${cid}`, JSON.stringify(updatedValues));
+            }
+        } catch {}
+    };
 
     // Upload tracking: local preview URL → { progress, error, retrying, compressing }
     const [uploadProgress, setUploadProgress] = useState<Record<string, { progress: number; error?: string; retrying?: boolean; compressing?: boolean }>>({});
@@ -224,15 +248,21 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
                 (payload) => {
                     const updated = payload.new as any;
                     setCompletion((prev: any) => prev ? { ...prev, ...updated } : prev);
-                    if (updated.status === 'completed') {
-                        onComplete?.();
+                    if (updated.status === 'completed' && !isSubmittingRef.current) {
+                        isSubmittingRef.current = true;
+                        try {
+                            localStorage.removeItem(`sop_draft_${templateId}_${completion.id}`);
+                            localStorage.removeItem(`sop_active_session_${templateId}`);
+                            sessionStorage.removeItem(`sop_active_session_${templateId}`);
+                        } catch {}
+                        onCompleteRef.current?.();
                     }
                 }
             )
             .subscribe();
 
         return () => { supabase.removeChannel(channel); };
-    }, [completion?.id, supabase, onComplete]);
+    }, [completion?.id, supabase, templateId]);
 
     useEffect(() => {
         const initializeChecklist = async () => {
@@ -292,29 +322,70 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
                     if (!res.ok) throw new Error(json.error || 'Failed to load completion');
                     completionData = json.completion;
                 } else {
-                    // Start new session via API (supabaseAdmin, bypasses RLS)
-                    const res = await fetch(`/api/properties/${resolvedPropertyId}/sop/completions`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ 
-                            templateId, 
-                            completionDate // Pass historical date if provided
-                        }),
-                    });
-                    const json = await res.json();
-                    if (!res.ok) throw new Error(json.error || 'Failed to start checklist');
-                    completionData = json.completion;
+                    // Check if an active uncompleted session exists in storage
+                    let activeId: string | null = null;
+                    try {
+                        activeId = sessionStorage.getItem(`sop_active_session_${templateId}`) ||
+                            localStorage.getItem(`sop_active_session_${templateId}`);
+                    } catch {}
+
+                    if (activeId) {
+                        try {
+                            const res = await fetch(`/api/properties/${resolvedPropertyId}/sop/completions/${activeId}`);
+                            if (res.ok) {
+                                const json = await res.json();
+                                if (json.completion && json.completion.status !== 'completed') {
+                                    completionData = json.completion;
+                                }
+                            }
+                        } catch {}
+                    }
+
+                    if (!completionData) {
+                        // Start new session via API (supabaseAdmin, bypasses RLS)
+                        const res = await fetch(`/api/properties/${resolvedPropertyId}/sop/completions`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ 
+                                templateId, 
+                                completionDate // Pass historical date if provided
+                            }),
+                        });
+                        const json = await res.json();
+                        if (!res.ok) throw new Error(json.error || 'Failed to start checklist');
+                        completionData = json.completion;
+                    }
                 }
 
                 setCompletion(completionData);
+                onSessionStarted?.(completionData.id);
+                try {
+                    sessionStorage.setItem(`sop_active_session_${templateId}`, completionData.id);
+                    localStorage.setItem(`sop_active_session_${templateId}`, completionData.id);
+                } catch {}
                 console.log('SOPChecklistRunner: Completion session fetched/started', completionData?.id);
+
+                // Restore draft values if available
+                let draftValues: Record<string, any> = {};
+                try {
+                    const savedDraft = localStorage.getItem(`sop_draft_${templateId}_${completionData.id}`);
+                    if (savedDraft) {
+                        draftValues = JSON.parse(savedDraft);
+                    }
+                } catch {}
 
                 // Initialize item values and user names cache
                 const initialValues: Record<string, any> = {};
                 const initialNames: Record<string, string> = {};
                 completionData.items?.forEach((i: any) => {
-                    // Try to use value first, if text/number/yes_no, otherwise fallback to checked status
-                    initialValues[i.checklist_item_id] = i.value !== null ? i.value : (i.is_checked ? true : false);
+                    // Use draft value if present, otherwise server value
+                    const hasDraft = draftValues[i.checklist_item_id] !== undefined;
+                    const val = hasDraft ? draftValues[i.checklist_item_id] : (i.value !== null ? i.value : (i.is_checked ? true : false));
+                    initialValues[i.checklist_item_id] = val;
+                    
+                    if (draftValues[`param_${i.id}`]) {
+                        i.parameter_values = { ...i.parameter_values, ...draftValues[`param_${i.id}`] };
+                    }
                     
                     if (i.checked_by && i.checked_by_user?.full_name) {
                         initialNames[i.checked_by] = i.checked_by_user.full_name;
@@ -333,19 +404,7 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
             }
         };
 
-        const timeoutId = setTimeout(() => {
-            if (isLoading) {
-                console.warn('SOPChecklistRunner: Initialization timed out');
-                setToast({ message: 'Loading is taking longer than expected. Please check your connection.', type: 'error' });
-                setIsLoading(false);
-            }
-        }, 30000);
-
         initializeChecklist();
-
-        return () => {
-            clearTimeout(timeoutId);
-        };
     }, [templateId, completionId, propertyId, completionDate]);
 
     const handleItemToggle = async (itemId: string, value: any = null) => {
@@ -356,6 +415,9 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
         }
 
         console.log(`[SOP Debug] handleItemToggle initiated for itemId: ${itemId}`);
+
+        let previousItem: any = null;
+        const previousItemValues = { ...itemValues };
 
         try {
             const findContext = (comp: any, temp: any) => {
@@ -381,6 +443,8 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
                 return;
             }
 
+            previousItem = { ...item };
+
             const newValue = value !== null ? value : !item.is_checked;
             const isChecked = templateItem.type === 'checkbox' ? !!newValue : true;
             const dbValue = templateItem.type !== 'checkbox' ? String(newValue) : null;
@@ -402,7 +466,9 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
             });
 
             setCompletion({ ...completion, items: optimisticItems });
-            setItemValues({ ...itemValues, [itemId]: newValue });
+            const updatedValues = { ...itemValues, [itemId]: newValue };
+            setItemValues(updatedValues);
+            saveDraftValues(updatedValues);
 
 
             const validPropId = (!propertyId || propertyId === 'undefined' || propertyId === 'null' || propertyId === 'all') ? null : propertyId;
@@ -443,7 +509,15 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
                         if (retryRes.ok) {
                             const data = await retryRes.json();
                             if (data.success && data.completion) {
-                                setCompletion(data.completion);
+                                setCompletion((prev: any) => {
+                                    if (!prev) return prev;
+                                    const serverItem = data.completion.items?.find((i: any) => i.id === item.id);
+                                    if (!serverItem) return prev;
+                                    return {
+                                        ...prev,
+                                        items: prev.items.map((i: any) => i.id === item.id ? { ...i, ...serverItem } : i)
+                                    };
+                                });
                                 return;
                             }
                         }
@@ -457,8 +531,16 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
 
             const data = await res.json();
             if (data.success && data.completion) {
-                // Final state sync with server data
-                setCompletion(data.completion);
+                // Merge ONLY the updated item from server response, do not overwrite other items
+                setCompletion((prev: any) => {
+                    if (!prev) return prev;
+                    const serverItem = data.completion.items?.find((i: any) => i.id === item.id);
+                    if (!serverItem) return prev;
+                    return {
+                        ...prev,
+                        items: prev.items.map((i: any) => i.id === item.id ? { ...i, ...serverItem } : i)
+                    };
+                });
                 // Update user names cache
                 const newNames: Record<string, string> = { ...userNames };
                 let namesChanged = false;
@@ -472,8 +554,19 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
             }
         } catch (err) {
             console.error('[SOP Debug] handleItemToggle Exception:', err);
-            // ── ROLLBACK ──
-            if (completion) setCompletion(completion); 
+            // Revert just this item on sync failure
+            if (previousItem) {
+                setCompletion((prev: any) => {
+                    if (!prev) return prev;
+                    return {
+                        ...prev,
+                        items: prev.items.map((i: any) =>
+                            String(i.checklist_item_id).toLowerCase() === String(itemId).toLowerCase() ? previousItem : i
+                        )
+                    };
+                });
+            }
+            setItemValues(previousItemValues);
             setToast({ message: 'Sync failed. Reverting changes...', type: 'error' });
         }
     };
@@ -507,6 +600,10 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
         });
 
         setCompletion({ ...completion, items: optimisticItems });
+        saveDraftValues({
+            ...itemValues,
+            [`param_${cItem.id}`]: updatedParams
+        });
 
         try {
             const validPropId = (!propertyId || propertyId === 'undefined' || propertyId === 'null' || propertyId === 'all') ? null : propertyId;
@@ -570,8 +667,8 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
                         setToast({
                             message: data.is_stale_image
                                 ? (data.timestamp_detected
-                                    ? `Old photo / Gallery upload detected (${data.timestamp_detected}). Please tap Retake to capture a live photo.`
-                                    : 'Old photo detected: Please tap Retake to capture a fresh live photo.')
+                                    ? `Outdated photo detected (${data.timestamp_detected}). Please capture a fresh photo for today's inspection.`
+                                    : 'Outdated photo detected. Please tap Retake to capture a fresh photo for today.')
                                 : 'Action needed: Please review AI feedback and tap Retake.',
                             type: 'error'
                         });
@@ -911,10 +1008,11 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
     };
 
     const handleSubmit = async () => {
-        if (!completion) return;
+        if (!completion || isSubmittingRef.current) return;
 
         try {
             setIsSaving(true);
+            isSubmittingRef.current = true;
 
             // Check mandatory items and evidence requirements
             const missingEvidence: string[] = [];
@@ -922,7 +1020,17 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
 
             template.items.forEach((item: any) => {
                 const comp = completion.items.find((c: any) => c.checklist_item_id === item.id);
-                const hasInteraction = comp && (comp.is_checked || (comp.value !== null && comp.value !== ''));
+                const stepParams = Array.isArray(item.parameters) ? item.parameters : [];
+                const hasParamAnswers = stepParams.length > 0 && comp?.parameter_values &&
+                    stepParams.some((p: any) => comp.parameter_values[p.id]?.value !== undefined && comp.parameter_values[p.id]?.value !== '');
+                const allParamsAnswered = stepParams.length > 0 &&
+                    stepParams.every((p: any) => comp?.parameter_values?.[p.id]?.value !== undefined && comp?.parameter_values?.[p.id]?.value !== '');
+
+                const hasInteraction = comp && (
+                    comp.is_checked ||
+                    (comp.value !== null && comp.value !== '') ||
+                    (stepParams.length > 0 && (allParamsAnswered || hasParamAnswers))
+                );
                 
                 // 1. Mandatory check (STRICT)
                 if (!item.is_optional && !hasInteraction) {
@@ -946,6 +1054,7 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
                     type: 'error',
                 });
                 setIsSaving(false);
+                isSubmittingRef.current = false;
                 return;
             }
 
@@ -984,12 +1093,20 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
                 throw new Error(errData.error || 'Failed to submit checklist');
             }
 
+            // Clean up session and draft storage
+            try {
+                localStorage.removeItem(`sop_draft_${templateId}_${completion.id}`);
+                localStorage.removeItem(`sop_active_session_${templateId}`);
+                sessionStorage.removeItem(`sop_active_session_${templateId}`);
+            } catch {}
+
             playTickleSound();
             setToast({ message: 'Checklist submitted successfully!', type: 'success' });
-            onComplete?.();
+            onCompleteRef.current?.();
         } catch (err: any) {
             console.error('[SOPRunner] Error submitting checklist:', err);
             setToast({ message: err?.message || 'Error submitting checklist', type: 'error' });
+            isSubmittingRef.current = false;
         } finally {
             setIsSaving(false);
         }
@@ -1991,6 +2108,15 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
                     isAdmin={isSuperAdmin}
                     items={(completion?.items || []).map((ci: any) => {
                         const templateItem = (template.items || []).find((ti: any) => ti.id === ci.checklist_item_id);
+                        const rawPhotos = Array.isArray(ci.photos) && ci.photos.length > 0
+                            ? ci.photos
+                            : (ci.photo_url ? [{ id: 'p1', url: ci.photo_url, captured_at: ci.checked_at }] : []);
+                        const rawRefPhotos = isSuperAdmin
+                            ? (Array.isArray(templateItem?.reference_photos) && templateItem.reference_photos.length > 0
+                                ? templateItem.reference_photos
+                                : (templateItem?.reference_photo_url ? [{ id: 'ref_1', label: 'Clean Standard Photo', url: templateItem.reference_photo_url }] : []))
+                            : [];
+
                         return {
                             id: ci.id,
                             completion_id: completion?.id,
@@ -1999,8 +2125,12 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({ templateId, com
                             ai_cleanliness_score: ci.ai_cleanliness_score ?? null,
                             ai_cleanliness_reason: ci.ai_cleanliness_reason ?? null,
                             photo_url: ci.photo_url || null,
+                            photos: rawPhotos,
                             // Only pass reference URL to super admins — staff must not see the benchmark
-                            reference_photo_url: isSuperAdmin ? (templateItem?.reference_photo_url || null) : null,
+                            reference_photo_url: isSuperAdmin ? (templateItem?.reference_photo_url || rawRefPhotos[0]?.url || null) : null,
+                            reference_photos: rawRefPhotos,
+                            ai_parameter_scores: ci.ai_parameter_scores || [],
+                            ai_photo_matches: ci.ai_photo_matches || [],
                         };
                     })}
                     onScorePhoto={async (completionItemId: string) => {

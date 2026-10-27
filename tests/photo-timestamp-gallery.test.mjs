@@ -69,49 +69,96 @@ test('extractActualImageTimestamp falls back to file lastModified when filename 
     assert.ok(result.timestampStr.includes('20/10/2026'));
 });
 
-test('Option B Gallery Upload verification logic marks old photo with actual timestamp', () => {
-    const expectedDateStr = '20/10/2026';
-    const galleryFilename = 'WhatsApp Image 2026-10-20 at 12.01.49 PM.jpeg';
+test('Gallery upload taken on the scheduled inspection date passes verification without spoofing penalty', () => {
+    const expectedDateStr = '23/10/2026';
+    const allowedDates = ['23/10/2026', '24/10/2026'];
+    const galleryFilename = 'IMG_20261023_114510.jpg';
 
     const actualImageInfo = extractActualImageTimestamp({
         filename: galleryFilename,
-        lastModified: 1792479036171,
+        lastModified: new Date('2026-10-23T11:45:10').getTime(),
     });
 
-    // Vision model outputs missing because gallery uploads have no canvas watermark
     const modelOutput = {
-        score: 85,
-        timestamp_detected: 'missing',
-        is_stale_image: true,
-        reason: 'Surfaces look clean.',
+        score: 88,
+        timestamp_detected: 'none',
+        is_stale_image: false,
+        reason: 'Surfaces look clean and cleared.',
     };
 
     const hasVisibleWatermark = Boolean(
         modelOutput.timestamp_detected &&
-        modelOutput.timestamp_detected !== 'missing' &&
-        modelOutput.timestamp_detected !== 'null'
+        modelOutput.timestamp_detected !== 'none' &&
+        modelOutput.timestamp_detected !== 'missing'
     );
-    const isLiveVerified = hasVisibleWatermark && modelOutput.timestamp_detected.includes(expectedDateStr) && !modelOutput.is_stale_image;
+    const watermarkMatchesExpected = hasVisibleWatermark && allowedDates.some(d => modelOutput.timestamp_detected.includes(d));
+    const isLiveVerified = hasVisibleWatermark && watermarkMatchesExpected && !modelOutput.is_stale_image;
+
+    const photoDateToTest = actualImageInfo?.date || null;
+    let isSameDayCapture = false;
+    if (photoDateToTest && !isNaN(photoDateToTest.getTime())) {
+        const pad = (n) => String(n).padStart(2, '0');
+        const photoDateStr = `${pad(photoDateToTest.getDate())}/${pad(photoDateToTest.getMonth() + 1)}/${photoDateToTest.getFullYear()}`;
+        isSameDayCapture = allowedDates.includes(photoDateStr);
+    }
+
+    let detectedWatermark = null;
+    let isStale = false;
+
+    if (isLiveVerified) {
+        isStale = false;
+        detectedWatermark = modelOutput.timestamp_detected;
+    } else if (isSameDayCapture && !modelOutput.is_stale_image) {
+        isStale = false;
+        detectedWatermark = actualImageInfo?.timestampStr
+            ? `${actualImageInfo.timestampStr} (Verified Capture)`
+            : `${expectedDateStr} (Verified Capture)`;
+    } else {
+        isStale = true;
+    }
+
+    assert.equal(isStale, false, 'Same-day gallery upload must NOT be marked stale');
+    assert.ok(detectedWatermark.includes('23/10/2026'), 'Watermark must show verified capture with date 23/10/2026');
+});
+
+test('Gallery upload taken on an outdated past date is rejected with spoofing error', () => {
+    const expectedDateStr = '23/10/2026';
+    const allowedDates = ['23/10/2026', '24/10/2026'];
+    const oldGalleryFilename = 'IMG_20261015_091520.jpg';
+
+    const actualImageInfo = extractActualImageTimestamp({
+        filename: oldGalleryFilename,
+        lastModified: new Date('2026-10-15T09:15:20').getTime(),
+    });
+
+    const modelOutput = {
+        score: 85,
+        timestamp_detected: 'none',
+        is_stale_image: false,
+    };
+
+    const photoDateToTest = actualImageInfo?.date || null;
+    let isSameDayCapture = false;
+    if (photoDateToTest && !isNaN(photoDateToTest.getTime())) {
+        const pad = (n) => String(n).padStart(2, '0');
+        const photoDateStr = `${pad(photoDateToTest.getDate())}/${pad(photoDateToTest.getMonth() + 1)}/${photoDateToTest.getFullYear()}`;
+        isSameDayCapture = allowedDates.includes(photoDateStr);
+    }
 
     let detectedWatermark = null;
     let isStale = false;
     let staleReasonMessage = '';
 
-    if (isLiveVerified) {
+    if (isSameDayCapture) {
         isStale = false;
-        detectedWatermark = modelOutput.timestamp_detected;
     } else {
         isStale = true;
-        if (actualImageInfo?.timestampStr) {
-            detectedWatermark = `${actualImageInfo.timestampStr} (Gallery Upload)`;
-            staleReasonMessage = `Gallery upload (Taken: ${actualImageInfo.timestampStr}) · Live camera capture required`;
-        }
+        detectedWatermark = `${actualImageInfo.timestampStr} (Outdated Date)`;
+        staleReasonMessage = `Outdated photo taken on ${actualImageInfo.timestampStr} · Scheduled: ${allowedDates.join(', ')}`;
     }
 
-    assert.equal(isStale, true, 'Gallery upload must be marked stale');
-    assert.equal(detectedWatermark, '20/10/2026, 12:01:49 PM (Gallery Upload)');
-    assert.ok(staleReasonMessage.includes('Gallery upload'));
-    assert.ok(staleReasonMessage.includes('20/10/2026, 12:01:49 PM'));
+    assert.equal(isStale, true, 'Photo from 15/10/2026 must be flagged stale for 23/10/2026 checklist');
+    assert.ok(staleReasonMessage.includes('15/10/2026'), 'Reason message must cite actual photo date');
 });
 
 test('Option B Live Camera capture passes with verified watermark', () => {

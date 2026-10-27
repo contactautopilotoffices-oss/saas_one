@@ -230,17 +230,31 @@ export async function POST(
         } 
         
         // If we still don't have an existing completion, do a final fallback search 
-        // based on the template and date (prevents duplicates for non-hourly templates)
+        // prioritizing any active pending/in-progress completion for today so in-flight work is never lost
         if (!existingCompletion) {
-            const { data } = await supabaseAdmin
+            const { data: pendingData } = await supabaseAdmin
                 .from('sop_completions')
                 .select('*, items:sop_completion_items(*)')
                 .eq('template_id', templateId)
                 .eq('property_id', propertyId)
                 .eq('completion_date', finalCompletionDate)
+                .in('status', ['pending', 'in_progress'])
                 .order('created_at', { ascending: false })
                 .limit(1);
-            existingCompletion = data?.[0] ?? null;
+
+            if (pendingData && pendingData.length > 0) {
+                existingCompletion = pendingData[0];
+            } else {
+                const { data } = await supabaseAdmin
+                    .from('sop_completions')
+                    .select('*, items:sop_completion_items(*)')
+                    .eq('template_id', templateId)
+                    .eq('property_id', propertyId)
+                    .eq('completion_date', finalCompletionDate)
+                    .order('created_at', { ascending: false })
+                    .limit(1);
+                existingCompletion = data?.[0] ?? null;
+            }
         }
 
         // ── Check if we should allow on-demand generation ───────────────────

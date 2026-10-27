@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Upload, FileText, Loader2, Trash2, Save, MapPin, CheckSquare, AlertCircle, RefreshCw, Camera, Eye, Plus, Check, Square, Shapes, Pencil, Undo2, MousePointer } from 'lucide-react';
+import { X, Upload, FileText, Loader2, Trash2, Save, MapPin, CheckSquare, AlertCircle, RefreshCw, Camera, Eye, EyeOff, Plus, Check, Square, Shapes, Pencil, Undo2, MousePointer, ZoomIn, ZoomOut, Image as ImageIcon } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Toast } from '@/frontend/components/ui/Toast';
 import { createClient } from '@/frontend/utils/supabase/client';
@@ -14,11 +14,19 @@ export interface Point {
     y: number;
 }
 
+export interface ChecklistItemPhoto {
+    id?: string;
+    label?: string;
+    url: string;
+    source?: string;
+}
+
 export interface ChecklistItem {
     id: string;
     title: string;
     order_index?: number;
     reference_photo_url?: string;
+    reference_photos?: ChecklistItemPhoto[];
 }
 
 export interface CADArea {
@@ -100,6 +108,10 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
     const [editingAreaLabel, setEditingAreaLabel] = useState('');
     const [localItems, setLocalItems] = useState<ChecklistItem[]>(items);
     const [refUploads, setRefUploads] = useState<Record<string, boolean>>({});
+    const [zoom, setZoom] = useState<number>(1);
+    const [viewportSize, setViewportSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
+    const [previewPhotoModal, setPreviewPhotoModal] = useState<{ url: string; label?: string; stepTitle?: string } | null>(null);
+    const [showLabels, setShowLabels] = useState<boolean>(true);
 
     const supabase = React.useMemo(() => createClient(), []);
 
@@ -110,6 +122,13 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
                 return {
                     ...incoming,
                     reference_photo_url: incoming.reference_photo_url || existing?.reference_photo_url,
+                    reference_photos: (incoming.reference_photos && incoming.reference_photos.length > 0)
+                        ? incoming.reference_photos
+                        : (existing?.reference_photos && existing.reference_photos.length > 0)
+                        ? existing.reference_photos
+                        : incoming.reference_photo_url
+                        ? [{ id: 'ref_1', label: 'Clean Photo', url: incoming.reference_photo_url }]
+                        : [],
                 };
             }));
         }
@@ -119,10 +138,45 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
     const imageRef = useRef<HTMLImageElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
+    const cadViewportRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         setMounted(true);
     }, []);
+
+    // ResizeObserver to track CAD viewport size and ensure perfect responsiveness
+    useEffect(() => {
+        if (!cadViewportRef.current) return;
+        const ro = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+                setViewportSize({
+                    width: entry.contentRect.width,
+                    height: entry.contentRect.height,
+                });
+            }
+        });
+        ro.observe(cadViewportRef.current);
+        return () => ro.disconnect();
+    }, [step]);
+
+    // Calculate fitted dimensions so CAD always fits cleanly in viewport by default
+    const fitDimensions = React.useMemo(() => {
+        if (imageSize.width === 0 || imageSize.height === 0 || viewportSize.width === 0 || viewportSize.height === 0) {
+            return null;
+        }
+        const padX = 24;
+        const padY = 24;
+        const availW = Math.max(100, viewportSize.width - padX);
+        const availH = Math.max(100, viewportSize.height - padY);
+        const scale = Math.min(availW / imageSize.width, availH / imageSize.height);
+        const baseW = Math.round(imageSize.width * scale);
+        const baseH = Math.round(imageSize.height * scale);
+        return {
+            width: Math.max(100, Math.round(baseW * zoom)),
+            height: Math.max(100, Math.round(baseH * zoom)),
+            scale,
+        };
+    }, [imageSize, viewportSize, zoom]);
 
     // Load existing CAD config and latest checklist items with photos
     useEffect(() => {
@@ -140,16 +194,22 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
                     setStep('editing');
                 }
 
-                // 2. Fetch fresh checklist items to guarantee reference_photo_url is always loaded
+                // 2. Fetch fresh checklist items to guarantee reference_photo_url and reference_photos are always loaded
                 const { data: dbItems } = await supabase
                     .from('sop_checklist_items')
-                    .select('id, title, description, order_index, reference_photo_url')
+                    .select('id, title, description, order_index, reference_photo_url, reference_photos')
                     .eq('template_id', templateId)
                     .order('order_index', { ascending: true });
 
                 if (dbItems && dbItems.length > 0) {
-                    setLocalItems(dbItems);
-                    onItemsUpdate?.(dbItems);
+                    const formatted: ChecklistItem[] = dbItems.map((it: any) => ({
+                        ...it,
+                        reference_photos: Array.isArray(it.reference_photos) && it.reference_photos.length > 0
+                            ? it.reference_photos
+                            : (it.reference_photo_url ? [{ id: 'ref_1', label: 'Clean Photo', url: it.reference_photo_url }] : []),
+                    }));
+                    setLocalItems(formatted);
+                    onItemsUpdate?.(formatted);
                 }
             } catch (err) {
                 console.error('Failed to load CAD config:', err);
@@ -158,34 +218,95 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
         loadExisting();
     }, [isOpen, templateId, propertyId, supabase]);
 
-    const handleStepPhotoUpload = async (stepId: string, file: File) => {
+    // Helper to get all photos for a step
+    const getStepPhotos = useCallback((item: ChecklistItem): ChecklistItemPhoto[] => {
+        if (Array.isArray(item.reference_photos) && item.reference_photos.length > 0) {
+            return item.reference_photos;
+        }
+        if (item.reference_photo_url) {
+            return [{ id: 'ref_1', label: 'Clean Photo', url: item.reference_photo_url }];
+        }
+        return [];
+    }, []);
+
+    // Handle single or multiple photo upload for a step
+    const handleStepPhotosUpload = async (stepId: string, files: FileList | File[]) => {
         if (!stepId || stepId.startsWith('ai-')) {
             setToast({ message: 'Please save the template first before uploading reference photos', type: 'error' });
             return;
         }
 
+        const fileArray = files instanceof FileList ? Array.from(files) : Array.isArray(files) ? files : [files];
+        if (fileArray.length === 0) return;
+
         setRefUploads(prev => ({ ...prev, [stepId]: true }));
         try {
-            const formData = new FormData();
-            formData.append('file', file);
-            const res = await fetch(`/api/properties/${propertyId}/sop/checklist-items/${stepId}/reference-photo`, {
-                method: 'POST',
-                body: formData,
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Upload failed');
+            let latestPhotos: ChecklistItemPhoto[] = [];
+            let latestPrimaryUrl: string | undefined = undefined;
 
-            const photoUrl = data.referencePhotoUrl || data.reference_photo_url;
+            for (let i = 0; i < fileArray.length; i++) {
+                const file = fileArray[i];
+                const formData = new FormData();
+                formData.append('file', file);
+                const rawName = file.name ? file.name.replace(/\.[^/.]+$/, "").replace(/[-_]/g, ' ') : '';
+                formData.append('label', rawName.trim() || `Clean Benchmark ${i + 1}`);
+
+                const res = await fetch(`/api/properties/${propertyId}/sop/checklist-items/${stepId}/reference-photo`, {
+                    method: 'POST',
+                    body: formData,
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Upload failed');
+
+                latestPrimaryUrl = data.referencePhotoUrl || data.reference_photo_url;
+                latestPhotos = data.referencePhotos || (latestPrimaryUrl ? [{ id: `ref_${Date.now()}_${i}`, label: rawName.trim() || 'Clean Photo', url: latestPrimaryUrl }] : []);
+            }
+
             setLocalItems(prev => {
-                const updated = prev.map(it => it.id === stepId ? { ...it, reference_photo_url: photoUrl } : it);
+                const updated = prev.map(it => {
+                    if (it.id !== stepId) return it;
+                    return {
+                        ...it,
+                        reference_photo_url: latestPrimaryUrl || it.reference_photo_url,
+                        reference_photos: latestPhotos.length > 0 ? latestPhotos : it.reference_photos,
+                    };
+                });
                 onItemsUpdate?.(updated);
                 return updated;
             });
-            setToast({ message: 'Clean reference photo updated', type: 'success' });
+            setToast({ message: `${fileArray.length} benchmark photo${fileArray.length > 1 ? 's' : ''} saved`, type: 'success' });
         } catch (err: any) {
             setToast({ message: err.message || 'Failed to upload photo', type: 'error' });
         } finally {
             setRefUploads(prev => ({ ...prev, [stepId]: false }));
+        }
+    };
+
+    // Handle delete of a single benchmark photo from a step
+    const handleDeleteStepPhoto = async (stepId: string, photoId: string) => {
+        if (!stepId || stepId.startsWith('ai-')) return;
+        try {
+            const res = await fetch(`/api/properties/${propertyId}/sop/checklist-items/${stepId}/reference-photo?photoId=${encodeURIComponent(photoId)}`, {
+                method: 'DELETE',
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to remove photo');
+
+            const remainingPhotos: ChecklistItemPhoto[] = data.referencePhotos || [];
+            const nextPrimary = data.referencePhotoUrl || (remainingPhotos.length > 0 ? remainingPhotos[0].url : undefined);
+
+            setLocalItems(prev => {
+                const updated = prev.map(it => it.id === stepId ? {
+                    ...it,
+                    reference_photo_url: nextPrimary,
+                    reference_photos: remainingPhotos,
+                } : it);
+                onItemsUpdate?.(updated);
+                return updated;
+            });
+            setToast({ message: 'Benchmark photo removed', type: 'success' });
+        } catch (err: any) {
+            setToast({ message: err.message || 'Failed to remove photo', type: 'error' });
         }
     };
 
@@ -255,10 +376,39 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
     const handleSaveAreas = async () => {
         setIsSavingAreas(true);
         try {
+            const sanitizedAreas: CADArea[] = areas.map((a, idx) => {
+                const rawLabel = (selectedAreaId === a.id && editingAreaLabel) ? editingAreaLabel : a.label;
+                const label = (rawLabel && typeof rawLabel === 'string' && rawLabel.trim())
+                    ? rawLabel.trim()
+                    : `Area ${idx + 1}`;
+
+                let coords = a.coordinates;
+                if ((!coords || typeof coords.x !== 'number') && Array.isArray(a.points) && a.points.length > 0) {
+                    const minX = Math.round(Math.min(...a.points.map(p => p.x)));
+                    const maxX = Math.round(Math.max(...a.points.map(p => p.x)));
+                    const minY = Math.round(Math.min(...a.points.map(p => p.y)));
+                    const maxY = Math.round(Math.max(...a.points.map(p => p.y)));
+                    coords = { x: minX, y: minY, width: Math.max(10, maxX - minX), height: Math.max(10, maxY - minY) };
+                }
+
+                const safeX = typeof coords?.x === 'number' && !isNaN(coords.x) ? coords.x : 0;
+                const safeY = typeof coords?.y === 'number' && !isNaN(coords.y) ? coords.y : 0;
+                const safeW = typeof coords?.width === 'number' && !isNaN(coords.width) && coords.width > 0 ? coords.width : 50;
+                const safeH = typeof coords?.height === 'number' && !isNaN(coords.height) && coords.height > 0 ? coords.height : 50;
+
+                return {
+                    ...a,
+                    id: a.id || `area-${Date.now()}-${idx}`,
+                    label,
+                    coordinates: { x: safeX, y: safeY, width: safeW, height: safeH },
+                    linked_step_ids: Array.isArray(a.linked_step_ids) ? a.linked_step_ids : [],
+                };
+            });
+
             const res = await fetch(`/api/properties/${propertyId}/sop/templates/${templateId}/cad/areas`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ areas }),
+                body: JSON.stringify({ areas: sanitizedAreas }),
             });
 
             const data = await res.json();
@@ -483,6 +633,8 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
                     e.preventDefault();
                     handleUndoPolygonPoint();
                 }
+            } else if (e.key === 'l' || e.key === 'L') {
+                setShowLabels((prev) => !prev);
             }
         };
         window.addEventListener('keydown', handleKeyDown);
@@ -518,16 +670,54 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
     }, [areas, selectedAreaId]);
 
     // Draw area badge label
-    const drawAreaBadge = useCallback((ctx: CanvasRenderingContext2D, area: CADArea, x: number, y: number) => {
-        ctx.fillStyle = getAreaColor(area.id);
-        ctx.font = 'bold 11px sans-serif';
+    const drawAreaBadge = useCallback((ctx: CanvasRenderingContext2D, area: CADArea, x: number, y: number, w: number, h: number) => {
+        if (!showLabels) return;
+
+        ctx.save();
+        ctx.font = 'bold 10px sans-serif';
         const labelText = area.label + (area.linked_step_ids.length > 0 ? ` (${area.linked_step_ids.length})` : '');
-        const textWidth = ctx.measureText(labelText).width;
-        const badgeY = Math.max(20, y);
-        ctx.fillRect(x, badgeY - 18, textWidth + 10, 18);
+
+        // Fit within the area width so badges never spill horizontally into adjacent rooms
+        const maxBadgeWidth = Math.max(16, w - 4);
+        let displayLabel = labelText;
+        let textWidth = ctx.measureText(displayLabel).width;
+
+        if (textWidth + 8 > maxBadgeWidth && maxBadgeWidth > 28) {
+            while (displayLabel.length > 2 && ctx.measureText(displayLabel + '…').width + 8 > maxBadgeWidth) {
+                displayLabel = displayLabel.slice(0, -1);
+            }
+            displayLabel = displayLabel + '…';
+            textWidth = ctx.measureText(displayLabel).width;
+        }
+
+        const badgeWidth = Math.min(textWidth + 8, maxBadgeWidth);
+        const badgeHeight = 16;
+
+        // Position INSIDE the area bounding box:
+        // Center horizontally inside area, or left-align with 2px padding
+        const badgeX = x + Math.max(2, Math.min(w - badgeWidth - 2, (w - badgeWidth) / 2));
+        // Keep strictly INSIDE top of area (never negative / above y into the space above)
+        const badgeY = y + Math.max(2, Math.min(h - badgeHeight - 2, 2));
+
+        const isDrawingMode = shapeTool !== 'select';
+
+        ctx.fillStyle = getAreaColor(area.id);
+        // Semi-transparent while drawing so underlying CAD details remain visible
+        ctx.globalAlpha = isDrawingMode ? 0.6 : 0.9;
+
+        ctx.beginPath();
+        if (typeof (ctx as any).roundRect === 'function') {
+            (ctx as any).roundRect(badgeX, badgeY, badgeWidth, badgeHeight, 3);
+        } else {
+            ctx.rect(badgeX, badgeY, badgeWidth, badgeHeight);
+        }
+        ctx.fill();
+
+        ctx.globalAlpha = 1;
         ctx.fillStyle = '#ffffff';
-        ctx.fillText(labelText, x + 5, badgeY - 5);
-    }, [getAreaColor]);
+        ctx.fillText(displayLabel, badgeX + 4, badgeY + 11.5);
+        ctx.restore();
+    }, [showLabels, shapeTool, getAreaColor]);
 
     useEffect(() => {
         const canvas = canvasRef.current;
@@ -547,6 +737,11 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
                 const isSelected = selectedAreaId === area.id;
                 ctx.strokeStyle = getAreaColor(area.id);
                 ctx.lineWidth = isSelected ? 3 : 2;
+
+                const areaX = area.coordinates.x * scaleX;
+                const areaY = area.coordinates.y * scaleY;
+                const areaW = area.coordinates.width * scaleX;
+                const areaH = area.coordinates.height * scaleY;
 
                 if (Array.isArray(area.points) && area.points.length > 2) {
                     ctx.beginPath();
@@ -576,22 +771,17 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
                         });
                     }
 
-                    drawAreaBadge(ctx, area, area.coordinates.x * scaleX, area.coordinates.y * scaleY);
+                    drawAreaBadge(ctx, area, areaX, areaY, areaW, areaH);
                 } else {
-                    const x = area.coordinates.x * scaleX;
-                    const y = area.coordinates.y * scaleY;
-                    const w = area.coordinates.width * scaleX;
-                    const h = area.coordinates.height * scaleY;
-
                     ctx.fillStyle = isSelected
                         ? 'rgba(59, 130, 246, 0.25)'
                         : area.linked_step_ids.length > 0
                         ? 'rgba(16, 185, 129, 0.18)'
                         : 'rgba(245, 158, 11, 0.18)';
-                    ctx.fillRect(x, y, w, h);
-                    ctx.strokeRect(x, y, w, h);
+                    ctx.fillRect(areaX, areaY, areaW, areaH);
+                    ctx.strokeRect(areaX, areaY, areaW, areaH);
 
-                    drawAreaBadge(ctx, area, x, y);
+                    drawAreaBadge(ctx, area, areaX, areaY, areaW, areaH);
                 }
             });
 
@@ -674,7 +864,7 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
         };
 
         render();
-    }, [areas, drawing, drawStart, drawCurrent, polygonPoints, freehandPoints, currentMousePos, shapeTool, selectedAreaId, imageSize, preview, getAreaColor, drawAreaBadge]);
+    }, [areas, drawing, drawStart, drawCurrent, polygonPoints, freehandPoints, currentMousePos, shapeTool, selectedAreaId, imageSize, preview, getAreaColor, drawAreaBadge, fitDimensions, zoom]);
 
     const handleImageLoad = () => {
         if (imageRef.current) {
@@ -760,7 +950,7 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
                     </div>
 
                     {/* Body */}
-                    <div className="flex-1 overflow-y-auto">
+                    <div className={`flex-1 min-h-0 flex flex-col ${step === 'editing' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
                         {step === 'upload' && (
                             <div className="p-5 space-y-4">
                                 <p className="text-xs text-slate-500 font-medium">
@@ -840,9 +1030,9 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
                         )}
 
                         {step === 'editing' && (
-                            <div className="p-4 sm:p-5 space-y-4 flex-1 flex flex-col min-h-0 overflow-hidden">
+                            <div className="p-3 sm:p-4 gap-3 flex-1 flex flex-col min-h-0 overflow-hidden">
                                 {/* Drawing Tools & Status Bar */}
-                                <div className="flex flex-wrap items-center justify-between gap-3 p-2.5 bg-slate-50/90 rounded-2xl border border-slate-200 flex-shrink-0 shadow-sm">
+                                <div className="flex flex-wrap items-center justify-between gap-2.5 p-2 bg-slate-50/95 rounded-xl border border-slate-200 flex-shrink-0 shadow-2xs">
                                     {/* Tool Selectors */}
                                     <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200/80 shadow-xs">
                                         <button
@@ -908,6 +1098,20 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
                                         >
                                             <MousePointer size={14} />
                                             <span>Select</span>
+                                        </button>
+                                        <div className="w-[1px] h-4 bg-slate-200 mx-0.5" />
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowLabels(prev => !prev)}
+                                            className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                                                showLabels
+                                                    ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200/60'
+                                                    : 'bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-800'
+                                            }`}
+                                            title={showLabels ? "Hide Area Labels (Press 'L')" : "Show Area Labels (Press 'L')"}
+                                        >
+                                            {showLabels ? <Eye size={13} /> : <EyeOff size={13} />}
+                                            <span>{showLabels ? 'Labels' : 'Labels Hidden'}</span>
                                         </button>
                                     </div>
 
@@ -996,65 +1200,134 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
                                     </div>
                                 </div>
 
-                                <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 flex-1 min-h-0">
-                                    {/* CAD Image with overlay */}
-                                    <div className="lg:col-span-2 relative bg-slate-900 rounded-2xl overflow-auto border border-slate-200 shadow-inner flex items-center justify-center h-full min-h-[500px]">
+                                {/* Main Workspace Grid */}
+                                <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5 flex-1 min-h-0 overflow-hidden">
+                                    {/* CAD Floor Plan Viewer (8 cols) */}
+                                    <div className="lg:col-span-8 flex flex-col h-full min-h-0 bg-slate-950 rounded-2xl border border-slate-800 overflow-hidden relative shadow-inner">
+                                        {/* CAD Header with Floor Plan info & Zoom Controls */}
+                                        <div className="flex items-center justify-between px-3.5 py-2 bg-slate-900/90 border-b border-slate-800/80 text-xs flex-shrink-0 z-10">
+                                            <div className="flex items-center gap-2">
+                                                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                                                <span className="text-[11px] font-bold text-slate-300 truncate max-w-[220px]">
+                                                    {fileName || 'CAD Floor Plan'}
+                                                </span>
+                                                {imageSize.width > 0 && (
+                                                    <span className="text-[10px] text-slate-500 font-mono hidden sm:inline">
+                                                        ({imageSize.width} × {imageSize.height}px)
+                                                    </span>
+                                                )}
+                                            </div>
+
+                                            {/* Zoom Toolbar */}
+                                            <div className="flex items-center gap-1.5 bg-slate-800/90 px-1.5 py-1 rounded-xl border border-slate-700/60 shadow-xs">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setZoom(prev => Math.max(0.5, Number((prev - 0.2).toFixed(1))))}
+                                                    className="p-1 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg transition-colors"
+                                                    title="Zoom Out (-20%)"
+                                                >
+                                                    <ZoomOut size={13} />
+                                                </button>
+                                                <span className="px-1.5 font-mono text-[11px] font-bold text-slate-200 min-w-[44px] text-center">
+                                                    {Math.round(zoom * 100)}%
+                                                </span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setZoom(prev => Math.min(3, Number((prev + 0.2).toFixed(1))))}
+                                                    className="p-1 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg transition-colors"
+                                                    title="Zoom In (+20%)"
+                                                >
+                                                    <ZoomIn size={13} />
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setZoom(1)}
+                                                    className="px-2 py-0.5 text-[10px] font-bold text-slate-300 hover:text-white hover:bg-slate-700 rounded-md transition-colors ml-0.5 bg-slate-700/50"
+                                                    title="Fit to View (100%)"
+                                                >
+                                                    Fit
+                                                </button>
+                                                <div className="w-[1px] h-3.5 bg-slate-700 mx-1" />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setShowLabels(prev => !prev)}
+                                                    className={`px-2 py-0.5 text-[10px] font-bold rounded-md transition-all flex items-center gap-1 ${
+                                                        showLabels
+                                                            ? 'bg-emerald-600/30 text-emerald-300 hover:bg-emerald-600/40 border border-emerald-500/30'
+                                                            : 'bg-slate-700/60 text-slate-400 hover:text-white hover:bg-slate-700 border border-slate-600/30'
+                                                    }`}
+                                                    title={showLabels ? "Hide Area Labels (Press 'L')" : "Show Area Labels (Press 'L')"}
+                                                >
+                                                    {showLabels ? <Eye size={11} /> : <EyeOff size={11} />}
+                                                    <span>{showLabels ? 'Labels ON' : 'Labels OFF'}</span>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        {/* CAD Viewport container */}
                                         <div
-                                            ref={containerRef}
-                                            className={`relative max-w-full my-auto select-none ${
-                                                shapeTool === 'select' ? 'cursor-pointer' : 'cursor-crosshair'
-                                            }`}
-                                            onMouseDown={handleImageMouseDown}
-                                            onMouseMove={handleImageMouseMove}
-                                            onMouseUp={handleImageMouseUp}
-                                            onMouseLeave={handleImageMouseUp}
-                                            onClick={handleCanvasClick}
-                                            onDoubleClick={handleCanvasDoubleClick}
+                                            ref={cadViewportRef}
+                                            className="flex-1 min-h-0 overflow-auto relative flex items-center justify-center p-3 bg-slate-950 select-none scrollbar-thin"
                                         >
-                                            <img
-                                                ref={imageRef}
-                                                src={preview || ''}
-                                                alt="CAD Floor Plan"
-                                                className="w-full h-auto select-none rounded-lg"
-                                                onLoad={handleImageLoad}
-                                                draggable={false}
-                                            />
-                                            <canvas
-                                                ref={canvasRef}
-                                                className="absolute top-0 left-0 pointer-events-none w-full h-full"
-                                            />
+                                            <div
+                                                ref={containerRef}
+                                                style={fitDimensions ? { width: `${fitDimensions.width}px`, height: `${fitDimensions.height}px` } : { maxWidth: '100%', maxHeight: '100%' }}
+                                                className={`relative select-none flex-shrink-0 m-auto ${
+                                                    shapeTool === 'select' ? 'cursor-pointer' : 'cursor-crosshair'
+                                                }`}
+                                                onMouseDown={handleImageMouseDown}
+                                                onMouseMove={handleImageMouseMove}
+                                                onMouseUp={handleImageMouseUp}
+                                                onMouseLeave={handleImageMouseUp}
+                                                onClick={handleCanvasClick}
+                                                onDoubleClick={handleCanvasDoubleClick}
+                                            >
+                                                <img
+                                                    ref={imageRef}
+                                                    src={preview || ''}
+                                                    alt="CAD Floor Plan"
+                                                    className="w-full h-full object-contain select-none rounded-lg block shadow-2xl"
+                                                    onLoad={handleImageLoad}
+                                                    draggable={false}
+                                                />
+                                                <canvas
+                                                    ref={canvasRef}
+                                                    className="absolute top-0 left-0 pointer-events-none w-full h-full"
+                                                />
+                                            </div>
                                         </div>
                                     </div>
 
-                                    {/* Areas panel */}
-                                    <div className="flex flex-col h-full space-y-3 bg-slate-50/70 p-3.5 rounded-2xl border border-slate-200 min-h-0">
-                                        <div className="flex items-center justify-between pb-1 border-b border-slate-200 flex-shrink-0">
+                                    {/* Areas Panel (4 cols) */}
+                                    <div className="lg:col-span-4 flex flex-col h-full min-h-0 bg-slate-50/80 p-3 sm:p-3.5 rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
+                                        <div className="flex items-center justify-between pb-2 border-b border-slate-200 flex-shrink-0">
                                             <h3 className="font-black text-xs text-slate-800 uppercase tracking-widest flex items-center gap-1.5">
                                                 <span>Areas</span>
-                                                <span className="px-1.5 py-0.5 rounded-full bg-primary/10 text-primary text-[10px]">{areas.length}</span>
+                                                <span className="px-1.5 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-bold">{areas.length}</span>
                                             </h3>
                                             <span className="text-[10px] font-bold text-slate-400">
-                                                {items.length} checklist step{items.length !== 1 ? 's' : ''}
+                                                {localItems.length} checklist step{localItems.length !== 1 ? 's' : ''}
                                             </span>
                                         </div>
 
-                                        {items.length === 0 && (
-                                            <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-800 flex items-start gap-2 flex-shrink-0">
+                                        {localItems.length === 0 && (
+                                            <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-800 flex items-start gap-2 flex-shrink-0 mt-2">
                                                 <AlertCircle size={14} className="flex-shrink-0 mt-0.5 text-amber-600" />
                                                 <span>No steps added in template yet. You can draw areas now and link steps once you add steps to the template.</span>
                                             </div>
                                         )}
 
                                         {areas.length === 0 && (
-                                            <div className="text-center py-10 px-4 text-slate-400 bg-white rounded-xl border border-dashed border-slate-200">
+                                            <div className="text-center py-10 px-4 text-slate-400 bg-white rounded-xl border border-dashed border-slate-200 my-auto">
                                                 <MapPin size={28} className="mx-auto mb-2 text-primary/40" />
                                                 <p className="text-xs font-black text-slate-700 mb-1">No areas drawn yet</p>
                                                 <p className="text-[11px] font-medium text-slate-400">Use the shape tools on top to outline any room, cafeteria, or space on the CAD floor plan.</p>
                                             </div>
                                         )}
 
-                                        <div className="space-y-2.5 flex-1 overflow-y-auto pr-1">
-                                            {areas.map((area, areaIdx) => {
+                                        {/* Scrollable list of areas */}
+                                        <div className="space-y-2.5 flex-1 min-h-0 overflow-y-auto pr-1 scrollbar-thin mt-2">
+                                            {areas.map((area) => {
                                                 const linkedCount = area.linked_step_ids?.length || 0;
                                                 const isSelected = selectedAreaId === area.id;
                                                 return (
@@ -1174,85 +1447,123 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
                                                                     </div>
                                                                 </div>
 
-                                                                {/* Display linked steps with Clean Photo Upload & View option */}
+                                                                {/* Display linked steps with Clean Photo Gallery & Upload option */}
                                                                 {area.linked_step_ids.length > 0 && (
-                                                                    <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1 bg-slate-50 p-1.5 rounded-xl border border-slate-100">
+                                                                    <div className="space-y-2 max-h-48 overflow-y-auto pr-1 bg-slate-50/90 p-2 rounded-xl border border-slate-200/80">
                                                                         {localItems
                                                                             .filter((item) => area.linked_step_ids.includes(item.id))
-                                                                            .map((item) => (
-                                                                                <div key={item.id} className="flex items-center justify-between gap-2 p-2 bg-white rounded-lg border border-slate-200 text-xs shadow-xs">
-                                                                                    <div className="flex items-center gap-2 min-w-0 flex-1">
-                                                                                        {/* Step title */}
-                                                                                        <span className="font-bold text-slate-800 truncate text-[11px] flex-1">{item.title}</span>
-
-                                                                                        {/* Clean reference photo thumbnail view */}
-                                                                                        {item.reference_photo_url ? (
-                                                                                            <a
-                                                                                                href={item.reference_photo_url}
-                                                                                                target="_blank"
-                                                                                                rel="noopener noreferrer"
-                                                                                                className="relative group flex-shrink-0"
-                                                                                                title="View Clean Reference Photo"
-                                                                                            >
-                                                                                                <img
-                                                                                                    src={item.reference_photo_url}
-                                                                                                    alt="Clean Ref"
-                                                                                                    className="w-7 h-7 rounded-lg object-cover border border-emerald-300"
-                                                                                                />
-                                                                                                <div className="absolute inset-0 bg-black/40 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                                                                                    <Eye size={10} className="text-white" />
-                                                                                                </div>
-                                                                                            </a>
-                                                                                        ) : (
-                                                                                            <span className="text-[8px] font-bold text-slate-400 uppercase bg-slate-100 px-1.5 py-0.5 rounded">
-                                                                                                No Clean Photo
+                                                                            .map((item) => {
+                                                                                const stepPhotos = getStepPhotos(item);
+                                                                                return (
+                                                                                    <div
+                                                                                        key={item.id}
+                                                                                        className="p-2 bg-white rounded-lg border border-slate-200 text-xs shadow-2xs space-y-1.5"
+                                                                                    >
+                                                                                        <div className="flex items-center justify-between gap-2">
+                                                                                            <span className="font-bold text-slate-800 truncate text-[11px] flex-1">
+                                                                                                {item.title}
                                                                                             </span>
+                                                                                            <div className="flex items-center gap-1 flex-shrink-0">
+                                                                                                {/* Upload button */}
+                                                                                                <input
+                                                                                                    type="file"
+                                                                                                    multiple
+                                                                                                    accept="image/*"
+                                                                                                    className="hidden"
+                                                                                                    id={`cad-step-ref-${area.id}-${item.id}`}
+                                                                                                    onChange={(e) => {
+                                                                                                        const fileList = e.target.files;
+                                                                                                        if (fileList && fileList.length > 0) {
+                                                                                                            handleStepPhotosUpload(item.id, fileList);
+                                                                                                        }
+                                                                                                    }}
+                                                                                                />
+                                                                                                <label
+                                                                                                    htmlFor={`cad-step-ref-${area.id}-${item.id}`}
+                                                                                                    className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider cursor-pointer flex items-center gap-1 transition-all ${
+                                                                                                        refUploads[item.id]
+                                                                                                            ? 'bg-primary/10 text-primary'
+                                                                                                            : stepPhotos.length > 0
+                                                                                                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
+                                                                                                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200'
+                                                                                                    }`}
+                                                                                                    title={stepPhotos.length > 0 ? 'Add more benchmark photos' : 'Upload benchmark photo'}
+                                                                                                >
+                                                                                                    {refUploads[item.id] ? (
+                                                                                                        <Loader2 size={11} className="animate-spin" />
+                                                                                                    ) : (
+                                                                                                        <Camera size={11} />
+                                                                                                    )}
+                                                                                                    <span>{stepPhotos.length > 0 ? 'Add Photo' : 'Upload'}</span>
+                                                                                                </label>
+
+                                                                                                {/* Unlink step */}
+                                                                                                <button
+                                                                                                    type="button"
+                                                                                                    onClick={() => handleToggleStepLink(area.id, item.id)}
+                                                                                                    className="p-1 text-slate-400 hover:text-rose-500 rounded-lg hover:bg-rose-50 transition-colors"
+                                                                                                    title="Unlink step from this area"
+                                                                                                >
+                                                                                                    <X size={12} />
+                                                                                                </button>
+                                                                                            </div>
+                                                                                        </div>
+
+                                                                                        {/* Multi-Photo Thumbnails Strip */}
+                                                                                        {stepPhotos.length > 0 ? (
+                                                                                            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 pt-0.5 scrollbar-thin">
+                                                                                                {stepPhotos.map((photo, pIdx) => (
+                                                                                                    <div
+                                                                                                        key={photo.id || pIdx}
+                                                                                                        className="relative group flex-shrink-0"
+                                                                                                    >
+                                                                                                        <button
+                                                                                                            type="button"
+                                                                                                            onClick={() => setPreviewPhotoModal({
+                                                                                                                url: photo.url,
+                                                                                                                label: photo.label || `Benchmark #${pIdx + 1}`,
+                                                                                                                stepTitle: item.title,
+                                                                                                            })}
+                                                                                                            className="relative block w-8 h-8 rounded-lg overflow-hidden border border-emerald-300 hover:border-emerald-500 shadow-2xs group-hover:scale-105 transition-transform"
+                                                                                                            title={photo.label || `Photo ${pIdx + 1}`}
+                                                                                                        >
+                                                                                                            <img
+                                                                                                                src={photo.url}
+                                                                                                                alt={photo.label || "Benchmark"}
+                                                                                                                className="w-full h-full object-cover"
+                                                                                                            />
+                                                                                                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                                                                                                <Eye size={10} className="text-white" />
+                                                                                                            </div>
+                                                                                                        </button>
+                                                                                                        {/* Delete single photo button */}
+                                                                                                        {photo.id && (
+                                                                                                            <button
+                                                                                                                type="button"
+                                                                                                                onClick={(e) => {
+                                                                                                                    e.stopPropagation();
+                                                                                                                    handleDeleteStepPhoto(item.id, photo.id!);
+                                                                                                                }}
+                                                                                                                className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-rose-500 hover:bg-rose-600 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-xs z-10"
+                                                                                                                title="Delete this benchmark photo"
+                                                                                                            >
+                                                                                                                <X size={8} />
+                                                                                                            </button>
+                                                                                                        )}
+                                                                                                    </div>
+                                                                                                ))}
+                                                                                                <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50/80 px-1.5 py-0.5 rounded border border-emerald-100 flex-shrink-0">
+                                                                                                    {stepPhotos.length} photo{stepPhotos.length !== 1 ? 's' : ''}
+                                                                                                </span>
+                                                                                            </div>
+                                                                                        ) : (
+                                                                                            <div className="text-[9px] font-medium text-slate-400 italic">
+                                                                                                No benchmark photos yet
+                                                                                            </div>
                                                                                         )}
                                                                                     </div>
-
-                                                                                    {/* Photo Upload action */}
-                                                                                    <div className="flex items-center gap-1 flex-shrink-0">
-                                                                                        <input
-                                                                                            type="file"
-                                                                                            accept="image/*"
-                                                                                            className="hidden"
-                                                                                            id={`cad-step-ref-${area.id}-${item.id}`}
-                                                                                            onChange={(e) => {
-                                                                                                const file = e.target.files?.[0];
-                                                                                                if (file) handleStepPhotoUpload(item.id, file);
-                                                                                            }}
-                                                                                        />
-                                                                                        <label
-                                                                                            htmlFor={`cad-step-ref-${area.id}-${item.id}`}
-                                                                                            className={`p-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider cursor-pointer flex items-center gap-1 transition-all ${
-                                                                                                refUploads[item.id]
-                                                                                                    ? 'bg-primary/10 text-primary'
-                                                                                                    : item.reference_photo_url
-                                                                                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
-                                                                                                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200'
-                                                                                            }`}
-                                                                                            title={item.reference_photo_url ? 'Change Clean Photo' : 'Upload Clean Photo'}
-                                                                                        >
-                                                                                            {refUploads[item.id] ? (
-                                                                                                <Loader2 size={11} className="animate-spin" />
-                                                                                            ) : (
-                                                                                                <Camera size={11} />
-                                                                                            )}
-                                                                                            <span>{item.reference_photo_url ? 'Edit Photo' : 'Add Photo'}</span>
-                                                                                        </label>
-
-                                                                                        {/* Unlink step button */}
-                                                                                        <button
-                                                                                            type="button"
-                                                                                            onClick={() => handleToggleStepLink(area.id, item.id)}
-                                                                                            className="p-1 text-slate-400 hover:text-rose-500 rounded-lg hover:bg-rose-50"
-                                                                                            title="Remove step from area"
-                                                                                        >
-                                                                                            <X size={12} />
-                                                                                        </button>
-                                                                                    </div>
-                                                                                </div>
-                                                                            ))}
+                                                                                );
+                                                                            })}
                                                                     </div>
                                                                 )}
                                                             </div>
@@ -1262,21 +1573,59 @@ const SOPCADConfigModal: React.FC<SOPCADConfigModalProps> = ({
                                             })}
                                         </div>
 
+                                        {/* Save Areas fixed button */}
                                         {areas.length > 0 && (
-                                            <button
-                                                onClick={handleSaveAreas}
-                                                disabled={isSavingAreas}
-                                                className="w-full mt-auto py-3 bg-primary text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-primary/90 transition-all shadow-md shadow-primary/20 disabled:opacity-50 flex items-center justify-center gap-2"
-                                            >
-                                                {isSavingAreas ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                                                {isSavingAreas ? 'Saving Areas...' : 'Save Areas'}
-                                            </button>
+                                            <div className="flex-shrink-0 pt-2 border-t border-slate-200">
+                                                <button
+                                                    onClick={handleSaveAreas}
+                                                    disabled={isSavingAreas}
+                                                    className="w-full py-2.5 sm:py-3 bg-primary text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-primary/90 transition-all shadow-md shadow-primary/20 disabled:opacity-50 flex items-center justify-center gap-2"
+                                                >
+                                                    {isSavingAreas ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                                                    {isSavingAreas ? 'Saving Areas...' : 'Save Areas'}
+                                                </button>
+                                            </div>
                                         )}
                                     </div>
                                 </div>
                             </div>
                         )}
                     </div>
+
+                    {/* Lightbox Preview Modal for Clean Benchmark Photos */}
+                    {previewPhotoModal && (
+                        <div
+                            className="fixed inset-0 z-[10000] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4"
+                            onClick={() => setPreviewPhotoModal(null)}
+                        >
+                            <div
+                                className="relative bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden max-w-2xl w-full max-h-[85vh] flex flex-col shadow-2xl"
+                                onClick={(e) => e.stopPropagation()}
+                            >
+                                <div className="flex items-center justify-between px-4 py-3 bg-slate-950/80 border-b border-slate-800">
+                                    <div>
+                                        <h4 className="text-xs font-black text-white">{previewPhotoModal.label || 'Clean Benchmark Photo'}</h4>
+                                        {previewPhotoModal.stepTitle && (
+                                            <p className="text-[10px] font-semibold text-slate-400">{previewPhotoModal.stepTitle}</p>
+                                        )}
+                                    </div>
+                                    <button
+                                        onClick={() => setPreviewPhotoModal(null)}
+                                        className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
+                                    >
+                                        <X size={16} />
+                                    </button>
+                                </div>
+                                <div className="flex-1 min-h-0 p-4 flex items-center justify-center overflow-auto bg-black/50">
+                                    <img
+                                        src={previewPhotoModal.url}
+                                        alt={previewPhotoModal.label || 'Benchmark'}
+                                        className="max-h-[60vh] max-w-full object-contain rounded-lg shadow-lg"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     {toast && (
                         <Toast

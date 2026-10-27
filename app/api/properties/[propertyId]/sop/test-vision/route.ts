@@ -148,12 +148,13 @@ ${paramList}
      * "reason": Concise 1-sentence observation.
 
 3. TIMESTAMP & ANTI-SPOOFING VERIFICATION:
-   - Check the bottom-right corner of Image 2 for the stamped verification watermark (format: DD/MM/YYYY HH:mm:ss or LIVE AUDIT: DD/MM/YYYY HH:mm:ss).
-   - "timestamp_detected": The exact watermark string read from the bottom-right corner (or "missing" if not visible).
-   - "is_stale_image": Set to true if:
-     * The watermark date does NOT match any of the allowed shift dates: [${allowedDates.join(', ')}], OR
-     * The watermark timestamp is missing, cut off, or illegible, OR
-     * The image appears to be an old photo, gallery re-upload, or a photo taken of a computer screen.
+   - Check Image 2 for any visible timestamp watermark.
+   - Photos taken with in-app camera or uploaded from gallery on the scheduled inspection date [${allowedDates.join(', ')}] are completely VALID.
+   - "timestamp_detected": The exact watermark string read from the image (or "none" if not visible).
+   - "is_stale_image": Set to true ONLY if:
+     * A visible watermark clearly displays an old/different date that does NOT match any shift dates: [${allowedDates.join(', ')}], OR
+     * The image is visibly a photo taken of a computer screen / monitor (screen moiré, bezel).
+   - Do NOT mark gallery photos taken on today's inspection date as stale.
 
 4. HELPFUL REASONING:
    - "overall_reason": Write a friendly, constructive explanation for on-site staff.
@@ -189,9 +190,12 @@ Image 2: Field test photo.
 Compare Image 2 directly against Image 1.
 CRITICAL RULES:
 1. TIMESTAMP & ANTI-SPOOFING VERIFICATION:
-   - Inspect the bottom-right corner of Image 2 for the stamped verification watermark (format: DD/MM/YYYY HH:mm:ss or LIVE AUDIT: DD/MM/YYYY HH:mm:ss).
-   - "timestamp_detected": The exact watermark string read from the bottom-right corner (or "missing" if not visible).
-   - "is_stale_image": Set to true if watermark date does NOT match any of the valid shift dates: [${allowedDates.join(', ')}], or if timestamp is missing/tampered.
+   - Check Image 2 for any visible timestamp watermark.
+   - Photos taken with in-app camera or uploaded from gallery on the scheduled inspection date [${allowedDates.join(', ')}] are completely VALID.
+   - "timestamp_detected": The exact watermark string read from the image (or "none" if not visible).
+   - "is_stale_image": Set to true ONLY if:
+     * A visible watermark clearly displays an old/different date that does NOT match any shift dates: [${allowedDates.join(', ')}], OR
+     * The image is visibly a photo taken of a computer screen / monitor (screen moiré, bezel).
    - If "is_stale_image" is true, score MUST be capped at 15-20, "pass": false.
 2. CLEANLINESS:
    - Leaving tables/desks un-cleared with laptops, cables, papers, or clutter when Image 1 is cleared is an immediate FAILURE (score 20-35, pass: false).
@@ -356,6 +360,17 @@ Return ONLY valid raw JSON:
         // Watermark matches today or allowed shift boundary dates if it contains any allowed date
         const watermarkMatchesExpected = hasVisibleWatermark && typeof rawWatermark === 'string' && allowedDates.some(d => rawWatermark.includes(d));
 
+        // Evaluate whether photo was captured on the scheduled inspection date (via camera watermark, filename date, or lastModified)
+        const photoDateToTest = actualImageInfo?.date || (fieldFileLastModified ? new Date(fieldFileLastModified) : null);
+        let isSameDayCapture = false;
+        if (photoDateToTest && !isNaN(photoDateToTest.getTime())) {
+            const pad = (n: number) => String(n).padStart(2, '0');
+            const photoDateStr = `${pad(photoDateToTest.getDate())}/${pad(photoDateToTest.getMonth() + 1)}/${photoDateToTest.getFullYear()}`;
+            isSameDayCapture = allowedDates.includes(photoDateStr);
+        } else {
+            isSameDayCapture = true;
+        }
+
         // Determine if it is a gallery upload vs verified live capture
         const isLiveVerified = hasVisibleWatermark && watermarkMatchesExpected && !parsed?.is_stale_image;
 
@@ -370,18 +385,24 @@ Return ONLY valid raw JSON:
         } else if (isLiveVerified) {
             isStale = false;
             detectedWatermark = rawWatermark;
+        } else if (isSameDayCapture && !parsed?.is_stale_image) {
+            // Gallery upload or unwatermarked capture taken on scheduled inspection date
+            isStale = false;
+            detectedWatermark = actualImageInfo?.timestampStr
+                ? `${actualImageInfo.timestampStr} (Verified Capture)`
+                : `${expectedDateStr} (Verified Capture)`;
         } else {
-            // Gallery upload or outdated photo
+            // Truly outdated photo or explicitly stale
             isStale = true;
-            if (actualImageInfo?.timestampStr) {
-                detectedWatermark = `${actualImageInfo.timestampStr} (Gallery Upload)`;
-                staleReasonMessage = `Gallery upload (Taken: ${actualImageInfo.timestampStr}) · Live camera capture required`;
-            } else if (hasVisibleWatermark) {
+            if (hasVisibleWatermark) {
                 detectedWatermark = `${rawWatermark} (Outdated)`;
                 staleReasonMessage = `Outdated watermark (${rawWatermark}) · Scheduled: ${allowedDates.join(', ')}`;
+            } else if (actualImageInfo?.timestampStr) {
+                detectedWatermark = `${actualImageInfo.timestampStr} (Outdated Date)`;
+                staleReasonMessage = `Outdated photo taken on ${actualImageInfo.timestampStr} · Scheduled: ${allowedDates.join(', ')}`;
             } else {
-                detectedWatermark = 'Gallery Upload (No Live Watermark)';
-                staleReasonMessage = 'Gallery upload without live watermark · Live camera capture required';
+                detectedWatermark = 'Outdated Photo';
+                staleReasonMessage = `Photo date does not match scheduled inspection date (${allowedDates.join(', ')}).`;
             }
         }
 

@@ -1439,16 +1439,31 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
                     areas={completion.template.cad_areas || []}
                     templateTitle={completion.template?.title}
                     isAdmin={isAdmin}
-                    items={effectiveItems.map((item: any) => ({
-                        id: item.id,
-                        checklist_item_id: item.checklist_item_id,
-                        title: item.checklist_item?.title || 'Step',
-                        ai_cleanliness_score: item.ai_cleanliness_score ?? null,
-                        ai_cleanliness_reason: item.ai_cleanliness_reason ?? null,
-                        photo_url: item.photo_url || null,
-                        // Only pass reference photo URL to admins — staff must not see the benchmark
-                        reference_photo_url: isAdmin ? (item.checklist_item?.reference_photo_url || null) : null,
-                    }))}
+                    items={effectiveItems.map((item: any) => {
+                        const rawPhotos = Array.isArray(item.photos) && item.photos.length > 0
+                            ? item.photos
+                            : (item.photo_url ? [{ id: 'p1', url: item.photo_url, captured_at: item.checked_at }] : []);
+                        const rawRefPhotos = isAdmin
+                            ? (Array.isArray(item.checklist_item?.reference_photos) && item.checklist_item.reference_photos.length > 0
+                                ? item.checklist_item.reference_photos
+                                : (item.checklist_item?.reference_photo_url ? [{ id: 'ref_1', label: 'Clean Standard Photo', url: item.checklist_item.reference_photo_url }] : []))
+                            : [];
+
+                        return {
+                            id: item.id,
+                            checklist_item_id: item.checklist_item_id,
+                            title: item.checklist_item?.title || 'Step',
+                            ai_cleanliness_score: item.ai_cleanliness_score ?? null,
+                            ai_cleanliness_reason: item.ai_cleanliness_reason ?? null,
+                            photo_url: item.photo_url || null,
+                            photos: rawPhotos,
+                            // Only pass reference photo URL to admins — staff must not see the benchmark
+                            reference_photo_url: isAdmin ? (item.checklist_item?.reference_photo_url || rawRefPhotos[0]?.url || null) : null,
+                            reference_photos: rawRefPhotos,
+                            ai_parameter_scores: item.ai_parameter_scores || [],
+                            ai_photo_matches: item.ai_photo_matches || [],
+                        };
+                    })}
                     onScorePhoto={triggerAIScoring}
                     aiScoring={aiScoring}
                 />

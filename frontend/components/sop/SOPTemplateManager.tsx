@@ -1078,7 +1078,13 @@ const SOPTemplateManager: React.FC<SOPTemplateManagerProps> = ({ propertyId, pro
                     propertyId={propertyId || cadViewTemplate.property_id}
                     templateId={cadViewTemplate.id}
                     templateTitle={cadViewTemplate.title}
-                    items={(cadViewTemplate.items || []).map((it: any) => ({ id: it.id, title: it.title, order_index: it.order_index, reference_photo_url: it.reference_photo_url }))}
+                    items={(cadViewTemplate.items || []).map((it: any) => ({
+                        id: it.id,
+                        title: it.title,
+                        order_index: it.order_index,
+                        reference_photo_url: it.reference_photo_url,
+                        reference_photos: it.reference_photos || [],
+                    }))}
                     onSuccess={() => {
                         setToast({ message: 'CAD areas updated', type: 'success' });
                         onRefresh?.();
