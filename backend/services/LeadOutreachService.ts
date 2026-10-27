@@ -216,7 +216,7 @@ This client is already in your pipeline (Lead ID: ${existingLead.id}). Skipping 
                 (outreachConfig.city || '').toLowerCase().includes('bangalore') ||
                 (outreachConfig.city || '').toLowerCase().includes('bengaluru');
 
-            if (outreachConfig.advisorId) {
+            if (!assignedUserId && outreachConfig.advisorId) {
                 assignedUserId = outreachConfig.advisorId;
                 await supabaseAdmin
                     .from('crm_leads')
@@ -238,7 +238,7 @@ This client is already in your pipeline (Lead ID: ${existingLead.id}). Skipping 
 
             // Fetch assigned advisor details
             let advisorName = outreachConfig.advisorName || 'Our Workspace Specialist';
-            if (!outreachConfig.advisorName && assignedUserId) {
+            if (assignedUserId) {
                 const { data: advisorUser } = await supabaseAdmin
                     .from('users')
                     .select('full_name, phone')
@@ -488,20 +488,21 @@ This client is already in your pipeline (Lead ID: ${existingLead.id}). Skipping 
                     metadata: { action: 'call_me_now', raw_message_id: messageId },
                 });
 
-                // 4. Urgent WhatsApp alert to assigned rep
+                // 4. Urgent WhatsApp alert to assigned rep via official crm_lead_assigned_v1 template
                 if (rep?.phone) {
-                    const alertMsg = `🚨 *HOT LEAD ALERT — CALL NOW!*
-Client: ${clientName}
-Phone: ${lead.contact_number}
-City: ${lead.city || 'Bangalore'}
-
-Client tapped *"Call me now"*.
-Target SLA: Connect within 5 minutes!
-Deep Link: /crm/leads`;
-
-                    WhatsAppService.sendAsync(rep.phone, {
-                        message: alertMsg,
-                        moduleName: 'crm',
+                    console.info(`[LeadOutreachService] Dispatching urgent rep alert to ${rep.phone} via crm_lead_assigned_v1`);
+                    AiSensyService.sendTemplate({
+                        phone: rep.phone,
+                        campaignName: 'crm_lead_assigned_v1',
+                        templateParams: [
+                            rep.full_name || 'Advisor',
+                            lead.company_name || 'Individual',
+                            clientName,
+                            lead.contact_number,
+                            lead.city ? `Managed Workspace - ${lead.city}` : 'Managed Workspace - Bangalore',
+                            'IMMEDIATE - Client tapped Call Me Now (5m SLA)',
+                        ],
+                        userName: rep.full_name || 'Advisor',
                     }).catch(e => console.error('[LeadOutreachService] Urgent rep alert error:', e));
                 }
 
@@ -518,7 +519,7 @@ Deep Link: /crm/leads`;
                     }).catch(e => console.error('[LeadOutreachService] Push alert error:', e));
                 }
 
-                // 6. Send Message 2 (Interactive List Picker for Team Size)
+                // 6. Send Message 2 (Interactive List Picker / Selection for Team Size)
                 await this.sendMessage2Qualification(lead, phone);
 
                 return { handled: true, leadId: lead.id, action: 'call_me_now' };
@@ -552,27 +553,45 @@ Deep Link: /crm/leads`;
                     metadata: { action: slotName, scheduled_time: targetFollowup.toISOString(), raw_message_id: messageId },
                 });
 
-                // 2. Send confirmation to lead with advisor's direct business card
-                const confirmationMsg = `Great, noted! ${advisorName} from Autopilot Offices will connect with you ${slotName.toLowerCase()}. In the meantime, you can reach them directly at ${advisorPhone}.`;
-                WhatsAppService.sendAsync(this.formatPhone(phone), {
-                    message: confirmationMsg,
-                    moduleName: 'crm',
-                }).catch(e => console.error('[LeadOutreachService] Advisor card send error:', e));
+                // 2. Alert rep of scheduled call slot
+                if (rep?.phone) {
+                    AiSensyService.sendTemplate({
+                        phone: rep.phone,
+                        campaignName: 'crm_lead_assigned_v1',
+                        templateParams: [
+                            rep.full_name || 'Advisor',
+                            lead.company_name || 'Individual',
+                            clientName,
+                            lead.contact_number,
+                            lead.city ? `Managed Workspace - ${lead.city}` : 'Managed Workspace - Bangalore',
+                            `SCHEDULED: ${slotName} (${targetFollowup.toLocaleString()})`,
+                        ],
+                        userName: rep.full_name || 'Advisor',
+                    }).catch(e => console.error('[LeadOutreachService] Rep slot alert error:', e));
+                }
 
-                // 3. Send Message 2 (Team size list picker)
+                // 3. Send Message 2 (Team size selection)
                 await this.sendMessage2Qualification(lead, phone);
 
                 return { handled: true, leadId: lead.id, action: slotName };
             }
 
             // ── ACTION 3: Team size list picker responses ────────────────────────────────
-            const seatMatch = clean.match(/(under 50|50 to 150|150 to 500|500\+)/i);
+            const seatMatch = clean.match(/(under 50|50 to 150|150 to 500|500\+|1|2|3|4)/i);
             if (seatMatch) {
-                const band = seatMatch[1];
+                const matched = seatMatch[1].toLowerCase();
+                let band = 'Under 50';
                 let approximateSeats = 40;
-                if (band.includes('50 to 150')) approximateSeats = 100;
-                if (band.includes('150 to 500')) approximateSeats = 300;
-                if (band.includes('500+')) approximateSeats = 600;
+                if (matched === '2' || matched.includes('50 to 150')) {
+                    band = '50 to 150';
+                    approximateSeats = 100;
+                } else if (matched === '3' || matched.includes('150 to 500')) {
+                    band = '150 to 500';
+                    approximateSeats = 300;
+                } else if (matched === '4' || matched.includes('500+')) {
+                    band = '500+';
+                    approximateSeats = 600;
+                }
 
                 await supabaseAdmin
                     .from('crm_leads')
@@ -590,15 +609,22 @@ Deep Link: /crm/leads`;
                     metadata: { seat_band: band, seats: approximateSeats },
                 });
 
-                // Notify rep of qualified seat count
+                // Notify rep of qualified seat count via crm_lead_assigned_v1
                 if (rep?.phone) {
-                    const updateMsg = `ℹ️ *Lead Requirement Updated*\nClient: ${clientName}\nTeam Size: ${band} (~${approximateSeats} seats).`;
-                    WhatsAppService.sendAsync(rep.phone, { message: updateMsg, moduleName: 'crm' }).catch(() => {});
+                    AiSensyService.sendTemplate({
+                        phone: rep.phone,
+                        campaignName: 'crm_lead_assigned_v1',
+                        templateParams: [
+                            rep.full_name || 'Advisor',
+                            lead.company_name || 'Individual',
+                            clientName,
+                            lead.contact_number,
+                            lead.city ? `Managed Workspace - ${lead.city}` : 'Managed Workspace - Bangalore',
+                            `QUALIFIED - Team Size: ${band} (~${approximateSeats} seats)`,
+                        ],
+                        userName: rep.full_name || 'Advisor',
+                    }).catch(() => {});
                 }
-
-                // Acknowledge to client
-                const ackMsg = `Thank you! We've noted your team size (${band}). Our advisor is pulling together live floor plans and availability.`;
-                WhatsAppService.sendAsync(this.formatPhone(phone), { message: ackMsg, moduleName: 'crm' }).catch(() => {});
 
                 return { handled: true, leadId: lead.id, action: 'team_size_captured' };
             }
@@ -606,14 +632,10 @@ Deep Link: /crm/leads`;
             // ── ACTION 4: Nudge response: "Still looking" vs "Please close" ─────────────
             if (lower.includes('still looking')) {
                 await supabaseAdmin.from('crm_leads').update({ priority: 'Medium' }).eq('id', lead.id);
-                const ack = `Glad to hear! ${advisorName} will give you a quick call today to understand what you're looking for.`;
-                WhatsAppService.sendAsync(this.formatPhone(phone), { message: ack, moduleName: 'crm' }).catch(() => {});
                 return { handled: true, leadId: lead.id, action: 'nudge_still_looking' };
             }
             if (lower.includes('close') || lower.includes('not looking') || lower.includes('no thanks')) {
                 await supabaseAdmin.from('crm_leads').update({ status_changed_reason: 'Closed by client via WhatsApp nudge' }).eq('id', lead.id);
-                const ack = `Understood. We have closed this inquiry. Feel free to reach back out anytime you need workspace! — Team Autopilot Offices`;
-                WhatsAppService.sendAsync(this.formatPhone(phone), { message: ack, moduleName: 'crm' }).catch(() => {});
                 return { handled: true, leadId: lead.id, action: 'nudge_closed' };
             }
 
@@ -642,22 +664,57 @@ Deep Link: /crm/leads`;
         const hasSeats = lead.seats && Number(lead.seats) > 0;
         const hasLocation = Boolean(lead.location || lead.city);
 
-        // If Meta form already captured both seats and location, skip list picker and send brief confirmation
+        // If Meta form already captured both seats and location, skip
         if (hasSeats && hasLocation) {
-            const skipMsg = `Great, noted! We see you're looking for ~${lead.seats} seats in ${lead.location || lead.city}. Our advisor will have tailored live options ready when we speak!`;
-            WhatsAppService.sendAsync(this.formatPhone(phone), { message: skipMsg, moduleName: 'crm' }).catch(() => {});
+            console.info(`[LeadOutreachService] Skipping Message 2 for lead ${lead.id} — already captured ${lead.seats} seats in ${lead.location || lead.city}`);
             return;
         }
 
-        // Send Message 2 with list picker options
-        const questionText = `Great, noted! Two quick details so we come prepared with the right layouts and pricing:\n1. Approx team size\n2. Preferred area and target move-in month\n\nPlease select your approx team size below:`;
-        const seatOptions = ['Under 50', '50 to 150', '150 to 500', '500+'];
+        const formattedPhone = this.formatPhone(phone);
+        const freeformText = `Great, noted. Two quick details so we come prepared:\n1. Approx team size\n2. Preferred area and move in month\n\nTeam size:\n1. Under 50\n2. 50 to 150\n3. 150 to 500\n4. 500+\n\nReply with your option or team size.`;
 
-        WhatsAppService.sendPoll(this.formatPhone(phone), questionText, seatOptions).catch(() => {
-            // Fallback text if poll is unsupported
-            const fallbackText = `${questionText}\n\n1. Under 50\n2. 50 to 150\n3. 150 to 500\n4. 500+\n\nReply with the number of your option.`;
-            WhatsAppService.sendAsync(this.formatPhone(phone), { message: fallbackText, moduleName: 'crm' }).catch(() => {});
-        });
+        // 1. If AiSensy Project Direct API is configured, send the interactive free-form text
+        let sent = false;
+        if (process.env.AISENSY_PROJECT_ID && process.env.AISENSY_PROJECT_API_KEY) {
+            try {
+                const res = await fetch(`https://apis.aisensy.com/project-apis/v1/project/${encodeURIComponent(process.env.AISENSY_PROJECT_ID)}/messages`, {
+                    method: 'POST',
+                    headers: {
+                        Accept: 'application/json',
+                        'Content-Type': 'application/json',
+                        'X-AiSensy-Project-API-Pwd': process.env.AISENSY_PROJECT_API_KEY,
+                    },
+                    body: JSON.stringify({
+                        to: formattedPhone,
+                        type: 'text',
+                        recipient_type: 'individual',
+                        text: { body: freeformText },
+                    }),
+                    signal: AbortSignal.timeout(10_000),
+                });
+                if (res.ok) {
+                    sent = true;
+                    console.info(`[LeadOutreachService] Message 2 sent via AiSensy Project API to ${formattedPhone}`);
+                }
+            } catch (e: any) {
+                console.warn('[LeadOutreachService] Project API delivery error, falling back to template:', e?.message);
+            }
+        }
+
+        // 2. Fallback to approved Meta template fms_whatsapp_select_v1
+        if (!sent) {
+            console.info(`[LeadOutreachService] Dispatching Message 2 via fms_whatsapp_select_v1 to ${formattedPhone}`);
+            await AiSensyService.sendTemplate({
+                phone: formattedPhone,
+                campaignName: 'fms_whatsapp_select_v1',
+                templateParams: [
+                    'Office Space',
+                    'approx team size',
+                    '1. Under 50 | 2. 50 to 150 | 3. 150 to 500 | 4. 500+',
+                ],
+                userName: (lead.contact_person || '').trim().split(' ')[0] || 'there',
+            }).catch(e => console.error('[LeadOutreachService] Message 2 template dispatch error:', e));
+        }
     }
 
     /**
