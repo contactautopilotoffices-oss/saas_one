@@ -445,3 +445,14 @@ department with the Task Manager ON, cut at 40 by name, so the active people fel
 - **Evaluation:** `test_import_parser_stage1.ts` (+3 checks; all four import test files pass). **L2 knowingly open:** no
   measured head-to-head of Sonnet vs Qwen on real task-list photos (the Qwen choice came from the Stage 1 image test).
   Before relying on it: run the Stage 1 sample images through both and compare field accuracy and cost.
+
+### Changes 2026-10-27 (c): the reason for "can't do it" is optional
+
+- **Owner decision** `[BAA p.107]`: declining a request from another department no longer needs a reason (website,
+  server and WhatsApp). `decideAnswer` no longer asks for one; a reason the person does give is still kept and still
+  grounded in their own words (`checkGrounding`), so the AI cannot invent one. **One YES still confirms** either answer
+  (accept or decline) — a stray tap never answers a request on its own `[BAA p.115]`.
+- **Template** `task_support_request_v1` ends "Tap Accept, or Can't do it." with two quick-reply buttons; a tap reaches
+  the bot as that text and goes through the same `answer_request` path (natural-language users only).
+- **Evaluation**: `test_upgrades_2026_10_26.ts` section 5 updated ("Can't do it" with no reason → one YES → declined
+  without a reason; +2 source checks). Prompt and intents unchanged. **L2** knowingly open (scripted model only).

@@ -212,7 +212,7 @@ export async function executeAction(action: Action, ctx: BrainContext, io: ExecI
             const line = `• ${action.title} (from ${action.fromName})`;
             try {
                 await io.answerRequest(me, action.requestId, action.accept, action.reason);
-                return { summary: action.accept ? `Accepted. It is on your list now, and ${action.fromName} has been told.` : `Done. ${action.fromName} has been told why.`, values: { details: action.accept ? line : `${line}\nReason: ${action.reason}` } };
+                return { summary: action.accept ? `Accepted. It is on your list now, and ${action.fromName} has been told.` : `Done. ${action.fromName} has been told${action.reason ? ' why' : ''}.`, values: { details: action.accept || !action.reason ? line : `${line}\nReason: ${action.reason}` } };
             } catch (err) {
                 return { summary: `I could not send your answer. ${reason(err)}`, values: { details: line } };
             }

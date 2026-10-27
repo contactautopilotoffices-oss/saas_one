@@ -299,8 +299,9 @@ export async function sendTeamDigest(phone: string | null | undefined, input: Pa
 
 /**
  * Owner 2026-10-26 — "Support request from another team" (cross-department collaboration in the Send tab). Template
- * task_support_request_v1: Hello {{1}} · {{2}} asks for your support · Task: {{3}} · Needed by: {{4}} · Reply ACCEPT, or NO
- * with a reason. It must be approved in AiSensy / Meta before it is delivered; until then the in-app notice still works.
+ * task_support_request_v1 (owner 2026-10-27: worded without "support"): header "Request from another team" · Hello {{1}} ·
+ * {{2}} needs your help with a task · Task: {{3}} · Needed by: {{4}} · Tap Accept, or Can't do it (two quick-reply buttons;
+ * a tap reaches the bot as that text, the reason is optional) · footer "Autopilot Offices · Task Manager". It must be approved in AiSensy / Meta before it is delivered; until then the in-app notice still works.
  */
 export const SUPPORT_REQUEST_CAMPAIGN = process.env.AISENSY_TASK_SUPPORT_REQUEST_CAMPAIGN || 'task_support_request_v1';
 
@@ -308,7 +309,7 @@ export function supportRequestParams(recipientName: string, fromLabel: string, t
     return [firstName(recipientName), oneLine(fromLabel, 100) || 'A colleague', oneLine(title, 200) || 'a task', neededBy ? formatDate(neededBy) : 'No date given'];
 }
 export function supportRequestPreview(p: [string, string, string, string]): string {
-    return `🤝 Support request from another team\n\nHello ${p[0]},\n${p[1]} asks for your support.\nTask: ${p[2]}\nNeeded by: ${p[3]}\n\nReply ACCEPT, or NO with a reason.`;
+    return `🤝 Request from another team\n\nHello ${p[0]},\n${p[1]} needs your help with a task.\nTask: ${p[2]}\nNeeded by: ${p[3]}\n\nTap Accept, or Can't do it.`;
 }
 
 /** Tells the receiver about a support request. Never throws. Gated like every other alert (kill switches, Pretend Mode). */

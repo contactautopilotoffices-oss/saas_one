@@ -78,7 +78,7 @@ export default function CrossDeptPanel({ collab, me, uploadFiles, onChanged, due
     // Owner 2026-10-27: a task (not a support request) with a date becomes a deadline when the switch is ON
     const asDeadline = dueDates && kind !== 'support' && !!neededBy;
     const preview = person ? (kind === 'support'
-        ? `🤝 Support request from another team\n\nHello ${firstName(person.name)},\n${from} asks for your support.\nTask: ${title.trim() || '…'}\nNeeded by: ${neededBy ? longDay(neededBy) : 'No date given'}\n\nReply ACCEPT, or NO with a reason.`
+        ? `🤝 Request from another team\n\nHello ${firstName(person.name)},\n${from} needs your help with a task.\nTask: ${title.trim() || '…'}\nNeeded by: ${neededBy ? longDay(neededBy) : 'No date given'}\n\nTap Accept, or Can't do it.`
         : `🔔 A new task has been assigned to you.\n\nTask: ${title.trim() || '…'}\nAssigned by: ${from}\nDate: ${longDay(asDeadline ? todayIST() : neededBy || todayIST())}\n\nReply "tasks" to see your list and mark it done.`) : '';
 
     const pickFiles = (list: FileList | null) => {
@@ -343,12 +343,12 @@ export function IncomingList({ incoming, respond, flash, onDone, compact = false
                         </p>
                         {declining === r.id ? (
                             <div className="mt-2 space-y-2">
-                                <label className="block"><span className="mb-1 block text-[11px] font-bold text-zinc-600 dark:text-zinc-300">Reason (sent to {firstName(r.fromName)})</span>
+                                <label className="block"><span className="mb-1 block text-[11px] font-bold text-zinc-600 dark:text-zinc-300">Reason (optional, sent to {firstName(r.fromName)})</span>
                                     <textarea autoFocus rows={2} maxLength={300} value={reason} onChange={e => setReason(e.target.value)}
                                         className="w-full resize-none rounded-xl border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold outline-none focus:border-rose-400 dark:border-zinc-700 dark:bg-zinc-950" />
                                 </label>
                                 <div className="flex gap-2">
-                                    <button type="button" disabled={busy === r.id || reason.trim().length < 2} onClick={() => void answer(r.id, false)} className="flex items-center gap-1 rounded-lg bg-rose-700 px-3 py-1.5 text-[11px] font-black text-white disabled:opacity-50">{busy === r.id && <Loader2 className="h-3 w-3 animate-spin" />} Send reason</button>
+                                    <button type="button" disabled={busy === r.id} onClick={() => void answer(r.id, false)} className="flex items-center gap-1 rounded-lg bg-rose-700 px-3 py-1.5 text-[11px] font-black text-white disabled:opacity-50">{busy === r.id && <Loader2 className="h-3 w-3 animate-spin" />} Send</button>
                                     <button type="button" onClick={() => { setDeclining(null); setReason(''); }} className="rounded-lg border border-zinc-300 px-3 py-1.5 text-[11px] font-bold text-zinc-700 dark:border-zinc-700 dark:text-zinc-200">Back</button>
                                 </div>
                             </div>

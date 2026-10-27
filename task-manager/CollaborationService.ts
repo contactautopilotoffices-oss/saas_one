@@ -17,7 +17,7 @@ import { setTaskDue } from './TaskDueService';
  * "Your manager"):
  *   task      give them a task: it goes straight onto their list (they are told like any new task);
  *   support   ask for support: a request waits for them to Accept (→ a normal task, given by the sender) or say they
- *             can't (with a reason, sent back to the sender). Nothing shows on lists or reports until accepted;
+ *             can't (a reason is optional, owner 2026-10-27; sent back to the sender). Nothing shows on lists or reports until accepted;
  *   together  work on it together: both get a linked copy and each finishes their own.
  * The receiver's manager is not told (owner decision). The acting person always comes from the login session.
  */
@@ -147,7 +147,7 @@ export class CollaborationService {
                 eventType: 'task_support_requested', actorId: actor.id, targetEmployeeId: person.id,
                 details: { requestId: data.id, title, neededBy, toDepartment: person.department_name, via: 'send_tab' },
             });
-            void taskBell({ userId: person.id, kind: 'TASK_ASSIGNED', title: `Support request from ${actor.name}`, message: `${from} asks for your support: ${title}`, departmentName: person.department_name });
+            void taskBell({ userId: person.id, kind: 'TASK_ASSIGNED', title: `Request from ${actor.name}`, message: `${from} needs your help with: ${title}`, departmentName: person.department_name });
             void sendSupportRequest(person.phone_number, { recipientName: person.name, fromLabel: from, title, neededBy, departmentId: person.department_id || undefined });
             return { taskIds: [], requestId: data.id as string };
         }
@@ -260,7 +260,8 @@ export class CollaborationService {
         if (!isUuid(input.requestId)) throw new WorkspaceError(400, 'That request is not valid.');
         if (typeof input.accept !== 'boolean') throw new WorkspaceError(400, 'Say whether you accept the request.');
         const reason = String(input.reason ?? '').replace(/\s+/g, ' ').trim();
-        if (!input.accept && (reason.length < 2 || reason.length > 300)) throw new WorkspaceError(400, 'Please give a short reason (up to 300 characters).');
+        // Owner 2026-10-27: the reason for "can't do it" is optional (at most 300 characters when given)
+        if (!input.accept && reason.length > 300) throw new WorkspaceError(400, 'Please keep the reason short (up to 300 characters).');
         const actor = await this.actorFor(actorUserId);
 
         const { data: req, error } = await supabaseAdmin.from('task_requests').select('*').eq('id', input.requestId).maybeSingle();
@@ -275,7 +276,7 @@ export class CollaborationService {
 
         // Claim it first, so a second answer at the same moment finds nothing to change
         const { data: claimed, error: claimError } = await supabaseAdmin.from('task_requests')
-            .update(input.accept ? { state: 'accepted', responded_at: now } : { state: 'declined', decline_reason: reason, responded_at: now })
+            .update(input.accept ? { state: 'accepted', responded_at: now } : { state: 'declined', decline_reason: reason || null, responded_at: now })
             .eq('id', req.id).eq('state', 'awaiting').select('id').maybeSingle();
         if (claimError) throw new WorkspaceError(500, 'Could not save your answer just now. Please try again.');
         if (!claimed) throw new WorkspaceError(409, 'This request has already been answered.', 'ANSWERED');
@@ -309,14 +310,14 @@ export class CollaborationService {
 
         await TaskDatabaseService.logAudit({
             eventType: input.accept ? 'task_support_accepted' : 'task_support_declined', actorId: actor.id, targetEmployeeId: req.from_user_id as string, taskId: taskId ?? undefined,
-            details: { requestId: req.id, title: req.title, ...(input.accept ? {} : { reason }), via: input.via ?? 'send_tab' },
+            details: { requestId: req.id, title: req.title, ...(input.accept || !reason ? {} : { reason }), via: input.via ?? 'send_tab' },
         });
         if (sender?.active) {
             const who = personLabel(actor.name, actor.department_name);
             void taskBell({
                 userId: sender.id, kind: 'TASK_UPDATE', departmentName: sender.department_name,
                 title: input.accept ? `${actor.name} accepted your request` : `${actor.name} can't take your request`,
-                message: input.accept ? `${who} accepted: ${req.title}` : `${who} on "${req.title}": ${reason}`,
+                message: input.accept ? `${who} accepted: ${req.title}` : reason ? `${who} on "${req.title}": ${reason}` : `${who} can't take: ${req.title}`,
             });
         }
         return { taskId };

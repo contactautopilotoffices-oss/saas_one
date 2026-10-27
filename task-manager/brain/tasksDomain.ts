@@ -644,7 +644,8 @@ function decideChange(slots: Extract<Slots, { intent: 'change_task' }>, ctx: Bra
 
 /**
  * Owner 2026-10-26: accept or decline a support request from another department. Only requests waiting for THIS person
- * (ctx.supportRequests) can be picked; never guesses between several. Declining needs a reason (asked for when missing).
+ * (ctx.supportRequests) can be picked; never guesses between several. Owner 2026-10-27: a reason for declining is optional
+ * (kept when they give one, never asked for); one YES still confirms either answer.
  * Always previewed, then YES; the server checks everything again (CollaborationService.respond).
  */
 function decideAnswer(slots: Extract<Slots, { intent: 'answer_request' }>, ctx: BrainContext): Decision {
@@ -660,7 +661,6 @@ function decideAnswer(slots: Extract<Slots, { intent: 'answer_request' }>, ctx: 
     }
     if (pick.length > 1) return clarify('several_tasks_match', pick.map(label), hint || null);
     const r = pick[0];
-    if (slots.decision === 'decline' && !slots.reason) return clarify('no_task_content', [], 'reason');
     return { outcome: 'CONFIRM', action: { type: 'answer_request', requestId: r.id, title: r.title, fromName: r.fromName, accept: slots.decision === 'accept', reason: slots.decision === 'decline' ? slots.reason : null } };
 }
 
@@ -1004,7 +1004,7 @@ function batchLine(a: Action, ctx: BrainContext): string {
         case 'rename_task': return `Rename "${titleOf(a.taskId)}" to "${a.title}"`;
         case 'add_note': return `Add note to "${a.title}"${a.ownerName ? ` (${a.ownerName})` : ''}: ${a.note}`;
         case 'change_task': return `Change "${a.title}"${a.ownerName ? ` (${a.ownerName})` : ''}: ${changeWords(a, ctx)}`;
-        case 'answer_request': return a.accept ? `Accept ${a.fromName}'s request: ${a.title}` : `Tell ${a.fromName} you can't take "${a.title}": ${a.reason}`;
+        case 'answer_request': return a.accept ? `Accept ${a.fromName}'s request: ${a.title}` : `Tell ${a.fromName} you can't take "${a.title}"${a.reason ? `: ${a.reason}` : ''}`;
         case 'remind_tasks': return `Send a reminder about: ${a.lines.join(', ')}`;
         case 'lock_tasks': return `${a.lock ? 'Repeat every working day' : 'Stop repeating'}: ${a.taskIds.map(titleOf).join(', ')}`;
         default: return 'One more change';
@@ -1108,10 +1108,10 @@ function replyFacts(decision: Decision, ctx: BrainContext, result?: ExecutionRes
             fallback: `Add this note to "${a.title}"${whose}?\nNote: ${a.note}` };
     }
     if (confirming && a.type === 'answer_request') {
-        const line = a.accept ? `Accept "${a.title}" from ${a.fromName}? It goes on your list.` : `Tell ${a.fromName} you can't take "${a.title}"?\nReason: ${a.reason}`;
+        const line = a.accept ? `Accept "${a.title}" from ${a.fromName}? It goes on your list.` : `Tell ${a.fromName} you can't take "${a.title}"?${a.reason ? `\nReason: ${a.reason}` : ''}`;
         return { kind: a.accept ? 'confirm_accept_request' : 'confirm_decline_request',
             describe: a.accept ? `Ask the person to confirm accepting ${a.fromName}'s support request (it goes on their list and ${a.fromName} is told). Nothing has changed yet.`
-                : `Ask the person to confirm telling ${a.fromName} they can't take the request, with their reason (inserted by the system). Nothing has been sent yet.`,
+                : `Ask the person to confirm telling ${a.fromName} they can't take the request${a.reason ? ', with their reason (inserted by the system)' : ' (they gave no reason, which is fine; do not ask for one)'}. Nothing has been sent yet.`,
             values: { task: a.title, ...(a.reason ? { reason: `Reason: ${a.reason}` } : {}) }, required: ['task', ...(a.reason ? ['reason'] : [])],
             asksQuestion: true, claimsNothingDone: true, names: [sender.name, a.fromName], fallback: line };
     }

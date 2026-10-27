@@ -159,9 +159,12 @@ async function run() {
     w = mk(m => (/can't/i.test(m) ? U('answer_request', { which: { all: false, numbers: [], hints: [] }, decision: 'decline', reason: 'payroll is with the vendor' }, 'Declines.') : YES), REQ);
     await turn(w, "can't, payroll is with the vendor"); await turn(w, 'yes');
     check('"can\'t, payroll is with the vendor" → declined with their reason', JSON.stringify(w.exec) === JSON.stringify([['answer', 'u1', 'r1', false, 'payroll is with the vendor']]), w.exec);
-    w = mk(() => U('answer_request', { which: { all: false, numbers: [], hints: [] }, decision: 'decline', reason: null }, 'Declines.'), REQ);
-    await turn(w, 'no');
-    check('declining without a reason → asks for one, nothing sent', w.exec.length === 0 && w.state?.data?.action == null, w.state?.data);
+    // Owner 2026-10-27: the reason is optional — "Can't do it" (the template's button) is confirmed once and sent without one
+    w = mk(m => (/can't do it/i.test(m) ? U('answer_request', { which: { all: false, numbers: [], hints: [] }, decision: 'decline', reason: null }, 'Declines.') : YES), REQ);
+    await turn(w, "Can't do it");
+    check('"Can not do it" with no reason → nothing sent yet, one YES asked', w.exec.length === 0 && w.state?.data?.action != null, w.state?.data);
+    await turn(w, 'yes');
+    check('…and after YES the request is declined without a reason', JSON.stringify(w.exec) === JSON.stringify([['answer', 'u1', 'r1', false, null]]), w.exec);
     w = mk(() => U('answer_request', { which: { all: false, numbers: [], hints: [] }, decision: 'decline', reason: 'the vendor has not paid' }, 'Declines.'), REQ);
     await turn(w, "can't do it");
     check('a reason the person never wrote → not trusted, nothing sent', w.exec.length === 0 && w.state?.data?.action == null, w.state?.data);
@@ -189,7 +192,7 @@ async function run() {
     check('only people in OTHER departments, never superusers, never yourself', cs.includes("e.role !== 'superuser'") && cs.includes('e.department_id !== actor.department_id') && cs.includes('e.id !== actor.id'));
     check('only people who use the Task Manager (unlocked)', cs.includes('TaskAccessService.partition(others, snapshot)'));
     check('a support request waits: only the receiver answers, and only once (conditional claim)', cs.includes('req.to_user_id !== actor.id') && cs.includes(".eq('state', 'awaiting').select('id').maybeSingle()"));
-    check('declining needs a reason; it goes back to the sender in the app', cs.includes('Please give a short reason') && cs.includes("can't take your request"));
+    check('declining: the reason is optional (owner 2026-10-27); the answer goes back to the sender in the app', cs.includes('Please keep the reason short') && cs.includes("can't take your request"));
     check("the receiver's manager is not told", !cs.includes('reporting_manager_id'));
     check('reminders only for tasks you gave to other departments', cs.includes('t.assigned_by === actor.id && !!holder?.department_id && holder.department_id !== actor.department_id'));
     const tv = read('frontend/components/procurement/tasks/TaskView.tsx');
@@ -214,6 +217,10 @@ async function run() {
     check('remove: logged in the audit trail', /task_attachment_removed/.test(rm));
     check('the delete button shows only on files the server marks canDelete', /removeFile && f\.canDelete/.test(read('frontend/components/procurement/tasks/TaskView.tsx')));
     check('the route takes WHO from the session', /export async function DELETE[\s\S]*sessionUserId\(\)/.test(read('app/api/task-manager/attachments/route.ts')));
+
+    const respondSrc = read('task-manager/CollaborationService.ts');
+    check('server: a decline without a reason is accepted (only a too-long reason is refused)', /if \(!input\.accept && reason\.length > 300\)/.test(respondSrc) && /decline_reason: reason \|\| null/.test(respondSrc));
+    check('website: "Send" works with the reason box empty', /disabled=\{busy === r\.id\} onClick=\{\(\) => void answer\(r\.id, false\)\}/.test(read('frontend/components/procurement/tasks/CrossDeptPanel.tsx')));
 
     console.log('\n9. "Work with other departments" switch, and no grey example text (owner 2026-10-27)');
     const xsql = read('supabase/migrations/20261027000002_task_manager_cross_department_switch.sql');
