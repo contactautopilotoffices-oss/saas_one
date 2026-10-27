@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
+import { cityFilterOr } from '@/backend/lib/crm/cityGroups';
 
 /**
  * CRM access resolution.
@@ -10,11 +11,12 @@ import { supabaseAdmin } from '@/backend/lib/supabase/admin';
  *
  *   - A user must be an ACTIVE member of the organization (org- or property-level)
  *     with a CRM-capable role, OR a master admin.
- *   - Every CRM member sees the whole org's leads, including leads assigned to
- *     teammates — the "All Leads" view is org-wide. This matches canAccessLead(),
- *     which already lets any active CRM member open any lead in their org.
- *   - Territory grants (crm_territories) remain on CrmAccess for lead DISTRIBUTION
- *     and reporting; they no longer hide leads from the list.
+ *   - bd_admin / org_admin / org_super_admin / master_admin  -> see the whole org.
+ *   - bd_rep -> sees their own MARKET: leads they created or are assigned to
+ *     (assignment = ownership, always visible), plus every lead in the cities and
+ *     campaigns granted to them in crm_territories, whoever they are assigned to.
+ *     So "All Leads" means all of my city's leads — a Mumbai rep does not see
+ *     Bangalore, and a Bangalore rep does not see Mumbai.
  *   - Admin-only powers (deal_value, archival) are still gated by isAdmin.
  */
 
@@ -63,6 +65,29 @@ export function readOrgId(request: NextRequest, body?: any): string | null {
         body?.org_id ||
         null
     );
+}
+
+/**
+ * Split crm_territories rows into city and campaign grants.
+ *
+ * A row may carry a city, a campaign, or both, and both are grants. Reading them
+ * as either/or was the bug behind "All Leads shows only my own leads": every row
+ * in this org names a campaign inside a city (Mumbai/Andheri, Bangalore/Bangalore),
+ * so the city grant was always discarded and a rep matched on the campaign name
+ * alone — never on their market.
+ */
+export function territoryGrants(
+    rows: { city?: string | null; campaign?: string | null }[]
+): { cities: string[]; campaigns: string[] } {
+    const cities: string[] = [];
+    const campaigns: string[] = [];
+    for (const t of rows || []) {
+        const city = (t.city || '').trim();
+        const campaign = (t.campaign || '').trim();
+        if (city) cities.push(city);
+        if (campaign) campaigns.push(campaign);
+    }
+    return { cities: [...new Set(cities)], campaigns: [...new Set(campaigns)] };
 }
 
 /**
@@ -140,13 +165,9 @@ export async function resolveCrmAccess(
             .select('city, campaign')
             .eq('user_id', user.id)
             .eq('is_active', true);
-        // A row with a campaign grants that campaign; otherwise it grants the whole city.
-        for (const t of terr || []) {
-            const campaign = (t.campaign || '').trim();
-            const city = (t.city || '').trim();
-            if (campaign) territoryCampaigns.push(campaign);
-            else if (city) territoryCities.push(city);
-        }
+        const grants = territoryGrants(terr || []);
+        territoryCities = grants.cities;
+        territoryCampaigns = grants.campaigns;
     }
 
     return { user, isMasterAdmin, organizationId, isAdmin, roles, territoryCities, territoryCampaigns };
@@ -157,19 +178,36 @@ export function isCrmAccessError(x: CrmAccess | NextResponse): x is NextResponse
 }
 
 /**
- * Apply tenancy to a crm_leads PostgREST query builder.
+ * Apply org + rep-market visibility to a crm_leads PostgREST query builder.
  *
- * Every active CRM member of the org sees every lead in that org, so the
- * "All Leads" view really does list all leads — including the ones assigned to
- * other reps. This mirrors canAccessLead(), which already grants any CRM member
- * read access to any lead in their organization; before this, the list query was
- * stricter than the detail route, so teammates' leads were silently missing.
+ * Admins get the whole org. A rep gets their market: leads they created or are
+ * assigned (ownership is always visible, even out of territory), plus every lead
+ * in their granted cities and campaigns regardless of who holds it — that is what
+ * "All Leads" shows them, and why a Mumbai rep sees their teammates' Mumbai leads
+ * but no Bangalore ones.
  *
- * Territory grants are NOT applied here: stopping cross-territory work belongs in
- * lead DISTRIBUTION (don't mis-assign), not in hiding rows from the table.
+ * The city match covers the campaign name too, because roughly a third of the ad
+ * leads arrive with no city and no location, carrying only a campaign like
+ * "Managed Office - Lower Parel (New)" to say where they belong.
  */
 export function scopeLeadsQuery(query: any, access: CrmAccess) {
-    return query.eq('organization_id', access.organizationId);
+    query = query.eq('organization_id', access.organizationId);
+    if (access.isAdmin) return query;
+
+    const ors: string[] = [`created_by.eq.${access.user.id}`, `assigned_to.eq.${access.user.id}`];
+    if (access.territoryCities.length > 0) {
+        // Metro-aware: a "Mumbai" grant must cover its neighbourhoods (Lower Parel,
+        // Andheri, …), matched against city, location AND campaign.
+        const cityOr = cityFilterOr(access.territoryCities, { includeCampaign: true });
+        if (cityOr) ors.push(cityOr);
+    }
+    if (access.territoryCampaigns.length > 0) {
+        const list = [...new Set(access.territoryCampaigns)]
+            .map((c) => `"${c.replace(/"/g, '')}"`)
+            .join(',');
+        ors.push(`campaign.in.(${list})`);
+    }
+    return query.or(ors.join(','));
 }
 
 /** True when this rep may act on a specific already-fetched lead row. */

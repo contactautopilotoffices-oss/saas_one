@@ -43,7 +43,11 @@ export class WhatsAppService {
             return false;
         }
 
-        const campaignName = options.templateName || 'fms_welcome_onboarding_v1';
+        const campaignName = options.templateName;
+        if (!campaignName) {
+            console.warn('[WhatsAppService] ⚠️ No templateName specified for sendAsync to', formattedPhone, '— skipping to avoid unwanted template broadcast.');
+            return false;
+        }
         const templateParams = options.templateParams || [
             'User',
             'AutoPilot Site'
