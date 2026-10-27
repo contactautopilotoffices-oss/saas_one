@@ -435,9 +435,11 @@ async function run() {
     check('the live preview is built from the SAME template blanks the server sends (template only)', /import \{ buildPingTemplatePreview \} from '@\/task-manager\/pingMessage'/.test(panelSrc) && /deliver/.test(read('task-manager/SuperuserPingService.ts')) && /buildPingTemplateParams\(input, recipient\.name\)/.test(read('task-manager/SuperuserPingService.ts')) && /templateOnly: true/.test(read('task-manager/SuperuserPingService.ts')) && /buildPingTemplateParams\(i, recipientName\)/.test(read('task-manager/pingMessage.ts')));
     check('the view offers send now, schedule in 15-minute steps, cancel, and the shared regular reminder', /Send now/.test(panelSrc) && /step=\{900\}/.test(panelSrc) && /Cancel/.test(panelSrc) && /Regular reminders/.test(panelSrc));
     const tab = read('frontend/components/procurement/ProcurementTasksTab.tsx');
-    check('the Tasks tab shows the view only for a team whose switch is ON and when there is someone to work with', /const collab = ok\.superuserCollab\?\.enabled && ok\.superuserCollab\.superusers\.length/.test(tab) && /\.\.\.\(collab \? \[\{ id: 'superuser' as View/.test(tab));
+    // Owner 2026-10-26: the Send tab now always shows (it also holds "Other departments"); the superuser side ("Your
+    // manager") still only for a team whose switch is ON and when there is someone to work with.
+    check('the "Your manager" side shows only for a team whose switch is ON and when there is someone to work with', /const superCollab = ok\.superuserCollab\?\.enabled && ok\.superuserCollab\.superusers\.length/.test(tab) && /side === 'manager' && superCollab \?/.test(tab) && /\{superCollab && crossDeptOn && \(/.test(tab));
     const panelUi = read('frontend/components/task-manager/TaskAccessPanel.tsx');
-    check('the Control Center has the per-department switch with its SQL-file banner', /Send tasks to a superuser: \{d\.superuserCollabEnabled/.test(panelUi) && /action: 'set_superuser_collab', departmentId/.test(panelUi) && /20261007000006_task_manager_superuser_pings\.sql/.test(panelUi));
+    check('the Control Center has the per-department switch with its SQL-file banner', /label: 'Send tasks to a superuser'[^}]*on: d\.superuserCollabEnabled/.test(panelUi) && /action: 'set_superuser_collab', departmentId/.test(panelUi) && /20261007000006_task_manager_superuser_pings\.sql/.test(panelUi));
     const permSrc = read('task-manager/PermissionService.ts');
     check('the permission change is exactly one guarded branch (superuser target + switch ON)', /target\.role === 'superuser' && actor\.department_id && await TaskAccessService\.isSuperuserCollabEnabled\(actor\.department_id\)/.test(permSrc));
     const relaySrc = read('task-manager/brain/relay.ts');

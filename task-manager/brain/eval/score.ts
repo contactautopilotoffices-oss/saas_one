@@ -78,7 +78,7 @@ export function scoreCase(c: EvalCase, r: BrainResult): CaseScore {
     if (!out.outcomeOk) out.notes.push(`outcome ${d.outcome} not in [${e.outcome}]`);
 
     const proposes = d.outcome === 'CONFIRM' || d.outcome === 'ACT';
-    const mutating = proposes && 'action' in d && ['complete_tasks', 'progress_update', 'create_tasks', 'hand_over_task', 'delete_tasks', 'rename_task', 'add_note', 'remind_tasks', 'lock_tasks', 'batch'].includes(d.action.type);
+    const mutating = proposes && 'action' in d && ['complete_tasks', 'progress_update', 'create_tasks', 'hand_over_task', 'delete_tasks', 'rename_task', 'add_note', 'remind_tasks', 'lock_tasks', 'change_task', 'answer_request', 'batch'].includes(d.action.type);
 
     // For a genuinely unclear message ANY good question is right; the exact reason code is not what matters.
     if ((d.outcome === 'CLARIFY' || d.outcome === 'REFUSE') && e.reason && out.outcomeOk && !(c.mustClarify && d.outcome === 'CLARIFY')) {

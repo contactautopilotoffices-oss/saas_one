@@ -9,6 +9,9 @@
 process.env.NEXT_PUBLIC_SUPABASE_URL = 'http://127.0.0.1:1';
 process.env.SUPABASE_SERVICE_ROLE_KEY = 'fake-key-offline-test';
 
+import fs from 'node:fs';
+import path from 'node:path';
+
 let failures = 0;
 const check = (n: string, ok: boolean, x?: unknown) => { if (ok) console.log(`  ✓ ${n}`); else { failures++; console.error(`  ✗ ${n}`, x ?? ''); } };
 
@@ -138,6 +141,11 @@ async function run() {
     check('carried forward shows where it came from', /• BGV pending cases: To do, from 19 Oct/.test(list), list);
     check('someone with nothing today is still listed', /\*Sanil Parab\*: no tasks today/.test(list), list);
     check('header counts people and tasks; carried-forward work comes first', list.startsWith('Your team today: 3 people, 4 tasks.') && list.indexOf('Srushti') < list.indexOf('Neeti'), list);
+    // Owner 2026-10-27: to do / in progress / carried forward / done at a glance; open work first in each person's list
+    check('second line sums up to do, in progress, carried forward and done', list.split('\n')[1] === 'To do: 2 · In progress: 1 · Carried forward: 1 · Done: 1', list.split('\n')[1]);
+    check('each person: carried forward, then in progress, then to do, done last', list.indexOf('BGV pending cases') < list.indexOf('Onboarding') && list.indexOf('Onboarding') < list.indexOf('Offer letter to Priya'), list);
+    const liveSrc = fs.readFileSync(path.resolve(__dirname, '../brain/live.ts'), 'utf8');
+    check('the team is only people who are unlocked (kickoff recorded), cut to 40 after that', /TaskAccessService\.partition\(candidates\)\)\.allowed\.slice\(0, 40\)/.test(liveSrc));
     const counts = R.buildTeamReport(members);
     check('the progress view stays counts only (no task names)', /Srushti Madhani: 1\/3 done/.test(counts) && !/Onboarding/.test(counts), counts);
 

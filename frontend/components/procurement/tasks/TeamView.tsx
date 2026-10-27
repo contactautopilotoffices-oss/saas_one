@@ -4,15 +4,26 @@ import React, { useMemo, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { Clock, Plus, X } from 'lucide-react';
 import { COLUMNS, EASE, WAssignable, WMember, WTask, avatarGradient, initials, shortDate } from './types';
+import { doneDueStatus, spanLabel } from '@/task-manager/dueDates';
+
+/** Owner 2026-10-27: finished tasks that had a deadline — how many on time, and by how much the late ones were late. */
+interface OnTime { total: number; onTime: number; lateMs: number[] }
+
+function onTimeLine(s: OnTime): { pct: number; text: string; late: string | null } {
+    const pct = Math.round((s.onTime / s.total) * 100);
+    const avgLate = s.lateMs.length ? s.lateMs.reduce((a, b) => a + b, 0) / s.lateMs.length : 0;
+    return { pct, text: `${pct}% · ${s.onTime}/${s.total}`, late: s.lateMs.length ? `When late: by ${spanLabel(avgLate)} on average` : null };
+}
 
 const item = {
     hidden: { opacity: 0, y: 16 },
     show: { opacity: 1, y: 0, transition: { duration: 0.6, ease: EASE } },
 };
 
-function MemberCard({ m, open, done, canAssign, onOpen, onAssign }: {
-    m: WMember; open: number; done: number; canAssign: boolean; onOpen: () => void; onAssign: () => void;
+function MemberCard({ m, open, done, onTime, canAssign, onOpen, onAssign }: {
+    m: WMember; open: number; done: number; onTime?: OnTime; canAssign: boolean; onOpen: () => void; onAssign: () => void;
 }) {
+    const ot = onTime && onTime.total > 0 ? onTimeLine(onTime) : null;
     const total = open + done;
     const pct = total > 0 ? Math.round((done / total) * 100) : 0;
 
@@ -36,6 +47,15 @@ function MemberCard({ m, open, done, canAssign, onOpen, onAssign }: {
             <div className="h-1.5 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`${m.name} progress`}>
                 <motion.div className="h-full rounded-full bg-emerald-500" initial={{ width: 0 }} animate={{ width: `${pct}%` }} transition={{ duration: 0.9, ease: EASE }} />
             </div>
+            {ot && (
+                <div className="rounded-2xl bg-zinc-50 px-3 py-2 text-left dark:bg-zinc-800/50" title="Only finished tasks with a due date count">
+                    <p className="flex items-center justify-between text-[11px] font-bold text-zinc-600 dark:text-zinc-300">
+                        <span>On time</span>
+                        <span className={`tabular-nums ${ot.pct >= 80 ? 'text-emerald-700 dark:text-emerald-300' : ot.pct >= 50 ? 'text-amber-700 dark:text-amber-300' : 'text-rose-700 dark:text-rose-300'}`}>{ot.text}</span>
+                    </p>
+                    {ot.late && <p className="mt-0.5 text-[10px] font-semibold text-zinc-500">{ot.late}</p>}
+                </div>
+            )}
             <div className="flex gap-2">
                 <button type="button" onClick={onOpen} className="flex-1 rounded-xl border border-zinc-300 px-3 py-2 text-xs font-bold text-zinc-700 transition-colors hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800">
                     View tasks
@@ -103,12 +123,17 @@ export default function TeamView({ members, tasks, assignable, onAssign }: {
 
     // Counts come from the tasks on screen, so they stay correct the moment a card is moved.
     const stats = useMemo(() => {
-        const map = new Map<string, { open: number; done: number }>();
-        members.forEach(m => map.set(m.userId, { open: 0, done: 0 }));
+        const map = new Map<string, { open: number; done: number; onTime: OnTime }>();
+        members.forEach(m => map.set(m.userId, { open: 0, done: 0, onTime: { total: 0, onTime: 0, lateMs: [] } }));
         tasks.forEach(t => {
             const s = map.get(t.ownerId);
             if (!s) return;
             if (t.status === 'completed') s.done++; else s.open++;
+            if (t.status === 'completed' && t.due && t.completedAt) {
+                const d = doneDueStatus(t.due, t.completedAt);
+                s.onTime.total++;
+                if (d.onTime) s.onTime.onTime++; else s.onTime.lateMs.push(d.lateMs);
+            }
         });
         return map;
     }, [members, tasks]);
@@ -130,6 +155,7 @@ export default function TeamView({ members, tasks, assignable, onAssign }: {
                         m={m}
                         open={stats.get(m.userId)?.open ?? 0}
                         done={stats.get(m.userId)?.done ?? 0}
+                        onTime={stats.get(m.userId)?.onTime}
                         canAssign={canAssign(m.userId)}
                         onOpen={() => setOpenId(m.userId)}
                         onAssign={() => onAssign(m.userId)}

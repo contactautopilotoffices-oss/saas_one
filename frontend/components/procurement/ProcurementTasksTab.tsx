@@ -4,15 +4,19 @@ import React, { useMemo, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { AlertTriangle, Bell, CheckCircle2, ClipboardList, LayoutGrid, Lock, Plus, RefreshCw, Send, UserCheck, Users, X } from 'lucide-react';
 import { EASE, WTask, todayIST } from './tasks/types';
-import DateRangePicker, { DateRange } from '@/frontend/components/task-manager/DateRangePicker';
+import { DateRange } from '@/frontend/components/task-manager/DateRangePicker';
+import TaskRangeFilter from '@/frontend/components/task-manager/assign/TaskRangeFilter';
 import { useWorkspace } from './tasks/useWorkspace';
 import StatCards from './tasks/StatCards';
 import Board from './tasks/Board';
 import TeamView from './tasks/TeamView';
 import TaskDialog from './tasks/TaskDialog';
+import RemarkDialog from './tasks/RemarkDialog';
 import NotificationsView from './tasks/NotificationsView';
 import SuperuserPanel from './tasks/SuperuserPanel';
 import AssignedView from './tasks/AssignedView';
+import CrossDeptPanel, { IncomingList } from './tasks/CrossDeptPanel';
+import { useCollaboration } from './tasks/useCollaboration';
 
 /**
  * Procurement "Tasks" tab: a drag-and-drop board and a team view.
@@ -21,6 +25,8 @@ import AssignedView from './tasks/AssignedView';
  */
 
 type View = 'board' | 'team' | 'assigned' | 'notifications' | 'superuser';
+/** Owner 2026-10-26: the Send tab has two sides — your manager (superuser) and other departments. */
+type SendTo = 'manager' | 'departments';
 type Filter = 'all' | 'today' | 'carried';
 
 const FILTERS: ReadonlyArray<{ id: Filter; label: string }> = [
@@ -92,9 +98,14 @@ export default function ProcurementTasksTab({ departmentName = 'Procurement' }: 
     const date = range.from === range.to ? range.from : todayIST();
     const [view, setView] = useState<View>('board');
     const [filter, setFilter] = useState<Filter>('all');
-    const [dialog, setDialog] = useState<{ open: boolean; target: string | null }>({ open: false, target: null });
+    const [dialog, setDialog] = useState<{ open: boolean; target: string | null; followUp?: { id: string; title: string } | null }>({ open: false, target: null });
+    // Owner 2026-10-26: the optional remark box, only when someone asks for it
+    const [remarkFor, setRemarkFor] = useState<string | null>(null);
+    const [sendTo, setSendTo] = useState<SendTo | null>(null);
+    // Owner 2026-10-26: cross-department collaboration (support requests waiting for me show on the board too)
+    const collab = useCollaboration(true);
 
-    const { ws, ok, loading, refreshing, error, toasts, dismissToast, reload, moveTask, addTask, giveTask, deleteTask, setLocked, flagDependency, editTask, giveMany, addNote } = useWorkspace(range.from, departmentName, range.to);
+    const { ws, ok, loading, refreshing, error, toasts, dismissToast, toast, reload, moveTask, addTask, addTasks, giveTask, deleteTask, setLocked, flagDependency, editTask, giveMany, addNote, addRemark, checkDuplicates, uploadFiles, listAttachments, removeAttachment } = useWorkspace(range.from, departmentName, range.to);
 
     // The board shows only MY tasks; the Team tab is where other people's tasks live.
     const mine: WTask[] = useMemo(() => (ok ? ok.tasks.filter(t => t.ownerId === ok.actor.userId) : []), [ok]);
@@ -136,12 +147,31 @@ export default function ProcurementTasksTab({ departmentName = 'Procurement' }: 
     }
 
     const meId = ok.actor.userId;
-    // Working with a superuser: this view exists only for a team whose switch is ON and when there is someone to work with.
-    const collab = ok.superuserCollab?.enabled && ok.superuserCollab.superusers.length ? ok.superuserCollab : null;
+    // Working with a superuser: only for a team whose switch is ON and when there is someone to work with.
+    const superCollab = ok.superuserCollab?.enabled && ok.superuserCollab.superusers.length ? ok.superuserCollab : null;
+    // Owner 2026-10-27: "Work with other departments" OFF for my team → no "Other departments" side (and no Send tab at all
+    // when there is no manager side either). Requests already waiting still show at the top of To do.
+    const crossDeptOn = collab.data?.enabled !== false;
+    const sendVisible = !!superCollab || crossDeptOn;
+    const side: SendTo = !crossDeptOn ? 'manager' : sendTo ?? (superCollab ? 'manager' : 'departments');
+    // Owner 2026-10-26: support requests from other departments sit at the top of To do until answered
+    const incoming = collab.data?.incoming.length ? (
+        <IncomingList compact incoming={collab.data.incoming} respond={collab.respond}
+            flash={(kind, text) => toast(kind === 'ok' ? 'success' : 'error', text)}
+            onDone={async accepted => { await collab.reload(); if (accepted) await reload(); }} />
+    ) : null;
     const openDialog = (target: string | null) => setDialog({ open: true, target });
     const quickAdd = (title: string) => addTask({ targetUserId: meId, title, date });
     // "Give to…": the teammates the server says I may give work to (never myself)
-    const give = { people: ok.assignable.filter(a => !a.isMe), onGive: giveTask, onGiveMany: giveMany, onAddNote: addNote };
+    // Owner 2026-10-26: the task window also edits (name, details, date, person), makes follow-ups and holds files.
+    const give = {
+        people: ok.assignable.filter(a => !a.isMe), onGive: giveTask, onGiveMany: giveMany, onAddNote: addNote,
+        extra: {
+            onEdit: editTask, editPeople: ok.assignable, listFiles: listAttachments, uploadFiles, removeFile: removeAttachment, dueDates: ok.features?.dueDates === true,
+            onFollowUp: (task: WTask) => setDialog({ open: true, target: task.ownerId, followUp: { id: task.id, title: task.title } }),
+        },
+    };
+    const remarkTask = remarkFor ? ok.tasks.find(t => t.id === remarkFor) || null : null;
     // Owner 2026-10-19: "Pending on…" a colleague (they are told; they still cannot see my board).
     const pending = { people: ok.dependencyPeople || [], onFlag: flagDependency };
 
@@ -177,8 +207,8 @@ export default function ProcurementTasksTab({ departmentName = 'Procurement' }: 
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                    {/* Owner 2026-10-15: pick one day or a range (quick picks + from–to, at most 31 days) */}
-                    <DateRangePicker value={range} onChange={setRange} className="rounded-2xl px-3 py-2" />
+                    {/* Owner 2026-10-26: the same date filter as the superadmin console (quick picks, one day or a range of up to 31 days) */}
+                    <TaskRangeFilter value={range} onChange={setRange} align="right" />
                     <button type="button" onClick={reload} disabled={refreshing} aria-label="Refresh" className="rounded-2xl border border-zinc-200 bg-white p-2.5 text-zinc-500 transition-colors hover:text-zinc-800 disabled:opacity-60 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:text-zinc-200">
                         <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
                     </button>
@@ -205,7 +235,7 @@ export default function ProcurementTasksTab({ departmentName = 'Procurement' }: 
                         { id: 'team' as View, label: 'Team', icon: <Users className="h-3.5 w-3.5" /> },
                         ...(ok.features?.assignedTab ? [{ id: 'assigned' as View, label: 'Assigned by me', icon: <UserCheck className="h-3.5 w-3.5" /> }] : []),
                         { id: 'notifications' as View, label: 'Notifications', icon: <Bell className="h-3.5 w-3.5" /> },
-                        ...(collab ? [{ id: 'superuser' as View, label: 'Send', icon: <Send className="h-3.5 w-3.5" /> }] : []),
+                        ...(sendVisible ? [{ id: 'superuser' as View, label: 'Send', icon: <Send className="h-3.5 w-3.5" />, ...(collab.data?.incoming.length ? { count: collab.data.incoming.length } : {}) }] : []),
                     ]}
                 />
                 {view === 'board' && (
@@ -219,16 +249,28 @@ export default function ProcurementTasksTab({ departmentName = 'Procurement' }: 
             {/* content */}
             <AnimatePresence mode="wait" initial={false}>
                 <motion.div key={view} initial={reduce ? false : { opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={reduce ? undefined : { opacity: 0, y: -6 }} transition={{ duration: 0.3, ease: EASE }}>
-                    {view === 'board' && <Board tasks={filtered} meId={meId} onMove={moveTask} onQuickAdd={quickAdd} onDelete={deleteTask} onLock={setLocked} give={give} pending={pending} />}
+                    {view === 'board' && <Board tasks={filtered} meId={meId} onMove={moveTask} onQuickAdd={quickAdd} onDelete={deleteTask} onLock={setLocked} give={give} pending={pending} onRemark={setRemarkFor} topOfTodo={incoming} />}
                     {view === 'assigned' && ok.features?.assignedTab && <AssignedView from={range.from} to={range.to} onEdit={editTask} onDelete={deleteTask} />}
                     {view === 'team' && <TeamView members={ok.members} tasks={ok.tasks} assignable={ok.assignable} onAssign={openDialog} />}
                     {view === 'notifications' && <NotificationsView departmentName={departmentName} />}
-                    {view === 'superuser' && collab && (
-                        <SuperuserPanel
-                            onAddTask={(recipientId, title) => addTask({ targetUserId: recipientId, title, date })}
-                            onDeleteTask={deleteTask}
-                            onChanged={reload}
-                        />
+                    {view === 'superuser' && sendVisible && (
+                        <div className="space-y-4">
+                            {superCollab && crossDeptOn && (
+                                <Segmented
+                                    id="send-to" value={side} onChange={setSendTo} size="sm"
+                                    options={[{ id: 'manager' as SendTo, label: 'Your manager' }, { id: 'departments' as SendTo, label: 'Other departments' }]}
+                                />
+                            )}
+                            {side === 'manager' && superCollab ? (
+                                <SuperuserPanel
+                                    onAddTask={(recipientId, title) => addTask({ targetUserId: recipientId, title, date })}
+                                    onDeleteTask={deleteTask}
+                                    onChanged={reload}
+                                />
+                            ) : (
+                                <CrossDeptPanel collab={collab} me={{ name: ok.actor.name, department: ok.actor.departmentName }} uploadFiles={uploadFiles} onChanged={reload} dueDates={ok.features?.dueDates === true} />
+                            )}
+                        </div>
                     )}
                 </motion.div>
             </AnimatePresence>
@@ -238,9 +280,14 @@ export default function ProcurementTasksTab({ departmentName = 'Procurement' }: 
                 assignable={ok.assignable}
                 defaultTarget={dialog.target}
                 date={date}
+                followUp={dialog.followUp}
                 onClose={() => setDialog({ open: false, target: null })}
-                onSubmit={input => addTask(input)}
+                onSubmit={input => addTasks(input)}
+                onCheckDuplicates={checkDuplicates}
+                dueDates={ok.features?.dueDates === true}
             />
+
+            <RemarkDialog task={remarkTask} onClose={() => setRemarkFor(null)} onSave={addRemark} />
 
             {/* toasts */}
             <div className="pointer-events-none fixed bottom-5 right-5 z-[60] flex w-[calc(100%-2.5rem)] max-w-sm flex-col gap-2" aria-live="polite">
@@ -255,6 +302,9 @@ export default function ProcurementTasksTab({ departmentName = 'Procurement' }: 
                         >
                             {t.kind === 'success' ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : <AlertTriangle className="h-4 w-4 shrink-0" />}
                             <span className="flex-1">{t.text}</span>
+                            {t.action && (
+                                <button type="button" onClick={() => { setRemarkFor(t.action!.taskId); dismissToast(t.id); }} className="shrink-0 rounded-lg bg-emerald-600 px-2.5 py-1 text-[11px] font-black text-white hover:bg-emerald-700">{t.action.label}</button>
+                            )}
                             <button type="button" onClick={() => dismissToast(t.id)} aria-label="Dismiss" className="opacity-60 hover:opacity-100"><X className="h-3.5 w-3.5" /></button>
                         </motion.div>
                     ))}

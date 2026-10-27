@@ -83,6 +83,22 @@ export async function POST(request: NextRequest) {
             });
         }
 
+        // Owner 2026-10-27: who in a department may send to other departments ('everyone' | 'selected'), and the ticks
+        if (body.action === 'set_cross_dept_scope') {
+            if (!body.departmentId || (body.scope !== 'everyone' && body.scope !== 'selected')) {
+                return NextResponse.json({ success: false, error: 'Missing departmentId or scope (everyone | selected)' }, { status: 400 });
+            }
+            await TaskAccessService.setCrossDeptScope(body.departmentId, body.scope, guard.label);
+            return NextResponse.json({ success: true, message: body.scope === 'selected' ? 'Only the ticked people can now send to other departments.' : 'Everyone in this department can now send to other departments.' });
+        }
+        if (body.action === 'set_cross_dept_person') {
+            if (!body.userId || typeof body.enabled !== 'boolean') {
+                return NextResponse.json({ success: false, error: 'Missing userId or enabled (true/false)' }, { status: 400 });
+            }
+            await TaskAccessService.setCrossDeptPerson(body.userId, body.enabled, guard.label);
+            return NextResponse.json({ success: true, message: body.enabled ? 'Can now send to other departments.' : 'Can no longer send to other departments.' });
+        }
+
         // Owner 2026-10-19: the other per-team switches (Pending on…, Protect given tasks, Assigned by me tab)
         if (body.action === 'set_team_feature') {
             if (!body.departmentId || typeof body.enabled !== 'boolean' || !TEAM_FEATURES.includes(body.feature)) {

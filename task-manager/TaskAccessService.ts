@@ -17,7 +17,7 @@ import { SuperuserReminder, normalizeReminder } from './pingMessage';
 export const TECH_DEPARTMENT_ID = '94a74961-2dd8-453d-9728-f6f2b9ade99b';
 
 /** Owner 2026-10-19: per-team switches stored as columns of task_manager_department_settings. */
-export const TEAM_FEATURES = ['pending_on', 'protect_given', 'assigned_tab'] as const;
+export const TEAM_FEATURES = ['pending_on', 'protect_given', 'assigned_tab', 'due_dates', 'cross_dept_collab'] as const;
 export type TeamFeature = typeof TEAM_FEATURES[number];
 
 export type AccessReason = 'ok' | 'no_department' | 'department_off' | 'not_onboarded' | 'settings_unreadable';
@@ -359,6 +359,102 @@ export class TaskAccessService {
         }
     }
 
+    // ── Owner 2026-10-27: "Due dates" switch (its own column, 20261027000001_task_manager_due_dates.sql) ──────────
+    // Read on its own so a missing column never switches the three switches above OFF. FAIL-CLOSED: OFF for everyone.
+    //   ON  = people in the department can set a due date (and time) on tasks they give, and get the "due soon" reminder.
+    //   OFF = no due date can be set by them and no reminder goes to them; deadlines already set still show on cards.
+    static async getDueDatesDepartments(): Promise<{ departments: Set<string>; columnMissing: boolean }> {
+        try {
+            const { data, error } = await supabaseAdmin.from('task_manager_department_settings').select('department_id, due_dates');
+            if (error) return { departments: new Set(), columnMissing: true };
+            return { departments: new Set((data || []).filter(r => (r as Record<string, unknown>).due_dates === true).map(r => r.department_id as string)), columnMissing: false };
+        } catch {
+            return { departments: new Set(), columnMissing: true };
+        }
+    }
+
+    // ── Owner 2026-10-27: "Work with other departments" (20261027000002_task_manager_cross_department_switch.sql) ──────
+    // ON by default (the Send tab's cross-department side worked for everyone before this switch). OFF = the department's
+    // people can neither send to nor receive from other departments. Before the SQL file is applied everyone counts as ON
+    // (today's behaviour); any other read problem counts as OFF for everyone (fail closed).
+    static async getCrossDeptOff(): Promise<{ off: Set<string>; allOff: boolean; columnMissing: boolean }> {
+        try {
+            const { data, error } = await supabaseAdmin.from('task_manager_department_settings').select('department_id, cross_dept_collab');
+            if (error) {
+                const missing = ['42703', '42P01', 'PGRST204', 'PGRST205'].includes(String((error as { code?: string }).code ?? ''));
+                return { off: new Set(), allOff: !missing, columnMissing: missing };
+            }
+            return { off: new Set((data || []).filter(r => (r as Record<string, unknown>).cross_dept_collab === false).map(r => r.department_id as string)), allOff: false, columnMissing: false };
+        } catch {
+            return { off: new Set(), allOff: true, columnMissing: false };
+        }
+    }
+
+    // ── Owner 2026-10-27: WHO in a department may send to other departments (20261027000003_…_cross_department_people.sql) ──
+    // 'everyone' (default) or 'selected' (only ticked people; nobody until someone is ticked). Receiving is never limited by
+    // this. Before the SQL file is applied: everyone (today's behaviour). Any other read problem: nobody (fail closed).
+    static async getCrossDeptScope(): Promise<{ selected: Set<string>; allowed: Set<string>; failClosed: boolean; columnMissing: boolean }> {
+        const missingCode = (e: unknown) => ['42703', '42P01', 'PGRST204', 'PGRST205'].includes(String((e as { code?: string } | null)?.code ?? ''));
+        try {
+            const [scope, people] = await Promise.all([
+                supabaseAdmin.from('task_manager_department_settings').select('department_id, cross_dept_scope'),
+                supabaseAdmin.from('task_manager_cross_dept_people').select('user_id'),
+            ]);
+            if (scope.error || people.error) {
+                const missing = missingCode(scope.error) || missingCode(people.error);
+                return { selected: new Set(), allowed: new Set(), failClosed: !missing, columnMissing: missing };
+            }
+            return {
+                selected: new Set((scope.data || []).filter(r => (r as Record<string, unknown>).cross_dept_scope === 'selected').map(r => r.department_id as string)),
+                allowed: new Set((people.data || []).map(r => r.user_id as string)),
+                failClosed: false, columnMissing: false,
+            };
+        } catch {
+            return { selected: new Set(), allowed: new Set(), failClosed: true, columnMissing: false };
+        }
+    }
+
+    /** May this person SEND to other departments? Their department's switch ON, and (when "only selected") ticked. */
+    static async maySendCrossDept(person: { id: string; department_id: string | null }): Promise<boolean> {
+        if (!person.department_id) return false;
+        const [cross, scope] = await Promise.all([this.getCrossDeptOff(), this.getCrossDeptScope()]);
+        if (cross.allOff || cross.off.has(person.department_id) || scope.failClosed) return false;
+        return !scope.selected.has(person.department_id) || scope.allowed.has(person.id);
+    }
+
+    static async setCrossDeptScope(departmentId: string, scope: 'everyone' | 'selected', actor?: string): Promise<void> {
+        const snapshot = await this.getSnapshot();
+        if (!snapshot.provisioned) throw new AccessNotProvisionedError();
+        const dept = await TaskDatabaseService.getDepartmentById(departmentId);
+        if (!dept) throw new Error('Department not found');
+        const { error } = await supabaseAdmin.from('task_manager_department_settings')
+            .upsert({ department_id: departmentId, cross_dept_scope: scope, updated_by: actor || null, updated_at: new Date().toISOString() }, { onConflict: 'department_id' });
+        if (error) throw new Error('Could not save that setting. Run supabase/migrations/20261027000003_task_manager_cross_department_people.sql in the Supabase SQL Editor first.');
+        await TaskDatabaseService.logAudit({
+            event_type: 'task_access_cross_dept_scope_updated',
+            details: { departmentId, departmentName: dept.name, scope, actor: actor || null },
+        });
+    }
+
+    static async setCrossDeptPerson(userId: string, allowed: boolean, actor?: string): Promise<void> {
+        const person = await TaskDatabaseService.getEmployeeById(userId);
+        if (!person || !person.active) throw new Error('Active employee with a user account not found');
+        const { error } = allowed
+            ? await supabaseAdmin.from('task_manager_cross_dept_people').upsert({ user_id: userId, added_by: actor || null, added_at: new Date().toISOString() }, { onConflict: 'user_id' })
+            : await supabaseAdmin.from('task_manager_cross_dept_people').delete().eq('user_id', userId);
+        if (error) throw new Error('Could not save that setting. Run supabase/migrations/20261027000003_task_manager_cross_department_people.sql in the Supabase SQL Editor first.');
+        await TaskDatabaseService.logAudit({
+            event_type: allowed ? 'task_access_cross_dept_person_added' : 'task_access_cross_dept_person_removed',
+            target_employee_id: userId,
+            details: { name: person.name, departmentName: person.department_name, actor: actor || null },
+        });
+    }
+
+    static async isDueDatesEnabled(departmentId: string | null | undefined): Promise<boolean> {
+        if (!departmentId) return false;
+        return (await this.getDueDatesDepartments()).departments.has(departmentId);
+    }
+
     /** One department's switches (all false when the department is unknown or the settings cannot be read). */
     static async teamFeaturesFor(departmentId: string | null | undefined): Promise<{ pendingOn: boolean; protectGiven: boolean; assignedTab: boolean }> {
         if (!departmentId) return { pendingOn: false, protectGiven: false, assignedTab: false };
@@ -379,7 +475,9 @@ export class TaskAccessService {
             .upsert({ department_id: departmentId, [feature]: enabled, updated_by: actor || null, updated_at: new Date().toISOString() },
                 { onConflict: 'department_id' });
         if (error) {
-            throw new Error('Could not save that setting. Run supabase/migrations/20261019000001_task_manager_team_controls.sql in the Supabase SQL Editor first.');
+            const file = feature === 'due_dates' ? '20261027000001_task_manager_due_dates.sql'
+                : feature === 'cross_dept_collab' ? '20261027000002_task_manager_cross_department_switch.sql' : '20261019000001_task_manager_team_controls.sql';
+            throw new Error(`Could not save that setting. Run supabase/migrations/${file} in the Supabase SQL Editor first.`);
         }
 
         await TaskDatabaseService.logAudit({
@@ -668,6 +766,9 @@ export class TaskAccessService {
         teamSharingColumnMissing: boolean;
         teamAssignColumnMissing: boolean;
         teamFeaturesColumnMissing: boolean;
+        dueDatesColumnMissing: boolean;
+        crossDeptColumnMissing: boolean;
+        crossDeptScopeColumnMissing: boolean;
         notificationsColumnMissing: boolean;
         taskImportColumnMissing: boolean;
         smartChatColumnMissing: boolean;
@@ -681,6 +782,9 @@ export class TaskAccessService {
             pendingOn: boolean;
             protectGiven: boolean;
             assignedTab: boolean;
+            dueDates: boolean;
+            crossDeptCollab: boolean;
+            crossDeptScope: 'everyone' | 'selected';
             notificationsDelegated: boolean;
             taskImportEnabled: boolean;
             smartChatEnabled: boolean;
@@ -694,6 +798,8 @@ export class TaskAccessService {
                 onboarded: boolean;
                 source: string | null;
                 kickoffSentAt: string | null;
+                /** Owner 2026-10-27: ticked for "only selected people" (may send to other departments). */
+                crossDeptAllowed: boolean;
             }>;
         }>;
     }> {
@@ -702,6 +808,9 @@ export class TaskAccessService {
         const peer = await this.getPeerAssignDepartments();
         const teamAssign = await this.getTeamAssignDepartments();
         const features = await this.getTeamFeatures();
+        const dueDates = await this.getDueDatesDepartments();
+        const crossDept = await this.getCrossDeptOff();
+        const crossScope = await this.getCrossDeptScope();
         const delegated = await this.getDelegatedDepartments();
         const imports = await this.getTaskImportDepartments();
         const smartChat = await this.getSmartChatDepartments();
@@ -727,6 +836,9 @@ export class TaskAccessService {
             teamSharingColumnMissing: peer.columnMissing,
             teamAssignColumnMissing: teamAssign.columnMissing,
             teamFeaturesColumnMissing: features.columnMissing,
+            dueDatesColumnMissing: dueDates.columnMissing,
+            crossDeptColumnMissing: crossDept.columnMissing,
+            crossDeptScopeColumnMissing: crossScope.columnMissing,
             notificationsColumnMissing: delegated.columnMissing,
             taskImportColumnMissing: imports.columnMissing,
             smartChatColumnMissing: smartChat.columnMissing,
@@ -744,6 +856,7 @@ export class TaskAccessService {
                             onboarded: Boolean(record) || assumedTech,
                             source: record?.source || (assumedTech ? 'backfill' : null),
                             kickoffSentAt: record?.kickoffSentAt || null,
+                            crossDeptAllowed: crossScope.allowed.has(p.user_id as string),
                         };
                     })
                     .sort((a, b) => a.name.localeCompare(b.name));
@@ -761,6 +874,9 @@ export class TaskAccessService {
                     pendingOn: features.pendingOn.has(d.id),
                     protectGiven: features.protectGiven.has(d.id),
                     assignedTab: features.assignedTab.has(d.id),
+                    dueDates: dueDates.departments.has(d.id),
+                    crossDeptCollab: !crossDept.allOff && !crossDept.off.has(d.id),
+                    crossDeptScope: (crossScope.selected.has(d.id) ? 'selected' : 'everyone') as 'everyone' | 'selected',
                     notificationsDelegated: delegated.departments.has(d.id),
                     taskImportEnabled: imports.departments.has(d.id),
                     smartChatEnabled: smartChat.departments.has(d.id),

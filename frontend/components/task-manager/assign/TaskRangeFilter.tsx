@@ -33,7 +33,7 @@ export function rangeButtonLabel(r: DateRange): string {
  * Which days the task list covers: Today, Yesterday, Last 7 days, All time, one custom day or a custom range (at most
  * 31 days, like the server). A card on a computer, a bottom sheet on a phone.
  */
-export default function TaskRangeFilter({ value, onChange }: { value: DateRange; onChange: (r: DateRange) => void }) {
+export default function TaskRangeFilter({ value, onChange, align = 'left' }: { value: DateRange; onChange: (r: DateRange) => void; align?: 'left' | 'right' }) {
     const desktop = useIsDesktop();
     const [open, setOpen] = useState(false);
     const [mode, setMode] = useState<Mode>(modeOf(value));
@@ -95,7 +95,7 @@ export default function TaskRangeFilter({ value, onChange }: { value: DateRange;
                 {rangeButtonLabel(value)}
                 <ChevronDown className="h-3.5 w-3.5 text-zinc-500" />
             </button>
-            <ResponsivePopover open={open} onClose={close} title="Show tasks from" width={custom ? 500 : 200}
+            <ResponsivePopover open={open} onClose={close} title="Show tasks from" width={custom ? 500 : 200} align={align}
                 footer={
                     <div className="flex items-center justify-between gap-3">
                         <span className="min-w-0 text-xs leading-tight text-zinc-600 dark:text-zinc-400">Showing <strong className="block truncate text-zinc-900 sm:inline dark:text-zinc-100">{custom ? summary : rangeButtonLabel(value)}</strong></span>

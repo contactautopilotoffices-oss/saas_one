@@ -18,6 +18,8 @@ export const TASK_INTENTS = [
     'add_note',          // "add note to onboarding: documents pending" — own task or one they gave; previewed, then YES (owner 2026-10-20)
     'remind_tasks',      // "remind srushti about onboarding" — tasks they GAVE that are still open; previewed, then YES (owner 2026-10-20)
     'lock_task',         // "lock task 2" / "unlock task 3" / "which tasks are locked?" — own tasks only; previewed, then YES (owner 2026-10-20)
+    'change_task',       // "move task 3 to Friday", "give Sanil's vendor task to Neeti instead" — a task they gave; previewed, then YES (owner 2026-10-26)
+    'answer_request',    // "ok I'll do it" / "can't, payroll is with the vendor" — answering a support request from another department; previewed, then YES (owner 2026-10-26)
     'find_tasks',        // any other QUESTION about tasks: "what did I finish yesterday", "anything about AMC", "how many did Lohit finish this week" (read-only)
     'help',
     'smalltalk',
@@ -43,7 +45,8 @@ export interface Which {
 
 export type Slots =
     | { intent: 'view_tasks'; scope: ViewScope; person: string | null; department: string | null; /** only tasks carried over from earlier days (own list) */ carriedOnly?: boolean; /** team: every task of each person, not only counts */ teamList?: boolean }
-    | { intent: 'complete_tasks'; which: Which }
+    /** Owner 2026-10-26: `note` = an optional remark given with it ("done 1: shared on the HR group"). */
+    | { intent: 'complete_tasks'; which: Which; note?: string | null }
     | { intent: 'progress_update'; state: ProgressState; which: Which; note: string | null }
     | { intent: 'create_tasks'; assignee: string; tasks: Array<{ title: string; details: string | null;
             /** Owner 2026-10-19: who THIS task is for, when it differs per line ("1. meeting with vendors - neeti"). */
@@ -53,7 +56,9 @@ export type Slots =
         /** A GROUP the AI read from the message ("everyone", "my team", "all of Tech except Harsh"). Code turns it into people. */
         group?: { whose: 'team' | 'department' | 'everyone'; department: string | null; except: string[] } | null;
         /** Owner 2026-10-21: they asked to add a note ("add note") but gave no text → the bot asks for it. */
-        wantsNote?: boolean }
+        wantsNote?: boolean;
+        /** Owner 2026-10-26: the EXISTING task this new one follows up ("follow up on task 2: …"). */
+        followUp?: Which | null }
     /** Owner 2026-10-21: `note` goes with the task to the new holder; `wantsNote` = "add note" said without the text. */
     | { intent: 'hand_over_task'; which: Which; to: string | null; note?: string | null; wantsNote?: boolean }
     | { intent: 'answer_pending'; answer: 'yes' | 'no' | 'pick' | 'edit' | 'unsure'; pick: number | null; instruction: string | null }
@@ -67,6 +72,10 @@ export type Slots =
     | { intent: 'remind_tasks'; which: Which; person: string | null; overdueOnly: boolean }
     /** Owner 2026-10-20: make own tasks repeat every working day (lock), stop that (unlock), or list the repeating ones. */
     | { intent: 'lock_task'; which: Which; action: 'lock' | 'unlock' | 'list' }
+    /** Owner 2026-10-26: change the date and/or the person of a task they gave (or made for themself). `person` = whose task. */
+    | { intent: 'change_task'; which: Which; person: string | null; date: string | null; to: string | null }
+    /** Owner 2026-10-26: accept or decline a support request from another department (`reason` = why not, their words). */
+    | { intent: 'answer_request'; which: Which; decision: 'accept' | 'decline'; reason: string | null }
     | { intent: 'help' | 'smalltalk' | 'unknown' };
 
 export interface Interpretation {
@@ -134,13 +143,20 @@ export interface BrainContext {
     noteTargets?: NoteTarget[];
     /** Owner 2026-10-21: the person's own message, so code can check a word in it (e.g. "assign" with nobody named). */
     message?: string;
+    /** Owner 2026-10-26: support requests from other departments waiting for this person's answer (absent = none). */
+    supportRequests?: Array<{ id: string; title: string; fromName: string; fromDepartment: string }>;
 }
 
 export type Action =
     | { type: 'view_tasks'; scope: ViewScope; personId: string | null; department: string | null; /** own list: only tasks carried over from earlier days */ carriedOnly?: boolean; /** Owner 2026-10-21: team = every task of each person (not the progress counts) */ list?: boolean }
-    | { type: 'complete_tasks'; taskIds: string[] }
+    /** Owner 2026-10-26: `note` = an optional remark, saved on each task after it is marked done (the giver is told in the app). */
+    | { type: 'complete_tasks'; taskIds: string[]; note?: string | null }
     | { type: 'progress_update'; state: ProgressState; taskIds: string[]; note: string | null }
-    | { type: 'create_tasks'; assigneeId: string; tasks: Array<{ title: string; details: string | null }>; date: string }
+    | { type: 'create_tasks'; assigneeId: string; tasks: Array<{ title: string; details: string | null }>; date: string;
+        /** Owner 2026-10-26: the existing task these follow up (its id and title, for the preview). */
+        followUpOf?: { id: string; title: string } | null;
+        /** Owner 2026-10-26: open tasks of this person that look like the new ones (the "Duplicate task alert"). */
+        similar?: string[] }
     | { type: 'hand_over_task'; taskId: string; toId: string; /** Owner 2026-10-21: optional note for the new holder. */ note?: string | null }
     | { type: 'answer_pending'; answer: 'yes' | 'no' | 'pick' | 'edit'; pick: number | null; instruction: string | null }
     | { type: 'chat'; kind: 'help' | 'smalltalk' }
@@ -158,6 +174,10 @@ export type Action =
     | { type: 'lock_tasks'; taskIds: string[]; lock: boolean }
     /** Read only: list the person's tasks that repeat every working day. */
     | { type: 'locked_list' }
+    /** Owner 2026-10-26: move a task to another day and/or another person (checked again by WorkspaceService.editTask). */
+    | { type: 'change_task'; taskId: string; title: string; ownerName: string | null; date: string | null; toId: string | null }
+    /** Owner 2026-10-26: answer a support request (checked again by CollaborationService.respond). */
+    | { type: 'answer_request'; requestId: string; title: string; fromName: string; accept: boolean; reason: string | null }
     /** Several changes from ONE message, shown in one preview and carried out after one YES. `unclear` = parts not understood. */
     | { type: 'batch'; actions: Action[]; unclear: string[] };
 

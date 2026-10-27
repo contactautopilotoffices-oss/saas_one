@@ -281,7 +281,7 @@ export default function SuperuserAssignMonitor() {
                 <div className="flex min-w-[200px] flex-1 flex-col">{personField}</div>
                 <label className={`${fieldLabel} min-w-[240px] flex-[3]`}>Task
                     <input ref={titleRef} value={qTitle} onChange={e => setQTitle(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && canAssign) assign(); }}
-                        placeholder="What needs doing? Press Enter to assign" maxLength={200} className={field} />
+                        maxLength={200} className={field} />
                 </label>
                 <div className={`${fieldLabel} w-[170px]`}>
                     <span id="assign-for-label">For</span>
@@ -299,7 +299,7 @@ export default function SuperuserAssignMonitor() {
                 <div className="flex gap-2">
                     <label className="flex-1">
                         <span className="sr-only">Task</span>
-                        <input value={qTitle} onChange={e => setQTitle(e.target.value)} placeholder="What needs doing?" maxLength={200} className={`${field} min-h-12 text-[15px]`} />
+                        <input value={qTitle} onChange={e => setQTitle(e.target.value)} maxLength={200} className={`${field} min-h-12 text-[15px]`} />
                     </label>
                     <button type="button" onClick={() => setSheetOpen(true)} aria-label="Assign task"
                         className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-indigo-600 text-white"><Plus className="h-6 w-6" /></button>
@@ -315,7 +315,7 @@ export default function SuperuserAssignMonitor() {
                 <div className="space-y-4">
                     <div className="grid grid-cols-2 gap-2.5">{deptField}{personField}</div>
                     <label className={fieldLabel}>Task
-                        <textarea value={qTitle} onChange={e => setQTitle(e.target.value)} rows={3} maxLength={200} placeholder="What needs doing?"
+                        <textarea value={qTitle} onChange={e => setQTitle(e.target.value)} rows={3} maxLength={200}
                             className={`${field} resize-none py-2.5 text-[15px]`} />
                     </label>
                     <div className={fieldLabel}>

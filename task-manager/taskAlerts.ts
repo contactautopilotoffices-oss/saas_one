@@ -296,3 +296,60 @@ export async function sendTeamDigest(phone: string | null | undefined, input: Pa
         return false;
     }
 }
+
+/**
+ * Owner 2026-10-26 — "Support request from another team" (cross-department collaboration in the Send tab). Template
+ * task_support_request_v1: Hello {{1}} · {{2}} asks for your support · Task: {{3}} · Needed by: {{4}} · Reply ACCEPT, or NO
+ * with a reason. It must be approved in AiSensy / Meta before it is delivered; until then the in-app notice still works.
+ */
+export const SUPPORT_REQUEST_CAMPAIGN = process.env.AISENSY_TASK_SUPPORT_REQUEST_CAMPAIGN || 'task_support_request_v1';
+
+export function supportRequestParams(recipientName: string, fromLabel: string, title: string, neededBy: string | null): [string, string, string, string] {
+    return [firstName(recipientName), oneLine(fromLabel, 100) || 'A colleague', oneLine(title, 200) || 'a task', neededBy ? formatDate(neededBy) : 'No date given'];
+}
+export function supportRequestPreview(p: [string, string, string, string]): string {
+    return `🤝 Support request from another team\n\nHello ${p[0]},\n${p[1]} asks for your support.\nTask: ${p[2]}\nNeeded by: ${p[3]}\n\nReply ACCEPT, or NO with a reason.`;
+}
+
+/** Tells the receiver about a support request. Never throws. Gated like every other alert (kill switches, Pretend Mode). */
+export async function sendSupportRequest(phone: string | null | undefined, input: { recipientName: string; fromLabel: string; title: string; neededBy: string | null; departmentId?: string }): Promise<boolean> {
+    if (!validPhone(phone)) return false;
+    const params = supportRequestParams(input.recipientName, input.fromLabel, input.title, input.neededBy);
+    try {
+        return await TaskMessagingService.sendMessage(phone, supportRequestPreview(params), {
+            messageType: 'task_support_request', departmentId: input.departmentId,
+            campaignName: SUPPORT_REQUEST_CAMPAIGN, templateParams: params, templateOnly: true,
+        });
+    } catch (err) {
+        console.error('[taskAlerts] Failed to send support request:', err instanceof Error ? err.message : err);
+        return false;
+    }
+}
+
+// ── Owner 2026-10-27: "Due soon" — one reminder before a task's deadline (Due dates switch in the Control Center) ─────────
+//   task_due_soon_v1   Hello {{1}} · Task: {{2}} · Due: {{3}} · Given by: {{4}}
+// Must be created and approved in AiSensy / Meta before it is delivered. Until then the in-app bell still works.
+
+export const DUE_SOON_CAMPAIGN = process.env.AISENSY_TASK_DUE_SOON_CAMPAIGN || 'task_due_soon_v1';
+
+export function dueSoonParams(recipientName: string, title: string, dueText: string, fromLabel: string): [string, string, string, string] {
+    return [firstName(recipientName), oneLine(title, 200) || 'a task', oneLine(dueText, 60), oneLine(fromLabel, 100) || 'You'];
+}
+export function dueSoonPreview(p: [string, string, string, string]): string {
+    return `⏰ Due soon\n\nHello ${p[0]},\nTask: ${p[1]}\nDue: ${p[2]}\nGiven by: ${p[3]}\n\nReply "tasks" to see your list and mark it done.`;
+}
+
+/** Reminds the person holding a task that its deadline is near. Never throws. Gated like every other alert. */
+export async function sendTaskDueSoon(phone: string | null | undefined, input: { recipientName: string; title: string; dueText: string; fromLabel: string; departmentId?: string }): Promise<boolean> {
+    if (!validPhone(phone)) return false;
+    const params = dueSoonParams(input.recipientName, input.title, input.dueText, input.fromLabel);
+    try {
+        return await TaskMessagingService.sendMessage(phone, dueSoonPreview(params), {
+            messageType: 'task_due_soon', departmentId: input.departmentId,
+            campaignName: DUE_SOON_CAMPAIGN, templateParams: params, templateOnly: true,
+        });
+    } catch (err) {
+        console.error('[taskAlerts] Failed to send due-soon reminder:', err instanceof Error ? err.message : err);
+        return false;
+    }
+}

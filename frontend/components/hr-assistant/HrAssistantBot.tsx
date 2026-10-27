@@ -109,6 +109,43 @@ function isHiddenPath(pathname: string | null): boolean {
  * layout). Self-gates: renders nothing on public pages, or until the server confirms the user
  * is an employee or staff member.
  */
+/**
+ * Owner 2026-10-26: on a phone the bot hides while any other pop-up is open (a dialog, a bottom sheet, the menu drawer),
+ * so it never sits on top of what someone is reading or typing. It comes back when the pop-up closes. Larger screens are
+ * unchanged.
+ */
+function useOtherPopupOpen(): boolean {
+    const [blocked, setBlocked] = useState(false);
+    useEffect(() => {
+        const phone = window.matchMedia('(max-width: 639px)');
+        let frame = 0;
+        const check = () => {
+            frame = 0;
+            if (!phone.matches) { setBlocked(false); return; }
+            const dialogOpen = Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"]'))
+                .some(el => !el.closest('#hr-assistant-window'));
+            const scrollLocked = document.body.style.overflow === 'hidden' || document.documentElement.style.overflow === 'hidden';
+            setBlocked(dialogOpen || scrollLocked);
+        };
+        const schedule = () => { if (!frame) frame = window.requestAnimationFrame(check); };
+        // New pop-ups (added nodes, role changes) anywhere, and scroll locks on <body> / <html> only
+        const popups = new MutationObserver(schedule);
+        popups.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['role', 'aria-modal'] });
+        const locks = new MutationObserver(schedule);
+        locks.observe(document.body, { attributes: true, attributeFilter: ['style'] });
+        locks.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
+        phone.addEventListener('change', schedule);
+        check();
+        return () => {
+            popups.disconnect();
+            locks.disconnect();
+            phone.removeEventListener('change', schedule);
+            if (frame) window.cancelAnimationFrame(frame);
+        };
+    }, []);
+    return blocked;
+}
+
 export default function HrAssistantBot() {
     const { user, membership } = useAuth();
     const params = useParams();
@@ -125,6 +162,7 @@ export default function HrAssistantBot() {
     const pending = useHrChatPending();
     const reduceMotion = useReducedMotion();
     const squash = useAnimationControls();
+    const otherPopupOpen = useOtherPopupOpen();
     const canUse = Boolean(user && access?.canUse && !isHiddenPath(pathname));
 
     const setOpen = (next: boolean) => {
@@ -232,7 +270,7 @@ export default function HrAssistantBot() {
 
             <div
                 className={`fixed right-5 z-[65] flex items-end gap-3 ${raised ? 'bottom-20' : 'bottom-5'} ${
-                    open ? 'max-sm:hidden' : ''
+                    open || otherPopupOpen ? 'max-sm:hidden' : ''
                 }`}
             >
                 <AnimatePresence>

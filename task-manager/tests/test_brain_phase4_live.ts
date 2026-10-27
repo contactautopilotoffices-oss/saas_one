@@ -278,7 +278,7 @@ async function run() {
     check('replies go through the safety gate (kill switches + Pretend Mode)', /TaskMessagingService\.sendFreeformReply/.test(live));
     check('only the brain\'s own state is ever cleared or overwritten', /context_type === LIVE_STATE_TYPE\) await TaskDatabaseService\.clearConversationContext/.test(live));
     const panel = read('frontend/components/task-manager/TaskAccessPanel.tsx');
-    check('the Control Center has a per-department "Smart chat" button with its SQL-file banner', /Smart chat: \{d\.smartChatEnabled/.test(panel) && /action: 'set_smart_chat', departmentId/.test(panel) && /20261007000005_task_manager_smart_chat\.sql/.test(panel));
+    check('the Control Center has a per-department "Smart chat" button with its SQL-file banner', /label: 'Smart chat'[^}]*on: d\.smartChatEnabled/.test(panel) && /action: 'set_smart_chat', departmentId/.test(panel) && /20261007000005_task_manager_smart_chat\.sql/.test(panel));
     check('nothing in this whole test touched the network', net.length === 0, net);
 
     console.log(failures === 0 ? '\n🎉 PHASE 4 SMART CHAT TESTS PASSED\n' : `\n❌ ${failures} FAILED\n`);

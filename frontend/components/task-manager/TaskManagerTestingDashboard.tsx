@@ -2541,7 +2541,6 @@ export default function TaskManagerTestingDashboard({ orgId }: { orgId?: string 
                                 <input
                                     type="text"
                                     value={newRuleForm.name}
-                                    placeholder="e.g. Afternoon Team Standup Reminder"
                                     onChange={(e) => setNewRuleForm(prev => ({ ...prev, name: e.target.value }))}
                                     className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
                                 />

@@ -75,7 +75,7 @@ function Row({ task, onEdit, onDelete, onRemind }: {
                         className="w-full rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm font-bold text-zinc-900 outline-none focus:border-indigo-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                     />
                     <textarea
-                        value={details} onChange={e => setDetails(e.target.value)} maxLength={900} placeholder="Details (optional)" aria-label="Task details"
+                        value={details} onChange={e => setDetails(e.target.value)} maxLength={900} aria-label="Task details"
                         className="h-16 w-full resize-none rounded-xl border border-zinc-300 bg-white px-3 py-2 text-xs text-zinc-800 outline-none focus:border-indigo-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200"
                     />
                     <div className="flex items-center gap-2">

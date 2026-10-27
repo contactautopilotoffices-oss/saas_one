@@ -1481,7 +1481,6 @@ export default function TaskAssignmentDashboard({
                                 <input
                                     type="text"
                                     required
-                                    placeholder="e.g. Clean Room 101, Prepare Q3 Audit"
                                     value={assignTitle}
                                     onChange={(e) => setAssignTitle(e.target.value)}
                                     className="w-full bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400 focus:outline-none transition-all"
@@ -1495,7 +1494,6 @@ export default function TaskAssignmentDashboard({
                                 </label>
                                 <textarea
                                     rows={2}
-                                    placeholder="Additional instructions or context..."
                                     value={assignDesc}
                                     onChange={(e) => setAssignDesc(e.target.value)}
                                     className="w-full bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400 focus:outline-none transition-all resize-none"
@@ -1572,7 +1570,6 @@ export default function TaskAssignmentDashboard({
                                 <input
                                     type="text"
                                     required
-                                    placeholder="e.g. Clean Meeting Room A, Submit Daily Report"
                                     value={newTemplateTitle}
                                     onChange={(e) => setNewTemplateTitle(e.target.value)}
                                     className="w-full bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400 focus:outline-none transition-all"
@@ -1617,7 +1614,6 @@ export default function TaskAssignmentDashboard({
                                 </label>
                                 <textarea
                                     rows={2}
-                                    placeholder="Standard operating procedure or instructions..."
                                     value={newTemplateDesc}
                                     onChange={(e) => setNewTemplateDesc(e.target.value)}
                                     className="w-full bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400 focus:outline-none transition-all resize-none"

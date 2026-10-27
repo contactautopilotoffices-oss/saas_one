@@ -57,8 +57,10 @@ async function run() {
     console.log('\n4. Every event is wired next to its WhatsApp alert');
     const src = (f: string) => fs.readFileSync(path.resolve(__dirname, '..', f), 'utf8');
     const ws = src('WorkspaceService.ts');
-    check('assigned (single and grouped), handed over', (ws.match(/kind: 'TASK_ASSIGNED'/g) || []).length === 2 && /kind: 'TASK_HANDOVER'/.test(ws));
-    check('edited / renamed / note / deleted by someone else → the holder', (ws.match(/bellHolderOfChange\(actor, row,/g) || []).length === 4 && /if \(row\.employee_id === actor\.id\) return;/.test(ws));
+    // Owner 2026-10-26: editing a task onto a new person bells them as a new task (3rd TASK_ASSIGNED) and tells the old
+    // holder it moved (5th bellHolderOfChange).
+    check('assigned (single and grouped, and moved by an edit), handed over', (ws.match(/kind: 'TASK_ASSIGNED'/g) || []).length === 3 && /kind: 'TASK_HANDOVER'/.test(ws));
+    check('edited / moved / renamed / note / deleted by someone else → the holder', (ws.match(/bellHolderOfChange\(actor, row,/g) || []).length === 5 && /if \(row\.employee_id === actor\.id\) return;/.test(ws));
     check('pending on you and remind use the same bell (with the link)', /kind: 'TASK_DEPENDENCY'/.test(ws) && /kind: 'TASK_REMINDER'/.test(ws));
     check('overdue: one summary per person when the overdue alert runs', /kind: 'TASK_OVERDUE'/.test(src('TaskNotificationService.ts')));
     check('older assign paths too (WhatsApp commands, older web route)', /kind: 'TASK_ASSIGNED'/.test(src('TaskCommandHandler.ts')) && /kind: 'TASK_ASSIGNED'/.test(fs.readFileSync(path.resolve(__dirname, '../../app/api/task-manager/tasks/route.ts'), 'utf8')));

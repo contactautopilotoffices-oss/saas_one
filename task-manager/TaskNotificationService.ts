@@ -165,7 +165,7 @@ export class TaskNotificationService {
         targetDate: string
     ): string {
         const firstName = employeeName.trim().split(' ')[0] || 'there';
-        const overdue = tasks.filter(t => t.status !== 'completed' && t.assigned_date < targetDate);
+        const overdue = this.overdueTasks(tasks, targetDate);
 
         if (overdue.length === 0) {
             return `Hi ${firstName}! ✅ You have no overdue tasks. All past tasks are up to date!`;
@@ -423,9 +423,13 @@ export class TaskNotificationService {
         return [head, '', `You have ${tasks.length} task${s(tasks.length)} today:`, lines(tasks), '', guide].join('\n');
     }
 
-    /** Open tasks from an earlier day than `targetDate`. */
+    /**
+     * Open tasks from an earlier day than `targetDate`. Owner 2026-10-27: a task still within its due date (one that takes
+     * several days) is not overdue yet. Without a due date (or before the due-date SQL file is applied) nothing changes.
+     */
     static overdueTasks(tasks: Array<ListTask>, targetDate: string) {
-        return tasks.filter(t => t.status !== 'completed' && t.assigned_date < targetDate);
+        return tasks.filter(t => t.status !== 'completed' && t.assigned_date < targetDate
+            && !((t as { due_date?: string | null }).due_date && (t as { due_date?: string | null }).due_date! >= targetDate));
     }
 
     /**

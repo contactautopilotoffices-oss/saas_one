@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-    DndContext, DragEndEvent, DragOverlay, DragStartEvent, KeyboardSensor,
+    DndContext, DragEndEvent, DragStartEvent, KeyboardSensor,
     PointerSensor, closestCenter, useSensor, useSensors,
 } from '@dnd-kit/core';
 import {
@@ -16,6 +16,8 @@ import {
 } from '@/frontend/lib/dashboard/types';
 import { invalidateWidgetData } from '@/frontend/lib/dashboard/useWidgetData';
 import WidgetShell from './WidgetShell';
+import ZoomSafeDragOverlay from '@/frontend/components/ui/ZoomSafeDragOverlay';
+import { unzoomTransform, useAppZoom } from '@/frontend/hooks/useAppZoom';
 
 /**
  * The customizable widget board.
@@ -94,6 +96,7 @@ interface CardProps {
 function SortableCard({ def, item, orgId, editing, lead, onSize, onRemove, onUsed, onReportSeverity }: CardProps) {
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
         useSortable({ id: item.widget_id, disabled: !editing });
+    const zoom = useAppZoom();
 
     const [severity, setSeverity] = useState<Severity>('ok');
     const [headline, setHeadline] = useState<string | null>(null);
@@ -117,7 +120,8 @@ function SortableCard({ def, item, orgId, editing, lead, onSize, onRemove, onUse
         const move = (ev: PointerEvent) => {
             const s = resizeRef.current;
             if (!s) return;
-            const next = sizeFromDrag(s.from, ev.clientX - s.x, ev.clientY - s.y, def.sizes);
+            // the pointer moves in screen pixels; the grid's column/row sizes are in page pixels (AppZoom)
+            const next = sizeFromDrag(s.from, (ev.clientX - s.x) / zoom, (ev.clientY - s.y) / zoom, def.sizes);
             if (next !== item.size) onSize(item.widget_id, next);
         };
         const up = () => {
@@ -127,12 +131,12 @@ function SortableCard({ def, item, orgId, editing, lead, onSize, onRemove, onUse
         };
         window.addEventListener('pointermove', move);
         window.addEventListener('pointerup', up);
-    }, [item.size, item.widget_id, def.sizes, onSize]);
+    }, [item.size, item.widget_id, def.sizes, onSize, zoom]);
 
     return (
         <div
             ref={setNodeRef}
-            style={{ transform: CSS.Transform.toString(transform), transition, zIndex: isDragging ? 40 : undefined }}
+            style={{ transform: CSS.Transform.toString(unzoomTransform(transform, zoom)), transition, zIndex: isDragging ? 40 : undefined }}
             className={`${COL_CLASS[span.col]} ${ROW_CLASS[span.row]} relative min-h-0`}
             onClick={() => onUsed?.(def.id)}
         >
@@ -404,7 +408,7 @@ export default function WidgetGrid({
                     </div>
                 </SortableContext>
 
-                <DragOverlay dropAnimation={{ duration: 200, easing: 'cubic-bezier(0.22,1,0.36,1)' }}>
+                <ZoomSafeDragOverlay dropAnimation={{ duration: 200, easing: 'cubic-bezier(0.22,1,0.36,1)' }}>
                     {activeDef && (
                         <div className="w-card h-full opacity-90 p-4" data-dragging="true">
                             <div className="flex items-center gap-2">
@@ -413,7 +417,7 @@ export default function WidgetGrid({
                             </div>
                         </div>
                     )}
-                </DragOverlay>
+                </ZoomSafeDragOverlay>
             </DndContext>
 
             {visible.length === 0 && (

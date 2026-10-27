@@ -152,7 +152,7 @@ export default function SuperuserPanel({ onAddTask, onDeleteTask, onChanged }: {
                 </ul>
 
                 <form className="mt-3 flex items-center gap-2" onSubmit={e => { e.preventDefault(); addTask(); }}>
-                    <input className={input} value={newTask} onChange={e => setNewTask(e.target.value)} maxLength={200} placeholder={`Add a task for ${first}`} aria-label={`Add a task for ${first}`} />
+                    <input className={input} value={newTask} onChange={e => setNewTask(e.target.value)} maxLength={200} aria-label={`Add a task for ${first}`} />
                     <button type="submit" disabled={busy === 'add' || !newTask.trim()} className="flex shrink-0 items-center gap-1 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-black text-white disabled:opacity-50">
                         {busy === 'add' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />} Add
                     </button>

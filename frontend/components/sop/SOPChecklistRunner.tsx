@@ -23,7 +23,8 @@ interface SOPChecklistRunnerProps {
     templateId: string;
     completionId?: string;
     isSuperAdmin?: boolean;
-    propertyId: string;
+    /** Optional: without it the runner uses the template row's own property_id. */
+    propertyId?: string;
     completionDate?: string; // e.g. YYYY-MM-DD for historical completion
     onSessionStarted?: (completionId: string) => void;
     onComplete?: () => void;
@@ -549,13 +550,14 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({
             }
         } catch (err) {
             console.error('[SOP Debug] handleItemToggle Exception:', err);
-            // Revert just this item on sync failure
+            // Revert just this item on sync failure (`completion` here is still the state from before the toggle)
+            const original = completion?.items?.find((i: { checklist_item_id: unknown }) => String(i.checklist_item_id).toLowerCase() === String(itemId).toLowerCase());
             setCompletion((prev: any) => {
-                if (!prev) return prev;
+                if (!prev || !original) return prev;
                 return {
                     ...prev,
                     items: prev.items.map((i: any) =>
-                        String(i.checklist_item_id).toLowerCase() === String(itemId).toLowerCase() ? item : i
+                        String(i.checklist_item_id).toLowerCase() === String(itemId).toLowerCase() ? original : i
                     )
                 };
             });

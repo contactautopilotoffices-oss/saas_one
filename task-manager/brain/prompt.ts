@@ -117,6 +117,8 @@ export function interpretUserPrompt(message: string, ctx: BrainContext, rewritte
             tasks: tasks.length ? tasks : ['(no tasks today)'],
             pending,
             recent: ctx.recent ?? [],
+            // Owner 2026-10-26: only when someone from another department is waiting for this person's answer
+            ...(ctx.supportRequests?.length ? { support_requests_waiting_for_answer: ctx.supportRequests.map(r => `${r.title} (from ${r.fromName}, ${r.fromDepartment})`) } : {}),
             // Owner 2026-10-22 (learned from Otto): the last CONVERSATION_LINES messages are REAL context for the whole
             // conversation, not only for "it / that". Only added when present, so with memory OFF this prompt is unchanged.
             ...(ctx.conversation?.length ? {

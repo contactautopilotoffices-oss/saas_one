@@ -3,6 +3,7 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState } from 'react';
 import { useDraggable } from '@dnd-kit/core';
+import { unzoomTransform, useAppZoom } from '@/frontend/hooks/useAppZoom';
 
 interface TicketNodeProps {
     id: string;
@@ -62,8 +63,10 @@ export default function TicketNode({
         ? assignedToName.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
         : null;
 
-    const style = transform ? {
-        transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
+    const zoom = useAppZoom();
+    const moved = unzoomTransform(transform, zoom);
+    const style = moved ? {
+        transform: `translate3d(${moved.x}px, ${moved.y}px, 0)`,
         zIndex: 1000,
     } : undefined;
 
