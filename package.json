@@ -19,6 +19,7 @@
     "test:notifications:browser": "npm exec --yes --package=esbuild -- node --test tests/notifications/settings-browser.test.mjs",
     "test:invoices": "node --test --test-isolation=none tests/invoices/match.test.mjs tests/invoices/lib.test.mjs tests/invoices/schedule.test.mjs tests/invoices/approval.test.mjs tests/invoices/watch.test.mjs tests/invoices/docdelete.test.mjs tests/invoices/reasons.test.mjs tests/invoices/bounty.test.mjs tests/invoices/database.test.mjs",
     "test:accounts": "node --test --test-isolation=none tests/accounts-onboarding.test.mjs tests/accounts-onboarding-ui.test.mjs",
+    "test:crm": "node --test --test-isolation=none tests/crm-lead-visibility.test.mjs tests/crm-seat-requirement.test.mjs",
     "test:whatsapp-interpreter": "node --test --test-isolation=none tests/whatsapp-interpreter-*.test.mjs",
     "test:requisition-drafts": "node --test --test-isolation=none tests/requisition-drafts.test.mjs tests/requisition-drafts-db.test.mjs tests/requisition-drafts-hook.test.mjs",
     "test:hr-assistant": "tsx --test \"tests/hr-assistant/*.test.ts\"",

@@ -1,5 +1,5 @@
 -- =================================================================================
--- Migration: 20261027000002_task_manager_cross_department_switch.sql
+-- Migration: 20261027100002_task_manager_cross_department_switch.sql
 -- Description: Control Center switch "Work with other departments" (owner 2026-10-27), per department.
 --   task_manager_department_settings.cross_dept_collab
 --     ON  (default)  the Send tab's "Other departments" side: give a task, ask for support, work together.

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { getPropertyStockSource, REQUISITION_LIST_LOCKED_MESSAGE } from '@/backend/lib/stock/propertyStock';
+import { liveItems, toItemSource } from '@/frontend/lib/stock/itemSource';
 import { exec } from 'child_process';
 import path from 'path';
 import { promisify } from 'util';
@@ -17,8 +19,12 @@ export async function GET(
     const category = searchParams.get('category');
     const lowStockOnly = searchParams.get('lowStockOnly') === 'true';
     const barcode = searchParams.get('barcode');
+    // ?source=legacy reads the Old Stock list; default is the list the property uses.
+    const requestedSource = searchParams.get('source');
 
     try {
+        const source = requestedSource ? toItemSource(requestedSource) : await getPropertyStockSource(propertyId);
+
         let query = supabase
             .from('stock_items')
             .select('*')
@@ -40,13 +46,14 @@ export async function GET(
         }
 
         // Filter low stock if requested
-        let filteredItems = items || [];
+        let filteredItems = liveItems(items || [], source);
         if (lowStockOnly) {
             filteredItems = filteredItems.filter(item => item.quantity < (item.min_threshold || 10));
         }
 
         return NextResponse.json({
             success: true,
+            item_source: source,
             items: filteredItems,
             total: filteredItems.length,
         });
@@ -69,6 +76,10 @@ export async function DELETE(
         const { data: { user }, error: authError } = await supabase.auth.getUser();
         if (authError || !user) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+
+        if (await getPropertyStockSource(propertyId) === 'catalog') {
+            return NextResponse.json({ error: REQUISITION_LIST_LOCKED_MESSAGE }, { status: 409 });
         }
 
         const body = await request.json();
@@ -130,6 +141,10 @@ export async function POST(
         const { data: { user }, error: authError } = await supabase.auth.getUser();
         if (authError || !user) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+
+        if (await getPropertyStockSource(propertyId) === 'catalog') {
+            return NextResponse.json({ error: REQUISITION_LIST_LOCKED_MESSAGE }, { status: 409 });
         }
 
         const body = await request.json();

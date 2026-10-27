@@ -4,6 +4,7 @@ import { enqueueAssistantMessage, drainWhatsAppPhone } from '@/backend/lib/whats
 import { processIncomingMessage } from '@/backend/lib/whatsapp/processMessage';
 import { isGreetingMessage } from '@/backend/lib/whatsapp/greeting';
 import { AiSensyService } from '@/backend/services/AiSensyService';
+import { LeadOutreachService } from '@/backend/services/LeadOutreachService';
 import { handleFreeformTest } from '@/whatsapp-test/freeformTest';
 import { TaskMessageRouter } from '@/task-manager/TaskMessageRouter';
 import { TaskIdempotencyService } from '@/task-manager/TaskIdempotencyService';
@@ -131,6 +132,32 @@ export async function POST(req: NextRequest) {
     if (input?.text) scheduleShadow({ phone: input.phone, text: input.text, messageId: input.messageId });
 
     if (!input) return NextResponse.json({ ok: true, ignored: true });
+
+    // CRM Inbound Lead Reply Ingestion:
+    // When a prospective lead replies with their preferred reach-out slot,
+    // update crm_leads followup date/notes, log the activity, and alert the assigned rep.
+    if (input.phone && input.text && !input.mediaUrl) {
+        try {
+            const isLead = await LeadOutreachService.isLeadPhone(input.phone);
+            if (isLead) {
+                const leadReply = await LeadOutreachService.handleInboundLeadReply({
+                    phone: input.phone,
+                    text: input.text,
+                    messageId: input.messageId || undefined,
+                });
+                if (leadReply.handled) {
+                    await markRoute(input.messageId, 'crm_lead_reply', input.phone, input.text);
+                    console.info('[AiSensyWebhook] Inbound routed to CRM_LEAD_REPLY', {
+                        phone: input.phone,
+                        leadId: leadReply.leadId,
+                    });
+                    return NextResponse.json({ success: true, routedTo: 'CRM_LEAD_REPLY', leadId: leadReply.leadId });
+                }
+            }
+        } catch (leadReplyError) {
+            console.error('[AiSensyWebhook] Error processing lead reply:', leadReplyError);
+        }
+    }
 
     let interpreter = false;
     try { interpreter = await isInterpreterPilot(input); }

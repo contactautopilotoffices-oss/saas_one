@@ -8,7 +8,7 @@ import { TaskDue, addDueDays, dueInstant, dueLabel, istDateOf, reminderAt, short
 
 /**
  * Owner 2026-10-27: due dates on the server — saving a deadline, the open tasks still within their deadline, and the one
- * "due soon" reminder. Columns from 20261027000001_task_manager_due_dates.sql; until it is applied, reads return nothing,
+ * "due soon" reminder. Columns from 20261027100001_task_manager_due_dates.sql; until it is applied, reads return nothing,
  * writes are skipped (logged once) and the reminder job does nothing.
  */
 
@@ -16,7 +16,7 @@ let warned = false;
 function warnOnce() {
     if (warned) return;
     warned = true;
-    console.warn('[TaskDueService] Due dates are not in the database yet (run 20261027000001_task_manager_due_dates.sql). Skipping them for now.');
+    console.warn('[TaskDueService] Due dates are not in the database yet (run 20261027100001_task_manager_due_dates.sql). Skipping them for now.');
 }
 
 /** Sets (or clears, with null) the deadline of new tasks. Returns false when the columns are not in the database yet. */

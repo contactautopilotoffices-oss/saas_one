@@ -425,21 +425,21 @@ Their files and images go back to being handled exactly as before.`;
             {provisioned && crossDeptColumnMissing && (
                 <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs">
                     <p className="font-black flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> &quot;Work with other departments&quot; needs one more SQL file</p>
-                    <p>Run <code className="font-mono bg-white/70 px-1 rounded">supabase/migrations/20261027000002_task_manager_cross_department_switch.sql</code> once in the Supabase SQL Editor. Until then every department can work with other departments (as today) and the switch cannot be turned off.</p>
+                    <p>Run <code className="font-mono bg-white/70 px-1 rounded">supabase/migrations/20261027100002_task_manager_cross_department_switch.sql</code> once in the Supabase SQL Editor. Until then every department can work with other departments (as today) and the switch cannot be turned off.</p>
                 </div>
             )}
 
             {provisioned && !crossDeptColumnMissing && crossDeptScopeColumnMissing && (
                 <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs">
                     <p className="font-black flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Choosing who can send to other departments needs one more SQL file</p>
-                    <p>Run <code className="font-mono bg-white/70 px-1 rounded">supabase/migrations/20261027000003_task_manager_cross_department_people.sql</code> once in the Supabase SQL Editor. Until then everyone in a department with the switch ON can send.</p>
+                    <p>Run <code className="font-mono bg-white/70 px-1 rounded">supabase/migrations/20261027100003_task_manager_cross_department_people.sql</code> once in the Supabase SQL Editor. Until then everyone in a department with the switch ON can send.</p>
                 </div>
             )}
 
             {provisioned && dueDatesColumnMissing && (
                 <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs">
                     <p className="font-black flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Due dates need one more SQL file</p>
-                    <p>Run <code className="font-mono bg-white/70 px-1 rounded">supabase/migrations/20261027000001_task_manager_due_dates.sql</code> once in the Supabase SQL Editor. Until then due dates are OFF everywhere and the switch is disabled.</p>
+                    <p>Run <code className="font-mono bg-white/70 px-1 rounded">supabase/migrations/20261027100001_task_manager_due_dates.sql</code> once in the Supabase SQL Editor. Until then due dates are OFF everywhere and the switch is disabled.</p>
                 </div>
             )}
 

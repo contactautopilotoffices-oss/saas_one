@@ -359,7 +359,7 @@ export class TaskAccessService {
         }
     }
 
-    // ── Owner 2026-10-27: "Due dates" switch (its own column, 20261027000001_task_manager_due_dates.sql) ──────────
+    // ── Owner 2026-10-27: "Due dates" switch (its own column, 20261027100001_task_manager_due_dates.sql) ──────────
     // Read on its own so a missing column never switches the three switches above OFF. FAIL-CLOSED: OFF for everyone.
     //   ON  = people in the department can set a due date (and time) on tasks they give, and get the "due soon" reminder.
     //   OFF = no due date can be set by them and no reminder goes to them; deadlines already set still show on cards.
@@ -373,7 +373,7 @@ export class TaskAccessService {
         }
     }
 
-    // ── Owner 2026-10-27: "Work with other departments" (20261027000002_task_manager_cross_department_switch.sql) ──────
+    // ── Owner 2026-10-27: "Work with other departments" (20261027100002_task_manager_cross_department_switch.sql) ──────
     // ON by default (the Send tab's cross-department side worked for everyone before this switch). OFF = the department's
     // people can neither send to nor receive from other departments. Before the SQL file is applied everyone counts as ON
     // (today's behaviour); any other read problem counts as OFF for everyone (fail closed).
@@ -390,7 +390,7 @@ export class TaskAccessService {
         }
     }
 
-    // ── Owner 2026-10-27: WHO in a department may send to other departments (20261027000003_…_cross_department_people.sql) ──
+    // ── Owner 2026-10-27: WHO in a department may send to other departments (20261027100003_…_cross_department_people.sql) ──
     // 'everyone' (default) or 'selected' (only ticked people; nobody until someone is ticked). Receiving is never limited by
     // this. Before the SQL file is applied: everyone (today's behaviour). Any other read problem: nobody (fail closed).
     static async getCrossDeptScope(): Promise<{ selected: Set<string>; allowed: Set<string>; failClosed: boolean; columnMissing: boolean }> {
@@ -429,7 +429,7 @@ export class TaskAccessService {
         if (!dept) throw new Error('Department not found');
         const { error } = await supabaseAdmin.from('task_manager_department_settings')
             .upsert({ department_id: departmentId, cross_dept_scope: scope, updated_by: actor || null, updated_at: new Date().toISOString() }, { onConflict: 'department_id' });
-        if (error) throw new Error('Could not save that setting. Run supabase/migrations/20261027000003_task_manager_cross_department_people.sql in the Supabase SQL Editor first.');
+        if (error) throw new Error('Could not save that setting. Run supabase/migrations/20261027100003_task_manager_cross_department_people.sql in the Supabase SQL Editor first.');
         await TaskDatabaseService.logAudit({
             event_type: 'task_access_cross_dept_scope_updated',
             details: { departmentId, departmentName: dept.name, scope, actor: actor || null },
@@ -442,7 +442,7 @@ export class TaskAccessService {
         const { error } = allowed
             ? await supabaseAdmin.from('task_manager_cross_dept_people').upsert({ user_id: userId, added_by: actor || null, added_at: new Date().toISOString() }, { onConflict: 'user_id' })
             : await supabaseAdmin.from('task_manager_cross_dept_people').delete().eq('user_id', userId);
-        if (error) throw new Error('Could not save that setting. Run supabase/migrations/20261027000003_task_manager_cross_department_people.sql in the Supabase SQL Editor first.');
+        if (error) throw new Error('Could not save that setting. Run supabase/migrations/20261027100003_task_manager_cross_department_people.sql in the Supabase SQL Editor first.');
         await TaskDatabaseService.logAudit({
             event_type: allowed ? 'task_access_cross_dept_person_added' : 'task_access_cross_dept_person_removed',
             target_employee_id: userId,
@@ -475,8 +475,8 @@ export class TaskAccessService {
             .upsert({ department_id: departmentId, [feature]: enabled, updated_by: actor || null, updated_at: new Date().toISOString() },
                 { onConflict: 'department_id' });
         if (error) {
-            const file = feature === 'due_dates' ? '20261027000001_task_manager_due_dates.sql'
-                : feature === 'cross_dept_collab' ? '20261027000002_task_manager_cross_department_switch.sql' : '20261019000001_task_manager_team_controls.sql';
+            const file = feature === 'due_dates' ? '20261027100001_task_manager_due_dates.sql'
+                : feature === 'cross_dept_collab' ? '20261027100002_task_manager_cross_department_switch.sql' : '20261019000001_task_manager_team_controls.sql';
             throw new Error(`Could not save that setting. Run supabase/migrations/${file} in the Supabase SQL Editor first.`);
         }
 

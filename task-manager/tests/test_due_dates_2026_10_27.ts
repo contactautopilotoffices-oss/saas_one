@@ -70,7 +70,7 @@ async function run() {
     check('"17:00:00" from the database → "17:00"', D.shortTime('17:00:00') === '17:00' && D.shortTime(null) === null);
 
     console.log('\n5. The server and the Control Center keep the rules');
-    const sql = read('supabase/migrations/20261027000001_task_manager_due_dates.sql');
+    const sql = read('supabase/migrations/20261027100001_task_manager_due_dates.sql');
     check('migration is additive only (no DROP / DELETE / UPDATE / TRUNCATE outside comments)', !/^\s*(DROP|DELETE|UPDATE|TRUNCATE)\b/im.test(sql.split('\n').filter(l => !l.trim().startsWith('--')).join('\n')));
     check('migration: switch is OFF by default', /due_dates BOOLEAN NOT NULL DEFAULT false/.test(sql));
     const access = read('task-manager/TaskAccessService.ts');

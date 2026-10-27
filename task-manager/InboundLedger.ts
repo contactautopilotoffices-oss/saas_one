@@ -12,7 +12,7 @@ import { botSwitchOn } from './BotSwitches';
  */
 
 export const LEDGER_TABLE = 'whatsapp_inbound_ledger';
-export type LedgerRoute = 'task_import' | 'smart_chat' | 'task_router';
+export type LedgerRoute = 'task_import' | 'smart_chat' | 'task_router' | 'crm_lead_reply' | 'agent_unknown';
 
 /** The "Never silent" switch (settings, cached 30 s; env forces it ON). */
 export const neverSilentEnabled = () => botSwitchOn('neverSilent');

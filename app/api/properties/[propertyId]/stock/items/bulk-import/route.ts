@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { getPropertyStockSource, REQUISITION_LIST_LOCKED_MESSAGE } from '@/backend/lib/stock/propertyStock';
 
 interface CSVRow {
     name: string;
@@ -150,6 +151,10 @@ export async function POST(
         const { data: { user }, error: authError } = await supabase.auth.getUser();
         if (authError || !user) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+
+        if (await getPropertyStockSource(propertyId) === 'catalog') {
+            return NextResponse.json({ error: REQUISITION_LIST_LOCKED_MESSAGE }, { status: 409 });
         }
 
         const body = await request.json();

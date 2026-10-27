@@ -1,5 +1,5 @@
 -- =================================================================================
--- Migration: 20261027000003_task_manager_cross_department_people.sql
+-- Migration: 20261027100003_task_manager_cross_department_people.sql
 -- Description: who in a department may SEND work to other departments (owner 2026-10-27).
 --   task_manager_department_settings.cross_dept_scope
 --     'everyone' (default)  everyone in the department, exactly as today
@@ -10,7 +10,7 @@
 -- Safety: ADDITIVE ONLY. One column with a default and one new empty table (row level security on, no policies: only
 --         server code with the service role reads or writes it). Existing rows and behaviour are unchanged. Safe to re-run.
 --         The app works before this is applied (everyone counts as "everyone", and the choice cannot be changed yet).
--- How to apply: run this file once in the Supabase SQL Editor (after 20261027000002).
+-- How to apply: run this file once in the Supabase SQL Editor (after 20261027100002).
 -- Rollback:   DROP TABLE public.task_manager_cross_dept_people;
 --             ALTER TABLE public.task_manager_department_settings DROP COLUMN cross_dept_scope;
 -- =================================================================================

@@ -236,7 +236,7 @@ async function run() {
     check('Give to: a deadline picker (Due dates switch); the hand-over saves it only when one was chosen', /actions\?\.dueDates && <DuePicker start=\{giveStart\}/.test(tv8) && /dueSent \? await this\.dueFor\(actor, row\.assigned_date as string, input\.dueDate, input\.dueTime\)/.test(wsSrc8));
 
     console.log('\n9. "Work with other departments" switch, and no grey example text (owner 2026-10-27)');
-    const xsql = read('supabase/migrations/20261027000002_task_manager_cross_department_switch.sql');
+    const xsql = read('supabase/migrations/20261027100002_task_manager_cross_department_switch.sql');
     check('migration: one column, ON by default, additive', /ADD COLUMN IF NOT EXISTS cross_dept_collab BOOLEAN NOT NULL DEFAULT true/.test(xsql) && !/^\s*(DROP|DELETE|UPDATE|TRUNCATE)\b/im.test(xsql.split('\n').filter(l => !l.trim().startsWith('--')).join('\n')));
     const collabSrc = read('task-manager/CollaborationService.ts');
     check('OFF: nobody to send to, and people in an OFF department are never offered', /if \(!\(await this\.enabledFor\(actor\)\)\) return \[\];/.test(collabSrc) && /on\(e\.department_id\)\)/.test(collabSrc));
@@ -248,7 +248,7 @@ async function run() {
     check('Send tab: the other-departments side follows the switch', /const crossDeptOn = collab\.data\?\.enabled !== false/.test(tab) && /superCollab && crossDeptOn/.test(tab));
     check('Control Center: a "Work with other departments" switch', /label: 'Work with other departments'/.test(read('frontend/components/task-manager/TaskAccessPanel.tsx')));
     // Owner 2026-10-27 (b): WHO in a department may send — "Everyone" (default) or "Only selected people" (ticked)
-    const psql = read('supabase/migrations/20261027000003_task_manager_cross_department_people.sql');
+    const psql = read('supabase/migrations/20261027100003_task_manager_cross_department_people.sql');
     check('migration: "everyone" by default, a CHECK on the value, a new table with row level security', /cross_dept_scope TEXT NOT NULL DEFAULT 'everyone'/.test(psql) && /CHECK \(cross_dept_scope IN \('everyone', 'selected'\)\)/.test(psql) && /task_manager_cross_dept_people ENABLE ROW LEVEL SECURITY/.test(psql));
     const may = accessSrc.slice(accessSrc.indexOf('static async maySendCrossDept('), accessSrc.indexOf('static async setCrossDeptScope('));
     check('may send = department ON and (everyone, or ticked); a read problem = nobody', /cross\.off\.has\(person\.department_id\) \|\| scope\.failClosed\) return false/.test(may) && /!scope\.selected\.has\(person\.department_id\) \|\| scope\.allowed\.has\(person\.id\)/.test(may));

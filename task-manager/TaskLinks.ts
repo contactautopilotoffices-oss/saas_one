@@ -16,7 +16,7 @@ export interface TaskExtras {
     attachmentCount: number;
     /** Owner 2026-10-26: made by accepting a support request from another department. */
     supportRequest: boolean;
-    /** Owner 2026-10-27: the deadline (20261027000001_task_manager_due_dates.sql); null = due on its start date, as before. */
+    /** Owner 2026-10-27: the deadline (20261027100001_task_manager_due_dates.sql); null = due on its start date, as before. */
     due: TaskDue | null;
 }
 
