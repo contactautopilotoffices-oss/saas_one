@@ -51,7 +51,7 @@ export default function DashboardSidebar({
     // CrmOnboardingGate (email allowlist + membership.org_role) so all four
     // call sites agree. user_metadata.role is not reliably populated.
     const isBdSuperAdmin = checkBdSuperAdmin(user?.email, membership?.org_role);
-    const isCrmRoute = pathname?.split('/').includes('crm') ?? false;
+    const isCrmRoute = (pathname?.split('/').includes('crm') ?? false) || (searchParams?.get('from') === 'crm');
     // Pure BD roles (bd_rep, bd_admin) belong to the CRM workspace permanently.
     // They must never lose their CRM navigation, quick actions, or branding on shared
     // personal pages like /hr-tickets or /settings.
@@ -62,7 +62,7 @@ export default function DashboardSidebar({
     // An org super admin landing on a non-CRM page was being labelled "Staff Dashboard"
     // because the label had only three branches and staff was the fallback. Their console
     // has a name; use it.
-    const isOrgSuperAdmin = userRole === 'org_super_admin' || membership?.org_role === 'org_super_admin';
+    const isOrgSuperAdmin = ['org_super_admin', 'director', 'super_admin'].includes(userRole) || ['org_super_admin', 'director', 'super_admin'].includes(membership?.org_role || '');
     // External parties (tenants, external vendors) must not see employee HR grievance options.
     const isExternalRole = Boolean(
         rawRole && (
@@ -95,7 +95,7 @@ export default function DashboardSidebar({
 
         const items: { label: string; href: string; icon: LucideIcon; domain: CapabilityDomain }[] = [
             { label: 'Overview', href: `/${orgId}/dashboard`, icon: LayoutDashboard, domain: 'dashboards' as const },
-            { label: 'Tickets', href: `/${orgId}/dashboard`, icon: Ticket, domain: 'tickets' as const },
+            { label: 'Tickets', href: `/${orgId}/dashboard?tab=requests`, icon: Ticket, domain: 'tickets' as const },
             { label: 'Flow Map', href: `/${orgId}/flow-map`, icon: GitMerge, domain: 'tickets' as const },
             { label: 'Inventory', href: `/${orgId}/procurement-management`, icon: Package, domain: 'procurement' as const },
             { label: 'Procurement', href: `/${orgId}/procurement-management`, icon: ShoppingCart, domain: 'procurement' as const },
@@ -120,13 +120,14 @@ export default function DashboardSidebar({
         // The Payment Tracker deliberately stays out: it is finance-only (item 7).
         // Petty Cash is rendered once in the shared personal section for every internal role.
 
-        if (userRole === 'org_super_admin') {
+        if (userRole === 'org_super_admin' || isOrgSuperAdmin) {
             items.push({ label: 'Water Analytics', href: `/${orgId}/dashboard?tab=water`, icon: Droplets, domain: 'dashboards' as const });
             // Both render as tabs of the super-admin console. Linking the standalone
             // /org-progress and /org-efficiency pages instead dropped the user into the
             // (dashboard) route group and its staff sidebar.
             items.push({ label: 'Org Progress Meter', href: `/${orgId}/dashboard?tab=org_progress`, icon: Gauge, domain: 'dashboards' as const });
             items.push({ label: 'Org Efficiency', href: `/${orgId}/dashboard?tab=org_efficiency`, icon: TrendingUp, domain: 'dashboards' as const });
+            items.push({ label: 'Business Development', href: `/${orgId}/crm`, icon: TrendingUp, domain: 'crm' as const });
         }
 
         // Ops Super Admin — electricity checker workspace: validation queue, disputes, reports.
@@ -271,7 +272,26 @@ export default function DashboardSidebar({
                                     <Plus className="w-4 h-4 shrink-0" />
                                     <span className="tracking-tight whitespace-nowrap leading-none">Request</span>
                                 </Link>
-                                {(userRole === 'hr' || userRole === 'hr_head' || isOrgSuperAdmin) ? (
+                                {(isBDRole && isCrmRoute) || (isBDRole && !isOrgSuperAdmin) ? (
+                                    <>
+                                        <Link
+                                            href={`/${orgId}/hr-tickets?tab=tickets`}
+                                            className="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-[#f6f2ec] dark:bg-[#aa895f]/20 hover:bg-[#ede5d8] dark:hover:bg-[#aa895f]/30 text-[#8f6d3d] dark:text-[#c4a479] transition-all text-[10px] font-bold text-center gap-1 border border-[#d8c4a5] dark:border-[#aa895f]/40 active:scale-95 shadow-xs h-13 min-w-0"
+                                            title="My Grievances"
+                                        >
+                                            <ShieldCheck className="w-4 h-4 shrink-0 text-[#aa895f] dark:text-[#c4a479]" />
+                                            <span className="tracking-tight whitespace-nowrap leading-none">Grievance</span>
+                                        </Link>
+                                        <Link
+                                            href={`/${orgId}/crm/leads`}
+                                            className="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-all text-[10px] font-bold text-center gap-1 border border-slate-200 dark:border-slate-700 active:scale-95 shadow-xs h-13 min-w-0"
+                                            title="View Leads"
+                                        >
+                                            <UsersRound className="w-4 h-4 shrink-0 text-slate-500 dark:text-slate-400" />
+                                            <span className="tracking-tight whitespace-nowrap leading-none">Leads</span>
+                                        </Link>
+                                    </>
+                                ) : (userRole === 'hr' || userRole === 'hr_head' || isOrgSuperAdmin) ? (
                                     <>
                                         <Link
                                             href={isOrgSuperAdmin ? `/${orgId}/dashboard?tab=grievance&subtab=directory&action=add` : `/${orgId}/hr-tickets?tab=directory&action=add`}
@@ -348,11 +368,17 @@ export default function DashboardSidebar({
                             {NAV_ITEMS.map((item) => {
                                 let isActive = false;
                                 if (item.href.includes('?tab=')) {
-                                    const itemTab = item.href.split('?tab=')[1];
-                                    isActive = pathname.endsWith('/hr-tickets') && (currentTab === itemTab || (!currentTab && itemTab === 'tickets'));
+                                    const [itemPath, itemQuery] = item.href.split('?');
+                                    const itemParams = new URLSearchParams(itemQuery);
+                                    const itemTab = itemParams.get('tab');
+                                    if (itemPath.endsWith('/hr-tickets')) {
+                                        isActive = pathname.endsWith('/hr-tickets') && (currentTab === itemTab || (!currentTab && itemTab === 'tickets'));
+                                    } else {
+                                        isActive = pathname === itemPath && currentTab === itemTab;
+                                    }
                                 } else if (item.href.includes('?')) {
-                                    const queryPart = item.href.split('?')[1];
-                                    isActive = pathname === item.href.split('?')[0] && (searchParams.toString().includes(queryPart));
+                                    const [itemPath, itemQuery] = item.href.split('?');
+                                    isActive = pathname === itemPath && (searchParams.toString().includes(itemQuery));
                                 } else {
                                     isActive = pathname === item.href && (!searchParams.get('tab'));
                                 }
@@ -374,7 +400,7 @@ export default function DashboardSidebar({
                                     </Link>
                                 );
 
-                                if (['hr', 'hr_head', 'hr_manager', 'hr_ops'].includes(userRole)) {
+                                if (['hr', 'hr_head', 'hr_manager', 'hr_ops'].includes(userRole) || isOrgSuperAdmin) {
                                     return (
                                         <React.Fragment key={`${item.label}-${item.href}`}>
                                             {linkElement}
@@ -506,10 +532,10 @@ export default function DashboardSidebar({
 
                             {isOrgSuperAdmin && (
                                 <Link
-                                    href={`/${orgId}/dashboard?tab=tasks`}
+                                    href={isCrmRoute ? `/${orgId}/crm/tasks` : `/${orgId}/dashboard?tab=tasks`}
                                     onClick={handleLinkClick}
                                     className={`flex items-center gap-3 px-3.5 py-2 rounded-xl transition-all font-semibold text-xs sm:text-sm group ${
-                                        pathname?.includes('tab=tasks')
+                                        (isCrmRoute ? pathname?.startsWith(`/${orgId}/crm/tasks`) : pathname?.includes('tab=tasks'))
                                             ? 'bg-[#587e85] text-white shadow-xs font-bold'
                                             : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
                                     }`}
@@ -521,16 +547,16 @@ export default function DashboardSidebar({
 
                             {(userRole !== 'hr' && userRole !== 'hr_head' && (isOrgSuperAdmin || userRole === 'property_admin')) && (
                                 <Link
-                                    href={`/${orgId}/dashboard?tab=ai_tickets`}
+                                    href={isCrmRoute ? `/${orgId}/crm/ai` : `/${orgId}/dashboard?tab=ai_tickets`}
                                     onClick={handleLinkClick}
                                     className={`flex items-center gap-3 px-3.5 py-2 rounded-xl transition-all font-semibold text-xs sm:text-sm group ${
-                                        pathname?.includes('tab=ai_tickets')
+                                        (isCrmRoute ? pathname?.startsWith(`/${orgId}/crm/ai`) : pathname?.includes('tab=ai_tickets'))
                                             ? 'bg-[#587e85] text-white shadow-xs font-bold'
                                             : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
                                     }`}
                                 >
                                     <Bot className="w-4 h-4 shrink-0 transition-transform group-hover:scale-105" />
-                                    <span className="truncate">AI Automation</span>
+                                    <span className="truncate">{isCrmRoute ? 'AI Agent' : 'AI Automation'}</span>
                                 </Link>
                             )}
 
@@ -547,10 +573,12 @@ export default function DashboardSidebar({
                             </button>
 
                             <Link
-                                href={`/${orgId}/settings`}
+                                href={isCrmRoute ? `/${orgId}/crm/settings` : `/${orgId}/settings`}
                                 onClick={handleLinkClick}
                                 className={`flex items-center gap-3.5 px-4 py-2.5 rounded-2xl transition-all font-semibold text-xs sm:text-sm group ${
-                                    pathname?.endsWith('/settings') && (!currentTab || currentTab !== 'profile')
+                                    (isCrmRoute
+                                        ? pathname === `/${orgId}/crm/settings` && (!currentTab || currentTab !== 'profile')
+                                        : pathname?.endsWith('/settings') && (!currentTab || currentTab !== 'profile'))
                                         ? 'bg-[#587e85] text-white shadow-sm font-bold'
                                         : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
                                 }`}
@@ -560,10 +588,12 @@ export default function DashboardSidebar({
                             </Link>
 
                             <Link
-                                href={`/${orgId}/settings?tab=profile`}
+                                href={isCrmRoute ? `/${orgId}/crm/settings?tab=profile` : `/${orgId}/settings?tab=profile`}
                                 onClick={handleLinkClick}
                                 className={`flex items-center gap-3.5 px-4 py-2.5 rounded-2xl transition-all font-semibold text-xs sm:text-sm group ${
-                                    pathname?.includes('tab=profile')
+                                    (isCrmRoute
+                                        ? pathname === `/${orgId}/crm/settings` && currentTab === 'profile'
+                                        : pathname?.includes('tab=profile'))
                                         ? 'bg-[#587e85] text-white shadow-sm font-bold'
                                         : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
                                 }`}

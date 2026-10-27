@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { resolveDistributionAssignee } from '@/backend/lib/crm/distribution';
 import { NotificationService } from '@/backend/services/NotificationService';
+import { LeadOutreachService } from '@/backend/services/LeadOutreachService';
 
 const GRAPH_VERSION = 'v19.0';
 
@@ -258,6 +259,7 @@ async function processLeadgen(leadgenId: string, value: any, config: any) {
 
         // Fire-and-forget WhatsApp notification.
         NotificationService.afterLeadCreated(lead.id).catch(e => console.error('[Meta webhook] WA error:', e));
+        LeadOutreachService.sendLeadFollowupOutreach(lead.id).catch(e => console.error('[Meta webhook] Lead outreach error:', e));
 
         return { leadgen_id: leadgenId, status: 'processed', lead_id: lead.id };
     } catch (err: any) {
