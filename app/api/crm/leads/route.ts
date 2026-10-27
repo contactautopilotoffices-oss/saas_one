@@ -10,6 +10,7 @@ import {
 import { NotificationService } from '@/backend/services/NotificationService';
 import { EmailService } from '@/backend/services/EmailService';
 import { cityFilterOr } from '@/backend/lib/crm/cityGroups';
+import { parseSeatCount, isMissingColumnError } from '@/backend/lib/crm/seatRequirement';
 
 const LEAD_SELECT = `
     *,
@@ -180,7 +181,12 @@ export async function POST(request: NextRequest) {
         location: body.location ?? null,
         city: body.city ?? body.location ?? null,
         requirement: body.requirement ?? null,
-        seats: body.seats != null && !isNaN(Number(body.seats)) ? Number(body.seats) : null,
+        // Seat requirement is free text ("70 workstations and 4 cabins"); `seats`
+        // keeps its leading number so the seat-range filters still work.
+        seats_detail: body.seats_detail ?? null,
+        seats: body.seats != null && !isNaN(Number(body.seats))
+            ? Number(body.seats)
+            : parseSeatCount(body.seats_detail),
         move_in_timeline: body.move_in_timeline ?? null,
         property_interest: body.property_interest ?? null,
         lead_source: body.lead_source ?? null,
@@ -192,11 +198,22 @@ export async function POST(request: NextRequest) {
         remarks: body.remarks ?? null,
     };
 
-    const { data, error } = await supabaseAdmin
+    let { data, error } = await supabaseAdmin
         .from('crm_leads')
         .insert(leadData)
         .select(LEAD_SELECT)
         .single();
+
+    // seats_detail arrived with a migration the team runs by hand. If this
+    // deployment hasn't run it yet, keep the lead rather than losing the create.
+    if (error && isMissingColumnError(error, 'seats_detail')) {
+        const { seats_detail, ...withoutSeatsDetail } = leadData;
+        ({ data, error } = await supabaseAdmin
+            .from('crm_leads')
+            .insert(withoutSeatsDetail)
+            .select(LEAD_SELECT)
+            .single());
+    }
 
     if (error) {
         console.error('CRM Lead CREATE error:', error);

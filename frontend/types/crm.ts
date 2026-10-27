@@ -288,6 +288,8 @@ export interface CRMLead {
     location?: string;
     requirement?: string;
     seats?: number;
+    /** Seat requirement as typed, e.g. "70 workstations and 4 cabins" (seats holds the number). */
+    seats_detail?: string | null;
     property_interest?: string;
     lead_source?: string;
     deal_value: number;
@@ -414,6 +416,7 @@ export interface CreateLeadInput {
     location?: string;
     requirement?: string;
     seats?: number | null;
+    seats_detail?: string | null;
     move_in_timeline?: string | null;
     property_interest?: string;
     lead_source?: string;

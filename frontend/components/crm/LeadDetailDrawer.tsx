@@ -14,6 +14,7 @@ import AddEventModal from '@/frontend/components/crm/AddEventModal';
 import CallCoachPanel from '@/frontend/components/crm/CallCoachPanel';
 import { getStageVisual, COMMENT_REQUIRED_STAGES } from '@/frontend/lib/crm/stages';
 import { getSourceVisual } from '@/frontend/lib/crm/sourceIcons';
+import { parseSeatCount, seatRequirementText } from '@/backend/lib/crm/seatRequirement';
 import { TextShimmer } from '@/frontend/components/ui/text-shimmer';
 import { Toast } from '@/frontend/components/ui/Toast';
 
@@ -108,11 +109,17 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
             setEditingField(null);
             return;
         }
-        const valToSend = field === 'seats'
-            ? (fieldDraft !== '' && !isNaN(Number(fieldDraft)) ? Number(fieldDraft) : null)
-            : (fieldDraft || null);
+        // Seat requirement is free text ("70 workstations and 4 cabins"); it is
+        // stored as typed, with its leading number kept in `seats` for the filters.
+        const isSeatRequirement = field === 'seats';
+        const seatText = fieldDraft.trim();
+        const payload: Record<string, any> = isSeatRequirement
+            ? { seats_detail: seatText || null, seats: parseSeatCount(seatText) }
+            : { [field]: fieldDraft || null };
 
-        if (valToSend === (lead[field] ?? null)) {
+        const currentVal = isSeatRequirement ? seatRequirementText(lead) : (lead[field] ?? null);
+        const nextVal = isSeatRequirement ? (seatText || null) : payload[field];
+        if (nextVal === (currentVal ?? null)) {
             setEditingField(null);
             return;
         }
@@ -121,11 +128,11 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
             const res = await fetch(`/api/crm/leads/${lead.id}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ [field]: valToSend }),
+                body: JSON.stringify(payload),
             });
             if (res.ok) {
                 const data = await res.json().catch(() => null);
-                const updated = data?.lead ? data.lead : ({ ...lead, [field]: valToSend } as CRMLead);
+                const updated = data?.lead ? data.lead : ({ ...lead, ...payload } as CRMLead);
                 setLead(updated);
                 onLeadUpdate?.(updated);
 
@@ -279,8 +286,8 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
                 } else if (normQ.includes('timeline') || normQ.includes('move-in')) {
                     updatePayload.move_in_timeline = val;
                 } else if (normQ.includes('seat')) {
-                    const num = parseInt(val, 10);
-                    if (!isNaN(num)) updatePayload.seats = num;
+                    updatePayload.seats_detail = val || null;
+                    updatePayload.seats = parseSeatCount(val);
                 } else if (normQ.includes('name') || normQ.includes('contact person')) {
                     updatePayload.contact_person = val;
                 }
@@ -750,7 +757,7 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
                                             {renderEditable('Secondary Contact', 'secondary_contact_number', lead.secondary_contact_number, <Phone className="w-4 h-4" />)}
                                             {renderEditable('Email', 'email', lead.email, <Mail className="w-4 h-4" />)}
                                             {renderEditable('City/Location', 'location', lead.location, <MapPin className="w-4 h-4" />)}
-                                            {renderEditable('Seat Requirement', 'seats', lead.seats, <Users className="w-4 h-4" />)}
+                                            {renderEditable('Seat Requirement', 'seats', seatRequirementText(lead), <Users className="w-4 h-4" />)}
                                         </div>
                                     </div>
 
