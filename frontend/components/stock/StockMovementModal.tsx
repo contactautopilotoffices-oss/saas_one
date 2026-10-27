@@ -6,6 +6,8 @@ import dynamic from 'next/dynamic';
 import { createClient } from '@/frontend/utils/supabase/client';
 import { Toast } from '@/frontend/components/ui/Toast';
 import Skeleton from '@/frontend/components/ui/Skeleton';
+import { usePropertyStockSource } from '@/frontend/hooks/usePropertyStockSource';
+import { liveItems, withListFilter } from '@/frontend/lib/stock/itemSource';
 
 const BarcodeScannerModal = dynamic(
     () => import('./BarcodeScannerModal'),
@@ -56,6 +58,15 @@ const UNIT_CONVERSIONS: Record<string, { label: string; subUnit: string; subLabe
     'cm': { label: 'cm', subUnit: 'meter', subLabel: 'Meter', factor: 100 },
     'centimeter': { label: 'cm', subUnit: 'meter', subLabel: 'Meter', factor: 100 },
     'centimeters': { label: 'cm', subUnit: 'meter', subLabel: 'Meter', factor: 100 },
+    // Short spellings used in older item lists
+    'ltr': { label: 'Ltr', subUnit: 'ml', subLabel: 'ml', factor: 1000 },
+    'ltrs': { label: 'Ltr', subUnit: 'ml', subLabel: 'ml', factor: 1000 },
+    'lt': { label: 'Ltr', subUnit: 'ml', subLabel: 'ml', factor: 1000 },
+    'kgs': { label: 'Kg', subUnit: 'grams', subLabel: 'Grams', factor: 1000 },
+    'gm': { label: 'g', subUnit: 'kg', subLabel: 'Kg', factor: 1000 },
+    'gms': { label: 'g', subUnit: 'kg', subLabel: 'Kg', factor: 1000 },
+    'mtr': { label: 'm', subUnit: 'cm', subLabel: 'cm', factor: 100 },
+    'mtrs': { label: 'm', subUnit: 'cm', subLabel: 'cm', factor: 100 },
 };
 
 function cleanUnitLabel(unit: string | undefined): string {
@@ -69,9 +80,9 @@ function getUnitConversion(unit: string | undefined) {
     if (UNIT_CONVERSIONS[normalized]) return UNIT_CONVERSIONS[normalized];
     const stripped = normalized.replace(/^[\d.,\s]+/, '').trim();
     if (UNIT_CONVERSIONS[stripped]) return UNIT_CONVERSIONS[stripped];
-    for (const key of Object.keys(UNIT_CONVERSIONS)) {
-        if (normalized.includes(key)) return UNIT_CONVERSIONS[key];
-    }
+    // Only a unit that IS a measure gets a sub-unit. Matching on "contains" made
+    // Roll a litre (l), Bag a gram (g) and Ream a metre (m); pack units such as
+    // "5 L Can" are counted as bought, so they get none either.
     return null;
 }
 
@@ -99,9 +110,12 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
     const [searchTerm, setSearchTerm] = useState('');
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
     const supabase = React.useMemo(() => createClient(), []);
+    // Only items on the list this property uses can be moved (old items stay frozen).
+    const { itemSource, loading: isLoadingSource, error: sourceError } = usePropertyStockSource(propertyId);
 
     useEffect(() => {
-        if (isOpen) {
+        if (isOpen && sourceError) setToast({ message: sourceError, type: 'error' });
+        if (isOpen && !isLoadingSource && !sourceError) {
             fetchItems();
             setStep('select');
             setSelectedItem(null);
@@ -112,7 +126,7 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
             setSearchTerm('');
             if (autoOpenScanner) setShowScanModal(true);
         }
-    }, [isOpen, autoOpenScanner]);
+    }, [isOpen, autoOpenScanner, isLoadingSource, itemSource, sourceError]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
         if (preSelectedItemId && items.length > 0) {
@@ -132,13 +146,12 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
     const fetchItems = async () => {
         try {
             setIsFetchingItems(true);
-            const { data, error } = await supabase
-                .from('stock_items')
-                .select('id, name, item_code, quantity, min_threshold, barcode, category, location, unit')
-                .eq('property_id', propertyId)
-                .order('name', { ascending: true });
+            const { data, error } = await withListFilter(filtered => {
+                const query = supabase.from('stock_items').select('*').eq('property_id', propertyId);
+                return (filtered ? query.eq('item_source', itemSource) : query).order('name', { ascending: true });
+            });
             if (error) throw error;
-            setItems(data || []);
+            setItems(liveItems(data || [], itemSource));
         } catch (err) {
             setToast({ message: 'Error loading items', type: 'error' });
         } finally {

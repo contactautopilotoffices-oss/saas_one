@@ -18,6 +18,7 @@ import HRTicketsContent from '@/frontend/components/hr/HRTicketsContent';
 import { ShieldCheck, Plus } from 'lucide-react';
 import ProcurementPOProcessor from '../procurement/ProcurementPOProcessor';
 import ProcurementStatusModal from './ProcurementStatusModal';
+import StockSettingsPanel from '../stock/StockSettingsPanel';
 import ProcurementComparativeFlow from './ProcurementComparativeFlow';
 import ProcurementCatalogModal from '../procurement/ProcurementCatalogModal';
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
@@ -72,7 +73,7 @@ interface MaterialRequest {
     };
 }
 
-type Tab = 'overview' | 'vendor-discovery' | 'tasks' | 'payment-tracker' | 'invoice-control' | 'bounty' | 'requests' | 'vendor_tickets' | 'monthly-requisitions' | 'monthly-feedback' | 'site-pricing' | 'history' | 'manage-items' | 'po-generator' | 'settings' | 'profile' | 'grievance';
+type Tab = 'overview' | 'vendor-discovery' | 'tasks' | 'payment-tracker' | 'invoice-control' | 'bounty' | 'requests' | 'vendor_tickets' | 'monthly-requisitions' | 'monthly-feedback' | 'site-pricing' | 'history' | 'manage-items' | 'stock-settings' | 'po-generator' | 'settings' | 'profile' | 'grievance';
 
 // Shared by the Active Orders status pills and their counts so both read a request the same way.
 const matchesStatusTab = (r: { status?: string }, filter: string) => {
@@ -120,7 +121,7 @@ export default function ProcurementDashboard() {
 
     useEffect(() => {
         const tabParam = searchParams?.get('tab') as string | null;
-        const linkableTabs = ['overview', 'vendor-discovery', 'tasks', 'payment-tracker', 'invoice-control', 'bounty', 'requests', 'vendor_tickets', 'monthly-requisitions', 'monthly-feedback', 'history', 'manage-items', 'po-generator', 'settings', 'profile', 'grievance'];
+        const linkableTabs = ['overview', 'vendor-discovery', 'tasks', 'payment-tracker', 'invoice-control', 'bounty', 'requests', 'vendor_tickets', 'monthly-requisitions', 'monthly-feedback', 'history', 'manage-items', 'stock-settings', 'po-generator', 'settings', 'profile', 'grievance'];
         if (SHOW_LEGACY_PER_PROPERTY_CONTROLS) linkableTabs.push('site-pricing');
         if (tabParam === 'urgency-tracker' || tabParam === 'task-sheet') {
             setActiveTab('payment-tracker');
@@ -709,6 +710,11 @@ export default function ProcurementDashboard() {
                                         label: 'Manage Items',
                                         count: sidebarCounts.manageItems > 0 ? sidebarCounts.manageItems : undefined
                                     },
+                                    {
+                                        id: 'stock-settings',
+                                        icon: Box,
+                                        label: 'Stock Settings'
+                                    },
                                     { 
                                         id: 'po-generator', 
                                         icon: FileText, 
@@ -827,6 +833,7 @@ export default function ProcurementDashboard() {
                                  activeTab === 'invoice-control' ? 'Vendor invoices, PO matching & payment plans' :
                                  activeTab === 'bounty' ? 'What this month\'s AOP still needs from you' :
                                  activeTab === 'manage-items' ? `Catalog · ${stats.total} Items` :
+                                 activeTab === 'stock-settings' ? 'Old stock list or requisition items, per property' :
                                  activeTab === 'po-generator' ? 'AI Purchase Order Processor' :
                                  activeTab === 'requests' ? `${statusFilter === 'all' ? 'All Requests' : statusFilter} · ${filteredRequests.length} Items` :
                                  `Awaiting Fulfillment · ${stats.pending} Items`}
@@ -982,6 +989,9 @@ export default function ProcurementDashboard() {
                                 propertyId={propertyFilter === 'all' ? '' : propertyFilter}
                                 isProcurementUser={isProcurementRole}
                             />
+                        )}
+                        {activeTab === 'stock-settings' && (userOrgId || user?.user_metadata?.organization_id) && (
+                            <StockSettingsPanel organizationId={userOrgId || user?.user_metadata?.organization_id} />
                         )}
                         {activeTab === 'vendor-discovery' && (
                             user?.user_metadata?.organization_id

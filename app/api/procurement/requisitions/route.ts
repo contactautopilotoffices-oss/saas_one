@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { generateRequisitionExcelWorkbook, RequisitionItemData } from '@/backend/lib/excel/requisitionExcelGenerator';
 import { PricingAndAliasService, normalizeText } from '@/backend/lib/procurement/pricingAndAliasService';
+import { deliverySummaries, type DeliverySummary } from '@/backend/lib/procurement/requisitionDelivery';
 
 const MONTH_NAMES = [
     'January', 'February', 'March', 'April', 'May', 'June',
@@ -97,7 +98,18 @@ export async function GET(request: NextRequest) {
             };
         });
 
-        return NextResponse.json({ requisitions: enriched });
+        // Delivery progress from confirmed challans, shown next to the status
+        // (the status itself stays as approval / Issue PO need it).
+        let deliveries = new Map<string, DeliverySummary>();
+        try {
+            deliveries = await deliverySummaries(adminSupabase, (data || []).filter(r => ['approved', 'ordered'].includes(r.status)));
+        } catch (deliveryErr) {
+            console.warn('[Requisitions GET] Delivery summary unavailable:', deliveryErr);
+        }
+
+        return NextResponse.json({
+            requisitions: enriched.map(req => ({ ...req, delivery: deliveries.get(req.id) || null })),
+        });
     } catch (err: any) {
         console.error('[Requisitions GET Server Error]:', err);
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
@@ -135,7 +147,6 @@ export async function POST(request: NextRequest) {
         let rawItems: RequisitionItemData[] = [];
         let uploadedFileBuffer: Buffer | null = null;
         let uploadedFileName = '';
-        let cachedCatalog: any[] = [];
 
         let isPreviewOnly = false;
         if (contentType.includes('application/json')) {
@@ -157,7 +168,6 @@ export async function POST(request: NextRequest) {
 
             // CRITICAL SECURITY RULE: Resolve authorized prices server-side from item_site_prices / procurement_catalog
             const siteCatalog = await PricingAndAliasService.getCatalogWithSitePrices(organizationId, propertyId);
-            cachedCatalog = siteCatalog;
             const verifiedPriceMap = new Map<string, number>();
             siteCatalog.forEach((item: any) => {
                 verifiedPriceMap.set(normalizeText(item.name), item.unit_price);
@@ -433,83 +443,8 @@ export async function POST(request: NextRequest) {
             finalRecord = insertedRecord;
         }
 
-        // Fire-and-forget background sync of available stock counts to property's stock_items table
-        // Runs non-blocking so the user gets an instant submission response (< 1s)
-        if (Array.isArray(rawItems) && rawItems.length > 0) {
-            (async () => {
-                try {
-                    const catalogToUse = cachedCatalog && cachedCatalog.length > 0
-                        ? cachedCatalog
-                        : await PricingAndAliasService.getCatalogWithSitePrices(organizationId, propertyId);
-
-                    const { data: existingStocks } = await adminSupabase
-                        .from('stock_items')
-                        .select('id, name, quantity')
-                        .eq('property_id', propertyId);
-
-                    const stockMap = new Map<string, any>();
-                    (existingStocks || []).forEach((stk: any) => {
-                        if (stk.name) stockMap.set(normalizeText(stk.name), stk);
-                    });
-
-                    const catalogMap = new Map<string, any>();
-                    (catalogToUse || []).forEach((c: any) => {
-                        if (c.name) catalogMap.set(normalizeText(c.name), c);
-                    });
-
-                    const updatePromises: PromiseLike<any>[] = [];
-                    const toInsert: any[] = [];
-
-                    for (const item of rawItems) {
-                        if (!item.name) continue;
-                        const norm = normalizeText(item.name);
-                        const existingStock = stockMap.get(norm);
-                        const matchedCatalog = catalogMap.get(norm);
-
-                        if (existingStock) {
-                            if (item.available_stock_qty !== undefined && item.available_stock_qty !== null && Number(existingStock.quantity) !== Number(item.available_stock_qty)) {
-                                updatePromises.push(
-                                    adminSupabase
-                                        .from('stock_items')
-                                        .update({
-                                            quantity: Number(item.available_stock_qty) || 0,
-                                            catalog_item_id: matchedCatalog?.id || null,
-                                            updated_at: new Date().toISOString()
-                                        })
-                                        .eq('id', existingStock.id)
-                                );
-                            }
-                        } else {
-                            const itemCode = `STK-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-                            toInsert.push({
-                                organization_id: organizationId,
-                                property_id: propertyId,
-                                catalog_item_id: matchedCatalog?.id || null,
-                                name: item.name,
-                                category: item.category || 'HK',
-                                unit: item.unit || 'pcs',
-                                item_code: itemCode,
-                                quantity: Number(item.available_stock_qty) || 0,
-                                min_threshold: 10,
-                                unit_price: item.unit_price || 0
-                            });
-                        }
-                    }
-
-                    if (toInsert.length > 0) {
-                        await adminSupabase.from('stock_items').insert(toInsert);
-                    }
-                    if (updatePromises.length > 0) {
-                        const batchSize = 25;
-                        for (let i = 0; i < updatePromises.length; i += batchSize) {
-                            await Promise.all(updatePromises.slice(i, i + batchSize));
-                        }
-                    }
-                } catch (syncStockErr) {
-                    console.warn('[Auto Sync Stock Background Error]:', syncStockErr);
-                }
-            })();
-        }
+        // Submitting a requisition does not write to stock. Stock changes only through
+        // the stock screens and confirmed delivery challans (matched by catalog item id).
 
         // Dispatch Omnichannel notification via event_outbox (automatically delivers Email & WhatsApp via /api/webhooks/process-event)
         (async () => {

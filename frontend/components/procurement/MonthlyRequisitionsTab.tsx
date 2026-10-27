@@ -18,6 +18,7 @@ import { siteVendorQuotation, siteEstimatedAmount } from '@/backend/lib/procurem
 import PropertyBudgetManagerModal from './PropertyBudgetManagerModal';
 import BulkApproverUploadModal from './BulkApproverUploadModal';
 import MonthlyFeedbackFormModal from './MonthlyFeedbackFormModal';
+import DeliveryChallanModal from './DeliveryChallanModal';
 import { SHOW_LEGACY_PER_PROPERTY_CONTROLS } from './procurementFeatureFlags';
 import RequisitionApproverSelect, { type RequisitionApprover } from './RequisitionApproverSelect';
 
@@ -58,6 +59,8 @@ interface MonthlyRequisition {
     budget_limit?: number;
     over_budget_amount?: number;
     budget_breakdown?: any;
+    /** From confirmed delivery challans; the status itself stays as approval / Issue PO need it. */
+    delivery?: { state: 'none' | 'partial' | 'delivered'; items_ordered: number; items_complete: number; challans: number } | null;
 }
 
 interface MonthlyRequisitionsTabProps {
@@ -115,6 +118,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
     const [approverModalReq, setApproverModalReq] = useState<MonthlyRequisition | null>(null);
     const [vendorQuoteModalReq, setVendorQuoteModalReq] = useState<MonthlyRequisition | null>(null);
     const [issuePoModalReq, setIssuePoModalReq] = useState<MonthlyRequisition | null>(null);
+    const [challanModalReq, setChallanModalReq] = useState<MonthlyRequisition | null>(null);
     const [showBudgetManagerModal, setShowBudgetManagerModal] = useState<boolean>(false);
     const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState<boolean>(false);
 
@@ -914,6 +918,19 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                                             #{req.po_info.po_number}
                                                         </span>
                                                     )}
+                                                    {req.delivery && (
+                                                        <span
+                                                            className={`inline-flex items-center gap-1 text-[10px] font-bold whitespace-nowrap ${req.delivery.state === 'delivered' ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}
+                                                            title={`${req.delivery.challans} delivery challan${req.delivery.challans === 1 ? '' : 's'} received`}
+                                                        >
+                                                            {req.delivery.state === 'delivered'
+                                                                ? <PackageCheck className="w-3 h-3 shrink-0" />
+                                                                : <Truck className="w-3 h-3 shrink-0" />}
+                                                            {req.delivery.state === 'delivered'
+                                                                ? 'Delivered'
+                                                                : `Partly delivered · ${req.delivery.items_complete} of ${req.delivery.items_ordered} items`}
+                                                        </span>
+                                                    )}
                                                 </div>
                                             </td>
 
@@ -964,6 +981,18 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                                         >
                                                             <ShoppingCart className="w-3.5 h-3.5 text-white shrink-0" />
                                                             <span>Issue PO</span>
+                                                        </button>
+                                                    )}
+
+                                                    {/* Property admin or ops super admin: delivery challan, from approval onwards */}
+                                                    {(isPropertyAdmin || userRoleLower === 'ops_super_admin') && (req.status === 'approved' || req.status === 'ordered') && (
+                                                        <button
+                                                            onClick={() => setChallanModalReq(req)}
+                                                            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold whitespace-nowrap transition-all shadow-xs shrink-0 cursor-pointer"
+                                                            title="Upload the delivery challan and add received items to stock"
+                                                        >
+                                                            <Truck className="w-3.5 h-3.5 text-white shrink-0" />
+                                                            <span>Delivery Challan</span>
                                                         </button>
                                                     )}
 
@@ -1111,6 +1140,15 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                 )}
             </AnimatePresence>
             </ModalPortal>
+
+            {challanModalReq && (
+                <DeliveryChallanModal
+                    requisitionId={challanModalReq.id}
+                    title={`${challanModalReq.property?.name || 'Property'} - ${MONTH_NAMES[(challanModalReq.requisition_month || 1) - 1]} ${challanModalReq.requisition_year}`}
+                    onClose={() => setChallanModalReq(null)}
+                    onConfirmed={(message) => { alert(message); fetchRequisitions(); }}
+                />
+            )}
 
             {/* Modal: Issue Purchase Order (PO) */}
             <ModalPortal>

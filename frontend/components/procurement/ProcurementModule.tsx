@@ -6,7 +6,7 @@ import {
     Settings, List, ShoppingCart, 
     FileText, FileSpreadsheet,
     DollarSign, IndianRupee, Layers,
-    Sparkles, RefreshCw, ClipboardList, FileCheck2
+    Sparkles, RefreshCw, ClipboardList, FileCheck2, Boxes
 } from 'lucide-react';
 import ProcurementAdminSettings from './ProcurementAdminSettings';
 import ProcurementRequestList from './ProcurementRequestList';
@@ -17,13 +17,14 @@ import SitePricingAdminTab from './SitePricingAdminTab';
 import PropertyBudgetsTab from './PropertyBudgetsTab';
 import ProcurementFeedbackTab from './ProcurementFeedbackTab';
 import ProcurementTasksTab from './ProcurementTasksTab';
+import StockSettingsPanel from '../stock/StockSettingsPanel';
 import { SHOW_LEGACY_PER_PROPERTY_CONTROLS } from './procurementFeatureFlags';
 import FinanceOverview from '../accounts/FinanceOverview';
 import InvoiceControl from '../invoices/InvoiceControl';
 import AccountsDashboard from '../accounts/AccountsDashboard';
 import { useAuth } from '@/frontend/context/AuthContext';
 
-type TabType = 'orders' | 'tasks' | 'payment-tracker' | 'invoices' | 'requisitions' | 'monthly-feedback' | 'site-budgets' | 'site-pricing' | 'catalog' | 'po-generator' | 'settings';
+type TabType = 'orders' | 'tasks' | 'payment-tracker' | 'invoices' | 'requisitions' | 'monthly-feedback' | 'site-budgets' | 'site-pricing' | 'catalog' | 'stock-settings' | 'po-generator' | 'settings';
 
 function ProcurementModuleSkeleton() {
     return (
@@ -167,7 +168,7 @@ export default function ProcurementModule({
             let tabParam = urlParams.get('procurement_tab') || urlParams.get('subtab') || urlParams.get('tab');
             if (tabParam === 'monthly-requisitions') tabParam = 'requisitions';
             if (tabParam === 'urgency-tracker') tabParam = 'payment-tracker';
-            const linkableTabs = ['orders', 'tasks', 'payment-tracker', 'invoices', 'requisitions', 'monthly-feedback', 'catalog', 'po-generator', 'settings'];
+            const linkableTabs = ['orders', 'tasks', 'payment-tracker', 'invoices', 'requisitions', 'monthly-feedback', 'catalog', 'stock-settings', 'po-generator', 'settings'];
             if (SHOW_LEGACY_PER_PROPERTY_CONTROLS) linkableTabs.push('site-budgets', 'site-pricing');
             if (tabParam && linkableTabs.includes(tabParam)) {
                 setActiveTab(tabParam as TabType);
@@ -186,6 +187,7 @@ export default function ProcurementModule({
         { id: 'site-budgets', label: 'Property Budgets', icon: IndianRupee, show: SHOW_LEGACY_PER_PROPERTY_CONTROLS && canManageCatalogAndPricing, count: 0 },
         { id: 'site-pricing', label: 'Site Pricing & Aliases', icon: DollarSign, show: SHOW_LEGACY_PER_PROPERTY_CONTROLS && canManageCatalogAndPricing, count: 0 },
         { id: 'catalog', label: 'Manage Items Master', icon: ShoppingCart, show: canManageCatalogAndPricing, count: 0 },
+        { id: 'stock-settings', label: 'Stock Settings', icon: Boxes, show: canManageCatalogAndPricing, count: 0 },
         { id: 'po-generator', label: 'PO Generator', icon: FileText, show: canManageCatalogAndPricing || userRole === 'org_admin', count: 0 },
         { id: 'settings', label: 'Settings', icon: Settings, show: isSuperAdmin, count: 0 },
     ], [counts.orders, canViewPaymentTracker, canManageCatalogAndPricing, userRole, isSuperAdmin]);
@@ -287,6 +289,10 @@ export default function ProcurementModule({
 
                 {activeTab === 'site-pricing' && SHOW_LEGACY_PER_PROPERTY_CONTROLS && canManageCatalogAndPricing && (
                     <SitePricingAdminTab user={user} organizationId={orgId || ''} properties={properties} />
+                )}
+
+                {activeTab === 'stock-settings' && canManageCatalogAndPricing && (
+                    <StockSettingsPanel organizationId={orgId || ''} />
                 )}
 
                 {activeTab === 'catalog' && canManageCatalogAndPricing && (
