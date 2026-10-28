@@ -2221,6 +2221,87 @@ export const WhatsAppEventProcessor = {
     // ============================================================================
     // HR Tickets & Grievances Handlers
     // ============================================================================
+    /**
+     * Resolves every user configured as an owner at a given HR ticket escalation level.
+     * Checks organization_settings hr_escalation_config / flow_assignees and maps them to users.
+     */
+    async resolveHrLevelOwners(ticket: any, level: number): Promise<{ id: string; email: string | null; phone: string | null; full_name: string | null }[]> {
+        const ownersMap = new Map<string, { id: string; email: string | null; phone: string | null; full_name: string | null }>();
+
+        if (ticket.assigned_to_user_id) {
+            ownersMap.set(ticket.assigned_to_user_id, {
+                id: ticket.assigned_to_user_id,
+                email: ticket.assigned_to?.email || null,
+                phone: ticket.assigned_to?.phone || null,
+                full_name: ticket.assigned_to?.full_name || null
+            });
+        }
+
+        try {
+            const orgId = ticket.organization_id;
+            if (!orgId) return Array.from(ownersMap.values());
+
+            const { data: orgSettings } = await supabaseAdmin
+                .from('organization_settings')
+                .select('hr_escalation_config, notification_matrix')
+                .eq('organization_id', orgId)
+                .maybeSingle();
+
+            const configObj = (orgSettings as any)?.notification_matrix?.hr_escalation_config
+                || (orgSettings as any)?.hr_escalation_config
+                || {};
+            let flowAssignees = configObj.flow_assignees || {};
+            while (flowAssignees && flowAssignees.flow_assignees) {
+                flowAssignees = flowAssignees.flow_assignees;
+            }
+
+            const tType = ticket.ticket_type || ticket.category?.ticket_type || 'grievance';
+            const levelAssignees = flowAssignees[tType]?.[String(level)] || flowAssignees[tType]?.[level];
+            const candidateIds: string[] = Array.isArray(levelAssignees) ? levelAssignees.filter(Boolean) : [];
+
+            if (candidateIds.length > 0) {
+                const { data: profiles } = await supabaseAdmin
+                    .from('employee_profiles')
+                    .select('id, user_id, email, phone, first_name, last_name')
+                    .or(`id.in.(${candidateIds.join(',')}),user_id.in.(${candidateIds.join(',')})`);
+
+                const userIdsToFetch = new Set<string>();
+                (profiles || []).forEach((p: any) => {
+                    if (p.user_id) userIdsToFetch.add(p.user_id);
+                });
+                candidateIds.forEach(cid => {
+                    userIdsToFetch.add(cid);
+                });
+
+                if (userIdsToFetch.size > 0) {
+                    const { data: matchedUsers } = await supabaseAdmin
+                        .from('users')
+                        .select('id, email, phone, full_name')
+                        .in('id', Array.from(userIdsToFetch));
+
+                    (matchedUsers || []).forEach((u: any) => {
+                        const prof = (profiles || []).find((p: any) => p.user_id === u.id || p.id === u.id);
+                        ownersMap.set(u.id, {
+                            id: u.id,
+                            email: u.email || prof?.email || null,
+                            phone: u.phone || prof?.phone || null,
+                            full_name: u.full_name || (prof ? `${prof.first_name || ''} ${prof.last_name || ''}`.trim() : null)
+                        });
+                    });
+                }
+            }
+        } catch (err) {
+            console.error('[WhatsAppEventProcessor] resolveHrLevelOwners error:', err);
+        }
+
+        // Submitter should never receive handler assignment notifications for their own ticket
+        if (ticket.raised_by_user_id) {
+            ownersMap.delete(ticket.raised_by_user_id);
+        }
+
+        return Array.from(ownersMap.values());
+    },
+
     async handleHrTicketCreated(payload: any): Promise<void> {
         const ticketId = payload.id;
         const { data: ticket } = await supabaseAdmin
@@ -2229,16 +2310,23 @@ export const WhatsAppEventProcessor = {
             .eq('id', ticketId)
             .maybeSingle();
 
-        const orgId = payload.organization_id || ticket?.organization_id;
-        const isAnonymous = ticket?.is_anonymous || payload.is_anonymous || ticket?.ticket_type === 'anonymous_feedback';
-        const empName = isAnonymous ? 'Anonymous Employee' : (ticket?.raised_by?.full_name || payload.employee_name || 'Employee');
-        const ticketNo = ticket?.ticket_number || payload.ticket_number || 'HR-0000';
-        const categoryName = ticket?.category?.category_name || payload.category_name || 'HR Request';
-        const assignedName = ticket?.assigned_to?.full_name || 'Reporting Manager / HR';
-        const createdDate = formatWhatsAppDate(ticket?.created_at || payload.created_at || new Date());
+        const effectiveTicket = ticket || payload;
+        const orgId = payload.organization_id || effectiveTicket?.organization_id;
+        const isAnonymous = effectiveTicket?.is_anonymous || payload.is_anonymous || effectiveTicket?.ticket_type === 'anonymous_feedback';
+        const empName = isAnonymous ? 'Anonymous Employee' : (effectiveTicket?.raised_by?.full_name || payload.employee_name || 'Employee');
+        const ticketNo = effectiveTicket?.ticket_number || payload.ticket_number || 'HR-0000';
+        const categoryName = effectiveTicket?.category?.category_name || payload.category_name || 'HR Request';
+        const createdDate = formatWhatsAppDate(effectiveTicket?.created_at || payload.created_at || new Date());
+
+        const level = effectiveTicket?.current_level || payload.current_level || 1;
+        const levelOwners = await this.resolveHrLevelOwners(effectiveTicket, level);
+        const primaryOwner = levelOwners[0] || effectiveTicket?.assigned_to;
+        const assignedName = primaryOwner?.full_name || primaryOwner?.email || 'Reporting Manager / HR';
+        const primaryAssigneeId = primaryOwner?.id || effectiveTicket?.assigned_to_user_id || payload.assigned_to_user_id;
+        const extraAssigneeIds = levelOwners.slice(1).map(o => o.id).filter(Boolean);
 
         // 1. Notify Employee (Confirmation) - ONLY if NOT anonymous
-        if (!isAnonymous && (ticket?.raised_by_user_id || payload.raised_by_user_id)) {
+        if (!isAnonymous && (effectiveTicket?.raised_by_user_id || payload.raised_by_user_id)) {
             await this.dispatch({
                 featureKey: 'hr_ticket_created_submitter_v2',
                 templateEventKey: 'hr_ticket_created_submitter_v2',
@@ -2252,13 +2340,12 @@ export const WhatsAppEventProcessor = {
                     assigned_owner: assignedName
                 },
                 summaryMessage: `HR Ticket #${ticketNo} created by ${empName}`,
-                contextualUserIds: { requesterId: ticket?.raised_by_user_id || payload.raised_by_user_id }
+                contextualUserIds: { requesterId: effectiveTicket?.raised_by_user_id || payload.raised_by_user_id }
             });
         }
 
-        // 2. Notify Assigned Handler (New Ticket Assignment)
-        const assigneeId = ticket?.assigned_to_user_id || payload.assigned_to_user_id;
-        if (assigneeId) {
+        // 2. Notify Assigned Handler(s) (New Ticket Assignment) & Omnichannel matrix recipients
+        if (primaryAssigneeId) {
             await this.dispatch({
                 featureKey: 'hr_ticket_assigned_handler_v2',
                 templateEventKey: 'hr_ticket_assigned_handler_v2',
@@ -2267,14 +2354,17 @@ export const WhatsAppEventProcessor = {
                 paramValues: {
                     user_name: assignedName,
                     ticket_number: ticketNo,
-                    level: String(ticket?.current_level || 1),
+                    level: String(level),
                     category: categoryName,
                     submitter: empName,
-                    subject: ticket?.subject || payload.subject || 'HR Request',
-                    sla_deadline: formatWhatsAppDateTime(ticket?.sla_due_at || payload.sla_due_at)
+                    subject: effectiveTicket?.subject || payload.subject || 'HR Request',
+                    sla_deadline: formatWhatsAppDateTime(effectiveTicket?.sla_due_at || payload.sla_due_at)
                 },
                 summaryMessage: `HR Ticket #${ticketNo} assigned to ${assignedName}`,
-                contextualUserIds: { assigneeId }
+                contextualUserIds: {
+                    assigneeId: primaryAssigneeId,
+                    extraUserIds: extraAssigneeIds
+                }
             });
         }
 
@@ -2284,13 +2374,13 @@ export const WhatsAppEventProcessor = {
             const { EmailService } = await import('./EmailService');
 
             // 3a. Submitter Email (Ticket Submitted)
-            if (!isAnonymous && ticket?.raised_by?.email) {
+            if (!isAnonymous && effectiveTicket?.raised_by?.email) {
                 const submitterEmailResult = await EmailRecipientResolver.resolveRecipients({
                     organizationId: orgId,
-                    propertyId: ticket?.property_id || payload?.property_id,
+                    propertyId: effectiveTicket?.property_id || payload?.property_id,
                     featureKey: 'hr_ticket_created_submitter_v2',
                     contextualRecipients: {
-                        requesterEmail: ticket.raised_by.email
+                        requesterEmail: effectiveTicket.raised_by.email
                     }
                 });
 
@@ -2298,7 +2388,7 @@ export const WhatsAppEventProcessor = {
                     for (const email of submitterEmailResult.emails) {
                         EmailService.sendHrTicketCreatedEmail({
                             emailTo: email,
-                            ticket: ticket || payload,
+                            ticket: effectiveTicket,
                             submitterName: empName,
                             assignedOwnerName: assignedName,
                             categoryName
@@ -2307,14 +2397,18 @@ export const WhatsAppEventProcessor = {
                 }
             }
 
-            // 3b. Handler Email (New Ticket Assignment)
-            if (ticket?.assigned_to?.email) {
+            // 3b. Handler Email (New Ticket Assignment) - to all level owners & omnichannel recipients
+            const primaryHandlerEmail = primaryOwner?.email || effectiveTicket?.assigned_to?.email;
+            const extraHandlerEmails = levelOwners.slice(1).map(o => o.email).filter(Boolean) as string[];
+
+            if (primaryHandlerEmail || extraHandlerEmails.length > 0) {
                 const handlerEmailResult = await EmailRecipientResolver.resolveRecipients({
                     organizationId: orgId,
-                    propertyId: ticket?.property_id || payload?.property_id,
+                    propertyId: effectiveTicket?.property_id || payload?.property_id,
                     featureKey: 'hr_ticket_assigned_handler_v2',
                     contextualRecipients: {
-                        assigneeEmail: ticket.assigned_to.email
+                        assigneeEmail: primaryHandlerEmail,
+                        extraEmails: extraHandlerEmails
                     }
                 });
 
@@ -2322,7 +2416,7 @@ export const WhatsAppEventProcessor = {
                     for (const email of handlerEmailResult.emails) {
                         EmailService.sendHrTicketAssignedEmail({
                             emailTo: email,
-                            ticket: ticket || payload,
+                            ticket: effectiveTicket,
                             assigneeName: assignedName,
                             submitterName: empName,
                             categoryName
@@ -2343,12 +2437,19 @@ export const WhatsAppEventProcessor = {
             .eq('id', ticketId)
             .maybeSingle();
 
-        const orgId = payload.organization_id || ticket?.organization_id;
-        const isAnonymous = ticket?.is_anonymous || payload.is_anonymous || ticket?.ticket_type === 'anonymous_feedback';
-        const assignedName = ticket?.assigned_to?.full_name || 'Manager';
-        const empName = isAnonymous ? 'Anonymous Employee' : (ticket?.raised_by?.full_name || 'Employee');
-        const ticketNo = ticket?.ticket_number || payload.ticket_number;
-        const categoryName = ticket?.category?.category_name || payload.category_name || 'HR Request';
+        const effectiveTicket = ticket || payload;
+        const orgId = payload.organization_id || effectiveTicket?.organization_id;
+        const isAnonymous = effectiveTicket?.is_anonymous || payload.is_anonymous || effectiveTicket?.ticket_type === 'anonymous_feedback';
+        const empName = isAnonymous ? 'Anonymous Employee' : (effectiveTicket?.raised_by?.full_name || 'Employee');
+        const ticketNo = effectiveTicket?.ticket_number || payload.ticket_number;
+        const categoryName = effectiveTicket?.category?.category_name || payload.category_name || 'HR Request';
+        const level = effectiveTicket?.current_level || payload.current_level || 1;
+
+        const levelOwners = await this.resolveHrLevelOwners(effectiveTicket, level);
+        const primaryOwner = levelOwners[0] || effectiveTicket?.assigned_to;
+        const assignedName = primaryOwner?.full_name || primaryOwner?.email || 'Manager';
+        const primaryAssigneeId = primaryOwner?.id || effectiveTicket?.assigned_to_user_id || payload.assigned_to_user_id;
+        const extraAssigneeIds = levelOwners.slice(1).map(o => o.id).filter(Boolean);
 
         await this.dispatch({
             featureKey: 'hr_ticket_assigned_handler_v2',
@@ -2358,24 +2459,31 @@ export const WhatsAppEventProcessor = {
             paramValues: {
                 user_name: assignedName,
                 ticket_number: ticketNo,
-                level: String(ticket?.current_level || payload.current_level || 1),
+                level: String(level),
                 category: categoryName,
                 submitter: empName,
-                subject: ticket?.subject || payload.subject || 'HR Request',
-                sla_deadline: formatWhatsAppDateTime(ticket?.sla_due_at || payload.sla_due_at)
+                subject: effectiveTicket?.subject || payload.subject || 'HR Request',
+                sla_deadline: formatWhatsAppDateTime(effectiveTicket?.sla_due_at || payload.sla_due_at)
             },
             summaryMessage: `HR Ticket #${ticketNo} assigned to ${assignedName}`,
-            contextualUserIds: { assigneeId: ticket?.assigned_to_user_id || payload.assigned_to_user_id }
+            contextualUserIds: {
+                assigneeId: primaryAssigneeId,
+                extraUserIds: extraAssigneeIds
+            }
         });
 
         try {
             const { EmailRecipientResolver } = await import('./EmailRecipientResolver');
+            const primaryHandlerEmail = primaryOwner?.email || effectiveTicket?.assigned_to?.email;
+            const extraHandlerEmails = levelOwners.slice(1).map(o => o.email).filter(Boolean) as string[];
+
             const emailResult = await EmailRecipientResolver.resolveRecipients({
                 organizationId: orgId,
-                propertyId: ticket?.property_id || payload?.property_id,
+                propertyId: effectiveTicket?.property_id || payload?.property_id,
                 featureKey: 'hr_ticket_assigned_handler_v2',
                 contextualRecipients: {
-                    assigneeEmail: ticket?.assigned_to?.email
+                    assigneeEmail: primaryHandlerEmail,
+                    extraEmails: extraHandlerEmails
                 }
             });
 
@@ -2384,7 +2492,7 @@ export const WhatsAppEventProcessor = {
                 for (const email of emailResult.emails) {
                     EmailService.sendHrTicketAssignedEmail({
                         emailTo: email,
-                        ticket: ticket || payload,
+                        ticket: effectiveTicket,
                         assigneeName: assignedName,
                         submitterName: empName,
                         categoryName
@@ -2404,13 +2512,19 @@ export const WhatsAppEventProcessor = {
             .eq('id', ticketId)
             .maybeSingle();
 
-        const orgId = payload.organization_id || ticket?.organization_id;
-        const isAnonymous = ticket?.is_anonymous || payload.is_anonymous || ticket?.ticket_type === 'anonymous_feedback';
-        const level = ticket?.current_level || payload.current_level || 2;
-        const ownerName = ticket?.assigned_to?.full_name || 'Escalation Owner';
-        const ticketNo = ticket?.ticket_number || payload.ticket_number;
-        const empName = isAnonymous ? 'Anonymous Employee' : (ticket?.raised_by?.full_name || 'Employee');
+        const effectiveTicket = ticket || payload;
+        const orgId = payload.organization_id || effectiveTicket?.organization_id;
+        const isAnonymous = effectiveTicket?.is_anonymous || payload.is_anonymous || effectiveTicket?.ticket_type === 'anonymous_feedback';
+        const level = effectiveTicket?.current_level || payload.current_level || payload.to_level || 2;
+        const ticketNo = effectiveTicket?.ticket_number || payload.ticket_number;
+        const empName = isAnonymous ? 'Anonymous Employee' : (effectiveTicket?.raised_by?.full_name || 'Employee');
         const reason = payload.reason || (payload.is_sla_breach ? 'due to SLA timeout' : 'by handler escalation');
+
+        const levelOwners = await this.resolveHrLevelOwners(effectiveTicket, level);
+        const primaryOwner = levelOwners[0] || effectiveTicket?.assigned_to;
+        const ownerName = primaryOwner?.full_name || primaryOwner?.email || 'Escalation Owner';
+        const primaryAssigneeId = primaryOwner?.id || effectiveTicket?.assigned_to_user_id || payload.assigned_to_user_id;
+        const extraAssigneeIds = levelOwners.slice(1).map(o => o.id).filter(Boolean);
 
         await this.dispatch({
             featureKey: 'hr_ticket_escalated_handler',
@@ -2422,23 +2536,30 @@ export const WhatsAppEventProcessor = {
                 ticket_number: ticketNo,
                 level: String(level),
                 reason,
-                category: ticket?.category?.category_name || 'HR Request',
+                category: effectiveTicket?.category?.category_name || 'HR Request',
                 submitter: empName,
-                subject: ticket?.subject || payload.subject || 'HR Request',
+                subject: effectiveTicket?.subject || payload.subject || 'HR Request',
                 previous_level: String(Math.max(level - 1, 1))
             },
             summaryMessage: `HR Ticket #${ticketNo} escalated to Level ${level} (${ownerName})`,
-            contextualUserIds: { assigneeId: ticket?.assigned_to_user_id || payload.assigned_to_user_id }
+            contextualUserIds: {
+                assigneeId: primaryAssigneeId,
+                extraUserIds: extraAssigneeIds
+            }
         });
 
         try {
             const { EmailRecipientResolver } = await import('./EmailRecipientResolver');
+            const primaryHandlerEmail = primaryOwner?.email || effectiveTicket?.assigned_to?.email;
+            const extraHandlerEmails = levelOwners.slice(1).map(o => o.email).filter(Boolean) as string[];
+
             const emailResult = await EmailRecipientResolver.resolveRecipients({
                 organizationId: orgId,
-                propertyId: ticket?.property_id || payload?.property_id,
+                propertyId: effectiveTicket?.property_id || payload?.property_id,
                 featureKey: 'hr_ticket_escalated_handler',
                 contextualRecipients: {
-                    assigneeEmail: ticket?.assigned_to?.email
+                    assigneeEmail: primaryHandlerEmail,
+                    extraEmails: extraHandlerEmails
                 }
             });
 
@@ -2447,7 +2568,7 @@ export const WhatsAppEventProcessor = {
                 for (const email of emailResult.emails) {
                     EmailService.sendHrTicketEscalatedEmail({
                         emailTo: email,
-                        ticket: ticket || payload,
+                        ticket: effectiveTicket,
                         assigneeName: ownerName,
                         level,
                         reason,
@@ -2468,9 +2589,15 @@ export const WhatsAppEventProcessor = {
             .eq('id', ticketId)
             .maybeSingle();
 
-        const orgId = payload.organization_id || ticket?.organization_id;
-        const ownerName = ticket?.assigned_to?.full_name || 'Owner';
-        const ticketNo = ticket?.ticket_number || payload.ticket_number;
+        const effectiveTicket = ticket || payload;
+        const orgId = payload.organization_id || effectiveTicket?.organization_id;
+        const level = effectiveTicket?.current_level || 1;
+        const levelOwners = await this.resolveHrLevelOwners(effectiveTicket, level);
+        const primaryOwner = levelOwners[0] || effectiveTicket?.assigned_to;
+        const ownerName = primaryOwner?.full_name || primaryOwner?.email || 'Owner';
+        const primaryAssigneeId = primaryOwner?.id || effectiveTicket?.assigned_to_user_id || payload.assigned_to_user_id;
+        const extraAssigneeIds = levelOwners.slice(1).map(o => o.id).filter(Boolean);
+        const ticketNo = effectiveTicket?.ticket_number || payload.ticket_number;
 
         await this.dispatch({
             featureKey: 'hr_ticket_sla_warning',
@@ -2481,12 +2608,15 @@ export const WhatsAppEventProcessor = {
                 user_name: ownerName,
                 ticket_number: ticketNo,
                 remaining_time: payload.remaining_hours || '4 hours',
-                subject: ticket?.subject || payload.subject || 'HR Request',
-                sla_deadline: formatWhatsAppDateTime(ticket?.sla_due_at || payload.sla_due_at),
-                next_level: String(Math.min((ticket?.current_level || 1) + 1, 4))
+                subject: effectiveTicket?.subject || payload.subject || 'HR Request',
+                sla_deadline: formatWhatsAppDateTime(effectiveTicket?.sla_due_at || payload.sla_due_at),
+                next_level: String(Math.min(level + 1, 4))
             },
             summaryMessage: `SLA warning for HR Ticket #${ticketNo}`,
-            contextualUserIds: { assigneeId: ticket?.assigned_to_user_id || payload.assigned_to_user_id }
+            contextualUserIds: {
+                assigneeId: primaryAssigneeId,
+                extraUserIds: extraAssigneeIds
+            }
         });
     },
 
@@ -2498,9 +2628,15 @@ export const WhatsAppEventProcessor = {
             .eq('id', ticketId)
             .maybeSingle();
 
-        const orgId = payload.organization_id || ticket?.organization_id;
-        const ticketNo = ticket?.ticket_number || payload.ticket_number;
-        const ownerName = ticket?.assigned_to?.full_name || 'Unassigned';
+        const effectiveTicket = ticket || payload;
+        const orgId = payload.organization_id || effectiveTicket?.organization_id;
+        const level = effectiveTicket?.current_level || 1;
+        const levelOwners = await this.resolveHrLevelOwners(effectiveTicket, level);
+        const primaryOwner = levelOwners[0] || effectiveTicket?.assigned_to;
+        const ownerName = primaryOwner?.full_name || primaryOwner?.email || 'Unassigned';
+        const primaryAssigneeId = primaryOwner?.id || effectiveTicket?.assigned_to_user_id || payload.assigned_to_user_id;
+        const extraAssigneeIds = levelOwners.slice(1).map(o => o.id).filter(Boolean);
+        const ticketNo = effectiveTicket?.ticket_number || payload.ticket_number;
 
         await this.dispatch({
             featureKey: 'hr_ticket_sla_warning',
@@ -2511,12 +2647,15 @@ export const WhatsAppEventProcessor = {
                 user_name: ownerName,
                 ticket_number: ticketNo,
                 remaining_time: '0 hours (BREACHED)',
-                subject: ticket?.subject || payload.subject || 'HR Request',
-                sla_deadline: formatWhatsAppDateTime(ticket?.sla_due_at || payload.sla_due_at),
-                next_level: String(Math.min((ticket?.current_level || 1) + 1, 4))
+                subject: effectiveTicket?.subject || payload.subject || 'HR Request',
+                sla_deadline: formatWhatsAppDateTime(effectiveTicket?.sla_due_at || payload.sla_due_at),
+                next_level: String(Math.min(level + 1, 4))
             },
             summaryMessage: `CRITICAL: HR Ticket #${ticketNo} SLA Breached`,
-            contextualUserIds: { assigneeId: ticket?.assigned_to_user_id || payload.assigned_to_user_id }
+            contextualUserIds: {
+                assigneeId: primaryAssigneeId,
+                extraUserIds: extraAssigneeIds
+            }
         });
     },
 
@@ -2528,46 +2667,60 @@ export const WhatsAppEventProcessor = {
         // Fetch full ticket details with assigned handler
         const { data: ticket } = await supabaseAdmin
             .from('hr_tickets')
-            .select('*, assigned_to:users!assigned_to_user_id(id, full_name, email, phone)')
+            .select('*, category:hr_ticket_categories(*), assigned_to:users!assigned_to_user_id(id, full_name, email, phone)')
             .eq('id', ticketId)
             .maybeSingle();
 
-        const isAnon = Boolean(payload.is_anonymous || ticket?.is_anonymous) || payload.ticket_type === 'anonymous_feedback' || ticket?.ticket_type === 'anonymous_feedback';
-        const assignedUser = ticket?.assigned_to;
-        const assignedName = assignedUser?.full_name || assignedUser?.email || 'Authority';
-        const assignedId = ticket?.assigned_to_user_id || payload.assigned_to_user_id;
+        const effectiveTicket = ticket || payload;
+        const isAnon = Boolean(effectiveTicket.is_anonymous) || effectiveTicket.ticket_type === 'anonymous_feedback';
         const categoryLabel = isAnon ? 'Anonymous Feedback' : 'Confidential Grievance';
         const submitterLabel = isAnon ? 'Anonymous Employee' : 'Confidential Submitter';
+        const level = effectiveTicket.current_level || 1;
 
-        // 1. WhatsApp Alert to Assigned Handler
-        await this.dispatch({
-            featureKey: 'hr_ticket_assigned_handler_v2',
-            templateEventKey: 'hr_ticket_assigned_handler_v2',
-            organizationId: orgId,
-            entityId: ticketId,
-            paramValues: {
-                user_name: assignedName,
-                ticket_number: ticketNo,
-                level: '1',
-                category: categoryLabel,
-                submitter: submitterLabel,
-                subject: ticket?.subject || payload.subject || 'Confidential Submission',
-                sla_deadline: formatWhatsAppDateTime(ticket?.sla_due_at || payload.sla_due_at)
-            },
-            summaryMessage: `Confidential HR alert received: #${ticketNo}`,
-            contextualUserIds: { assigneeId: assignedId }
-        });
+        const levelOwners = await this.resolveHrLevelOwners(effectiveTicket, level);
+        const primaryOwner = levelOwners[0] || effectiveTicket.assigned_to;
+        const assignedName = primaryOwner?.full_name || primaryOwner?.email || 'Authority';
+        const primaryAssigneeId = primaryOwner?.id || effectiveTicket.assigned_to_user_id || payload.assigned_to_user_id;
+        const extraAssigneeIds = levelOwners.slice(1).map(o => o.id).filter(Boolean);
 
-        // 2. Email Alert to Assigned Handler - strictly respecting Omnichannel Matrix
-        if (assignedUser?.email) {
+        // 1. WhatsApp Alert to Assigned Handler(s) & Omnichannel matrix recipients
+        if (primaryAssigneeId) {
+            await this.dispatch({
+                featureKey: 'hr_ticket_assigned_handler_v2',
+                templateEventKey: 'hr_ticket_assigned_handler_v2',
+                organizationId: orgId,
+                entityId: ticketId,
+                paramValues: {
+                    user_name: assignedName,
+                    ticket_number: ticketNo,
+                    level: String(level),
+                    category: categoryLabel,
+                    submitter: submitterLabel,
+                    subject: effectiveTicket.subject || payload.subject || 'Confidential Submission',
+                    sla_deadline: formatWhatsAppDateTime(effectiveTicket.sla_due_at || payload.sla_due_at)
+                },
+                summaryMessage: `Confidential HR alert received: #${ticketNo}`,
+                contextualUserIds: {
+                    assigneeId: primaryAssigneeId,
+                    extraUserIds: extraAssigneeIds
+                }
+            });
+        }
+
+        // 2. Email Alert to Assigned Handler(s) - strictly respecting Omnichannel Matrix
+        const primaryHandlerEmail = primaryOwner?.email || effectiveTicket.assigned_to?.email;
+        const extraHandlerEmails = levelOwners.slice(1).map(o => o.email).filter(Boolean) as string[];
+
+        if (primaryHandlerEmail || extraHandlerEmails.length > 0) {
             try {
                 const { EmailRecipientResolver } = await import('./EmailRecipientResolver');
                 const emailResult = await EmailRecipientResolver.resolveRecipients({
                     organizationId: orgId,
-                    propertyId: ticket?.property_id || payload?.property_id,
+                    propertyId: effectiveTicket.property_id || payload?.property_id,
                     featureKey: 'hr_ticket_assigned_handler_v2',
                     contextualRecipients: {
-                        assigneeEmail: assignedUser.email
+                        assigneeEmail: primaryHandlerEmail,
+                        extraEmails: extraHandlerEmails
                     }
                 });
 
@@ -2576,7 +2729,7 @@ export const WhatsAppEventProcessor = {
                     for (const email of emailResult.emails) {
                         EmailService.sendHrTicketAssignedEmail({
                             emailTo: email,
-                            ticket: ticket || payload,
+                            ticket: effectiveTicket,
                             assigneeName: assignedName,
                             submitterName: submitterLabel,
                             categoryName: categoryLabel
@@ -2672,26 +2825,30 @@ export const WhatsAppEventProcessor = {
             .eq('id', payload.sender_user_id)
             .maybeSingle();
 
-        const orgId = payload.organization_id || ticket?.organization_id;
-        const isAnonymous = ticket?.is_anonymous || ticket?.ticket_type === 'anonymous_feedback';
-        const isSenderEmployee = payload.sender_user_id === ticket?.raised_by_user_id;
+        const effectiveTicket = ticket || payload;
+        const orgId = payload.organization_id || effectiveTicket?.organization_id;
+        const isAnonymous = effectiveTicket?.is_anonymous || effectiveTicket?.ticket_type === 'anonymous_feedback';
+        const isSenderEmployee = payload.sender_user_id === effectiveTicket?.raised_by_user_id;
 
         const senderName = (isAnonymous && isSenderEmployee) ? 'Anonymous Employee' : (sender?.full_name || 'Team Member');
-        const ticketNo = ticket?.ticket_number || payload.ticket_number;
+        const ticketNo = effectiveTicket?.ticket_number || payload.ticket_number;
         const msgSnippet = (payload.message || payload.content || '').slice(0, 100);
 
-        const targetUser = isSenderEmployee ? ticket?.assigned_to : ticket?.raised_by;
-        const targetUserId = targetUser?.id || (isSenderEmployee ? ticket?.assigned_to_user_id : ticket?.raised_by_user_id);
+        const level = effectiveTicket?.current_level || 1;
+        const levelOwners = isSenderEmployee ? await this.resolveHrLevelOwners(effectiveTicket, level) : [];
+        const primaryTarget = isSenderEmployee ? (levelOwners[0] || effectiveTicket?.assigned_to) : effectiveTicket?.raised_by;
+        const primaryTargetId = primaryTarget?.id || (isSenderEmployee ? effectiveTicket?.assigned_to_user_id : effectiveTicket?.raised_by_user_id);
+        const extraTargetIds = isSenderEmployee ? levelOwners.slice(1).map(o => o.id).filter(Boolean) : [];
         const targetName = isSenderEmployee
-            ? (ticket?.assigned_to?.full_name || 'Handler')
-            : (isAnonymous ? 'Anonymous Employee' : (ticket?.raised_by?.full_name || 'Employee'));
+            ? (primaryTarget?.full_name || primaryTarget?.email || 'Handler')
+            : (isAnonymous ? 'Anonymous Employee' : (effectiveTicket?.raised_by?.full_name || 'Employee'));
 
         // If target is anonymous submitter, suppress WhatsApp since anonymous submitters have no registered phone
         if (!isSenderEmployee && isAnonymous) {
             return;
         }
 
-        if (targetUserId) {
+        if (primaryTargetId) {
             await this.dispatch({
                 featureKey: 'hr_ticket_comment_added',
                 templateEventKey: 'hr_ticket_comment_added',
@@ -2705,20 +2862,28 @@ export const WhatsAppEventProcessor = {
                     date: formatWhatsAppDate(new Date())
                 },
                 summaryMessage: `New comment on HR Ticket #${ticketNo} from ${senderName}`,
-                contextualUserIds: { assigneeId: targetUserId }
+                contextualUserIds: {
+                    assigneeId: isSenderEmployee ? primaryTargetId : undefined,
+                    requesterId: !isSenderEmployee ? primaryTargetId : undefined,
+                    extraUserIds: extraTargetIds
+                }
             });
         }
 
-        if (targetUser?.email && (!isAnonymous || isSenderEmployee)) {
+        const primaryTargetEmail = primaryTarget?.email;
+        const extraTargetEmails = isSenderEmployee ? levelOwners.slice(1).map(o => o.email).filter(Boolean) as string[] : [];
+
+        if ((primaryTargetEmail || extraTargetEmails.length > 0) && (!isAnonymous || isSenderEmployee)) {
             try {
                 const { EmailRecipientResolver } = await import('./EmailRecipientResolver');
                 const emailResult = await EmailRecipientResolver.resolveRecipients({
                     organizationId: orgId,
-                    propertyId: ticket?.property_id || payload?.property_id,
+                    propertyId: effectiveTicket?.property_id || payload?.property_id,
                     featureKey: 'hr_ticket_comment_added',
                     contextualRecipients: {
-                        assigneeEmail: isSenderEmployee ? targetUser.email : undefined,
-                        requesterEmail: !isSenderEmployee ? targetUser.email : undefined
+                        assigneeEmail: isSenderEmployee ? primaryTargetEmail : undefined,
+                        extraEmails: isSenderEmployee ? extraTargetEmails : undefined,
+                        requesterEmail: !isSenderEmployee ? primaryTargetEmail : undefined
                     }
                 });
 
@@ -2727,7 +2892,7 @@ export const WhatsAppEventProcessor = {
                     for (const email of emailResult.emails) {
                         EmailService.sendHrTicketCommentAddedEmail({
                             emailTo: email,
-                            ticket: ticket || payload,
+                            ticket: effectiveTicket,
                             recipientName: targetName,
                             senderName,
                             commentSnippet: msgSnippet

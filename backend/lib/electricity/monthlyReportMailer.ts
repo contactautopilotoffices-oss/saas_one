@@ -79,7 +79,7 @@ export async function sendMonthlyReport({
     }
     try {
         await transporter.sendMail({
-            from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || smtpUser}>`,
+            from: `"${process.env.SMTP_SENDER_NAME || 'Autopilot Offices'}" <${process.env.SMTP_SENDER_EMAIL || smtpUser}>`,
             to: to.join(', '),
             subject: `Electricity monthly report — ${monthLabel} — ${orgName}`,
             html:
