@@ -692,8 +692,12 @@ export async function defaultLiveIO(): Promise<LiveIO> {
     const { botSwitchOn } = await import('../BotSwitches');
     const { activePromptSections, beginObservation, observeTurn } = await import('../BotLearningService');
     const llm = engyBrainLlm();
-    // Group 2: two independent setup reads side by side.
-    const [relayIO, promptSections] = await Promise.all([defaultRelayIO(), activePromptSections()]);
+    // Group 2: independent setup reads side by side. Owner 2026-10-28: the models picked in the Control Center for each step
+    // (understand / reply / tidy); each falls back to today's chain, and the read never throws.
+    const { chainFor } = await import('../ai/AiModelSettings');
+    const [relayIO, promptSections, interpretModels, replyModels, rewriteModels] = await Promise.all([
+        defaultRelayIO(), activePromptSections(), chainFor('wa_understand'), chainFor('wa_reply'), chainFor('wa_tidy'),
+    ]);
 
     const STATUS: Record<string, string> = { pending: 'To do', in_progress: 'In progress', completed: 'Done' };
 
@@ -812,7 +816,7 @@ export async function defaultLiveIO(): Promise<LiveIO> {
             findCreated: (actorId, assigneeId, title, date, since) => WorkspaceService.findRecentlyCreated(actorId, assigneeId, title, date, since),
             async deleteTask(actorId, taskId) { await WorkspaceService.deleteTask(actorId, { taskId }); },
         },
-        brain: { llm, promptSections },
+        brain: { llm, promptSections, interpretModels, replyModels, rewriteModels },
         beginLearning: beginObservation,
         observeLearning: observeTurn,
         exec,

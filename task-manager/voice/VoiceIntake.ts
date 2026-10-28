@@ -390,6 +390,8 @@ export async function defaultVoiceIO(): Promise<VoiceIO> {
     const { transcribeVoiceNote } = await import('./VoiceTranscriber');
     const { cleanTranscript } = await import('./VoiceCleanup');
     const { engyBrainLlm } = await import('../brain/llm');
+    // Owner 2026-10-28: the models picked in the Control Center ("AI models"); today's models when none / on any problem
+    const { chainFor } = await import('../ai/AiModelSettings');
     const store = makeVoiceStore(supabaseAdmin);
     const llm = engyBrainLlm();
     return {
@@ -403,8 +405,8 @@ export async function defaultVoiceIO(): Promise<VoiceIO> {
             return user ? { employeeId: null, userId: user.id } : null;
         },
         download: url => fetchMediaSafely(url),
-        transcribe: input => transcribeVoiceNote(input),
-        cleanup: text => cleanTranscript(text, { llm }),
+        transcribe: async input => transcribeVoiceNote(input, { models: await chainFor('voice_transcribe') }),
+        cleanup: async text => cleanTranscript(text, { llm, models: await chainFor('voice_cleanup') }),
         tryBrain: input => handToBrain(input),
         getState: phone => store.get(phone),
         setState: (phone, state) => store.set(phone, state),

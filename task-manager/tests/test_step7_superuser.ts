@@ -55,6 +55,8 @@ async function run() {
     process.env.GROQ_TASK_CHAT_API_KEY = 'k'; // present, but fetch below is fake
     const aiCalls: string[] = [];
     (globalThis as any).fetch = async (_u: string, init: any) => {
+        // Owner 2026-10-28: the "AI models" setting is read from the database first; offline, that read fails → today's model
+        if (!String(_u).includes('api.groq.com')) throw new Error('offline test: no database');
         aiCalls.push(String(init?.body));
         const body = JSON.parse(init.body);
         const message = JSON.parse(body.messages[1].content).message as string;
