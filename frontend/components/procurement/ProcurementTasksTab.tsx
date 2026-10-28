@@ -3,7 +3,7 @@
 import React, { useMemo, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { AlertTriangle, Bell, CheckCircle2, ClipboardList, LayoutGrid, Lock, Plus, RefreshCw, Send, UserCheck, Users, X } from 'lucide-react';
-import { EASE, WTask, todayIST } from './tasks/types';
+import { EASE, Status, WTask, todayIST } from './tasks/types';
 import { DateRange } from '@/frontend/components/task-manager/DateRangePicker';
 import TaskRangeFilter from '@/frontend/components/task-manager/assign/TaskRangeFilter';
 import { useWorkspace } from './tasks/useWorkspace';
@@ -101,6 +101,8 @@ export default function ProcurementTasksTab({ departmentName = 'Procurement' }: 
     const [dialog, setDialog] = useState<{ open: boolean; target: string | null; followUp?: { id: string; title: string } | null }>({ open: false, target: null });
     // Owner 2026-10-26: the optional remark box, only when someone asks for it
     const [remarkFor, setRemarkFor] = useState<string | null>(null);
+    // Owner 2026-10-28: "Remark on completion" — the task waiting for its comment box before it is marked done
+    const [completingId, setCompletingId] = useState<string | null>(null);
     const [sendTo, setSendTo] = useState<SendTo | null>(null);
     // Owner 2026-10-26: cross-department collaboration (support requests waiting for me show on the board too)
     const collab = useCollaboration(true);
@@ -172,6 +174,14 @@ export default function ProcurementTasksTab({ departmentName = 'Procurement' }: 
         },
     };
     const remarkTask = remarkFor ? ok.tasks.find(t => t.id === remarkFor) || null : null;
+    const remarkMode = ok.features?.completionRemark ?? 'ask';
+    const completingTask = completingId ? ok.tasks.find(t => t.id === completingId) || null : null;
+    // Every way of marking one of MY tasks done (drag, arrow keys, the task window) asks first, unless switched off
+    const move = (taskId: string, status: Status) => {
+        const t = ok.tasks.find(x => x.id === taskId);
+        if (status === 'completed' && remarkMode !== 'off' && t && t.ownerId === meId && t.status !== 'completed') { setCompletingId(taskId); return; }
+        void moveTask(taskId, status);
+    };
     // Owner 2026-10-19: "Pending on…" a colleague (they are told; they still cannot see my board).
     const pending = { people: ok.dependencyPeople || [], onFlag: flagDependency };
 
@@ -249,8 +259,12 @@ export default function ProcurementTasksTab({ departmentName = 'Procurement' }: 
             {/* content */}
             <AnimatePresence mode="wait" initial={false}>
                 <motion.div key={view} initial={reduce ? false : { opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={reduce ? undefined : { opacity: 0, y: -6 }} transition={{ duration: 0.3, ease: EASE }}>
-                    {view === 'board' && <Board tasks={filtered} meId={meId} onMove={moveTask} onQuickAdd={quickAdd} onDelete={deleteTask} onLock={setLocked} give={give} pending={pending} onRemark={setRemarkFor} topOfTodo={incoming} />}
-                    {view === 'assigned' && ok.features?.assignedTab && <AssignedView from={range.from} to={range.to} onEdit={editTask} onDelete={deleteTask} />}
+                    {view === 'board' && <Board tasks={filtered} meId={meId} onMove={move} onQuickAdd={quickAdd} onDelete={deleteTask} onLock={setLocked} give={give} pending={pending} onRemark={setRemarkFor} topOfTodo={incoming} />}
+                    {view === 'assigned' && ok.features?.assignedTab && (
+                        <AssignedView from={range.from} to={range.to} onEdit={editTask} onDelete={deleteTask} meId={meId}
+                            actions={{ ...give.extra, onAddNote: addNote }}
+                            onFollowUp={t => setDialog({ open: true, target: t.holderId, followUp: { id: t.id, title: t.title } })} />
+                    )}
                     {view === 'team' && <TeamView members={ok.members} tasks={ok.tasks} assignable={ok.assignable} onAssign={openDialog} />}
                     {view === 'notifications' && <NotificationsView departmentName={departmentName} />}
                     {view === 'superuser' && sendVisible && (
@@ -288,6 +302,11 @@ export default function ProcurementTasksTab({ departmentName = 'Procurement' }: 
             />
 
             <RemarkDialog task={remarkTask} onClose={() => setRemarkFor(null)} onSave={addRemark} />
+            <RemarkDialog
+                task={completingTask} completing={remarkMode === 'required' ? 'required' : 'ask'} onClose={() => setCompletingId(null)}
+                onSkip={id => void moveTask(id, 'completed')}
+                onSave={async (id, remark) => { await moveTask(id, 'completed', remark); return true; }}
+            />
 
             {/* toasts */}
             <div className="pointer-events-none fixed bottom-5 right-5 z-[60] flex w-[calc(100%-2.5rem)] max-w-sm flex-col gap-2" aria-live="polite">

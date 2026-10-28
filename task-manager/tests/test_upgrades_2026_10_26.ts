@@ -100,7 +100,7 @@ async function run() {
             buildContext: async (_e: any, _p: string, o: any) => ({ ...world('default'), noteTargets: GIVEN, ...extra, pending: o.pending, recent: o.recent }),
             brain: { llm },
             exec: {
-                setStatus: async (...a: any[]) => { w.exec.push(['setStatus', ...a.slice(0, 3)]); },
+                setStatus: async (...a: any[]) => { w.exec.push(['setStatus', ...a.slice(0, 3), a[3]?.remark ?? null]); },
                 assign: async (_a: string, i: any) => { w.exec.push(['assign', i.targetUserId, i.title, i.followUpOf ?? null]); },
                 handOver: async () => ({ toName: '' }), readPerson: async () => null, readInsight: async () => '',
                 addNote: async (a: string, id: string, note: string, opts: any) => { w.exec.push(['note', a, id, note, !!opts?.tellGiver]); },
@@ -119,10 +119,11 @@ async function run() {
     let w = mk(m => (/done/i.test(m) ? U('complete_tasks', { which: { all: false, numbers: [1], hints: [] }, note: 'shared the PO with the vendor' }, 'Done 1.') : YES));
     await turn(w, 'done 1: shared the PO with the vendor', ); await yesIfAsked(w);
     check('"done 1: …" → task 1 marked done', w.exec.some((e: any[]) => e[0] === 'setStatus' && e[2] === 't1' && e[3] === 'completed'), w.exec);
-    check('…and the remark saved on it, telling the giver', w.exec.some((e: any[]) => e[0] === 'note' && e[2] === 't1' && e[3] === 'shared the PO with the vendor' && e[4] === true), w.exec);
+    // Owner 2026-10-28: the remark is saved as the completion remark in the same step (the giver's notice carries it)
+    check('…and the remark saved on it as its completion remark', w.exec.some((e: any[]) => e[0] === 'setStatus' && e[2] === 't1' && e[3] === 'completed' && e[4] === 'shared the PO with the vendor'), w.exec);
     w = mk(m => (/done/i.test(m) ? U('complete_tasks', { which: { all: false, numbers: [1], hints: [] }, note: 'vendor confirmed delivery by Friday' }, 'Done 1.') : YES));
     await turn(w, 'done 1'); await yesIfAsked(w);
-    check('a remark the person never wrote (invented by the AI) → nothing done', !w.exec.some((e: any[]) => e[0] === 'note'), w.exec);
+    check('a remark the person never wrote (invented by the AI) → nothing done', !w.exec.some((e: any[]) => e[0] === 'note' || (e[0] === 'setStatus' && e[4])), w.exec);
 
     // b. change date / person of a task they gave
     w = mk(m => (/move/i.test(m) ? U('change_task', { which: { all: false, numbers: [], hints: ['onboarding'] }, person: 'Vidya', date: '2026-10-30', to: 'Harsh' }, 'Move Vidya\'s onboarding.') : YES));
@@ -230,7 +231,9 @@ async function run() {
     check('personal task = I hold it and nobody else gave it', WS.isPersonalTask({ employee_id: 'me', assigned_by: null }, 'me') && WS.isPersonalTask({ employee_id: 'me', assigned_by: 'me' }, 'me') && !WS.isPersonalTask({ employee_id: 'me', assigned_by: 'boss' }, 'me') && !WS.isPersonalTask({ employee_id: 'other', assigned_by: 'me' }, 'me'));
     const wsSrc8 = read('task-manager/WorkspaceService.ts');
     const cn = wsSrc8.slice(wsSrc8.indexOf('static async changeNote('), wsSrc8.indexOf('static async addNote('));
-    check('edit / delete a note: only on my personal task, only if the note is still the one shown, and only if nothing changed meanwhile', /isPersonalTask\(/.test(cn) && /target\.text !== input\.expected\.trim\(\)/.test(cn) && /\.eq\('description', row\.description as string\)/.test(cn) && /task_note_deleted/.test(cn));
+    // Owner 2026-10-28: the person who gave the task may change its notes too (never the holder of a given task)
+    check('notes: my personal task or one I gave; not a task someone gave me', WS.mayChangeNotes({ employee_id: 'me', assigned_by: null }, 'me') && WS.mayChangeNotes({ employee_id: 'other', assigned_by: 'me' }, 'me') && !WS.mayChangeNotes({ employee_id: 'me', assigned_by: 'boss' }, 'me') && !WS.mayChangeNotes({ employee_id: 'other', assigned_by: 'boss' }, 'me'));
+    check('edit / delete a note: only on my personal task or one I gave, only if the note is still the one shown, and only if nothing changed meanwhile', /mayChangeNotes\(/.test(cn) && /target\.text !== input\.expected\.trim\(\)/.test(cn) && /\.eq\('description', row\.description as string\)/.test(cn) && /task_note_deleted/.test(cn));
     const tv8 = read('frontend/components/procurement/tasks/TaskView.tsx');
     check('the Edit window has no Details box and never sends details (notes cannot be wiped by editing)', !/>Details<\/span>/.test(tv8) && /await onSave\(title\.trim\(\), undefined,/.test(tv8) && /\.\.\.\(description !== undefined \? \{ description \} : \{\}\)/.test(read('frontend/components/procurement/tasks/useWorkspace.ts')));
     check('Give to: a deadline picker (Due dates switch); the hand-over saves it only when one was chosen', /actions\?\.dueDates && <DuePicker start=\{giveStart\}/.test(tv8) && /dueSent \? await this\.dueFor\(actor, row\.assigned_date as string, input\.dueDate, input\.dueTime\)/.test(wsSrc8));
@@ -239,7 +242,7 @@ async function run() {
     const xsql = read('supabase/migrations/20261027100002_task_manager_cross_department_switch.sql');
     check('migration: one column, ON by default, additive', /ADD COLUMN IF NOT EXISTS cross_dept_collab BOOLEAN NOT NULL DEFAULT true/.test(xsql) && !/^\s*(DROP|DELETE|UPDATE|TRUNCATE)\b/im.test(xsql.split('\n').filter(l => !l.trim().startsWith('--')).join('\n')));
     const collabSrc = read('task-manager/CollaborationService.ts');
-    check('OFF: nobody to send to, and people in an OFF department are never offered', /if \(!\(await this\.enabledFor\(actor\)\)\) return \[\];/.test(collabSrc) && /on\(e\.department_id\)\)/.test(collabSrc));
+    check('OFF: nobody to send to, and people in an OFF department are never offered (unless their own setting says ON)', /if \(!\(await this\.enabledFor\(actor\)\)\) return \[\];/.test(collabSrc) && /\?\? on\(e\.department_id\)/.test(collabSrc) && /&& receives\(e\)\)/.test(collabSrc));
     check('OFF: sending and the duplicate check are refused by the server', /You cannot send work to other departments/.test(collabSrc));
     check('OFF: answering a request already waiting still works (respond does not use the switch)', !/enabledFor/.test(collabSrc.slice(collabSrc.indexOf('static async respond('), collabSrc.indexOf('static async respond(') + 2500)));
     const accessSrc = read('task-manager/TaskAccessService.ts');
@@ -252,12 +255,12 @@ async function run() {
     check('migration: "everyone" by default, a CHECK on the value, a new table with row level security', /cross_dept_scope TEXT NOT NULL DEFAULT 'everyone'/.test(psql) && /CHECK \(cross_dept_scope IN \('everyone', 'selected'\)\)/.test(psql) && /task_manager_cross_dept_people ENABLE ROW LEVEL SECURITY/.test(psql));
     const may = accessSrc.slice(accessSrc.indexOf('static async maySendCrossDept('), accessSrc.indexOf('static async setCrossDeptScope('));
     check('may send = department ON and (everyone, or ticked); a read problem = nobody', /cross\.off\.has\(person\.department_id\) \|\| scope\.failClosed\) return false/.test(may) && /!scope\.selected\.has\(person\.department_id\) \|\| scope\.allowed\.has\(person\.id\)/.test(may));
-    check('sending checks the person; RECEIVING only checks the other department (not the ticks)', /if \(!\(await this\.enabledFor\(actor\)\)\) return \[\];/.test(collabSrc) && /return TaskAccessService\.maySendCrossDept\(actor\)/.test(collabSrc) && /e\.department_id !== actor\.department_id && on\(e\.department_id\)\)/.test(collabSrc));
+    check('sending checks the person; RECEIVING only checks the other department (not the ticks)', /if \(!\(await this\.enabledFor\(actor\)\)\) return \[\];/.test(collabSrc) && /return TaskAccessService\.maySendCrossDept\(actor\)/.test(collabSrc) && /e\.department_id !== actor\.department_id && receives\(e\)\)/.test(collabSrc));
     check('before the SQL file: everyone (as today)', /failClosed: !missing/.test(accessSrc));
     const routeSrc = read('app/api/task-manager/access/route.ts');
     check('the Control Center route saves the choice and the ticks (admin-only, like every action there)', /action === 'set_cross_dept_scope'/.test(routeSrc) && /action === 'set_cross_dept_person'/.test(routeSrc) && /requireControlCentre/.test(routeSrc));
     const panelSrc = read('frontend/components/task-manager/TaskAccessPanel.tsx');
-    check('Control Center: "Everyone / Only selected people" and a tick per person', /'Only selected people'/.test(panelSrc) && /Can send to other departments/.test(panelSrc));
+    check('Control Center: "Everyone / Only selected people" and a tick per person (in their Settings window)', /'Only selected people'/.test(panelSrc) && /can send to other departments/i.test(panelSrc) && /onCrossDeptTick/.test(panelSrc));
     const tmFiles = ['AssignedView', 'Board', 'CrossDeptPanel', 'RemarkDialog', 'SuperuserPanel', 'TaskDialog', 'TaskView'].map(n => read(`frontend/components/procurement/tasks/${n}.tsx`));
     const leftover = tmFiles.join('\n').match(/placeholder=(?:"[^"]*"|\{`[^`]*`\})/g) || [];
     check('Task Manager screens: no grey example text left (search boxes keep their hint)', leftover.every(p => /Search/.test(p)), leftover);

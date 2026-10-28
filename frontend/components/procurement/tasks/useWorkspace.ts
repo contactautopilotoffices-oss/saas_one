@@ -69,7 +69,8 @@ export function useWorkspace(date: string, departmentName: string, to: string = 
         return data;
     }, []);
 
-    const moveTask = useCallback(async (taskId: string, status: Status) => {
+    /** Owner 2026-10-28: `remark` — what was done, from the comment box shown before a task is marked done. */
+    const moveTask = useCallback(async (taskId: string, status: Status, remark?: string) => {
         const before = wsRef.current;
         if (!before || before.state !== 'ok') return;
         const task = before.tasks.find(t => t.id === taskId);
@@ -80,10 +81,12 @@ export function useWorkspace(date: string, departmentName: string, to: string = 
 
         // 2. confirm with the server; undo on refusal
         try {
-            await post({ action: 'set_status', taskId, status });
-            // Owner 2026-10-26: a remark is optional, so it is offered on the message instead of a pop-up
+            await post({ action: 'set_status', taskId, status, ...(remark ? { remark } : {}) });
+            // Owner 2026-10-28: the comment box comes BEFORE the move (Remark on completion); with it switched off, a remark
+            // can still be added from the message, as before
             const mine = task.ownerId === before.actor.userId;
-            toast('success', `Moved to ${columnLabel(status)}`, status === 'completed' && mine ? { label: 'Add remark', taskId } : undefined);
+            const offerRemark = status === 'completed' && mine && !remark && before.features?.completionRemark === 'off';
+            toast('success', remark ? 'Marked done, with your remark' : `Moved to ${columnLabel(status)}`, offerRemark ? { label: 'Add remark', taskId } : undefined);
             load();
         } catch (err) {
             setWs(before);
@@ -229,8 +232,9 @@ export function useWorkspace(date: string, departmentName: string, to: string = 
     /** Owner 2026-10-26: an optional remark on one of MY tasks (saved like a note; the person who gave it is told in the app). */
     const addRemark = useCallback(async (taskId: string, note: string) => {
         try {
-            await post({ action: 'add_note', taskId, note, tellGiver: true });
-            toast('success', 'Remark added');
+            // Owner 2026-10-28: on a finished task this is its completion remark (shown on its own, the giver is told)
+            await post({ action: 'set_completion_remark', taskId, remark: note });
+            toast('success', 'Remark saved');
             await load();
             return true;
         } catch (err) {

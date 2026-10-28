@@ -20,6 +20,22 @@ export const TECH_DEPARTMENT_ID = '94a74961-2dd8-453d-9728-f6f2b9ade99b';
 export const TEAM_FEATURES = ['pending_on', 'protect_given', 'assigned_tab', 'due_dates', 'cross_dept_collab'] as const;
 export type TeamFeature = typeof TEAM_FEATURES[number];
 
+/**
+ * Owner 2026-10-28: the switches a person can have a personal exception to (Control Center → click a person). "Team
+ * manages notifications" stays team-only. A personal value wins over the team either way.
+ */
+export const PERSON_SWITCHES = ['smart_chat', 'task_import', 'peer_assign', 'team_assign', 'cross_dept_collab', 'superuser_collab', 'pending_on', 'protect_given', 'assigned_tab', 'due_dates'] as const;
+export type PersonSwitch = typeof PERSON_SWITCHES[number];
+export const PERSON_SETTINGS = [...PERSON_SWITCHES, 'completion_remark'] as const;
+export type PersonSetting = typeof PERSON_SETTINGS[number];
+
+/** Owner 2026-10-28: "Remark on completion" — no box, a box that can be skipped (default), or a remark is required. */
+export const COMPLETION_REMARK_MODES = ['off', 'ask', 'required'] as const;
+export type CompletionRemarkMode = typeof COMPLETION_REMARK_MODES[number];
+
+/** Personal exceptions by person: setting → value ('on' / 'off', or a completion-remark mode). */
+export interface PersonOverrides { byUser: Map<string, Map<string, string>>; tableMissing: boolean }
+
 export type AccessReason = 'ok' | 'no_department' | 'department_off' | 'not_onboarded' | 'settings_unreadable';
 
 export interface AccessDecision {
@@ -265,8 +281,11 @@ export class TaskAccessService {
         }
     }
 
-    static async isPeerAssignEnabled(departmentId: string | null | undefined): Promise<boolean> {
+    /** Owner 2026-10-28: with `userId`, that person's own exception (if any) wins over the team switch. */
+    static async isPeerAssignEnabled(departmentId: string | null | undefined, userId?: string | null): Promise<boolean> {
         if (!departmentId) return false;
+        const own = await this.personSwitch(userId, 'peer_assign');
+        if (own !== null) return own;
         return (await this.getPeerAssignDepartments()).departments.has(departmentId);
     }
 
@@ -311,8 +330,10 @@ export class TaskAccessService {
         }
     }
 
-    static async isTeamAssignEnabled(departmentId: string | null | undefined): Promise<boolean> {
+    static async isTeamAssignEnabled(departmentId: string | null | undefined, userId?: string | null): Promise<boolean> {
         if (!departmentId) return false;
+        const own = await this.personSwitch(userId, 'team_assign');
+        if (own !== null) return own;
         return (await this.getTeamAssignDepartments()).departments.has(departmentId);
     }
 
@@ -417,6 +438,9 @@ export class TaskAccessService {
     /** May this person SEND to other departments? Their department's switch ON, and (when "only selected") ticked. */
     static async maySendCrossDept(person: { id: string; department_id: string | null }): Promise<boolean> {
         if (!person.department_id) return false;
+        // Owner 2026-10-28: a personal exception wins over the department switch and the "only selected" ticks
+        const own = await this.personSwitch(person.id, 'cross_dept_collab');
+        if (own !== null) return own;
         const [cross, scope] = await Promise.all([this.getCrossDeptOff(), this.getCrossDeptScope()]);
         if (cross.allOff || cross.off.has(person.department_id) || scope.failClosed) return false;
         return !scope.selected.has(person.department_id) || scope.allowed.has(person.id);
@@ -450,16 +474,26 @@ export class TaskAccessService {
         });
     }
 
-    static async isDueDatesEnabled(departmentId: string | null | undefined): Promise<boolean> {
+    static async isDueDatesEnabled(departmentId: string | null | undefined, userId?: string | null): Promise<boolean> {
         if (!departmentId) return false;
+        const own = await this.personSwitch(userId, 'due_dates');
+        if (own !== null) return own;
         return (await this.getDueDatesDepartments()).departments.has(departmentId);
     }
 
-    /** One department's switches (all false when the department is unknown or the settings cannot be read). */
-    static async teamFeaturesFor(departmentId: string | null | undefined): Promise<{ pendingOn: boolean; protectGiven: boolean; assignedTab: boolean }> {
+    /**
+     * One department's switches (all false when the department is unknown or the settings cannot be read).
+     * Owner 2026-10-28: with `userId`, that person's exceptions win.
+     */
+    static async teamFeaturesFor(departmentId: string | null | undefined, userId?: string | null): Promise<{ pendingOn: boolean; protectGiven: boolean; assignedTab: boolean }> {
         if (!departmentId) return { pendingOn: false, protectGiven: false, assignedTab: false };
-        const f = await this.getTeamFeatures();
-        return { pendingOn: f.pendingOn.has(departmentId), protectGiven: f.protectGiven.has(departmentId), assignedTab: f.assignedTab.has(departmentId) };
+        const [f, o] = await Promise.all([this.getTeamFeatures(), this.getPersonOverrides()]);
+        const pick = (key: PersonSwitch, team: boolean) => this.switchFrom(o, userId, key) ?? team;
+        return {
+            pendingOn: pick('pending_on', f.pendingOn.has(departmentId)),
+            protectGiven: pick('protect_given', f.protectGiven.has(departmentId)),
+            assignedTab: pick('assigned_tab', f.assignedTab.has(departmentId)),
+        };
     }
 
     static async setTeamFeature(departmentId: string, feature: TeamFeature, enabled: boolean, actor?: string): Promise<void> {
@@ -633,8 +667,10 @@ export class TaskAccessService {
         }
     }
 
-    static async isTaskImportEnabled(departmentId: string | null | undefined): Promise<boolean> {
+    static async isTaskImportEnabled(departmentId: string | null | undefined, userId?: string | null): Promise<boolean> {
         if (!departmentId) return false;
+        const own = await this.personSwitch(userId, 'task_import');
+        if (own !== null) return own;
         return (await this.getTaskImportDepartments()).departments.has(departmentId);
     }
 
@@ -677,8 +713,10 @@ export class TaskAccessService {
         }
     }
 
-    static async isSmartChatEnabled(departmentId: string | null | undefined): Promise<boolean> {
+    static async isSmartChatEnabled(departmentId: string | null | undefined, userId?: string | null): Promise<boolean> {
         if (!departmentId) return false;
+        const own = await this.personSwitch(userId, 'smart_chat');
+        if (own !== null) return own;
         return (await this.getSmartChatDepartments()).departments.has(departmentId);
     }
 
@@ -723,8 +761,10 @@ export class TaskAccessService {
         }
     }
 
-    static async isSuperuserCollabEnabled(departmentId: string | null | undefined): Promise<boolean> {
+    static async isSuperuserCollabEnabled(departmentId: string | null | undefined, userId?: string | null): Promise<boolean> {
         if (!departmentId) return false;
+        const own = await this.personSwitch(userId, 'superuser_collab');
+        if (own !== null) return own;
         return (await this.getSuperuserCollab()).departments.has(departmentId);
     }
 
@@ -758,6 +798,131 @@ export class TaskAccessService {
         if (error) throw new Error('Could not save the reminder schedule. Run supabase/migrations/20261007000006_task_manager_superuser_pings.sql in the Supabase SQL Editor first.');
     }
 
+    // ── Owner 2026-10-28: "Remark on completion" (completion_remark) and personal exceptions ─────────────────────
+    // Both come from 20261028100001. Before it is applied every team counts as 'ask' and nobody has an exception.
+    // A read problem on the exceptions means "no exceptions": everyone follows their team (the behaviour before them).
+
+    static async getCompletionRemarkModes(): Promise<{ modes: Map<string, CompletionRemarkMode>; columnMissing: boolean }> {
+        try {
+            const { data, error } = await supabaseAdmin.from('task_manager_department_settings').select('department_id, completion_remark');
+            if (error) return { modes: new Map(), columnMissing: true };
+            const modes = new Map<string, CompletionRemarkMode>();
+            for (const r of data || []) {
+                const v = (r as Record<string, unknown>).completion_remark;
+                if (COMPLETION_REMARK_MODES.includes(v as CompletionRemarkMode)) modes.set(r.department_id as string, v as CompletionRemarkMode);
+            }
+            return { modes, columnMissing: false };
+        } catch {
+            return { modes: new Map(), columnMissing: true };
+        }
+    }
+
+    /** Read once per request burst: the same settings are asked about several times while one screen loads. */
+    private static overridesCache: { at: number; value: PersonOverrides } | null = null;
+
+    static async getPersonOverrides(): Promise<PersonOverrides> {
+        const cached = this.overridesCache;
+        if (cached && Date.now() - cached.at < 3_000) return cached.value;
+        let value: PersonOverrides;
+        try {
+            const { data, error } = await supabaseAdmin.from('task_manager_person_settings').select('user_id, setting, value');
+            if (error) {
+                if (!isMissingTable(error) && !['42703', 'PGRST204'].includes(String(error.code ?? ''))) console.error('[TaskAccessService] could not read personal settings; everyone follows their team:', error.message);
+                value = { byUser: new Map(), tableMissing: isMissingTable(error) };
+            } else {
+                const byUser = new Map<string, Map<string, string>>();
+                for (const r of data || []) {
+                    const m = byUser.get(r.user_id as string) ?? new Map<string, string>();
+                    m.set(r.setting as string, r.value as string);
+                    byUser.set(r.user_id as string, m);
+                }
+                value = { byUser, tableMissing: false };
+            }
+        } catch {
+            value = { byUser: new Map(), tableMissing: false };
+        }
+        this.overridesCache = { at: Date.now(), value };
+        return value;
+    }
+
+    /** A personal on/off exception from already-read overrides: true / false, or null = follows the team. */
+    static switchFrom(o: PersonOverrides, userId: string | null | undefined, key: PersonSwitch): boolean | null {
+        const v = userId ? o.byUser.get(userId)?.get(key) : undefined;
+        return v === 'on' ? true : v === 'off' ? false : null;
+    }
+
+    static async personSwitch(userId: string | null | undefined, key: PersonSwitch): Promise<boolean | null> {
+        if (!userId) return null;
+        return this.switchFrom(await this.getPersonOverrides(), userId, key);
+    }
+
+    /**
+     * For code that works with a set of departments (the WhatsApp gates): whether ANYONE has a personal ON for this switch
+     * (so "no department has it" no longer means "nobody has it"), and each person's own exception.
+     */
+    static async personalSwitches(key: PersonSwitch): Promise<{ anyOn: boolean; of: (userId: string) => boolean | null }> {
+        const o = await this.getPersonOverrides();
+        const anyOn = [...o.byUser.values()].some(m => m.get(key) === 'on');
+        return { anyOn, of: userId => this.switchFrom(o, userId, key) };
+    }
+
+    /** "Remark on completion" for this person: their exception, else their team, else 'ask'. */
+    static async completionRemarkFor(person: { id: string; department_id: string | null }): Promise<CompletionRemarkMode> {
+        const [o, teams] = await Promise.all([this.getPersonOverrides(), this.getCompletionRemarkModes()]);
+        const own = o.byUser.get(person.id)?.get('completion_remark');
+        if (COMPLETION_REMARK_MODES.includes(own as CompletionRemarkMode)) return own as CompletionRemarkMode;
+        return (person.department_id && teams.modes.get(person.department_id)) || 'ask';
+    }
+
+    static async setCompletionRemark(departmentId: string, mode: CompletionRemarkMode, actor?: string): Promise<void> {
+        if (!COMPLETION_REMARK_MODES.includes(mode)) throw new Error('Unknown setting');
+        const snapshot = await this.getSnapshot();
+        if (!snapshot.provisioned) throw new AccessNotProvisionedError();
+        const dept = await TaskDatabaseService.getDepartmentById(departmentId);
+        if (!dept) throw new Error('Department not found');
+        const { error } = await supabaseAdmin.from('task_manager_department_settings')
+            .upsert({ department_id: departmentId, completion_remark: mode, updated_by: actor || null, updated_at: new Date().toISOString() }, { onConflict: 'department_id' });
+        if (error) throw new Error('Could not save that setting. Run supabase/migrations/20261028100001_task_manager_person_settings_and_completion_remark.sql in the Supabase SQL Editor first.');
+        await TaskDatabaseService.logAudit({
+            event_type: 'task_access_completion_remark_updated',
+            details: { departmentId, departmentName: dept.name, mode, actor: actor || null },
+        });
+    }
+
+    /** One personal exception: `value` null = back to the team setting. */
+    static async setPersonSetting(userId: string, setting: PersonSetting, value: string | null, actor?: string): Promise<void> {
+        if (!PERSON_SETTINGS.includes(setting)) throw new Error('Unknown setting');
+        const allowed = setting === 'completion_remark' ? COMPLETION_REMARK_MODES as readonly string[] : ['on', 'off'];
+        if (value !== null && !allowed.includes(value)) throw new Error('That value is not valid for this setting');
+        const person = await TaskDatabaseService.getEmployeeById(userId);
+        if (!person) throw new Error('Employee with a user account not found');
+        const { error } = value === null
+            ? await supabaseAdmin.from('task_manager_person_settings').delete().eq('user_id', userId).eq('setting', setting)
+            : await supabaseAdmin.from('task_manager_person_settings')
+                .upsert({ user_id: userId, setting, value, updated_by: actor || null, updated_at: new Date().toISOString() }, { onConflict: 'user_id,setting' });
+        if (error) throw new Error('Could not save that setting. Run supabase/migrations/20261028100001_task_manager_person_settings_and_completion_remark.sql in the Supabase SQL Editor first.');
+        this.overridesCache = null;
+        await TaskDatabaseService.logAudit({
+            event_type: 'task_access_person_setting_updated',
+            target_employee_id: userId,
+            details: { name: person.name, departmentName: person.department_name, setting, value, actor: actor || null },
+        });
+    }
+
+    /** Clears every personal exception: the person follows their team again. */
+    static async resetPersonSettings(userId: string, actor?: string): Promise<void> {
+        const person = await TaskDatabaseService.getEmployeeById(userId);
+        if (!person) throw new Error('Employee with a user account not found');
+        const { error } = await supabaseAdmin.from('task_manager_person_settings').delete().eq('user_id', userId);
+        if (error) throw new Error('Could not reset. Run supabase/migrations/20261028100001_task_manager_person_settings_and_completion_remark.sql in the Supabase SQL Editor first.');
+        this.overridesCache = null;
+        await TaskDatabaseService.logAudit({
+            event_type: 'task_access_person_settings_reset',
+            target_employee_id: userId,
+            details: { name: person.name, departmentName: person.department_name, actor: actor || null },
+        });
+    }
+
     // ── Overview for the Control Center ─────────────────────────────────────────
 
     static async getOverview(): Promise<{
@@ -773,6 +938,8 @@ export class TaskAccessService {
         taskImportColumnMissing: boolean;
         smartChatColumnMissing: boolean;
         superuserCollabColumnMissing: boolean;
+        completionRemarkColumnMissing: boolean;
+        personSettingsTableMissing: boolean;
         departments: Array<{
             departmentId: string;
             name: string;
@@ -789,6 +956,7 @@ export class TaskAccessService {
             taskImportEnabled: boolean;
             smartChatEnabled: boolean;
             superuserCollabEnabled: boolean;
+            completionRemark: CompletionRemarkMode;
             memberCount: number;
             onboardedCount: number;
             members: Array<{
@@ -800,6 +968,8 @@ export class TaskAccessService {
                 kickoffSentAt: string | null;
                 /** Owner 2026-10-27: ticked for "only selected people" (may send to other departments). */
                 crossDeptAllowed: boolean;
+                /** Owner 2026-10-28: personal exceptions (setting → value). Empty = follows the team. */
+                overrides: Record<string, string>;
             }>;
         }>;
     }> {
@@ -815,6 +985,9 @@ export class TaskAccessService {
         const imports = await this.getTaskImportDepartments();
         const smartChat = await this.getSmartChatDepartments();
         const collab = await this.getSuperuserCollab();
+        const remarkModes = await this.getCompletionRemarkModes();
+        this.overridesCache = null;     // the Control Center always shows what is saved right now
+        const overrides = await this.getPersonOverrides();
 
         const { data: profiles, error } = await supabaseAdmin
             .from('employee_profiles')
@@ -843,6 +1016,8 @@ export class TaskAccessService {
             taskImportColumnMissing: imports.columnMissing,
             smartChatColumnMissing: smartChat.columnMissing,
             superuserCollabColumnMissing: collab.columnMissing,
+            completionRemarkColumnMissing: remarkModes.columnMissing,
+            personSettingsTableMissing: overrides.tableMissing,
             departments: departments.map(d => {
                 const members = people
                     .filter(p => p.department_id === d.id)
@@ -857,6 +1032,7 @@ export class TaskAccessService {
                             source: record?.source || (assumedTech ? 'backfill' : null),
                             kickoffSentAt: record?.kickoffSentAt || null,
                             crossDeptAllowed: crossScope.allowed.has(p.user_id as string),
+                            overrides: Object.fromEntries(overrides.byUser.get(p.user_id as string) ?? []),
                         };
                     })
                     .sort((a, b) => a.name.localeCompare(b.name));
@@ -881,6 +1057,7 @@ export class TaskAccessService {
                     taskImportEnabled: imports.departments.has(d.id),
                     smartChatEnabled: smartChat.departments.has(d.id),
                     superuserCollabEnabled: collab.departments.has(d.id),
+                    completionRemark: remarkModes.modes.get(d.id) ?? 'ask',
                     memberCount: members.length,
                     onboardedCount: members.filter(m => m.onboarded).length,
                     members,

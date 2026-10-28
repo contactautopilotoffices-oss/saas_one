@@ -35,6 +35,8 @@ export interface PingIO {
     getEmployee(id: string): Promise<Employee | null>;
     access(e: Employee): Promise<AccessDecision>;
     getCollab(): Promise<{ departments: Set<string>; reminders: Map<string, SuperuserReminder> }>;
+    /** Owner 2026-10-28: personal exceptions to "Send tasks to a superuser" (missing = everyone follows their team). */
+    personalSwitches?(): Promise<{ anyOn: boolean; of: (userId: string) => boolean | null }>;
     saveReminder(departmentId: string, reminder: SuperuserReminder, actor: string): Promise<void>;
     allEmployees(): Promise<Employee[]>;
     tasksByIds(ids: string[]): Promise<PingTask[]>;
@@ -63,7 +65,8 @@ async function actorIn(io: PingIO, actorId: string): Promise<{ actor: Employee; 
     const access = await io.access(actor);
     if (!access.allowed) throw new PingError(403, access.message, 'LOCKED');
     const collab = await io.getCollab();
-    if (!actor.department_id || !collab.departments.has(actor.department_id)) {
+    const own = io.personalSwitches ? (await io.personalSwitches()).of(actor.id) : null;
+    if (!actor.department_id || !(own ?? collab.departments.has(actor.department_id))) {
         throw new PingError(403, 'Your team has not been set up to send tasks to a superuser yet. Ask an admin to switch it on.', 'NOT_ENABLED');
     }
     return { actor, collab };
@@ -247,11 +250,12 @@ export async function runDue(io: PingIO): Promise<DueSummary> {
     try {
         const now = io.now();
         const collab = await io.getCollab();
-        if (collab.departments.size === 0) return out; // no team has this switched on (the default): do nothing at all
+        const personal = io.personalSwitches ? await io.personalSwitches() : { anyOn: false, of: () => null };
+        if (collab.departments.size === 0 && !personal.anyOn) return out; // nobody has this switched on (the default): do nothing at all
 
         // 1. reminders scheduled for a time that has come. claimDue() flips scheduled → sending in one step, so no two runs can both send it.
         for (const ping of await io.claimDue(now.toISOString())) {
-            if (!collab.departments.has(ping.department_id)) { await io.updatePing(ping.id, { status: 'cancelled', error: 'The team can no longer send tasks to a superuser.' }); out.skipped++; continue; }
+            if (!(personal.of(ping.created_by) ?? collab.departments.has(ping.department_id))) { await io.updatePing(ping.id, { status: 'cancelled', error: 'The team can no longer send tasks to a superuser.' }); out.skipped++; continue; }
             const r = await deliver(ping, io).catch(() => ({ ok: false }));
             if (r.ok) out.sent++; else out.failed++;
         }
@@ -312,6 +316,7 @@ export function defaultPingIO(): PingIO {
         getEmployee: id => TaskDatabaseService.getEmployeeById(id),
         access: e => TaskAccessService.check({ userId: e.id, departmentId: e.department_id }),
         async getCollab() { const c = await TaskAccessService.getSuperuserCollab(); return { departments: c.departments, reminders: c.reminders }; },
+        personalSwitches: () => TaskAccessService.personalSwitches('superuser_collab'),
         saveReminder: (departmentId, reminder, actor) => TaskAccessService.saveSuperuserReminder(departmentId, reminder, actor),
         allEmployees: () => TaskDatabaseService.getAllEmployees(),
         async tasksByIds(ids) {

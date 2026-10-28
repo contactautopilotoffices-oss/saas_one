@@ -37,7 +37,7 @@ export class PermissionService {
         if (actor.role === 'superuser') return candidates;
         const { hierarchy } = await HierarchyService.load();
         const below = new Set(hierarchy.allReports(actor.id).map(p => p.userId));
-        const sharing = await TaskAccessService.isPeerAssignEnabled(actor.department_id);
+        const sharing = await TaskAccessService.isPeerAssignEnabled(actor.department_id, actor.id);
         return candidates.filter(e =>
             e.id === actor.id ||
             below.has(e.id) ||
@@ -53,7 +53,7 @@ export class PermissionService {
     static async assignableTo(actor: Employee, candidates: Employee[]): Promise<Employee[]> {
         if (actor.role === 'superuser') return candidates;
         const visible = await this.visibleAndAssignable(actor, candidates);
-        const teamAssign = !!actor.department_id && await TaskAccessService.isTeamAssignEnabled(actor.department_id);
+        const teamAssign = !!actor.department_id && await TaskAccessService.isTeamAssignEnabled(actor.department_id, actor.id);
         if (!teamAssign) return visible;
         const ok = new Set(visible.map(e => e.id));
         return candidates.filter(e => ok.has(e.id) || e.department_id === actor.department_id);
@@ -175,7 +175,7 @@ export class PermissionService {
         // ONLY for a superuser target, and ONLY a superuser ABOVE the actor in the reporting chain (their own manager,
         // direct or indirect) — e.g. Procurement may give tasks to Saniel, not to another superuser they don't report to
         // (owner 2026-10-15). Nothing else about who may assign to whom is changed.
-        if (target.role === 'superuser' && actor.department_id && await TaskAccessService.isSuperuserCollabEnabled(actor.department_id)
+        if (target.role === 'superuser' && actor.department_id && await TaskAccessService.isSuperuserCollabEnabled(actor.department_id, actor.id)
             && (await this.superusersAbove(actor, [target])).length === 1) {
             return { actor, target };
         }

@@ -46,6 +46,8 @@ export interface WTask {
     due?: { date: string; time: string | null } | null;
     /** Owner 2026-10-27: my own personal task — I may edit or delete its notes. */
     canEditNotes?: boolean;
+    /** Owner 2026-10-28: what the holder wrote when they marked it done. */
+    completionRemark?: string | null;
 }
 
 /** Owner 2026-10-26: a file on a task, with a download link that works for 10 minutes. */
@@ -95,6 +97,16 @@ export interface AssignedTask {
     assignerName: string;
     mine: boolean;
     isCarriedForward: boolean;
+    /** Owner 2026-10-28: for the task window opened from "Assigned by me". */
+    followUpOf?: { id: string; title: string } | null;
+    alsoWith?: Array<{ name: string; status: Status }>;
+    attachmentCount?: number;
+    supportRequest?: boolean;
+    due?: { date: string; time: string | null } | null;
+    /** I gave it: I may edit and delete its notes. */
+    canEditNotes?: boolean;
+    /** Owner 2026-10-28: what the holder wrote when they marked it done. */
+    completionRemark?: string | null;
 }
 
 export interface WMember {
@@ -124,7 +136,8 @@ export interface WorkspaceOk {
     /** Colleagues I can tell "this task of mine is pending on you". */
     dependencyPeople?: Array<{ userId: string; name: string }>;
     /** Per-team switches from the Control Center. */
-    features?: { assignedTab: boolean; pendingOn: boolean; dueDates?: boolean };
+    /** Owner 2026-10-28: completionRemark — the comment box when I mark one of my tasks done. */
+    features?: { assignedTab: boolean; pendingOn: boolean; dueDates?: boolean; completionRemark?: 'off' | 'ask' | 'required' };
 }
 
 export type Workspace =

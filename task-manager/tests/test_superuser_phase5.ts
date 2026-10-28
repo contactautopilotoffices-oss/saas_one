@@ -441,7 +441,7 @@ async function run() {
     const panelUi = read('frontend/components/task-manager/TaskAccessPanel.tsx');
     check('the Control Center has the per-department switch with its SQL-file banner', /label: 'Send tasks to a superuser'[^}]*on: d\.superuserCollabEnabled/.test(panelUi) && /action: 'set_superuser_collab', departmentId/.test(panelUi) && /20261007000006_task_manager_superuser_pings\.sql/.test(panelUi));
     const permSrc = read('task-manager/PermissionService.ts');
-    check('the permission change is exactly one guarded branch (superuser target + switch ON)', /target\.role === 'superuser' && actor\.department_id && await TaskAccessService\.isSuperuserCollabEnabled\(actor\.department_id\)/.test(permSrc));
+    check('the permission change is exactly one guarded branch (superuser target + switch ON)', /target\.role === 'superuser' && actor\.department_id && await TaskAccessService\.isSuperuserCollabEnabled\(actor\.department_id, actor\.id\)/.test(permSrc));
     const relaySrc = read('task-manager/brain/relay.ts');
     check('the relay module never receives the person\'s message (its inputs are state, tasks and a paraphrased note)', !/message|text:/.test(relaySrc.split('export interface RelayIO')[0].replace(/\/\*\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '').replace(/userMessage/g, '')) || /input: \{ actor: RelayPerson; taskIds: string\[\]; state: ProgressState; note: string \| null/.test(relaySrc));
 

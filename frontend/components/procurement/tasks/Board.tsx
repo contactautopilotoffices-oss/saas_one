@@ -7,7 +7,7 @@ import {
     type CollisionDetection, type DragEndEvent, type DragStartEvent,
 } from '@dnd-kit/core';
 import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from 'framer-motion';
-import { ArrowRightLeft, Check, Clock, CornerDownRight, Eye, Loader2, Lock, MessageSquarePlus, MoveRight, Paperclip, Plus, Trash2, Unlock, UserCheck, Users } from 'lucide-react';
+import { ArrowRightLeft, Check, Clock, CornerDownRight, Eye, Loader2, Lock, MessageSquarePlus, MessageSquareText, MoveRight, Paperclip, Plus, Trash2, Unlock, UserCheck, Users } from 'lucide-react';
 import { COLUMNS, ColumnDef, EASE, Status, WAssignable, WTask, avatarGradient, initials, shortDate, shortDateTime } from './types';
 import TaskView, { TaskViewActions } from './TaskView';
 import PendingOn from './PendingOn';
@@ -90,6 +90,8 @@ function CardBody({ task, meId, floating = false, pending, onDelete, onLock, onV
             {task.description && (
                 <p className="mt-1.5 line-clamp-3 whitespace-pre-line text-xs leading-relaxed text-zinc-500 dark:text-zinc-400 break-words">{task.description}</p>
             )}
+            {/* Owner 2026-10-28: what the holder wrote when marking it done, on its own */}
+            {task.completionRemark && <CompletionRemark text={task.completionRemark} />}
 
             <div className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
                 <span className="flex items-center gap-1.5 text-[11px] font-bold text-zinc-600 dark:text-zinc-300">
@@ -168,7 +170,7 @@ function CardBody({ task, meId, floating = false, pending, onDelete, onLock, onV
                             onClick={e => { e.stopPropagation(); onRemark!(task.id); }}
                             onMouseDown={e => e.stopPropagation()} onTouchStart={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}
                             className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-black text-emerald-800 transition-colors hover:bg-emerald-100 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300"
-                        ><MessageSquarePlus className="h-3.5 w-3.5" aria-hidden="true" /> Add remark</button>
+                        ><MessageSquarePlus className="h-3.5 w-3.5" aria-hidden="true" /> {task.completionRemark ? 'Edit remark' : 'Add remark'}</button>
                     )}
                     {showPending && (
                     <PendingOn
@@ -204,6 +206,16 @@ function CardBody({ task, meId, floating = false, pending, onDelete, onLock, onV
                 </div>
             )}
         </div>
+    );
+}
+
+/** Owner 2026-10-28: the completion remark, in green, on a card (board and "Assigned by me"). */
+export function CompletionRemark({ text }: { text: string }) {
+    return (
+        <p className="mt-1.5 flex items-start gap-1.5 rounded-lg bg-emerald-50 px-2 py-1.5 text-xs leading-relaxed text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">
+            <MessageSquareText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+            <span className="min-w-0 line-clamp-3 break-words"><span className="font-black">Completion remark:</span> {text}</span>
+        </p>
     );
 }
 

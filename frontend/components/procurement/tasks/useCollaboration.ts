@@ -9,6 +9,10 @@ export interface CollabPerson { userId: string; name: string; department: string
 export interface CollabSent {
     kind: 'task' | 'request'; id: string; title: string; toName: string; department: string;
     status: 'awaiting' | 'declined' | Status; since: string; reason: string | null; canRemind: boolean; supportRequest: boolean;
+    /** Owner 2026-10-28: for the details window. `due` is a task's deadline or a request's "needed by" day. */
+    description: string | null; createdAt: string; startDate: string | null; due: { date: string; time: string | null } | null; attachmentCount: number;
+    /** What they wrote when they marked it done. */
+    completionRemark?: string | null;
 }
 export interface CollabIncoming { id: string; title: string; description: string | null; fromName: string; fromDepartment: string; neededBy: string | null; createdAt: string }
 export interface CollabData { people: CollabPerson[]; sent: CollabSent[]; incoming: CollabIncoming[]; requestsReady: boolean; /** Owner 2026-10-27: my team may work with other departments. */ enabled: boolean }
@@ -47,12 +51,16 @@ export function useCollaboration(enabled = true) {
 
     useEffect(() => { if (enabled) void reload(); }, [enabled, reload]);
 
-    const send = useCallback((input: { targetUserId: string; kind: CollabKind; title: string; description: string; neededBy: string; dueTime?: string }) =>
+    // Owner 2026-10-28: a task has a start date and an optional deadline; a support request has "needed by"
+    const send = useCallback((input: { targetUserId: string; kind: CollabKind; title: string; description: string; neededBy?: string; startDate?: string; dueDate?: string; dueTime?: string }) =>
         post<{ taskIds: string[]; requestId: string | null }>({ action: 'send', ...input }), []);
     const respond = useCallback((requestId: string, accept: boolean, reason?: string) =>
         post<{ taskId: string | null }>({ action: 'respond', requestId, accept, reason }), []);
     const remind = useCallback((taskIds: string[]) =>
         post<{ reminded: Array<{ name: string; count: number }>; skipped: Array<{ title: string; why: string }> }>({ action: 'remind', taskIds }), []);
+    /** Owner 2026-10-28: clears these from MY "Waiting on other teams" only (the task stays with them). */
+    const clearSent = useCallback((items: Array<{ kind: CollabSent['kind']; id: string }>) =>
+        post<{ cleared: number }>({ action: 'clear_sent', items }), []);
     const checkDuplicate = useCallback(async (targetUserId: string, title: string) => {
         const r = await post<{ match: { assignedDate: string; status: Status } | null }>({ action: 'check_duplicate', targetUserId, title });
         return r.ok ? r.match : null;   // a failed check never blocks sending
@@ -71,5 +79,5 @@ export function useCollaboration(enabled = true) {
         return failed;
     }, []);
 
-    return { data, loading, error, reload, send, respond, remind, checkDuplicate, uploadToRequest };
+    return { data, loading, error, reload, send, respond, remind, clearSent, checkDuplicate, uploadToRequest };
 }
