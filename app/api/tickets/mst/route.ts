@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { TicketDepartment } from '@/frontend/types/ticketing';
 
 // Type for ticket from database
@@ -56,6 +57,32 @@ export async function GET(request: NextRequest) {
 
         if (!propertyId) {
             return NextResponse.json({ error: 'propertyId is required' }, { status: 400 });
+        }
+
+        const adminSupabase = createAdminClient();
+        const [orgMemsRes, propMemsRes] = await Promise.all([
+            adminSupabase.from('organization_memberships').select('role').eq('user_id', user.id),
+            adminSupabase.from('property_memberships').select('role, property_id').eq('user_id', user.id).eq('is_active', true)
+        ]);
+
+        const orgRoles = (orgMemsRes.data || []).map(m => (m.role || '').toLowerCase().trim());
+        const propMems = propMemsRes.data || [];
+        const propRoles = propMems.map(m => (m.role || '').toLowerCase().trim());
+
+        const isSuperAdmin = orgRoles.some(r => ['org_super_admin', 'master_admin', 'super_admin', 'ops_super_admin'].includes(r));
+        const isStaffOrAdmin = isSuperAdmin ||
+            propRoles.some(r => ['property_admin', 'ops_super_admin', 'mst', 'staff', 'tech', 'soft_service_manager', 'soft_service_supervisor'].includes(r));
+
+        if (!isStaffOrAdmin) {
+            return NextResponse.json({ error: 'Forbidden. MST ticket views are restricted to staff and property managers.' }, { status: 403 });
+        }
+
+        // Check if non-superadmin user has membership in the requested property
+        if (!isSuperAdmin) {
+            const hasPropertyAccess = propMems.some(m => m.property_id === propertyId);
+            if (!hasPropertyAccess) {
+                return NextResponse.json({ error: 'You do not have permission to view tickets for this property.' }, { status: 403 });
+            }
         }
 
         // Base ticket select query with relations

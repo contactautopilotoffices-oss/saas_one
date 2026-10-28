@@ -78,24 +78,66 @@ export async function GET(
         }
 
         const { searchParams } = new URL(request.url);
-        const reqRole = (searchParams.get('role') || '').toLowerCase();
         const reqUserId = searchParams.get('userId');
-        const hrRoles = ['hr', 'hr_head', 'hr_manager', 'hr_ops'];
         const orgSuperAdminRoles = ['org_super_admin', 'master_admin', 'super_admin'];
+        const hrRoles = ['hr', 'hr_head', 'hr_manager', 'hr_ops'];
 
-        const isSuperAdmin = orgSuperAdminRoles.includes(reqRole);
-        const isHrRole = hrRoles.includes(reqRole);
+        let isSuperAdmin = false;
+        let isHrRole = false;
+        let myProfile: any = null;
+
+        if (reqUserId) {
+            // Fetch caller profile and org memberships concurrently for authentic authorization from DB
+            const [profileRes, memsRes] = await Promise.all([
+                supabaseAdmin
+                    .from('employee_profiles')
+                    .select('id, user_id, employee_code, first_name, last_name, email, reporting_manager_id, reporting_manager_code, is_hr_authority, is_hr_manager_authority, is_director_authority, designation, department, location')
+                    .eq('user_id', reqUserId)
+                    .maybeSingle(),
+                supabaseAdmin
+                    .from('organization_memberships')
+                    .select('role')
+                    .eq('user_id', reqUserId)
+                    .or(`organization_id.eq.${ticket.organization_id},organization_id.is.null`)
+            ]);
+
+            myProfile = profileRes.data;
+            const mems = memsRes.data || [];
+
+            if (mems.some((m: any) => orgSuperAdminRoles.includes((m.role || '').toLowerCase().trim()))) {
+                isSuperAdmin = true;
+            }
+            if (!isSuperAdmin && mems.some((m: any) => hrRoles.includes((m.role || '').toLowerCase().trim()))) {
+                isHrRole = true;
+            }
+            if (!isSuperAdmin && !isHrRole && myProfile) {
+                if (myProfile.is_hr_authority || myProfile.is_hr_manager_authority) {
+                    isHrRole = true;
+                }
+            }
+        }
+
         const isConfidential = Boolean(ticket.is_confidential) || ticket.ticket_type === 'confidential_feedback' || ticket.ticket_type === 'confidential';
         const isAnon = Boolean(ticket.is_anonymous) || ticket.ticket_type === 'anonymous_feedback';
         const isConfOrAnon = isConfidential || isAnon;
 
+        const isSubmitter = Boolean(
+            reqUserId && (
+                ticket.raised_by_user_id === reqUserId ||
+                (myProfile?.id && ticket.raised_by_user_id === myProfile.id)
+            )
+        );
+
         const isAssigned = Boolean(
             reqUserId && (
                 ticket.assigned_to_user_id === reqUserId || 
-                (Array.isArray(ticket.assigned_history) && ticket.assigned_history.includes(reqUserId) && (!isConfOrAnon || (reqUserId !== ticket.manager_user_id && reqUserId !== ticket.employee_snapshot?.manager_user_id)))
+                (myProfile?.id && ticket.assigned_to_user_id === myProfile.id) ||
+                (Array.isArray(ticket.assigned_history) && (
+                    ticket.assigned_history.includes(reqUserId) || 
+                    (myProfile?.id && ticket.assigned_history.includes(myProfile.id))
+                ) && (!isConfOrAnon || (reqUserId !== ticket.manager_user_id && reqUserId !== ticket.employee_snapshot?.manager_user_id)))
             )
         );
-        const isSubmitter = Boolean(reqUserId && ticket.raised_by_user_id === reqUserId);
 
         let isDesignatedAdminConfigAssignee = false;
         try {
@@ -116,19 +158,34 @@ export async function GET(
             Object.values(flowObj).forEach((val: any) => {
                 if (Array.isArray(val)) val.forEach((id: string) => configAssigneesForType.add(id));
             });
-            if (reqUserId && configAssigneesForType.has(reqUserId)) {
+            if (reqUserId && (configAssigneesForType.has(reqUserId) || (myProfile?.id && configAssigneesForType.has(myProfile.id)))) {
                 isDesignatedAdminConfigAssignee = true;
             }
         } catch (e) {
             console.warn('Could not read escalation config for ticket authorization:', e);
         }
 
-        if (ticket.is_anonymous) {
+        // Manager check for grievance tickets (reporting chain)
+        const myFullName = myProfile ? `${myProfile.first_name || ''} ${myProfile.last_name || ''}`.trim() : '';
+        const isManager = Boolean(
+            reqUserId && !isConfOrAnon && (
+                ticket.manager_user_id === reqUserId ||
+                (myProfile?.id && ticket.manager_user_id === myProfile.id) ||
+                ticket.employee_snapshot?.manager_user_id === reqUserId ||
+                (myProfile?.id && ticket.employee_snapshot?.manager_user_id === myProfile.id) ||
+                (myProfile?.employee_code && ticket.employee_snapshot?.manager_code === myProfile.employee_code) ||
+                (myFullName && ticket.employee_snapshot?.manager_name && ticket.employee_snapshot.manager_name.toLowerCase() === myFullName.toLowerCase())
+            )
+        );
+
+        // Security check across ALL ticket types:
+        if (isAnon) {
             // Anonymous feedback tickets are strictly accessible to Org Super Admin, the assigned handler, designated Admin Config assignees, or the submitter
             if (!isSuperAdmin && !isAssigned && !isSubmitter && !isDesignatedAdminConfigAssignee) {
                 return NextResponse.json({ success: false, error: 'Anonymous feedback tickets are restricted to Org Super Admin, assigned users, and the submitter.' }, { status: 403 });
             }
             if (!isSubmitter) {
+                ticket.raised_by_user_id = null;
                 ticket.raised_by = { id: null, email: 'anonymous@hidden.local', full_name: 'Anonymous Employee' };
                 ticket.employee_snapshot = {
                     name: 'Anonymous Employee',
@@ -140,9 +197,19 @@ export async function GET(
                 };
             }
         } else if (isConfidential) {
-            // Confidential tickets are strictly restricted to Org Super Admin, the explicitly assigned user, designated Admin Config assignees, or the submitter
+            // Confidential tickets are strictly restricted to Org Super Admin, the explicitly assigned user, designated Admin Config assignees, or the submitter. NEVER reporting manager.
             if (!isSuperAdmin && !isAssigned && !isSubmitter && !isDesignatedAdminConfigAssignee) {
                 return NextResponse.json({ success: false, error: 'Confidential tickets are not accessible to unauthorized roles and are restricted to Org Super Admin, Director, and assigned users.' }, { status: 403 });
+            }
+        } else if (ticket.ticket_type === 'grievance') {
+            // Grievance tickets: restricted to Org Super Admin, HR, explicitly assigned user, reporting manager, designated Admin Config assignees, or the submitter
+            if (!isSuperAdmin && !isHrRole && !isAssigned && !isSubmitter && !isManager && !isDesignatedAdminConfigAssignee) {
+                return NextResponse.json({ success: false, error: 'You are not authorized to view this grievance ticket.' }, { status: 403 });
+            }
+        } else {
+            // Standard HR queries / requests / onboarding: restricted to Org Super Admin, HR, assigned user, designated Admin Config assignees, or the submitter
+            if (!isSuperAdmin && !isHrRole && !isAssigned && !isSubmitter && !isDesignatedAdminConfigAssignee) {
+                return NextResponse.json({ success: false, error: 'You are not authorized to view this ticket.' }, { status: 403 });
             }
         }
 
@@ -622,46 +689,7 @@ export async function GET(
             }
         }
 
-        // Check if requesting user has HR authority (strictly HR roles only - NOT Super Admins)
-        let requesterIsHr = false;
-        if (reqUserId) {
-            try {
-                const { data: actMems } = await supabaseAdmin
-                    .from('organization_memberships')
-                    .select('role')
-                    .eq('user_id', reqUserId);
-                const actRoles = (actMems || []).map((m: any) => (m.role || '').toLowerCase().trim());
-                if (reqRole) actRoles.push(reqRole);
-
-                const hrRoleKeywords = ['hr', 'hr_head', 'hr_manager', 'hr_ops', 'hr_admin', 'director'];
-                requesterIsHr = actRoles.some((r: string) => {
-                    if (['org_super_admin', 'ops_super_admin', 'master_admin', 'super_admin', 'property_admin'].includes(r)) {
-                        return false;
-                    }
-                    return hrRoleKeywords.includes(r) || (r.includes('hr') && !r.includes('super_admin'));
-                });
-
-                if (!requesterIsHr) {
-                    const { data: actProfile } = await supabaseAdmin
-                        .from('employee_profiles')
-                        .select('is_hr_authority, is_hr_manager_authority, is_director_authority, department, designation')
-                        .eq('user_id', reqUserId)
-                        .maybeSingle();
-                    if (
-                        actProfile?.is_hr_authority ||
-                        actProfile?.is_hr_manager_authority ||
-                        actProfile?.is_director_authority ||
-                        (actProfile?.department && /hr|human resources/i.test(actProfile.department)) ||
-                        (actProfile?.designation && /hr|human resources/i.test(actProfile.designation))
-                    ) {
-                        requesterIsHr = true;
-                    }
-                }
-            } catch (authErr) {
-                console.warn('Error determining requester HR authority:', authErr);
-            }
-        }
-        ticket.user_is_hr_authority = requesterIsHr;
+        ticket.user_is_hr_authority = isHrRole;
 
         return NextResponse.json({ success: true, data: ticket });
     } catch (err: any) {

@@ -15,8 +15,8 @@ export async function GET(
         const { searchParams } = new URL(request.url);
         const includeInternal = searchParams.get('includeInternal') === 'true';
         const reqUserId = searchParams.get('userId');
-        const reqRole = (searchParams.get('role') || '').toLowerCase();
-        const isSuperAdmin = ['org_super_admin', 'master_admin', 'super_admin'].includes(reqRole);
+        const orgSuperAdminRoles = ['org_super_admin', 'master_admin', 'super_admin'];
+        const hrRoles = ['hr', 'hr_head', 'hr_manager', 'hr_ops'];
 
         // Check confidentiality / anonymity restrictions
         const { data: ticket } = await supabaseAdmin
@@ -25,21 +25,93 @@ export async function GET(
             .eq('id', id)
             .maybeSingle();
 
-        if (ticket) {
-            const isConfidential = Boolean(ticket.is_confidential) || ticket.ticket_type === 'confidential_feedback' || ticket.ticket_type === 'confidential';
-            const isAnon = Boolean(ticket.is_anonymous) || ticket.ticket_type === 'anonymous_feedback';
-            const isConfOrAnon = isConfidential || isAnon;
+        if (!ticket) {
+            return NextResponse.json({ success: false, error: 'Ticket not found' }, { status: 404 });
+        }
 
-            const isAssigned = reqUserId && (ticket.assigned_to_user_id === reqUserId || (Array.isArray(ticket.assigned_history) && ticket.assigned_history.includes(reqUserId) && (!isConfOrAnon || (reqUserId !== ticket.manager_user_id && reqUserId !== ticket.employee_snapshot?.manager_user_id))));
+        let isSuperAdmin = false;
+        let isHrRole = false;
+        let myProfile: any = null;
 
-            const isSubmitter = Boolean(reqUserId && ticket.raised_by_user_id === reqUserId);
+        if (reqUserId) {
+            const [profileRes, memsRes] = await Promise.all([
+                supabaseAdmin
+                    .from('employee_profiles')
+                    .select('id, user_id, employee_code, first_name, last_name, email, is_hr_authority, is_hr_manager_authority, is_director_authority')
+                    .eq('user_id', reqUserId)
+                    .maybeSingle(),
+                supabaseAdmin
+                    .from('organization_memberships')
+                    .select('role')
+                    .eq('user_id', reqUserId)
+                    .or(`organization_id.eq.${ticket.organization_id},organization_id.is.null`)
+            ]);
 
-            if (isAnon && !isSuperAdmin && !isAssigned && !isSubmitter) {
+            myProfile = profileRes.data;
+            const mems = memsRes.data || [];
+            if (mems.some((m: any) => orgSuperAdminRoles.includes((m.role || '').toLowerCase().trim()))) {
+                isSuperAdmin = true;
+            }
+            if (!isSuperAdmin && mems.some((m: any) => hrRoles.includes((m.role || '').toLowerCase().trim()))) {
+                isHrRole = true;
+            }
+            if (!isSuperAdmin && !isHrRole && myProfile) {
+                if (myProfile.is_hr_authority || myProfile.is_hr_manager_authority) {
+                    isHrRole = true;
+                }
+            }
+        }
+
+        const isConfidential = Boolean(ticket.is_confidential) || ticket.ticket_type === 'confidential_feedback' || ticket.ticket_type === 'confidential';
+        const isAnon = Boolean(ticket.is_anonymous) || ticket.ticket_type === 'anonymous_feedback';
+        const isConfOrAnon = isConfidential || isAnon;
+
+        const isAssigned = Boolean(
+            reqUserId && (
+                ticket.assigned_to_user_id === reqUserId || 
+                (myProfile?.id && ticket.assigned_to_user_id === myProfile.id) ||
+                (Array.isArray(ticket.assigned_history) && (
+                    ticket.assigned_history.includes(reqUserId) ||
+                    (myProfile?.id && ticket.assigned_history.includes(myProfile.id))
+                ) && (!isConfOrAnon || (reqUserId !== ticket.manager_user_id && reqUserId !== ticket.employee_snapshot?.manager_user_id)))
+            )
+        );
+
+        const isSubmitter = Boolean(
+            reqUserId && (
+                ticket.raised_by_user_id === reqUserId ||
+                (myProfile?.id && ticket.raised_by_user_id === myProfile.id)
+            )
+        );
+
+        const myFullName = myProfile ? `${myProfile.first_name || ''} ${myProfile.last_name || ''}`.trim() : '';
+        const isManager = Boolean(
+            reqUserId && !isConfOrAnon && (
+                ticket.manager_user_id === reqUserId ||
+                (myProfile?.id && ticket.manager_user_id === myProfile.id) ||
+                ticket.employee_snapshot?.manager_user_id === reqUserId ||
+                (myProfile?.id && ticket.employee_snapshot?.manager_user_id === myProfile.id) ||
+                (myProfile?.employee_code && ticket.employee_snapshot?.manager_code === myProfile.employee_code) ||
+                (myFullName && ticket.employee_snapshot?.manager_name && ticket.employee_snapshot.manager_name.toLowerCase() === myFullName.toLowerCase())
+            )
+        );
+
+        // Security check across all ticket types for viewing comments
+        if (isAnon) {
+            if (!isSuperAdmin && !isAssigned && !isSubmitter) {
                 return NextResponse.json({ success: false, error: 'Anonymous ticket comments are strictly restricted to Org Super Admin, assigned users, and the submitter.' }, { status: 403 });
             }
-
-            if (isConfidential && !isSuperAdmin && !isAssigned && !isSubmitter) {
-                return NextResponse.json({ success: false, error: 'Confidential ticket comments are not accessible to HR roles and are restricted to Org Super Admin, assigned users, and the submitter.' }, { status: 403 });
+        } else if (isConfidential) {
+            if (!isSuperAdmin && !isAssigned && !isSubmitter) {
+                return NextResponse.json({ success: false, error: 'Confidential ticket comments are not accessible to unauthorized roles.' }, { status: 403 });
+            }
+        } else if (ticket.ticket_type === 'grievance') {
+            if (!isSuperAdmin && !isHrRole && !isAssigned && !isSubmitter && !isManager) {
+                return NextResponse.json({ success: false, error: 'You are not authorized to view comments for this grievance ticket.' }, { status: 403 });
+            }
+        } else {
+            if (!isSuperAdmin && !isHrRole && !isAssigned && !isSubmitter) {
+                return NextResponse.json({ success: false, error: 'You are not authorized to view comments for this ticket.' }, { status: 403 });
             }
         }
 
@@ -52,10 +124,8 @@ export async function GET(
             .eq('ticket_id', id)
             .order('created_at', { ascending: true });
 
-        // Filter out internal notes if requested by non-handler/employee view or if user is the submitter
-        const isAssigned = reqUserId && (ticket?.assigned_to_user_id === reqUserId || (Array.isArray(ticket?.assigned_history) && ticket.assigned_history.includes(reqUserId)));
-        const isSubmitter = reqUserId && ticket?.raised_by_user_id === reqUserId;
-        const canViewInternal = includeInternal && (isSuperAdmin || (isAssigned && !isSubmitter) || (reqRole.includes('hr') && !isSubmitter));
+        // Filter out internal notes if requested by submitter or non-staff
+        const canViewInternal = includeInternal && (isSuperAdmin || (isAssigned && !isSubmitter) || (isHrRole && !isSubmitter));
 
         if (!canViewInternal) {
             query = query.eq('is_internal', false);
