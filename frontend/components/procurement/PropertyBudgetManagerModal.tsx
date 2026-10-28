@@ -457,7 +457,7 @@ export default function PropertyBudgetManagerModal({
                                 }`}
                             >
                                 <Plus className="w-4 h-4" />
-                                <span>{showAddForm ? 'Cancel Floor Allocation' : '+ Add Floor Allocation'}</span>
+                                <span>{showAddForm ? 'Cancel Floor Allocation' : 'Add Floor Allocation'}</span>
                             </button>
 
                             <button
