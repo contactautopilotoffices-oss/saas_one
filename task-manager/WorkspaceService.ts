@@ -294,7 +294,10 @@ export async function duplicateHits<T extends { title: string }>(title: string, 
     if (rest.length && aiDuplicateEnabled()) {
         try {
             const llm = await liveDuplicateLlm();
-            const found = await Promise.all(rest.slice(0, 5).map(async p => ({ p, i: await aiSameTask(llm, title, p.open.map(t => t.title)) })));
+            // Owner 2026-10-28: the models picked in the Control Center ("AI models"); today's models when none
+            const { chainFor } = await import('./ai/AiModelSettings');
+            const models = await chainFor('duplicate_check');
+            const found = await Promise.all(rest.slice(0, 5).map(async p => ({ p, i: await aiSameTask(llm, title, p.open.map(t => t.title), models) })));
             for (const { p, i } of found) if (i !== null && p.open[i]) hits.set(p.id, p.open[i]);
         } catch (err) {
             console.warn('[WorkspaceService] AI duplicate check skipped:', err instanceof Error ? err.message : err);

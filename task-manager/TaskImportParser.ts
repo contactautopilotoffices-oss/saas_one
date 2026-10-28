@@ -313,8 +313,14 @@ export function createEngyImportLlm(
     models: readonly string[] = IMPORT_MODELS,
     transport: EngyTransport = defaultTransport,
     /** Models for both steps. Default: Claude first, then `models`; when `models` is given (tests), the same list. */
-    chain: readonly string[] = models === IMPORT_MODELS ? IMPORT_IMAGE_MODELS : models
+    chain: readonly string[] = models === IMPORT_MODELS ? IMPORT_IMAGE_MODELS : models,
+    /** Owner 2026-10-28: per call, the models picked in the Control Center for each step. Any problem → `chain`. */
+    resolve?: (step: 'image' | 'text') => Promise<readonly string[]>
 ): ImportLlm {
+    const listFor = async (step: 'image' | 'text'): Promise<readonly string[]> => {
+        if (!resolve) return chain;
+        try { const list = await resolve(step); return list.length ? list : chain; } catch { return chain; }
+    };
     const withFallback = async <T>(what: string, run: (model: string) => Promise<T>, list: readonly string[] = chain): Promise<T> => {
         let last: unknown = new Error('no model configured');
         for (let i = 0; i < list.length; i++) {
@@ -328,17 +334,18 @@ export function createEngyImportLlm(
         throw last;
     };
     return {
-        imageToText: (image, mimeType) => withFallback('image read', async m => {
+        imageToText: async (image, mimeType) => withFallback('image read', async m => {
             const t = (await transport.vision(m, image, mimeType, IMAGE_PROMPT)).trim();
             if (!t) throw new Error('the model returned nothing');
             return t;
-        }),
-        structureText: rawText => withFallback('structuring', async m =>
-            tasksFromModelJson(await transport.chat(m, `${STRUCTURE_PROMPT}\n\nTEXT:\n${rawText}`)))
+        }, await listFor('image')),
+        structureText: async rawText => withFallback('structuring', async m =>
+            tasksFromModelJson(await transport.chat(m, `${STRUCTURE_PROMPT}\n\nTEXT:\n${rawText}`)), await listFor('text'))
     };
 }
 
-export const engyImportLlm: ImportLlm = createEngyImportLlm();
+export const engyImportLlm: ImportLlm = createEngyImportLlm(IMPORT_MODELS, defaultTransport, IMPORT_IMAGE_MODELS,
+    async step => (await import('./ai/AiModelSettings')).chainFor(step === 'image' ? 'import_image' : 'import_text'));
 
 // ── The smart parser ─────────────────────────────────────────────────────────
 

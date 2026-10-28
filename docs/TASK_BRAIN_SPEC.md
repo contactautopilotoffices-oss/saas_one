@@ -468,3 +468,43 @@ department with the Task Manager ON, cut at 40 by name, so the active people fel
 - Only while "One front door" is ON and nothing else is waiting for an answer (same rule as "done 2").
 - **Evaluation**: `test_front_door.ts` +3 checks (exact text only; one request → act; several / none → AI). **L2**
   knowingly open (no live run).
+
+## Agent Spec — model choice from the Control Center (owner 2026-10-28)
+
+Control Center → **AI models**: per Task Manager AI job, a main model and up to 3 backups (`task_manager_ai_models`,
+migration `20261028140001`). Code: `task-manager/ai/aiCatalog.ts` (jobs, models, "can this model do this job"),
+`task-manager/ai/AiModelSettings.ts` (saved chains, key status by name, `chainFor`), `app/api/task-manager/ai-models`,
+`frontend/components/task-manager/AiModelsPanel.tsx`. Jobs: WhatsApp understand / reply / tidy, voice speech-to-text and
+clean-up, task import (photos / text), duplicate check, superuser chat, learning loop. Tests: `tests/test_ai_models_2026_10_28.ts`.
+
+**1. Workflow or agent?** No change to any job's shape: each stays the workflow it was; only WHICH model each fixed step
+   calls becomes a setting. `[BAA p.104]` Justification: N/A (no new agent). `[BAA p.115]`
+   Head-to-head `[BAA pp.94–95, 99]`: **not run.** The planned comparison (understand on Claude Haiku, reply/tidy on Groq
+   gpt-oss-120b / Llama 3.3 70B / glm-5.3-flash) could not run on the developer machine: `CLAUDE_API_KEY` and
+   `WHATSAPP_BOT_GROQ_API_KEY` are only on the server. Owner: skip for now; use the panel's **Test** (real latency, server keys).
+**2. Context** `[BAA p.112]` Unchanged per step. Splitting understand / reply / tidy keeps each step's context separate,
+   and a different model per step is the book's "per-task model" reason. `[BAA p.116]`
+**3. Cost of a false positive** `[BAA p.112]` Unchanged and stated on the screen: understanding is **high** (it decides
+   actions) → keep a strong model there; reply and tidy are **low** (checked by code, plain fallback) → a faster, cheaper
+   model is acceptable. The setting does not enforce this; the default keeps Claude Haiku on every step (measured 7/8 vs
+   glm 3/8, Groq 0/8 on 2026-10-21).
+**4. Tools** `[BAA pp.93–94, 107]` No model-facing tools added. Errors never escape: a saved model that is unknown, cannot
+   do the job (e.g. a text model for photos) or has no key is skipped; a read failure or a missing table → today's chain;
+   today's chain always follows as the last resort. Saving a model that cannot do the job is refused by the server.
+   MCP: no (in-process setting). `[BAA p.106]`
+**5. Prompt** `[BAA pp.105, 114]` Unchanged (same prompts on any model).
+**6. Memory** `[BAA pp.100–103]` None added.
+**7. Multi-agent?** `[BAA p.116]` No; one workflow, now with a per-step model choice.
+**8. Evaluation** `[BAA pp.118–119]`
+   System: the setting is read at most once a minute per server; the panel's Test measures one real call (ms).
+   Quality assurance (rubric: family none, tier none, scale none, manual audit 0%) `[BAA pp.96–98]`: **not measured for a
+   new model.** Before switching the WhatsApp understanding model, run `run_eval.ts --set real` with the server's keys.
+   Tool interaction: n/a. `[BAA p.95]` Agent efficiency: unchanged until a model is changed. `[BAA p.119]`
+**9. Trace** `[BAA pp.119–120]` Each save is an audit row (`task_ai_models_updated`: job, models, who). Existing brain
+   traces already record which model answered each step (`interpretModel`, `replyModel`).
+**10. Laws knowingly violated, and why:**
+   - **L2** `[BAA pp.94–95]`: a model can be switched from the screen without a fresh head-to-head on the same cases. Owner
+     decision (2026-10-28) to allow it; mitigated by the default being today's measured chain, the Test button, and
+     today's chain always following as the fallback.
+   - **L6** `[BAA pp.96–97]`: if the learning loop is set to the same family as the live bot, its drafts are graded by a
+     same-family model. Not blocked; the default keeps Gemini for the loop and Claude for the bot.

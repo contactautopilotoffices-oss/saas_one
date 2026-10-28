@@ -42,6 +42,7 @@ import {
     ArrowLeftRight
 } from 'lucide-react';
 import TaskAccessPanel from '@/frontend/components/task-manager/TaskAccessPanel';
+import AiModelsPanel from '@/frontend/components/task-manager/AiModelsPanel';
 import BotLearningPanel from '@/frontend/components/task-manager/BotLearningPanel';
 import type {
     NotificationRule,
@@ -3075,6 +3076,8 @@ export default function TaskManagerTestingDashboard({ orgId }: { orgId?: string 
             {/* Step 3: Who is unlocked for the Task Manager (department switch + kickoff status) */}
             <TaskAccessPanel orgId={orgId} />
             <BotLearningPanel orgId={orgId} />
+            {/* Owner 2026-10-28: which AI model each Task Manager job uses */}
+            <AiModelsPanel orgId={orgId} />
 
             {/* ── Phase 4 Modal: Transfer Employee Department ── */}
             {transferModal.isOpen && transferModal.employee && (

@@ -2,6 +2,7 @@
 import { FACILITY_INTENTS, TASK_INTENTS } from './brain/types';
 import { engyBrainLlm, extractJson, type BrainLlm } from './brain/llm';
 import { geminiDraftModels, geminiKey, geminiLlm } from './brain/geminiLlm';
+import { learningAttempts } from './ai/aiCatalog';
 import { validateReviewLabel, type ReviewLabel } from './LearningLoop';
 
 /**
@@ -108,10 +109,14 @@ export function parseSummary(raw: unknown, row: any, model: string, adminNote?: 
 }
 
 /** One call, Gemini models first, then glm-5.3-flash. Returns the summary plus token use for the audit log. */
-export async function summarizeReviewItem(row: any, adminNote?: string | null, deps: { gemini?: BrainLlm | null; fallback?: BrainLlm } = {}): Promise<{ summary: ReviewSummary; tokensIn: number; tokensOut: number; failures: string[] }> {
+/** Owner 2026-10-28: `deps.models` = the Control Center's "Learning loop" chain (absent = today's: Gemini, then glm-5.3-flash). */
+export async function summarizeReviewItem(row: any, adminNote?: string | null, deps: { gemini?: BrainLlm | null; fallback?: BrainLlm; models?: readonly string[] } = {}): Promise<{ summary: ReviewSummary; tokensIn: number; tokensOut: number; failures: string[] }> {
     // 20 s per Gemini model (not the nightly 45 s): an admin is waiting on the screen.
     const gemini = deps.gemini === undefined ? geminiLlm(geminiKey(), 20_000) : deps.gemini;
-    const attempts: Array<[BrainLlm, string]> = [...(gemini ? geminiDraftModels().map(m => [gemini, m] as [BrainLlm, string]) : []), [deps.fallback ?? engyBrainLlm({ thinking: 'off' }), 'glm-5.3-flash']];
+    const shared = deps.fallback ?? engyBrainLlm({ thinking: 'off' });
+    const attempts: Array<[BrainLlm, string]> = deps.models
+        ? learningAttempts(deps.models, shared, gemini)
+        : [...(gemini ? geminiDraftModels().map(m => [gemini, m] as [BrainLlm, string]) : []), [shared, 'glm-5.3-flash']];
     const user = buildSummaryInput(row, adminNote), failures: string[] = [];
     for (const [client, model] of attempts) {
         try {

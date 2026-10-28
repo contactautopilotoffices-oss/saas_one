@@ -61,6 +61,13 @@ export function engyBrainLlm(options: { thinking?: 'off' | 'default'; timeoutMs?
         async complete(req) {
             if (req.model.startsWith(GROQ_PREFIX)) return groqComplete(req, timeoutMs);
             if (req.model.startsWith(ANTHROPIC_PREFIX)) return anthropicComplete(req, timeoutMs);
+            // Owner 2026-10-28: a Gemini model picked in the Control Center ("AI models") goes to Google, not to Engy
+            if (req.model.startsWith(GEMINI_PREFIX)) {
+                const { geminiLlm } = await import('./geminiLlm');
+                const gemini = geminiLlm(undefined, timeoutMs);
+                if (!gemini) throw new Error('no Gemini key is configured');
+                return gemini.complete(req);
+            }
             const { resolveProvider } = await import('@/backend/lib/council/llm');
             const { provider, spec, apiKey } = resolveProvider();
             if (!apiKey) throw new Error('no AI key is configured');
@@ -95,6 +102,7 @@ export function engyBrainLlm(options: { thinking?: 'off' | 'default'; timeoutMs?
 }
 
 export const GROQ_PREFIX = 'groq:';
+export const GEMINI_PREFIX = 'gemini-';
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
 /**

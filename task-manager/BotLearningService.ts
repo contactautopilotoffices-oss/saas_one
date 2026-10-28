@@ -152,7 +152,11 @@ export async function summarizeReview(id: string, actor: string, adminNote?: str
     if (error) throw error; if (!row) throw new Error('This message is no longer waiting for review.');
     const { summarizeReviewItem } = await import('./BotReviewSummary');
     let out: Awaited<ReturnType<typeof summarizeReviewItem>>;
-    try { out = await summarizeReviewItem(row, note); }
+    try {
+        // Owner 2026-10-28: the Control Center's "Learning loop" models (today's when none is picked)
+        const { chainFor } = await import('./ai/AiModelSettings');
+        out = await summarizeReviewItem(row, note, { models: await chainFor('learning_loop') });
+    }
     catch (e) { await TaskDatabaseService.logAudit({ eventType: 'bot_review_summary', details: { reviewId: id, actor, ok: false, error: e instanceof Error ? e.message.slice(0, 300) : 'failed' } }).catch(() => undefined); throw e; }
     const { error: saveError } = await supabaseAdmin.from(REVIEW).update({ ai_summary: out.summary, fix_owner: out.summary.owner, updated_at: new Date().toISOString() }).eq('id', id).eq('status', 'waiting');
     if (saveError) throw saveError;

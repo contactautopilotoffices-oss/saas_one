@@ -10,6 +10,8 @@ import { runBrain } from './brain';
 import { scoreCase, summarize, type EvalCase } from './brain/eval/score';
 import { tasksDomainWithTeam } from './brain/tasksDomain';
 import { geminiDraftModels, geminiLlm } from './brain/geminiLlm';
+import { chainFor } from './ai/AiModelSettings';
+import { learningAttempts } from './ai/aiCatalog';
 import { facilityDomain } from './brain/facilityDomain';
 
 // USD per million tokens (in, out). Gemini uses deliberately conservative PAID-tier figures: on the free tier the real
@@ -89,7 +91,8 @@ export function applyPromptEdits(current: PromptSections, edits: unknown[]): Pro
     return out;
 }
 
-export async function draftCandidate(current: PromptSections, labels: any[], state: EvalState, llm: BrainLlm = engyBrainLlm({ thinking: 'off', timeoutMs: 90_000 }), gemini: BrainLlm | null = geminiLlm()): Promise<{ sections: PromptSections; changeSummary: string; model: string }> {
+/** Owner 2026-10-28: `models` = the Control Center's "Learning loop" chain (absent = today's: Gemini drafts, then glm-5.3-flash). */
+export async function draftCandidate(current: PromptSections, labels: any[], state: EvalState, llm: BrainLlm = engyBrainLlm({ thinking: 'off', timeoutMs: 90_000 }), gemini: BrainLlm | null = geminiLlm(), models?: readonly string[]): Promise<{ sections: PromptSections; changeSummary: string; model: string }> {
     const user = JSON.stringify({ current, labelled_cases: labels.map(x => ({ message: String(x.message_text).slice(0, 800), context: x.context_snapshot, correct: x.expectation })) });
     const system = [
         'You improve only the tunable task-understanding steps and examples.',
@@ -104,7 +107,9 @@ export async function draftCandidate(current: PromptSections, labels: any[], sta
         'Example output: {"edits":[{"section":"examples","op":"insert_after","index":2,"text":"Example. Message: tasks → view_tasks."}],"change_summary":"Clarify short task-list requests."}',
     ].join('\n');
     const baseChars = current.steps.concat(current.examples).join('\n').length;
-    const attempts: Array<[BrainLlm, string]> = [...(gemini ? geminiDraftModels().map(m => [gemini, m] as [BrainLlm, string]) : []), [llm, 'glm-5.3-flash']];
+    const attempts: Array<[BrainLlm, string]> = models
+        ? learningAttempts(models, llm, gemini)
+        : [...(gemini ? geminiDraftModels().map(m => [gemini, m] as [BrainLlm, string]) : []), [llm, 'glm-5.3-flash']];
     const failures: string[] = [];
     for (const [client, model] of attempts) {
         try {
@@ -164,7 +169,7 @@ export async function runNightlyAutoTune(now = new Date(), rawLlm: BrainLlm = en
         const { data: max } = await supabaseAdmin.from(tables.PROMPTS).select('version').eq('prompt_key', 'task_brain_understand').order('version', { ascending: false }).limit(1).maybeSingle();
         const version = (max?.version || 0) + 1, runDate = istDateHour(now).date;
         try {
-            const draft = await draftCandidate(current, labels || [], state, rawLlm);
+            const draft = await draftCandidate(current, labels || [], state, rawLlm, undefined, await chainFor('learning_loop'));
             const { data, error } = await supabaseAdmin.from(tables.PROMPTS).insert({ prompt_key: 'task_brain_understand', version, sections: draft.sections, status: 'evaluating', change_summary: `${draft.changeSummary} [drafted by ${draft.model}]`.slice(0, 300), evaluation_state: state, estimated_cost_usd: state.costUsd, run_date: runDate, source_label_at: newestLabelAt, created_by: 'auto-tune' }).select('*').single(); if (error) throw error; row = data;
         } catch (e) {
             const reason = e instanceof Error ? e.message : String(e); console.warn('[BotAutoTune] draft rejected:', reason);
