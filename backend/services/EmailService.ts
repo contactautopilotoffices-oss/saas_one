@@ -5,6 +5,7 @@ const smtpUser = process.env.SMTP_USER || process.env.EMAIL_SMTP_USER || (resend
 const smtpPass = process.env.SMTP_PASS || process.env.EMAIL_SMTP_PASS || resendApiKey;
 const smtpHost = process.env.SMTP_HOST || process.env.EMAIL_SMTP_HOST || (resendApiKey ? 'smtp.resend.com' : 'smtp.gmail.com');
 const smtpPort = parseInt(process.env.SMTP_PORT || process.env.EMAIL_SMTP_PORT || '465');
+const DEFAULT_SENDER_NAME = process.env.SMTP_SENDER_NAME || 'Autopilot Offices';
 
 const transporter = nodemailer.createTransport({
     host: smtpHost,
@@ -25,13 +26,13 @@ export const EmailService = {
         const sender=process.env.RESEND_FROM_EMAIL||process.env.SMTP_SENDER_EMAIL||smtpUser||'onboarding@resend.dev';
         if(resendApiKey){
             try {
-                const response=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${resendApiKey}`,'Content-Type':'application/json','Idempotency-Key':`petty-cash-${idempotencyKey}`},body:JSON.stringify({from:sender.includes('<')?sender:`"Autopilot FMS" <${sender}>`,to:[to],subject,html,text}),signal:AbortSignal.timeout(15_000)});
+                const response=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${resendApiKey}`,'Content-Type':'application/json','Idempotency-Key':`petty-cash-${idempotencyKey}`},body:JSON.stringify({from:sender.includes('<')?sender:`"${DEFAULT_SENDER_NAME}" <${sender}>`,to:[to],subject,html,text}),signal:AbortSignal.timeout(15_000)});
                 const body=await response.json().catch(()=>({}));
                 return response.ok?{success:true,providerReference:typeof body.id==='string'?body.id:undefined}:{success:false,ambiguous:response.status>=500,error:`Email provider HTTP ${response.status}`};
             }catch{return {success:false,ambiguous:true,error:'Email provider outcome unknown; reconcile before retry'};}
         }
         if(!smtpUser||!smtpPass)return {success:false,error:'Email provider credentials are not configured'};
-        try {const result=await transporter.sendMail({from:sender.includes('<')?sender:`"Autopilot FMS" <${sender}>`,to,subject,html,text,messageId:`<petty-cash-${idempotencyKey}@autopilot.local>`});return {success:true,providerReference:result.messageId};}
+        try {const result=await transporter.sendMail({from:sender.includes('<')?sender:`"${DEFAULT_SENDER_NAME}" <${sender}>`,to,subject,html,text,messageId:`<petty-cash-${idempotencyKey}@autopilot.local>`});return {success:true,providerReference:result.messageId};}
         catch(reason:any){return {success:false,ambiguous:!['EAUTH','EENVELOPE','ECONNECTION'].includes(reason?.code),error:'Email provider failed'+(reason?.code?` (${reason.code})`:'')};}
     },
     // Generic sender — supports Resend API (RESEND_API_KEY) and SMTP credentials.
@@ -71,7 +72,7 @@ export const EmailService = {
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({
-                        from: sender.includes('<') ? sender : `"Autopilot FMS" <${sender}>`,
+                        from: sender.includes('<') ? sender : `"${DEFAULT_SENDER_NAME}" <${sender}>`,
                         to: Array.isArray(to) ? to : [to],
                         subject,
                         html
@@ -91,7 +92,7 @@ export const EmailService = {
         }
         try {
             await transporter.sendMail({
-                from: sender.includes('<') ? sender : `"Autopilot FMS" <${sender}>`,
+                from: sender.includes('<') ? sender : `"${DEFAULT_SENDER_NAME}" <${sender}>`,
                 to: Array.isArray(to) ? to.join(',') : to,
                 subject,
                 html,
@@ -111,7 +112,7 @@ export const EmailService = {
         }
         try {
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: emailTo,
                 subject,
                 html,
@@ -145,7 +146,7 @@ export const EmailService = {
                 <p style="margin-top:24px; color: #555;">Log in to Autopilot FMS to view the details.</p>
             `;
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: emailTo,
                 subject,
                 html,
@@ -373,7 +374,7 @@ export const EmailService = {
 
         try {
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: emailTo,
                 subject,
                 html,
@@ -621,7 +622,7 @@ export const EmailService = {
 
         try {
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: emailTo,
                 subject,
                 html,
@@ -819,7 +820,7 @@ export const EmailService = {
             `;
 
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: recipients,
                 subject,
                 html,
@@ -878,7 +879,7 @@ export const EmailService = {
             `;
 
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: recipients,
                 subject,
                 html,
@@ -942,7 +943,7 @@ export const EmailService = {
             `;
 
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: recipients,
                 subject,
                 html,
@@ -999,7 +1000,7 @@ export const EmailService = {
             `;
 
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: recipients,
                 subject,
                 html,
@@ -1060,7 +1061,7 @@ export const EmailService = {
             `;
 
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: recipients,
                 subject,
                 html,
@@ -1123,7 +1124,7 @@ export const EmailService = {
             `;
 
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: recipients,
                 subject,
                 html,
@@ -1178,7 +1179,7 @@ export const EmailService = {
             `;
 
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: recipients,
                 subject,
                 html,
@@ -1233,7 +1234,7 @@ export const EmailService = {
             `;
 
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: recipients,
                 subject,
                 html,
@@ -1288,7 +1289,7 @@ export const EmailService = {
             `;
 
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: recipients,
                 subject,
                 html,
@@ -1346,7 +1347,7 @@ export const EmailService = {
             `;
 
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: recipients,
                 subject,
                 html,
@@ -1400,7 +1401,7 @@ export const EmailService = {
             `;
 
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: recipients,
                 subject,
                 html,
@@ -1458,7 +1459,7 @@ export const EmailService = {
             `;
 
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: recipients,
                 subject,
                 html,
