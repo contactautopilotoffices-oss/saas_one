@@ -47,7 +47,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
     const [viewMode, setViewMode] = useState<'kanban' | 'table' | 'properties'>('table');
 
     const [tickets, setTickets] = useState<any[]>(() => {
-        return hrDataCache.getAnyTickets(resolvedOrgId) || [];
+        return hrDataCache.getAnyTickets(resolvedOrgId, user?.id) || [];
     });
     const [properties, setProperties] = useState<any[]>(() => {
         return hrDataCache.getProperties(resolvedOrgId).data || [];
@@ -436,12 +436,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                 filter: `organization_id=eq.${resolvedOrgId}`
             }, (payload: any) => {
                 if (payload.eventType === 'INSERT') {
-                    const newT = payload.new;
-                    setTickets(prev => {
-                        if (prev.some(t => t.id === newT.id)) return prev;
-                        return [newT, ...prev];
-                    });
-                    hrDataCache.prependTicket(newT);
+                    // Revalidate securely through server API to enforce strict role and privacy access scoping
                     fetchTickets(true);
                 } else if (payload.eventType === 'UPDATE') {
                     const upd = payload.new;
@@ -540,7 +535,8 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                 const list = data.data || [];
                 setTickets(prev => {
                     const listIds = new Set(list.map((t: any) => t.id));
-                    const freshlyCreated = prev.filter(t => !listIds.has(t.id));
+                    // Only preserve genuine local optimistic tickets raised by the current user within active session
+                    const freshlyCreated = prev.filter(t => !listIds.has(t.id) && Boolean(t._isOptimistic && t.raised_by_user_id === user.id));
                     const merged = [...freshlyCreated, ...list];
                     hrDataCache.setTickets(cacheKey, merged);
                     return merged;
@@ -747,19 +743,29 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         myRaisedCount,
         teamTicketsCount
     } = useMemo(() => {
-        const total = tickets.length;
-        const assignedToYou = tickets.filter(t => isDirectlyAssignedToMe(t)).length;
-        const assignedPending = tickets.filter(t => isCurrentlyAssignedToMe(t) && !['resolved', 'closed'].includes(t.status)).length;
+        const isStrictOrgSuperAdmin = ['org_super_admin', 'master_admin', 'super_admin'].includes(userRole);
+        // Privacy guard: exclude anonymous and confidential tickets for non-OrgSuperAdmin viewers who are not assigned or submitter
+        const viewableTickets = tickets.filter(t => {
+            const isConfOrAnon = Boolean(t.is_anonymous || t.is_confidential || t.ticket_type === 'anonymous_feedback' || t.ticket_type === 'confidential_feedback');
+            if (isConfOrAnon && !isStrictOrgSuperAdmin) {
+                return isDirectlyAssignedToMe(t) || checkIsMyRaised(t);
+            }
+            return true;
+        });
 
-        const grievances = tickets.filter(t => isGrievance(t)).length;
-        const pendingGrievances = tickets.filter(t => isGrievance(t) && !['resolved', 'closed'].includes(t.status)).length;
-        const queries = tickets.filter(t => isHRQuery(t)).length;
-        const confidential = tickets.filter(t => isConfidential(t)).length;
-        const overdue = tickets.filter(t => t.sla_due_at && new Date(t.sla_due_at) < new Date() && !['resolved', 'closed'].includes(t.status)).length;
+        const total = viewableTickets.length;
+        const assignedToYou = viewableTickets.filter(t => isDirectlyAssignedToMe(t)).length;
+        const assignedPending = viewableTickets.filter(t => isCurrentlyAssignedToMe(t) && !['resolved', 'closed'].includes(t.status)).length;
 
-        const myRaised = tickets.filter(t => checkIsMyRaised(t)).length;
+        const grievances = viewableTickets.filter(t => isGrievance(t)).length;
+        const pendingGrievances = viewableTickets.filter(t => isGrievance(t) && !['resolved', 'closed'].includes(t.status)).length;
+        const queries = viewableTickets.filter(t => isHRQuery(t)).length;
+        const confidential = viewableTickets.filter(t => isConfidential(t)).length;
+        const overdue = viewableTickets.filter(t => t.sla_due_at && new Date(t.sla_due_at) < new Date() && !['resolved', 'closed'].includes(t.status)).length;
 
-        const teamTickets = tickets.filter(t => 
+        const myRaised = viewableTickets.filter(t => checkIsMyRaised(t)).length;
+
+        const teamTickets = viewableTickets.filter(t => 
             !t.is_anonymous && !t.is_confidential && t.ticket_type !== 'confidential_feedback' && t.ticket_type !== 'confidential' && (
                 Array.from(reporteeUserIds).some(rid => {
                     const profileObj = employeesList.find(e => (e.user_id || e.id) === rid || e.employee_code === rid);
@@ -790,6 +796,15 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
 
     // Filter tickets based on UI search, scope, type, and status filters
     const filteredTickets = tickets.filter(t => {
+        const isStrictOrgSuperAdmin = ['org_super_admin', 'master_admin', 'super_admin'].includes(userRole);
+        // Strict privacy guard: Anonymous and confidential cases are restricted to assigned reviewer or submitter
+        const isConfOrAnon = Boolean(t.is_anonymous || t.is_confidential || t.ticket_type === 'anonymous_feedback' || t.ticket_type === 'confidential_feedback');
+        if (isConfOrAnon && !isStrictOrgSuperAdmin) {
+            const isAssigned = isDirectlyAssignedToMe(t);
+            const isRaised = checkIsMyRaised(t);
+            if (!isAssigned && !isRaised) return false;
+        }
+
         if (scopeFilter === 'my_raised') {
             if (!checkIsMyRaised(t)) return false;
         }

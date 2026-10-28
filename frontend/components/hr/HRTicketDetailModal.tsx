@@ -233,7 +233,7 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
             setFetchError(null);
 
             // 1. Instant Cache Check: If already viewed, load instantly in 0ms!
-            const cached = hrDataCache.getTicketDetail(ticketId);
+            const cached = hrDataCache.getTicketDetail(ticketId, currentUserId);
             if (cached.data) {
                 setTicket(cached.data);
                 setLoading(false);
@@ -262,7 +262,7 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
             setShowForceCloseModal(false);
             setForceCloseNoteInput('');
         }
-    }, [isOpen, ticketId]);
+    }, [isOpen, ticketId, currentUserId]);
 
     const fetchTicketDetail = async (silent = false) => {
         if (!ticketId) return;
@@ -274,7 +274,7 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
             let data: any = {};
             try { data = text ? JSON.parse(text) : {}; } catch {}
             if (data.success && data.data) {
-                hrDataCache.setTicketDetail(ticketId, data.data);
+                hrDataCache.setTicketDetail(ticketId, data.data, currentUserId);
                 setTicket(data.data);
                 setFetchError(null);
             } else {
@@ -415,7 +415,7 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
                 const finalStatus = data.data?.status || optimisticStatus;
                 if (data.data) {
                     setTicket(data.data);
-                    hrDataCache.setTicketDetail(ticketId, data.data);
+                    hrDataCache.setTicketDetail(ticketId, data.data, currentUserId);
                 } else {
                     fetchTicketDetail();
                 }

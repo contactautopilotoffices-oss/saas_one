@@ -34,6 +34,27 @@ export async function GET(
             return NextResponse.json({ error: 'Ticket not found' }, { status: 404 });
         }
 
+        const adminSupabase = createAdminClient();
+
+        // Check caller roles for data isolation (Tenants and Vendors must NEVER see internal operational notes or procurement financials)
+        let isTenantOrVendor = false;
+        if (user) {
+            const [orgMemsRes, propMemsRes] = await Promise.all([
+                adminSupabase.from('organization_memberships').select('role').eq('user_id', user.id),
+                adminSupabase.from('property_memberships').select('role, property_id').eq('user_id', user.id).eq('is_active', true)
+            ]);
+            const orgRoles = (orgMemsRes.data || []).map(m => (m.role || '').toLowerCase().trim());
+            const propRoles = (propMemsRes.data || []).map(m => (m.role || '').toLowerCase().trim());
+            const isStaffOrAdmin = orgRoles.some(r => ['org_super_admin', 'master_admin', 'super_admin', 'ops_super_admin'].includes(r)) ||
+                propRoles.some(r => ['property_admin', 'ops_super_admin', 'mst', 'staff', 'tech', 'soft_service_manager', 'soft_service_supervisor'].includes(r));
+            isTenantOrVendor = !isStaffOrAdmin;
+        }
+
+        // 1. If ticket is internal, tenants and external vendors cannot access it
+        if (ticket.internal && isTenantOrVendor) {
+            return NextResponse.json({ error: 'Ticket not found' }, { status: 404 });
+        }
+
         // Get comments
         const { data: comments } = await supabase
             .from('ticket_comments')
@@ -41,7 +62,11 @@ export async function GET(
             .eq('ticket_id', ticketId)
             .order('created_at', { ascending: true });
 
-        const adminSupabase = createAdminClient();
+        // 2. Filter internal comments for non-staff
+        let filteredComments = comments || [];
+        if (isTenantOrVendor) {
+            filteredComments = filteredComments.filter((c: any) => !c.is_internal);
+        }
 
         // Get activity log (use admin client to bypass RLS so all users' upload activities are visible)
         const { data: activities } = await adminSupabase
@@ -58,25 +83,28 @@ export async function GET(
             .eq('ticket_id', ticketId)
             .order('escalated_at', { ascending: true });
 
-        // Get material requests (Procurement) with comparative quotes
-        const { data: procurementRequests } = await adminSupabase
-            .from('material_requests')
-            .select(`
-                *,
-                line_items:material_request_items(
-                    *
-                ),
-                comparatives:material_request_comparatives(
+        // Get material requests (Procurement) with comparative quotes - STRICTLY restricted to staff/admins
+        let formattedProcurementRequests: any[] = [];
+        if (!isTenantOrVendor) {
+            const { data: procurementRequests } = await adminSupabase
+                .from('material_requests')
+                .select(`
                     *,
-                    created_by_user:users!material_request_comparatives_created_by_fkey(full_name, email),
-                    action_by_user:users!material_request_comparatives_action_by_fkey(full_name, email)
-                ),
-                requester:users!material_requests_requested_by_fkey(full_name)
-            `)
-            .eq('ticket_id', ticketId)
-            .order('created_at', { ascending: false });
+                    line_items:material_request_items(
+                        *
+                    ),
+                    comparatives:material_request_comparatives(
+                        *,
+                        created_by_user:users!material_request_comparatives_created_by_fkey(full_name, email),
+                        action_by_user:users!material_request_comparatives_action_by_fkey(full_name, email)
+                    ),
+                    requester:users!material_requests_requested_by_fkey(full_name)
+                `)
+                .eq('ticket_id', ticketId)
+                .order('created_at', { ascending: false });
 
-        const formattedProcurementRequests = procurementRequests || [];
+            formattedProcurementRequests = procurementRequests || [];
+        }
 
         // Hydrate approver_user for comparatives if approver_uid is set
         const allComparatives = formattedProcurementRequests.flatMap((r: any) => r.comparatives || []);
@@ -157,7 +185,7 @@ export async function GET(
 
         return NextResponse.json({
             ticket,
-            comments: comments || [],
+            comments: filteredComments,
             activities: activities || [],
             escalationLogs: escalationLogs || [],
             procurementRequests: formattedProcurementRequests,
