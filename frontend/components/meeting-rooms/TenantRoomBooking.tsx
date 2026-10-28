@@ -424,7 +424,7 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
                                 className="flex items-center gap-2 px-3.5 py-2 bg-primary text-text-inverse rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-sm"
                             >
                                 <Calendar className="w-4 h-4" />
-                                <span>+ Book New Room</span>
+                                <span>Book New Room</span>
                             </button>
                         )}
                     </div>

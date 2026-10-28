@@ -373,7 +373,7 @@ export default function PropertyBudgetsTab({
                         }`}
                     >
                         <Plus className="w-4 h-4" />
-                        <span>{showAddForm ? 'Close Add Form' : '+ Add Floor Allocation'}</span>
+                        <span>{showAddForm ? 'Close Add Form' : 'Add Floor Allocation'}</span>
                     </button>
 
                     <button

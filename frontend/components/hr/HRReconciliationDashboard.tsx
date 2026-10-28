@@ -715,7 +715,7 @@ export default function HRReconciliationDashboard({ orgId, organizationId, onRef
                                             title="Add this registered app user into the HR Employee Directory"
                                         >
                                             <UserPlus className="w-3.5 h-3.5" />
-                                            <span>+ Add</span>
+                                            <span>Add</span>
                                         </button>
                                     </div>
                                 </div>

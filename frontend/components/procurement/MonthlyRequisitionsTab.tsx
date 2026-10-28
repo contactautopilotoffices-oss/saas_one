@@ -586,7 +586,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                             className="h-9 px-4 inline-flex items-center gap-2 rounded-xl bg-primary hover:bg-primary/90 text-white font-black text-xs whitespace-nowrap transition-all shadow-md shadow-primary/20 hover:scale-[1.02] cursor-pointer shrink-0"
                         >
                             <Plus className="w-4 h-4 shrink-0" />
-                            <span>+ Create Requisition</span>
+                            <span>Create Requisition</span>
                         </button>
                     )}
                 </div>
@@ -790,7 +790,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                     className="px-5 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-white font-extrabold text-xs shadow-md shadow-primary/20 transition-all flex items-center gap-2 cursor-pointer"
                                 >
                                     <Plus className="w-4 h-4" />
-                                    <span>+ Create Requisition Sheet</span>
+                                    <span>Create Requisition Sheet</span>
                                 </button>
                             )}
 
