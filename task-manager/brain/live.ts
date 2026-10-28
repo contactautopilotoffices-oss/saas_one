@@ -1,4 +1,5 @@
 import type { AccessDecision } from '../TaskAccessService';
+import { withPersonalSwitch } from '../personalSwitch';
 import { decideImportEligibility, extractCandidate } from '../TaskImportInbound';
 import type { Employee, TestingConfig } from '../types';
 import type { ExecutionResult } from './domain';
@@ -159,6 +160,8 @@ const remember = (recent: string[], understood: string, said: string | null): st
 
 export interface LiveIO {
     getSmartChatDepartments(): Promise<ReadonlySet<string>>;
+    /** Owner 2026-10-28: personal exceptions to Smart chat (missing = everyone follows their team). */
+    personalSmartChat?(): Promise<{ anyOn: boolean; of: (userId: string) => boolean | null }>;
     getConfig(): Promise<TestingConfig>;
     getEmployee(phone: string): Promise<Employee | null>;
     checkAccess(employee: Employee): Promise<AccessDecision>;
@@ -251,8 +254,10 @@ export async function claimSmartChat(body: unknown, io?: LiveIO, opts: LiveOptio
         // Group 2 "faster replies" (2026-10-13): reads that do not depend on each other run side by side (they used to run one
         // after another). The same checks, in the same order of meaning: any "no" still means the old bot answers.
         const t0 = Date.now();
-        const [departments, employee] = await Promise.all([real.getSmartChatDepartments(), real.getEmployee(cand.phone)]);
-        if (departments.size === 0) return NOT_HANDLED;
+        const [teamDepartments, employee, personal] = await Promise.all([real.getSmartChatDepartments(), real.getEmployee(cand.phone), real.personalSmartChat ? real.personalSmartChat() : Promise.resolve(null)]);
+        if (teamDepartments.size === 0 && !personal?.anyOn) return NOT_HANDLED;
+        // Owner 2026-10-28: the person's own exception wins over their department's switch
+        const departments = withPersonalSwitch(teamDepartments, employee?.department_id, employee && personal ? personal.of(employee.id) : null);
         if (!employee?.department_id || !departments.has(employee.department_id)) return NOT_HANDLED;
         const [access, config] = await Promise.all([real.checkAccess(employee), real.getConfig()]);
         // Same people as the Task Manager itself, in a department with the switch ON, inside the sandbox while it is ON.
@@ -693,7 +698,7 @@ export async function defaultLiveIO(): Promise<LiveIO> {
     const STATUS: Record<string, string> = { pending: 'To do', in_progress: 'In progress', completed: 'Done' };
 
     const exec: ExecIO = {
-        async setStatus(actorId, taskId, status, opts) { await WorkspaceService.setStatus(actorId, { taskId, status, notifyGiver: opts?.notifyGiver }); },
+        async setStatus(actorId, taskId, status, opts) { await WorkspaceService.setStatus(actorId, { taskId, status, notifyGiver: opts?.notifyGiver, remark: opts?.remark }); },
         async notifyCompleted(_actorId, taskIds) { await WorkspaceService.notifyCompleted(taskIds); },
         async assign(actorId, i) {
             const task = await WorkspaceService.assign(actorId, { targetUserId: i.targetUserId, title: i.title, description: i.description, date: i.date, notify: i.notify, note: i.note });
@@ -772,6 +777,7 @@ export async function defaultLiveIO(): Promise<LiveIO> {
 
     return {
         getSmartChatDepartments: async () => (await TaskAccessService.getSmartChatDepartments()).departments,
+        personalSmartChat: () => TaskAccessService.personalSwitches('smart_chat'),
         getConfig: () => TaskDatabaseService.getTestingConfig(),
         getEmployee: phone => TaskDatabaseService.getEmployeeByPhone(phone),
         checkAccess: e => TaskAccessService.check({ userId: e.id, departmentId: e.department_id }),

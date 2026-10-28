@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, Trash2 } from 'lucide-react';
 import Board from '@/frontend/components/procurement/tasks/Board';
+import RemarkDialog from '@/frontend/components/procurement/tasks/RemarkDialog';
 import NotificationsView from '@/frontend/components/procurement/tasks/NotificationsView';
 import { Status, WTask } from '@/frontend/components/procurement/tasks/types';
 import { registerSessionCache } from '@/frontend/lib/dashboard/sessionCaches';
@@ -25,12 +26,16 @@ interface ConsoleTask {
     locked: boolean; canLock: boolean;
     /** Owner 2026-10-15: still open from before the chosen dates. */
     isCarriedForward?: boolean;
+    /** Owner 2026-10-28: what the holder wrote when they marked it done. */
+    completionRemark?: string | null;
 }
 export interface ConsoleData {
     actor: { userId: string; name: string };
     departments: string[];
     mine: ConsoleTask[];
     given: ConsoleTask[];
+    /** Owner 2026-10-28: the comment box when I mark one of my tasks done. */
+    completionRemark?: 'off' | 'ask' | 'required';
 }
 
 // Kept for the whole page load, so coming back to the tab shows the last data at once and refreshes quietly.
@@ -90,7 +95,7 @@ export function useConsoleTasks() {
     };
 
     /** Moves one of MY tasks. The screen changes at once and snaps back with a message if the server refuses. */
-    const moveTask = useCallback(async (taskId: string, next: Status) => {
+    const moveTask = useCallback(async (taskId: string, next: Status, remark?: string) => {
         const before = dataRef.current;
         if (!before) return;
         const task = before.mine.find(t => t.id === taskId);
@@ -98,7 +103,7 @@ export function useConsoleTasks() {
         const apply = (d: ConsoleData): ConsoleData => ({ ...d, mine: d.mine.map(t => (t.id === taskId ? { ...t, status: next } : t)) });
         setData(apply(before));
         try {
-            await post({ action: 'set_status', taskId, status: next });
+            await post({ action: 'set_status', taskId, status: next, ...(remark ? { remark } : {}) });
             load();
         } catch (err) {
             setData(before);
@@ -181,6 +186,14 @@ export function ConsoleTasksView({ c }: { c: ConsoleState }) {
     const [view, setView] = useState<View>('mine');
     const [dept, setDept] = useState('All');
     const data = c.data;
+    // Owner 2026-10-28: "Remark on completion" — the box opens before one of my tasks is marked done
+    const [completingId, setCompletingId] = useState<string | null>(null);
+    const remarkMode = data?.completionRemark ?? 'ask';
+    const move = (taskId: string, next: Status) => {
+        const t = data?.mine.find(x => x.id === taskId);
+        if (next === 'completed' && remarkMode !== 'off' && t && t.status !== 'completed') { setCompletingId(taskId); return; }
+        void c.moveTask(taskId, next);
+    };
 
     // Owner 2026-10-22: the department filter is for "Assigned by me" only; "Assigned to me" always shows all of yours
     const inDept = useCallback((t: ConsoleTask) => dept === 'All' || t.department === dept, [dept]);
@@ -190,8 +203,9 @@ export function ConsoleTasksView({ c }: { c: ConsoleState }) {
     const boardTasks: WTask[] = useMemo(() => (data ? mine.map(t => ({
         id: t.id, title: t.title, description: null, ownerId: data.actor.userId, ownerName: data.actor.name, status: t.status,
         assignedDate: t.assignedDate, isCarriedForward: !!t.isCarriedForward, canChange: true, locked: t.locked, canLock: t.canLock,
-        meta: { from: t.personName, department: t.department },
+        meta: { from: t.personName, department: t.department }, completionRemark: t.completionRemark ?? null,
     })) : []), [data, mine]);
+    const completingTask = completingId ? boardTasks.find(t => t.id === completingId) || null : null;
 
     if (!data) return null;
 
@@ -248,7 +262,14 @@ export function ConsoleTasksView({ c }: { c: ConsoleState }) {
             </div>
 
             {view === 'mine' ? (
-                <Board tasks={boardTasks} meId={data.actor.userId} onMove={c.moveTask} onQuickAdd={c.addTask} onDelete={c.deleteTask} onLock={c.setLocked} instant />
+                <>
+                    <Board tasks={boardTasks} meId={data.actor.userId} onMove={move} onQuickAdd={c.addTask} onDelete={c.deleteTask} onLock={c.setLocked} instant />
+                    <RemarkDialog
+                        task={completingTask} completing={remarkMode === 'required' ? 'required' : 'ask'} onClose={() => setCompletingId(null)}
+                        onSkip={id => void c.moveTask(id, 'completed')}
+                        onSave={async (id, remark) => { await c.moveTask(id, 'completed', remark); return true; }}
+                    />
+                </>
             ) : (
                 <div className="space-y-3">
                     {groups.length === 0 && <p className="rounded-2xl border border-dashed border-zinc-300 p-6 text-center text-xs text-zinc-500 dark:border-zinc-700">You have not given any tasks{dept === 'All' ? '' : ` in ${dept}`}.</p>}

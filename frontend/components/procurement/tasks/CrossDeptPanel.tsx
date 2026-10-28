@@ -1,9 +1,12 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
-import { AlertTriangle, Bell, Check, ChevronDown, Eye, FileText, Loader2, Paperclip, Search, Send, X } from 'lucide-react';
-import { ATTACH_ACCEPT, ATTACH_MAX_BYTES, avatarGradient, fileSizeLabel, initials, shortDate, todayIST } from './types';
+import React, { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { createPortal } from 'react-dom';
+import { AlertTriangle, Bell, Check, ChevronDown, Eye, FileText, Loader2, Paperclip, Search, Send, Trash2, X } from 'lucide-react';
+import { ATTACH_ACCEPT, ATTACH_MAX_BYTES, WAttachment, avatarGradient, fileSizeLabel, initials, shortDate, shortDateTime, todayIST } from './types';
 import type { CollabIncoming, CollabKind, CollabSent, useCollaboration } from './useCollaboration';
+import { DuePicker, DueValue, dueBody } from './due';
+import { dueLabel } from '@/task-manager/dueDates';
 
 /**
  * Owner 2026-10-26 — the Send tab's "Other departments": give a task to, ask for support from, or work together with
@@ -36,7 +39,7 @@ export default function CrossDeptPanel({ collab, me, uploadFiles, onChanged, due
     uploadFiles: (taskIds: string[], files: File[]) => Promise<number>;
     /** The board changed (a task was added to my list): reload it. */
     onChanged: () => void;
-    /** Owner 2026-10-27: Due dates switch ON — "needed by" is a deadline (with an optional time); the task starts today. */
+    /** Owner 2026-10-27: Due dates switch ON — a task may get a deadline. Owner 2026-10-28: the start date is separate. */
     dueDates?: boolean;
 }) {
     const { data, loading, error } = collab;
@@ -46,8 +49,11 @@ export default function CrossDeptPanel({ collab, me, uploadFiles, onChanged, due
     const [kind, setKind] = useState<CollabKind>('task');
     const [title, setTitle] = useState('');
     const [details, setDetails] = useState('');
+    // Owner 2026-10-28: a task has a Start date (when it shows on their list) and, Due dates ON, an optional Deadline.
+    // A support request keeps one "Needed by" date (it starts when they accept it).
     const [neededBy, setNeededBy] = useState('');
-    const [dueTime, setDueTime] = useState('');
+    const [startDate, setStartDate] = useState('');
+    const [due, setDue] = useState<DueValue | null>(null);
     const [files, setFiles] = useState<File[]>([]);
     const [showPreview, setShowPreview] = useState(false);
     const [duplicate, setDuplicate] = useState<{ assignedDate: string } | null>(null);
@@ -73,13 +79,12 @@ export default function CrossDeptPanel({ collab, me, uploadFiles, onChanged, due
     if (!data) return null;
 
     const flash = (k: 'ok' | 'err', text: string) => { setMessage({ kind: k, text }); setTimeout(() => setMessage(null), 6000); };
-    const clear = () => { setTitle(''); setDetails(''); setNeededBy(''); setDueTime(''); setFiles([]); setDuplicate(null); setShowPreview(false); };
+    const clear = () => { setTitle(''); setDetails(''); setNeededBy(''); setStartDate(''); setDue(null); setFiles([]); setDuplicate(null); setShowPreview(false); };
     const from = me.department ? `${me.name} (${me.department})` : me.name;
-    // Owner 2026-10-27: a task (not a support request) with a date becomes a deadline when the switch is ON
-    const asDeadline = dueDates && kind !== 'support' && !!neededBy;
+    const start = startDate || todayIST();
     const preview = person ? (kind === 'support'
         ? `🤝 Request from another team\n\nHello ${firstName(person.name)},\n${from} needs your help with a task.\nTask: ${title.trim() || '…'}\nNeeded by: ${neededBy ? longDay(neededBy) : 'No date given'}\n\nTap Accept, or Can't do it.`
-        : `🔔 A new task has been assigned to you.\n\nTask: ${title.trim() || '…'}\nAssigned by: ${from}\nDate: ${longDay(asDeadline ? todayIST() : neededBy || todayIST())}\n\nReply "tasks" to see your list and mark it done.`) : '';
+        : `🔔 A new task has been assigned to you.\n\nTask: ${title.trim() || '…'}\nAssigned by: ${from}\nDate: ${longDay(start)}\n\nReply "tasks" to see your list and mark it done.`) : '';
 
     const pickFiles = (list: FileList | null) => {
         const picked = Array.from(list || []);
@@ -95,7 +100,8 @@ export default function CrossDeptPanel({ collab, me, uploadFiles, onChanged, due
             const match = await collab.checkDuplicate(person.userId, title.trim());
             if (match) { setDuplicate(match); setBusy(null); return; }
         }
-        const r = await collab.send({ targetUserId: person.userId, kind, title: title.trim(), description: details.trim(), neededBy, ...(asDeadline && dueTime ? { dueTime } : {}) });
+        const dates = kind === 'support' ? { neededBy } : { startDate: start, ...(dueDates ? dueBody(due) as { dueDate?: string; dueTime?: string } : {}) };
+        const r = await collab.send({ targetUserId: person.userId, kind, title: title.trim(), description: details.trim(), ...dates });
         if (!r.ok) { setBusy(null); flash('err', r.error); return; }
         let fileNote = '';
         if (files.length) {
@@ -188,18 +194,11 @@ export default function CrossDeptPanel({ collab, me, uploadFiles, onChanged, due
                         <textarea rows={2} maxLength={1000} value={details} onChange={e => setDetails(e.target.value)} className={`${field} resize-none`} />
                     </label>
                     <div className="grid grid-cols-1 gap-3 @2xl:grid-cols-2">
-                        {dueDates && kind !== 'support' ? (
-                            <div>
-                                <span className={label}>Due by (optional)</span>
-                                <div className="grid grid-cols-2 gap-2">
-                                    <label className="block"><span className="sr-only">Due date</span>
-                                        <input type="date" min={todayIST()} value={neededBy} onChange={e => setNeededBy(e.target.value)} className={field} />
-                                    </label>
-                                    <label className="block"><span className="sr-only">Due time (optional)</span>
-                                        <input type="time" value={dueTime} disabled={!neededBy} onChange={e => setDueTime(e.target.value)} className={`${field} disabled:opacity-50`} />
-                                    </label>
-                                </div>
-                            </div>
+                        {kind !== 'support' ? (
+                            <label className="block"><span className={label}>{dueDates ? 'Start date' : 'Date'}</span>
+                                <input type="date" min={todayIST()} value={start}
+                                    onChange={e => { const v = e.target.value || todayIST(); setStartDate(v); if (due && due.date < v) setDue(null); }} className={field} />
+                            </label>
                         ) : (
                             <label className="block"><span className={label}>Needed by (optional)</span>
                                 <input type="date" min={todayIST()} value={neededBy} onChange={e => setNeededBy(e.target.value)} className={field} />
@@ -211,6 +210,7 @@ export default function CrossDeptPanel({ collab, me, uploadFiles, onChanged, due
                             <label htmlFor="collab-files" className={`${field} flex cursor-pointer items-center gap-2 text-zinc-600`}><Paperclip className="h-4 w-4" aria-hidden="true" /> Attach document or screenshot</label>
                         </div>
                     </div>
+                    {dueDates && kind !== 'support' && <DuePicker start={start} value={due} onChange={setDue} idPrefix="collab" />}
                     {files.length > 0 && (
                         <ul className="space-y-1">
                             {files.map((f, i) => (
@@ -256,16 +256,37 @@ export default function CrossDeptPanel({ collab, me, uploadFiles, onChanged, due
 
             {/* 3 + 4. Tracking */}
             <div className="space-y-4 @4xl:col-span-2 @6xl:col-span-1">
-                <SentList sent={data.sent} remind={collab.remind} flash={flash} />
+                <SentList sent={data.sent} remind={collab.remind} clearSent={collab.clearSent} reload={collab.reload} flash={flash} />
                 <IncomingList incoming={data.incoming} respond={collab.respond} flash={flash} onDone={async accepted => { await collab.reload(); if (accepted) onChanged(); }} />
             </div>
         </div>
     );
 }
 
-function SentList({ sent, remind, flash }: { sent: CollabSent[]; remind: ReturnType<typeof useCollaboration>['remind']; flash: (k: 'ok' | 'err', t: string) => void }) {
+function SentList({ sent, remind, clearSent, reload, flash }: {
+    sent: CollabSent[];
+    remind: ReturnType<typeof useCollaboration>['remind'];
+    clearSent: ReturnType<typeof useCollaboration>['clearSent'];
+    reload: () => Promise<void>;
+    flash: (k: 'ok' | 'err', t: string) => void;
+}) {
     const [busy, setBusy] = useState<string | null>(null);
+    const [viewing, setViewing] = useState<string | null>(null);
     const open = sent.filter(s => s.canRemind);
+    const keyOf = (s: CollabSent) => `${s.kind}-${s.id}`;
+    const shown = sent.find(s => keyOf(s) === viewing) || null;
+    // Owner 2026-10-28: Delete only clears it from MY list; the task stays on their list
+    const doClear = async (items: CollabSent[], key: string) => {
+        const many = items.length > 1;
+        if (!window.confirm(many ? `Clear all ${items.length} from this list? The tasks stay on the other people's lists.` : 'Clear this from your list? The task stays on their list.')) return;
+        setBusy(key);
+        const r = await clearSent(items.map(s => ({ kind: s.kind, id: s.id })));
+        setBusy(null);
+        if (!r.ok) return flash('err', r.error);
+        if (viewing && items.some(s => keyOf(s) === viewing)) setViewing(null);
+        flash('ok', many ? `Cleared ${r.cleared} from your list.` : 'Cleared from your list.');
+        await reload();
+    };
     const doRemind = async (ids: string[], key: string) => {
         setBusy(key);
         const r = await remind(ids);
@@ -276,16 +297,24 @@ function SentList({ sent, remind, flash }: { sent: CollabSent[]; remind: ReturnT
     };
     return (
         <section className="rounded-3xl border border-zinc-200 bg-white p-4 shadow-xs dark:border-zinc-800 dark:bg-zinc-900" aria-label="Waiting on other teams">
-            <h3 className="mb-3 flex items-center gap-2 text-sm font-black text-zinc-900 dark:text-zinc-100">Waiting on other teams <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-black text-zinc-600 dark:bg-zinc-800">{sent.length}</span></h3>
+            <h3 className="mb-3 flex items-center gap-2 text-sm font-black text-zinc-900 dark:text-zinc-100">
+                Waiting on other teams <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-black text-zinc-600 dark:bg-zinc-800">{sent.length}</span>
+                {sent.length > 1 && (
+                    <button type="button" disabled={!!busy} onClick={() => void doClear(sent, 'clear-all')} title="Clear the whole list (the tasks stay with them)"
+                        className="ml-auto flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-black text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:text-rose-300 dark:hover:bg-rose-950/40">
+                        {busy === 'clear-all' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />} Delete all
+                    </button>
+                )}
+            </h3>
             {sent.length === 0 && <p className="text-xs text-zinc-500">Nothing sent to other teams yet.</p>}
-            <ul className="max-h-[380px] space-y-1.5 overflow-y-auto">
+            <ul className="max-h-[380px] space-y-1.5 overflow-y-auto pr-1">
                 {sent.map(s => (
-                    <li key={`${s.kind}-${s.id}`} className="flex items-center gap-2 rounded-xl border border-zinc-100 px-3 py-2 dark:border-zinc-800">
-                        <span className="min-w-0 flex-1">
+                    <li key={keyOf(s)} className="flex items-center gap-2 rounded-xl border border-zinc-100 px-3 py-2 transition-colors hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-800/50">
+                        <button type="button" onClick={() => setViewing(keyOf(s))} aria-label={`Open ${s.title}`} className="min-w-0 flex-1 cursor-pointer text-left">
                             <span className="block truncate text-xs font-black text-zinc-900 dark:text-zinc-100">{s.title}</span>
                             <span className="block truncate text-[11px] font-semibold text-zinc-500">{firstName(s.toName)} · {s.department}{s.supportRequest ? ' · support request' : ''} · {shortDate(s.since.slice(0, 10))}</span>
                             {s.reason && <span className="mt-0.5 block text-[11px] font-semibold text-rose-700 dark:text-rose-300">“{s.reason}”</span>}
-                        </span>
+                        </button>
                         <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-black ${STATUS[s.status].cls}`}>{STATUS[s.status].label}</span>
                         {s.canRemind && (
                             <button type="button" disabled={!!busy} onClick={() => void doRemind([s.id], s.id)} aria-label={`Remind ${s.toName} about ${s.title}`} title="Send a reminder"
@@ -293,9 +322,15 @@ function SentList({ sent, remind, flash }: { sent: CollabSent[]; remind: ReturnT
                                 {busy === s.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Bell className="h-3.5 w-3.5" />}
                             </button>
                         )}
+                        <button type="button" disabled={!!busy} onClick={() => void doClear([s], `clear-${keyOf(s)}`)} aria-label={`Clear ${s.title} from your list`} title="Delete from this list"
+                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-zinc-400 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 dark:hover:bg-rose-950/40">
+                            {busy === `clear-${keyOf(s)}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                        </button>
                     </li>
                 ))}
             </ul>
+            <SentDetails item={shown} onClose={() => setViewing(null)} busy={!!busy}
+                onRemind={s => void doRemind([s.id], s.id)} onClear={s => void doClear([s], `clear-${keyOf(s)}`)} />
             {open.length > 1 && (
                 <button type="button" disabled={!!busy} onClick={() => void doRemind(open.map(s => s.id), 'all')}
                     className="mt-3 flex items-center gap-1.5 rounded-xl border border-indigo-200 px-3 py-1.5 text-xs font-black text-indigo-700 hover:bg-indigo-50 disabled:opacity-50 dark:border-indigo-900/60 dark:text-indigo-300">
@@ -331,7 +366,7 @@ export function IncomingList({ incoming, respond, flash, onDone, compact = false
         <section className={compact ? 'space-y-2' : 'rounded-3xl border border-zinc-200 bg-white p-4 shadow-xs dark:border-zinc-800 dark:bg-zinc-900'} aria-label="Asked of you by other teams">
             {!compact && <h3 className="mb-3 flex items-center gap-2 text-sm font-black text-zinc-900 dark:text-zinc-100">Asked of you <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-black text-zinc-600 dark:bg-zinc-800">{incoming.length}</span></h3>}
             {!compact && incoming.length === 0 && <p className="text-xs text-zinc-500">No requests from other teams.</p>}
-            <ul className="space-y-2">
+            <ul className={compact ? 'space-y-2' : 'max-h-[420px] space-y-2 overflow-y-auto pr-1'}>
                 {incoming.map(r => (
                     <li key={r.id} className="relative overflow-hidden rounded-2xl border border-orange-300 bg-orange-50/80 p-3 pl-4 dark:border-orange-800/50 dark:bg-orange-950/20">
                         <span className="absolute inset-y-0 left-0 w-1 bg-orange-500" aria-hidden="true" />
@@ -362,5 +397,124 @@ export function IncomingList({ incoming, respond, flash, onDone, compact = false
                 ))}
             </ul>
         </section>
+    );
+}
+
+const noSubscribe = () => () => {};
+
+/**
+ * Owner 2026-10-28: a small window with everything about one item on "Waiting on other teams": the full note, who has
+ * it, start date and deadline (or "needed by" for a request), the reason they gave, and the files. Remind and Delete
+ * (clears it from my list only).
+ */
+function SentDetails({ item, onClose, onRemind, onClear, busy }: {
+    item: CollabSent | null;
+    onClose: () => void;
+    onRemind: (s: CollabSent) => void;
+    onClear: (s: CollabSent) => void;
+    busy: boolean;
+}) {
+    const mounted = useSyncExternalStore(noSubscribe, () => true, () => false);   // the portal needs the browser
+    const [files, setFiles] = useState<WAttachment[] | null>(null);
+    const [filesError, setFilesError] = useState<string | null>(null);
+    const openKey = item ? `${item.kind}-${item.id}` : null;
+
+    useEffect(() => {
+        if (!openKey) return;
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+        document.addEventListener('keydown', onKey);
+        return () => document.removeEventListener('keydown', onKey);
+    }, [openKey, onClose]);
+
+    useEffect(() => {
+        if (!item) return;
+        let live = true;
+        setFiles(null); setFilesError(null);
+        const q = item.kind === 'request' ? `requestId=${encodeURIComponent(item.id)}` : `taskId=${encodeURIComponent(item.id)}`;
+        fetch(`/api/task-manager/attachments?${q}`)
+            .then(res => res.json().then(body => ({ ok: res.ok, body })))
+            .then(({ ok, body }) => { if (!live) return; if (!ok || !body.success) throw new Error(body.error || 'Could not load the files'); setFiles(body.attachments as WAttachment[]); })
+            .catch(err => { if (live) setFilesError(err instanceof Error ? err.message : 'Could not load the files'); });
+        return () => { live = false; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [openKey]);
+
+    if (!mounted || !item) return null;
+    const st = STATUS[item.status];
+    const row = (term: string, value: React.ReactNode) => (<>
+        <dt className="font-semibold text-zinc-500 dark:text-zinc-400">{term}</dt>
+        <dd className="min-w-0 break-words font-bold text-zinc-900 dark:text-zinc-100">{value}</dd>
+    </>);
+
+    return createPortal(
+        <div className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-zinc-950/45 p-4 pt-[10vh] backdrop-blur-[2px]"
+            onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
+            <div role="dialog" aria-modal="true" aria-labelledby="sent-details-title" className="w-full max-w-md overflow-hidden rounded-3xl bg-white shadow-2xl dark:bg-zinc-900">
+                <header className="flex items-start gap-3 border-b border-zinc-200 bg-zinc-50 px-5 pb-4 pt-5 dark:border-zinc-800 dark:bg-zinc-900">
+                    <div className="min-w-0 flex-1 space-y-2">
+                        <span className={`inline-block rounded-md px-1.5 py-0.5 text-[10px] font-black ${st.cls}`}>{st.label}</span>
+                        <h2 id="sent-details-title" className="whitespace-pre-line break-words text-lg font-black leading-snug text-zinc-900 dark:text-zinc-50">{item.title}</h2>
+                    </div>
+                    <button type="button" onClick={onClose} aria-label="Close" className="rounded-xl bg-black/5 p-2 text-zinc-600 hover:bg-black/10 dark:bg-white/10 dark:text-zinc-300 dark:hover:bg-white/15">
+                        <X className="h-4 w-4" />
+                    </button>
+                </header>
+                <div className="space-y-4 px-5 pb-5 pt-4">
+                    {item.completionRemark && (
+                        <p className="rounded-xl bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
+                            Completion remark: {item.completionRemark}
+                        </p>
+                    )}
+                    {item.reason && (
+                        <p className="rounded-xl bg-rose-50 px-3 py-2 text-xs font-bold text-rose-800 dark:bg-rose-950/40 dark:text-rose-200">
+                            {firstName(item.toName)} can&apos;t take it: “{item.reason}”
+                        </p>
+                    )}
+                    <section className="space-y-1.5">
+                        <h3 className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Note</h3>
+                        {item.description
+                            ? <p className="whitespace-pre-wrap break-words rounded-xl bg-zinc-100 px-3 py-2.5 text-sm leading-relaxed text-zinc-800 dark:bg-zinc-800 dark:text-zinc-100">{item.description.replace(/^Remark:\s*/gim, '')}</p>
+                            : <p className="text-sm text-zinc-500">No note.</p>}
+                    </section>
+                    <dl className="grid grid-cols-[110px_1fr] gap-x-3 gap-y-2 text-sm">
+                        {row('To', `${item.toName} (${item.department})`)}
+                        {row('Type', item.kind === 'request' ? 'Support request' : item.supportRequest ? 'Task (accepted support request)' : 'Task')}
+                        {row('Sent', shortDateTime(item.createdAt))}
+                        {item.startDate && row('Start date', shortDate(item.startDate))}
+                        {item.due && row(item.kind === 'request' ? 'Needed by' : 'Deadline', item.kind === 'request' ? shortDate(item.due.date) : dueLabel(item.due))}
+                        {item.status === 'completed' && row('Done', shortDateTime(item.since))}
+                    </dl>
+                    <section className="space-y-1.5">
+                        <h3 className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Files</h3>
+                        {filesError ? <p className="text-xs font-semibold text-rose-700">{filesError}</p>
+                            : files === null ? <p className="flex items-center gap-2 text-xs text-zinc-500"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…</p>
+                            : files.length === 0 ? <p className="text-sm text-zinc-500">No files.</p>
+                            : (
+                                <ul className="space-y-1">
+                                    {files.map(f => (
+                                        <li key={f.id} className="flex items-center gap-2 rounded-xl border border-zinc-200 px-3 py-1.5 text-xs font-bold dark:border-zinc-700">
+                                            <FileText className="h-3.5 w-3.5 shrink-0 text-indigo-600" aria-hidden="true" />
+                                            {f.url ? <a href={f.url} target="_blank" rel="noreferrer" className="min-w-0 flex-1 truncate text-indigo-700 hover:underline dark:text-indigo-300">{f.fileName}</a>
+                                                : <span className="min-w-0 flex-1 truncate">{f.fileName}</span>}
+                                            <span className="shrink-0 text-zinc-500">{fileSizeLabel(f.fileSize)}</span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                    </section>
+                    <div className="flex flex-wrap gap-2 border-t border-zinc-100 pt-4 dark:border-zinc-800">
+                        {item.canRemind && (
+                            <button type="button" disabled={busy} onClick={() => onRemind(item)} className="flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-black text-indigo-700 hover:bg-indigo-100 disabled:opacity-50 dark:border-indigo-900/60 dark:bg-indigo-950/40 dark:text-indigo-300">
+                                <Bell className="h-4 w-4" aria-hidden="true" /> Remind
+                            </button>
+                        )}
+                        <button type="button" disabled={busy} onClick={() => onClear(item)} className="flex items-center gap-1.5 rounded-xl border border-rose-200 bg-white px-4 py-2 text-sm font-black text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900/60 dark:bg-zinc-900 dark:text-rose-300">
+                            <Trash2 className="h-4 w-4" aria-hidden="true" /> Delete from list
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>,
+        document.body,
     );
 }

@@ -3,14 +3,32 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { Bell, Check, Clock, Eye, Loader2, Pencil, RefreshCw, Trash2, X } from 'lucide-react';
-import { AssignedTask, EASE, avatarGradient, columnLabel, initials, shortDate, shortDateTime } from './types';
+import { AssignedTask, EASE, WTask, avatarGradient, columnLabel, initials, shortDate, shortDateTime } from './types';
+import TaskView, { EditExtra, TaskViewActions } from './TaskView';
+import { CompletionRemark } from './Board';
 
 /**
  * "Assigned by me" (owner 2026-10-19): every task I gave to someone, with who holds it, its status and timestamps.
  * I can edit or delete the ones I gave. Tasks given by people below me in the reporting chain are listed too, view only.
  * The server decides what is listed and what may be changed; this screen only shows it.
  * Owner 2026-10-20: "Remind" on an open task I gave, and "Remind all overdue" (one message per person, at most once an hour).
+ * Owner 2026-10-28: "View / Assign" opens the same task window as the board: notes, files, edit (name, date, person,
+ * deadline) and follow-up for a task I gave; view only for my team's.
  */
+
+/** What the task window needs from the board (everything but "Give to", which is only for the holder). */
+export type AssignedViewActions = Omit<TaskViewActions, 'people' | 'onGive' | 'onFollowUp'>;
+
+/** The task window works on board tasks: the same task, seen by the person who gave it. */
+const asBoardTask = (t: AssignedTask): WTask => ({
+    id: t.id, title: t.title, description: t.description, ownerId: t.holderId, ownerName: t.holderName, status: t.status,
+    assignedDate: t.assignedDate, isCarriedForward: t.isCarriedForward, canChange: false, canHandOver: false,
+    assignedByName: t.assignerName, createdAt: t.createdAt, completedAt: t.completedAt,
+    canDelete: t.mine, canEdit: t.mine, canEditNotes: t.canEditNotes === true,
+    followUpOf: t.followUpOf ?? null, alsoWith: t.alsoWith ?? [], attachmentCount: t.attachmentCount ?? 0, supportRequest: t.supportRequest, due: t.due ?? null,
+    completionRemark: t.completionRemark ?? null,
+});
+const noMove = () => {};
 
 /** Today in India (YYYY-MM-DD): a task given before today and still open is overdue. */
 const todayIndia = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
@@ -23,11 +41,12 @@ const STATUS_PILL: Record<AssignedTask['status'], string> = {
 
 type Who = 'me' | 'team';
 
-function Row({ task, onEdit, onDelete, onRemind }: {
+function Row({ task, onEdit, onDelete, onRemind, onView }: {
     task: AssignedTask;
     onEdit: (id: string, title: string, description?: string) => Promise<boolean>;
     onDelete: (id: string) => Promise<boolean>;
     onRemind: (ids: string[]) => Promise<void>;
+    onView: (id: string) => void;
 }) {
     const [mode, setMode] = useState<'view' | 'edit' | 'confirm'>('view');
     const [title, setTitle] = useState(task.title);
@@ -89,21 +108,7 @@ function Row({ task, onEdit, onDelete, onRemind }: {
                             {task.title}
                         </p>
                         <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black ${STATUS_PILL[task.status]}`}>{columnLabel(task.status)}</span>
-                        {task.mine ? (
-                            <>
-                                {!done && (
-                                    <button type="button" onClick={remind} disabled={reminding} aria-label={`Remind ${task.holderName} about ${task.title}`} title={`Remind ${task.holderName}`} className="shrink-0 rounded-lg p-1 text-zinc-400 hover:bg-amber-50 hover:text-amber-600 disabled:opacity-60 dark:hover:bg-amber-950/30">
-                                        {reminding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Bell className="h-3.5 w-3.5" />}
-                                    </button>
-                                )}
-                                <button type="button" onClick={() => setMode('edit')} aria-label={`Edit ${task.title}`} title="Edit" className="shrink-0 rounded-lg p-1 text-zinc-400 hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-950/30">
-                                    <Pencil className="h-3.5 w-3.5" />
-                                </button>
-                                <button type="button" onClick={() => setMode('confirm')} aria-label={`Delete ${task.title}`} title="Delete" className="shrink-0 rounded-lg p-1 text-zinc-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/30">
-                                    <Trash2 className="h-3.5 w-3.5" />
-                                </button>
-                            </>
-                        ) : (
+                        {!task.mine && (
                             <span className="flex shrink-0 items-center gap-1 rounded-md bg-zinc-100 px-1.5 py-0.5 text-[10px] font-bold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400" title="Given by someone in your team. You can view it, but only they can change it.">
                                 <Eye className="h-3 w-3" /> View only
                             </span>
@@ -111,6 +116,7 @@ function Row({ task, onEdit, onDelete, onRemind }: {
                     </div>
 
                     {task.description && <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400 break-words">{task.description}</p>}
+                    {task.completionRemark && <CompletionRemark text={task.completionRemark} />}
 
                     <div className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
                         <span className="flex items-center gap-1.5 text-[11px] font-bold text-zinc-600 dark:text-zinc-300">
@@ -130,6 +136,31 @@ function Row({ task, onEdit, onDelete, onRemind }: {
                         {done && task.completedAt && <> · Done {shortDateTime(task.completedAt)}</>}
                     </p>
 
+                    {/* Owner 2026-10-28: the same bottom row as a board card — View / Assign, then remind, edit and delete */}
+                    {mode !== 'confirm' && (
+                        <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-zinc-100 pt-2.5 dark:border-zinc-800">
+                            <button
+                                type="button" aria-label={`View or assign ${task.title}`} onClick={() => onView(task.id)}
+                                className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-[11px] font-black text-indigo-700 transition-colors hover:bg-indigo-100 dark:border-indigo-900/60 dark:bg-indigo-950/40 dark:text-indigo-300 dark:hover:bg-indigo-950/70"
+                            ><Eye className="h-3.5 w-3.5" aria-hidden="true" /> View / Assign</button>
+                            {task.mine && (
+                                <span className="ml-auto flex shrink-0 items-center gap-0.5">
+                                    {!done && (
+                                        <button type="button" onClick={remind} disabled={reminding} aria-label={`Remind ${task.holderName} about ${task.title}`} title={`Remind ${task.holderName}`} className="shrink-0 cursor-pointer rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-amber-50 hover:text-amber-600 disabled:opacity-60 dark:text-zinc-500 dark:hover:bg-amber-950/30">
+                                            {reminding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Bell className="h-3.5 w-3.5" />}
+                                        </button>
+                                    )}
+                                    <button type="button" onClick={() => setMode('edit')} aria-label={`Edit ${task.title}`} title="Edit" className="shrink-0 cursor-pointer rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-indigo-50 hover:text-indigo-600 dark:text-zinc-500 dark:hover:bg-indigo-950/30">
+                                        <Pencil className="h-3.5 w-3.5" />
+                                    </button>
+                                    <button type="button" onClick={() => setMode('confirm')} aria-label={`Delete ${task.title}`} title="Delete" className="shrink-0 cursor-pointer rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-rose-50 hover:text-rose-600 dark:text-zinc-500 dark:hover:bg-rose-950/30">
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
+                                </span>
+                            )}
+                        </div>
+                    )}
+
                     {mode === 'confirm' && (
                         <div role="alertdialog" aria-label="Confirm delete" className="mt-3 flex flex-wrap items-center gap-2 border-t border-zinc-100 pt-2.5 dark:border-zinc-800">
                             <p className="flex-1 text-[11px] font-bold text-zinc-700 dark:text-zinc-200">Delete this task for good?</p>
@@ -147,11 +178,16 @@ function Row({ task, onEdit, onDelete, onRemind }: {
     );
 }
 
-export default function AssignedView({ from, to, onEdit, onDelete }: {
+export default function AssignedView({ from, to, onEdit, onDelete, meId, actions, onFollowUp }: {
     from: string;
     to: string;
-    onEdit: (id: string, title: string, description?: string) => Promise<boolean>;
+    onEdit: (id: string, title: string, description?: string, extra?: EditExtra) => Promise<boolean>;
     onDelete: (id: string) => Promise<boolean>;
+    /** Owner 2026-10-28: the task window (same as the board's). */
+    meId: string;
+    actions: AssignedViewActions;
+    /** Opens New task as a follow-up, for the person holding this task (they can pick someone else). */
+    onFollowUp: (task: AssignedTask) => void;
 }) {
     const reduce = !!useReducedMotion();
     const [tasks, setTasks] = useState<AssignedTask[] | null>(null);
@@ -160,6 +196,7 @@ export default function AssignedView({ from, to, onEdit, onDelete }: {
     const [who, setWho] = useState<Who>('me');
     const [flash, setFlash] = useState<{ ok: boolean; text: string } | null>(null);
     const [remindingAll, setRemindingAll] = useState(false);
+    const [viewId, setViewId] = useState<string | null>(null);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -187,6 +224,19 @@ export default function AssignedView({ from, to, onEdit, onDelete }: {
         if (ok) load();
         return ok;
     };
+    // Owner 2026-10-28: the task window. Changes I make there reload this list, so the window shows them at once.
+    const viewing = viewId ? (tasks || []).find(t => t.id === viewId) || null : null;
+    const closeView = useCallback(() => setViewId(null), []);
+    const reloadAfter = <A extends unknown[]>(fn: ((...a: A) => Promise<boolean>) | undefined) =>
+        fn && (async (...a: A) => { const ok = await fn(...a); if (ok) load(); return ok; });
+    const viewActions: TaskViewActions | undefined = !viewing ? undefined : viewing.mine ? {
+        ...actions, people: [],
+        onEdit: async (id, title, description, extra) => { const ok = await onEdit(id, title, description, extra); if (ok) load(); return ok; },
+        onAddNote: reloadAfter(actions.onAddNote),
+        onEditNote: reloadAfter(actions.onEditNote),
+        uploadFiles: actions.uploadFiles && (async (ids, files) => { const n = await actions.uploadFiles!(ids, files); load(); return n; }),
+        onFollowUp: () => onFollowUp(viewing),
+    } : { people: [], listFiles: actions.listFiles };
     // Owner 2026-10-20: remind the people doing these tasks. The server checks everything again (who gave it, still open,
     // not reminded in the last hour) and says what it skipped.
     const remind = async (ids: string[]) => {
@@ -263,10 +313,11 @@ export default function AssignedView({ from, to, onEdit, onDelete }: {
             ) : (
                 <ul className="grid grid-cols-1 gap-2.5 @2xl:grid-cols-2 @5xl:grid-cols-3">
                     <AnimatePresence initial={!reduce}>
-                        {shown.map(t => <Row key={t.id} task={t} onEdit={edit} onDelete={remove} onRemind={remind} />)}
+                        {shown.map(t => <Row key={t.id} task={t} onEdit={edit} onDelete={remove} onRemind={remind} onView={setViewId} />)}
                     </AnimatePresence>
                 </ul>
             )}
+            <TaskView task={viewing ? asBoardTask(viewing) : null} meId={meId} onClose={closeView} onMove={noMove} actions={viewActions} />
         </div>
     );
 }

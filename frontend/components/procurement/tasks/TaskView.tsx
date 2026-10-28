@@ -233,6 +233,14 @@ function TaskViewBody({ task, meId, onClose, onMove, actions }: {
                                 </div>
                             )}
 
+                            {/* Owner 2026-10-28: what the holder wrote when marking it done */}
+                            {task.completionRemark && (
+                                <section aria-labelledby="task-view-remark" className="space-y-1.5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 dark:border-emerald-900/60 dark:bg-emerald-950/30">
+                                    <h3 id="task-view-remark" className="text-[11px] font-black uppercase tracking-widest text-emerald-800 dark:text-emerald-300">Completion remark</h3>
+                                    <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-emerald-950 dark:text-emerald-100">{task.completionRemark}</p>
+                                </section>
+                            )}
+
                             {/* Notes, in full */}
                             <section aria-labelledby="task-view-notes" className="space-y-2">
                                 <div className="flex items-center justify-between gap-2">

@@ -1,5 +1,6 @@
 import { normalizeInbound } from '@/backend/lib/whatsapp/assistant/protocol.mjs';
 import type { AccessDecision } from './TaskAccessService';
+import { withPersonalSwitch } from './personalSwitch';
 import type { Employee, TestingConfig } from './types';
 import type { ParseInput } from './TaskImportParser';
 import {
@@ -192,6 +193,8 @@ export interface InboundIO {
     /** Owner 2026-10-19: departments with Smart chat ON. Typed text from them goes to the AI, not to this importer.
      *  Absent (older callers / tests) → treated as none, i.e. the previous behaviour. */
     getSmartChatDepartments?(): Promise<ReadonlySet<string>>;
+    /** Owner 2026-10-28: personal exceptions to Task import / Smart chat (missing = everyone follows their team). */
+    personalSwitches?(key: 'task_import' | 'smart_chat'): Promise<{ anyOn: boolean; of: (userId: string) => boolean | null }>;
     getEmployee(phone: string): Promise<Employee | null>;
     checkAccess(employee: Employee): Promise<AccessDecision>;
     fetchMedia(url: string): Promise<MediaFetchResult>;
@@ -221,9 +224,12 @@ export async function claimTaskImport(body: unknown, io?: InboundIO): Promise<Im
         }
 
         // One small read first: while no department has Task Import ON (the default), nothing else is read.
-        const importDepartments = await real.getImportDepartments();
-        if (importDepartments.size === 0) return NOT_HANDLED;
+        const teamImport = await real.getImportDepartments();
+        const personalImport = real.personalSwitches ? await real.personalSwitches('task_import') : null;
+        if (teamImport.size === 0 && !personalImport?.anyOn) return NOT_HANDLED;
         const employee = await real.getEmployee(cand.phone);
+        // Owner 2026-10-28: the person's own exception wins over their department's switch
+        const importDepartments = withPersonalSwitch(teamImport, employee?.department_id, employee && personalImport ? personalImport.of(employee.id) : null);
         if (!employee?.department_id || !importDepartments.has(employee.department_id)) return NOT_HANDLED;
         const access = await real.checkAccess(employee);
         const config = await real.getConfig();
@@ -232,7 +238,8 @@ export async function claimTaskImport(body: unknown, io?: InboundIO): Promise<Im
         // Owner 2026-10-19: for a team with Smart chat ON, TYPED tasks ("add task: Autopilot amplify payment") are handled by the
         // AI, which understands one task or several. This importer keeps images and Excel files, and only finishes a list it is
         // already in the middle of (a preview waiting for YES, a file being read, the "task list or ticket?" photo question).
-        if (cand.mediaClass === 'text' && real.getSmartChatDepartments && (await real.getSmartChatDepartments()).has(employee.department_id)) {
+        const smartOwn = real.personalSwitches ? (await real.personalSwitches('smart_chat')).of(employee.id) : null;
+        if (cand.mediaClass === 'text' && real.getSmartChatDepartments && (smartOwn ?? (await real.getSmartChatDepartments()).has(employee.department_id))) {
             const ctx = await deps.getContext(cand.phone);
             const midImport = ctx?.type === IMPORT_CONTEXT.PREVIEW || ctx?.type === IMPORT_CONTEXT.PROCESSING || ctx?.type === IMPORT_CONTEXT.PHOTO_CHOICE;
             if (!midImport) {
@@ -363,6 +370,7 @@ export async function defaultInboundIO(): Promise<InboundIO> {
         getConfig: () => TaskDatabaseService.getTestingConfig(),
         getImportDepartments: async () => (await TaskAccessService.getTaskImportDepartments()).departments,
         getSmartChatDepartments: async () => (await TaskAccessService.getSmartChatDepartments()).departments,
+        personalSwitches: key => TaskAccessService.personalSwitches(key),
         getEmployee: phone => TaskDatabaseService.getEmployeeByPhone(phone),
         checkAccess: employee => TaskAccessService.check({ userId: employee.id, departmentId: employee.department_id }),
         fetchMedia: url => fetchMediaSafely(url),

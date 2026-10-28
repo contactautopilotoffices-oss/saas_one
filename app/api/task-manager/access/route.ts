@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
-import { TaskAccessService, AccessNotProvisionedError, TEAM_FEATURES, TeamFeature } from '@/task-manager/TaskAccessService';
+import { TaskAccessService, AccessNotProvisionedError, TEAM_FEATURES, TeamFeature, COMPLETION_REMARK_MODES, CompletionRemarkMode, PERSON_SETTINGS, PersonSetting } from '@/task-manager/TaskAccessService';
 import { TaskDatabaseService } from '@/task-manager/TaskDatabaseService';
 import { resetBotSwitchCache } from '@/task-manager/BotSwitches';
 import { clearAllMemory } from '@/task-manager/ConversationMemory';
@@ -97,6 +97,28 @@ export async function POST(request: NextRequest) {
             }
             await TaskAccessService.setCrossDeptPerson(body.userId, body.enabled, guard.label);
             return NextResponse.json({ success: true, message: body.enabled ? 'Can now send to other departments.' : 'Can no longer send to other departments.' });
+        }
+
+        // Owner 2026-10-28: "Remark on completion" for a team (off | ask | required)
+        if (body.action === 'set_completion_remark') {
+            if (!body.departmentId || !COMPLETION_REMARK_MODES.includes(body.mode)) {
+                return NextResponse.json({ success: false, error: 'Missing departmentId or mode (off | ask | required)' }, { status: 400 });
+            }
+            await TaskAccessService.setCompletionRemark(body.departmentId, body.mode as CompletionRemarkMode, guard.label);
+            return NextResponse.json({ success: true, message: 'Remark on completion saved.' });
+        }
+        // Owner 2026-10-28: one person's exception to a team switch (value null = follow the team), or reset them all
+        if (body.action === 'set_person_setting') {
+            if (!body.userId || !PERSON_SETTINGS.includes(body.setting) || !(body.value === null || typeof body.value === 'string')) {
+                return NextResponse.json({ success: false, error: 'Missing userId, setting or value' }, { status: 400 });
+            }
+            await TaskAccessService.setPersonSetting(body.userId, body.setting as PersonSetting, body.value, guard.label);
+            return NextResponse.json({ success: true, message: body.value === null ? 'Now follows the team.' : 'Saved for this person.' });
+        }
+        if (body.action === 'reset_person_settings') {
+            if (!body.userId) return NextResponse.json({ success: false, error: 'Missing userId' }, { status: 400 });
+            await TaskAccessService.resetPersonSettings(body.userId, guard.label);
+            return NextResponse.json({ success: true, message: 'Back to the team settings.' });
         }
 
         // Owner 2026-10-19: the other per-team switches (Pending on…, Protect given tasks, Assigned by me tab)

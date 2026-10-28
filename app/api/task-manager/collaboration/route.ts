@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic';
 /**
  * Owner 2026-10-26: cross-department collaboration (the Send tab's "Other departments").
  *   GET  /api/task-manager/collaboration                    people in other departments + what I sent + what was asked of me
- *   POST { action: 'send' | 'respond' | 'remind' | 'check_duplicate', ... }
+ *   POST { action: 'send' | 'respond' | 'remind' | 'clear_sent' | 'check_duplicate', ... }
  *
  * WHO is acting always comes from the signed-in session; the request body can never name the actor.
  */
@@ -45,7 +45,8 @@ export async function POST(request: NextRequest) {
 
         if (body.action === 'send') {
             const result = await CollaborationService.send(userId, {
-                targetUserId: body.targetUserId, kind: body.kind, title: body.title, description: body.description, neededBy: body.neededBy || undefined, dueTime: body.dueTime || undefined,
+                targetUserId: body.targetUserId, kind: body.kind, title: body.title, description: body.description, neededBy: body.neededBy || undefined,
+                startDate: body.startDate || undefined, dueDate: body.dueDate || undefined, dueTime: body.dueTime || undefined,
             });
             return NextResponse.json({ success: true, ...result });
         }
@@ -55,6 +56,10 @@ export async function POST(request: NextRequest) {
         }
         if (body.action === 'remind') {
             const result = await CollaborationService.remind(userId, body.taskIds);
+            return NextResponse.json({ success: true, ...result });
+        }
+        if (body.action === 'clear_sent') {
+            const result = await CollaborationService.clearSent(userId, body.items);
             return NextResponse.json({ success: true, ...result });
         }
         if (body.action === 'check_duplicate') {

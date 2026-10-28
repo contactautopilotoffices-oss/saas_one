@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { MAX_CARRY_DAYS, TaskDatabaseService, carryDaysOf } from './TaskDatabaseService';
 import { ALL_TIME_FROM } from './dateRange';
-import { TaskAccessService } from './TaskAccessService';
+import { TaskAccessService, type CompletionRemarkMode } from './TaskAccessService';
 import { PermissionDeniedError, PermissionService } from './PermissionService';
 import { HierarchyService } from './HierarchyService';
 import { personLabel, sendTaskAssigned, sendTaskDependency, sendTaskHandover, sendTaskReminder } from './taskAlerts';
@@ -68,6 +68,8 @@ export interface WorkspaceTask {
     due: TaskDue | null;
     /** Owner 2026-10-27: my own personal task (I hold it and nobody else gave it) — I may edit or delete its notes. */
     canEditNotes: boolean;
+    /** Owner 2026-10-28: what the holder wrote when they marked it done (shown on its own, not as a note). */
+    completionRemark: string | null;
 }
 
 /** Owner 2026-10-26: an open task that looks like the one about to be given (the "Duplicate task alert"). */
@@ -96,6 +98,16 @@ export interface AssignedTask {
     /** True when I gave it (or I am a superuser): I may edit and delete it. Seniors only view. */
     mine: boolean;
     isCarriedForward: boolean;
+    /** Owner 2026-10-28: the task window opened from this tab (follow-up link, others on it, files, deadline). */
+    followUpOf: { id: string; title: string } | null;
+    alsoWith: Array<{ name: string; status: TaskStatus }>;
+    attachmentCount: number;
+    supportRequest: boolean;
+    due: TaskDue | null;
+    /** Owner 2026-10-28: the person who gave it may edit and delete its notes. */
+    canEditNotes: boolean;
+    /** Owner 2026-10-28: what the holder wrote when they marked it done. */
+    completionRemark: string | null;
 }
 
 export interface WorkspaceMember {
@@ -125,7 +137,7 @@ export type WorkspaceResponse =
          *  Empty when the "Pending on…" switch is OFF for my department. */
         dependencyPeople: Array<{ userId: string; name: string }>;
         /** Owner 2026-10-19: per-team switches the screen needs (from the Control Center). */
-        features: { assignedTab: boolean; pendingOn: boolean; dueDates: boolean };
+        features: { assignedTab: boolean; pendingOn: boolean; dueDates: boolean; completionRemark: CompletionRemarkMode };
     };
 
 /** One row of the superuser's cross-department console. `department` is the OTHER person's department. */
@@ -146,6 +158,8 @@ export interface ConsoleTask {
     isCarriedForward?: boolean;
     personName: string;
     department: string;
+    /** Owner 2026-10-28: what the holder wrote when they marked it done. */
+    completionRemark: string | null;
 }
 
 export interface ConsoleResponse {
@@ -153,6 +167,8 @@ export interface ConsoleResponse {
     departments: string[];
     mine: ConsoleTask[];
     given: ConsoleTask[];
+    /** Owner 2026-10-28: the comment box when the superuser marks one of their own tasks done. */
+    completionRemark: CompletionRemarkMode;
 }
 
 // Owner 2026-10-15: carry-forward follows each person's DEPARTMENT setting (Notifications tab, 1–7 days or off), the same
@@ -211,6 +227,10 @@ export function isPersonalTask(row: { employee_id: string; assigned_by?: string 
     return row.employee_id === actorId && (!row.assigned_by || row.assigned_by === actorId);
 }
 
+/** Owner 2026-10-28: notes may be edited or deleted on my personal task, or on a task I gave (not by its holder). */
+export const mayChangeNotes = (row: { employee_id: string; assigned_by?: string | null }, actorId: string): boolean =>
+    isPersonalTask(row, actorId) || row.assigned_by === actorId;
+
 /**
  * Owner 2026-10-27: the note lines of a description, as the task window lists them (the "Given by …" trail is not a note),
  * each with its line number in the stored text and its text without the "Remark:" prefix.
@@ -218,14 +238,32 @@ export function isPersonalTask(row: { employee_id: string; assigned_by?: string 
 export function noteLines(description: string | null | undefined): Array<{ line: number; text: string; prefixed: boolean }> {
     return String(description || '').split('\n')
         .map((raw, line) => ({ raw: raw.trim(), line }))
-        .filter(x => x.raw && !x.raw.startsWith(HANDOVER_NOTE_PREFIX))
+        .filter(x => x.raw && !x.raw.startsWith(HANDOVER_NOTE_PREFIX) && !x.raw.startsWith(COMPLETION_REMARK_PREFIX))
         .map(x => ({ line: x.line, text: x.raw.replace(/^Remark:\s*/i, ''), prefixed: /^Remark:/i.test(x.raw) }));
 }
 
+/** The notes as the screens list them: without the "Given by …" trail and (owner 2026-10-28) the completion remark. */
 export function withoutHandoverNotes(description: string | null | undefined): string | null {
-    const kept = String(description || '').split('\n').filter(l => !l.trim().startsWith(HANDOVER_NOTE_PREFIX)).join('\n').trim();
+    const kept = String(description || '').split('\n')
+        .filter(l => !l.trim().startsWith(HANDOVER_NOTE_PREFIX) && !l.trim().startsWith(COMPLETION_REMARK_PREFIX)).join('\n').trim();
     return kept || null;
 }
+
+/**
+ * Owner 2026-10-28: "Remark on completion". A task keeps ONE completion remark, stored as its own line of the description
+ * ("Completion remark: …"), so no new column is needed; marking it done again replaces it.
+ */
+export const COMPLETION_REMARK_PREFIX = 'Completion remark: ';
+export function completionRemarkOf(description: string | null | undefined): string | null {
+    const line = String(description || '').split('\n').map(l => l.trim()).filter(l => l.startsWith(COMPLETION_REMARK_PREFIX)).pop();
+    return line ? line.slice(COMPLETION_REMARK_PREFIX.length).trim() || null : null;
+}
+export function withCompletionRemark(description: string | null | undefined, remark: string): string {
+    const kept = String(description || '').split('\n').filter(l => !l.trim().startsWith(COMPLETION_REMARK_PREFIX)).join('\n').trim();
+    return kept ? `${kept}\n${COMPLETION_REMARK_PREFIX}${remark}` : `${COMPLETION_REMARK_PREFIX}${remark}`;
+}
+/** How a finished task reads in the giver's WhatsApp message and bell (the approved template has no Remark line). */
+export const withRemarkLabel = (title: string, remark: string | null | undefined) => (remark ? `${title} (Remark: ${remark})` : title);
 
 /** True when someone other than the holder created the task (a task you made for yourself is not "given"). */
 export const isGivenByOther = (task: { assigned_by?: string | null; employee_id: string }) => !!task.assigned_by && task.assigned_by !== task.employee_id;
@@ -371,11 +409,16 @@ export class WorkspaceService {
         const extras = await loadTaskExtras(rows.map(r => r.id as string), id => pool.find(e => e.id === id)?.name || 'Someone');
         // Owner 2026-10-19: per-team switches. "Protect given tasks" follows the HOLDER's department.
         const feats = await TaskAccessService.getTeamFeatures();
-        const protectedFor = (holderId: string) => feats.protectGiven.has(byId.get(holderId)?.department_id ?? '');
+        // Owner 2026-10-28: a person's own exception wins over their team's switch
+        const personal = await TaskAccessService.getPersonOverrides();
+        const own = (userId: string, key: 'protect_given' | 'assigned_tab' | 'pending_on') => TaskAccessService.switchFrom(personal, userId, key);
+        const protectedFor = (holderId: string) => own(holderId, 'protect_given') ?? feats.protectGiven.has(byId.get(holderId)?.department_id ?? '');
         const myFeatures = {
-            assignedTab: actor.role === 'superuser' || (!!actor.department_id && feats.assignedTab.has(actor.department_id)),
-            pendingOn: !!actor.department_id && feats.pendingOn.has(actor.department_id),
+            assignedTab: actor.role === 'superuser' || (own(actor.id, 'assigned_tab') ?? (!!actor.department_id && feats.assignedTab.has(actor.department_id))),
+            pendingOn: !!actor.department_id && (own(actor.id, 'pending_on') ?? feats.pendingOn.has(actor.department_id)),
             dueDates: await this.mayUseDueDates(actor),
+            // Owner 2026-10-28: the comment box when I mark one of my tasks done
+            completionRemark: await TaskAccessService.completionRemarkFor(actor),
         };
         const canChange = (ownerId: string) => actor.role === 'superuser' || ownerId === actor.id || below.has(ownerId);
         const nameOf = (id: string | null | undefined) => (id ? pool.find(e => e.id === id)?.name || 'Someone' : null);
@@ -401,7 +444,8 @@ export class WorkspaceService {
                 completedAt: (r.completed_at as string) || null,
                 canDelete: canChange(r.employee_id) && (!protectedFor(r.employee_id) || mayRemoveGivenTask(r, actor, !!r.assigned_by && below.has(r.assigned_by))),
                 canEdit: (r.assigned_by === actor.id || actor.role === 'superuser') && !isLockedFor(templates.get(r.task_template_id), r.employee_id as string),
-                canEditNotes: isPersonalTask(r, actor.id),
+                canEditNotes: mayChangeNotes(r, actor.id),
+                completionRemark: completionRemarkOf(r.description as string),
                 ...(extras.get(r.id as string) ?? NO_EXTRAS),
                 _created: r.created_at as string,
             }))
@@ -432,7 +476,7 @@ export class WorkspaceService {
 
         // Working with a superuser: when this team has it ON, tell the screen who they can work with — a superuser who is
         // unlocked AND above them in the reporting chain (owner 2026-10-15: same rule as assertCanAssignTask).
-        const collabOn = actor.role !== 'superuser' && await TaskAccessService.isSuperuserCollabEnabled(actor.department_id);
+        const collabOn = actor.role !== 'superuser' && await TaskAccessService.isSuperuserCollabEnabled(actor.department_id, actor.id);
         const superusers = collabOn
             ? (await TaskAccessService.partition(await PermissionService.superusersAbove(actor, pool), snapshot)).allowed
                 .map(e => ({ userId: e.id, name: e.name }))
@@ -449,7 +493,7 @@ export class WorkspaceService {
         return {
             state: 'ok',
             actor: { userId: actor.id, name: actor.name, role: actor.role, departmentName: actor.department_name },
-            teamSharing: await TaskAccessService.isPeerAssignEnabled(actor.department_id),
+            teamSharing: await TaskAccessService.isPeerAssignEnabled(actor.department_id, actor.id),
             date,
             to,
             members: memberViews,
@@ -497,7 +541,9 @@ export class WorkspaceService {
             return {
                 id: r.id as string,
                 title: r.title as string,
-                description: (r.description as string) || null,
+                // Owner 2026-10-28: the completion remark is shown on its own, not as part of the details
+                description: String(r.description || '').split('\n').filter(l => !l.trim().startsWith(COMPLETION_REMARK_PREFIX)).join('\n').trim() || null,
+                completionRemark: completionRemarkOf(r.description as string),
                 status: r.status as TaskStatus,
                 assignedDate: r.assigned_date as string,
                 locked: isLockedFor(templates.get(r.task_template_id), r.employee_id as string),
@@ -517,7 +563,7 @@ export class WorkspaceService {
         const active = await TaskAccessService.activeDepartmentIds();
         const departments = Array.from(new Set(pool.filter(e => e.department_id && active.has(e.department_id)).map(e => e.department_name)
             .filter((n): n is string => !!n))).sort((a, b) => a.localeCompare(b));
-        return { actor: { userId: actor.id, name: actor.name }, departments, mine, given };
+        return { actor: { userId: actor.id, name: actor.name }, departments, mine, given, completionRemark: await TaskAccessService.completionRemarkFor(actor) };
     }
 
     /**
@@ -534,7 +580,7 @@ export class WorkspaceService {
 
     /** Owner 2026-10-27: may this person set due dates? Their department's "Due dates" switch; superusers always. */
     private static async mayUseDueDates(actor: Employee): Promise<boolean> {
-        return actor.role === 'superuser' || await TaskAccessService.isDueDatesEnabled(actor.department_id);
+        return actor.role === 'superuser' || await TaskAccessService.isDueDatesEnabled(actor.department_id, actor.id);
     }
 
     /** A deadline sent by the browser: checked against the start date and the actor's switch. null = none. */
@@ -765,8 +811,8 @@ export class WorkspaceService {
 
         const { data: row, error } = await supabaseAdmin.from('task_assignments').select('*').eq('id', input.taskId).maybeSingle();
         if (error || !row) throw new WorkspaceError(404, 'Task not found.');
-        if (!isPersonalTask(row as { employee_id: string; assigned_by: string | null }, actor.id)) {
-            throw new WorkspaceError(403, 'Notes can only be changed on your own personal tasks.', 'NOT_PERSONAL');
+        if (!mayChangeNotes(row as { employee_id: string; assigned_by: string | null }, actor.id)) {
+            throw new WorkspaceError(403, 'Notes can only be changed on your own personal tasks, or on tasks you gave.', 'NOT_PERSONAL');
         }
         const notes = noteLines(row.description as string | null);
         const target = notes[input.index];
@@ -779,7 +825,7 @@ export class WorkspaceService {
 
         const { data: saved, error: upError } = await supabaseAdmin.from('task_assignments')
             .update({ description, updated_at: new Date().toISOString() })
-            .eq('id', row.id).eq('employee_id', actor.id).eq('description', row.description as string).select('id').maybeSingle();
+            .eq('id', row.id).eq('employee_id', row.employee_id as string).eq('description', row.description as string).select('id').maybeSingle();
         if (upError) {
             console.error('[WorkspaceService] note change failed:', upError);
             throw new WorkspaceError(500, 'Could not save the note just now. Please try again.');
@@ -790,6 +836,42 @@ export class WorkspaceService {
             actorId: actor.id, targetEmployeeId: row.employee_id, taskId: row.id,
             details: { title: row.title, from: target.text, ...(remove ? {} : { to: text }), via: 'web_tasks_tab' },
         });
+        return { id: row.id as string };
+    }
+
+    /**
+     * Owner 2026-10-28: "Add remark" on a task I already finished (e.g. I skipped the box): sets or replaces its completion
+     * remark. Only the holder, only once it is done. The person who gave it is told in the app.
+     */
+    static async setCompletionRemark(actorUserId: string, input: { taskId?: unknown; remark?: unknown }): Promise<{ id: string }> {
+        if (!isUuid(input.taskId)) throw new WorkspaceError(400, 'That task is not valid.');
+        const remark = String(input.remark ?? '').replace(/\s+/g, ' ').trim();
+        if (!remark) throw new WorkspaceError(400, 'The remark is empty.');
+        if (remark.length > 300) throw new WorkspaceError(400, 'The remark is too long (300 characters at most).');
+        const actor = await this.requireUnlockedActor(actorUserId);
+
+        const { data: row, error } = await supabaseAdmin.from('task_assignments').select('*').eq('id', input.taskId).maybeSingle();
+        if (error || !row) throw new WorkspaceError(404, 'Task not found.');
+        if (row.employee_id !== actor.id) throw new WorkspaceError(403, 'Only the person who did this task can add its remark.', 'NOT_HOLDER');
+        if (row.status !== 'completed') throw new WorkspaceError(409, 'The remark is added when the task is done.', 'NOT_DONE');
+
+        const description = withCompletionRemark(row.description as string | null, remark);
+        if (description.length > 1000) throw new WorkspaceError(400, 'This task already has a lot of notes, so the remark does not fit. Please shorten it.');
+        const { data: saved, error: upError } = await supabaseAdmin.from('task_assignments')
+            .update({ description, updated_at: new Date().toISOString() }).eq('id', row.id).eq('employee_id', actor.id).select('id').maybeSingle();
+        if (upError) {
+            console.error('[WorkspaceService] completion remark failed:', upError);
+            throw new WorkspaceError(500, 'Could not save the remark just now. Please try again.');
+        }
+        if (!saved) throw new WorkspaceError(409, 'This task changed just now. Please refresh and try again.', 'CHANGED');
+        await TaskDatabaseService.logAudit({
+            eventType: 'task_completion_remark_added', actorId: actor.id, targetEmployeeId: row.employee_id, taskId: row.id,
+            details: { title: row.title, remark, via: 'web_tasks_tab' },
+        });
+        if (row.assigned_by && row.assigned_by !== actor.id) {
+            const giver = await TaskDatabaseService.getEmployeeById(row.assigned_by as string).catch(() => null);
+            if (giver?.active) void taskBell({ userId: giver.id, kind: 'TASK_UPDATE', title: `Remark from ${actor.name}`, message: `${actor.name} on "${row.title}": ${remark}`, departmentName: giver.department_name });
+        }
         return { id: row.id as string };
     }
 
@@ -890,7 +972,7 @@ export class WorkspaceService {
         if (mayRemoveGivenTask(row, actor)) return;
         // Owner 2026-10-19: only for teams where "Protect given tasks" is switched ON (the holder's department).
         const holder = await TaskDatabaseService.getEmployeeById(row.employee_id);
-        if (!(await TaskAccessService.teamFeaturesFor(holder?.department_id)).protectGiven) return;
+        if (!(await TaskAccessService.teamFeaturesFor(holder?.department_id, holder?.id)).protectGiven) return;
         if (row.assigned_by) {
             const { hierarchy } = await HierarchyService.load();
             if (mayRemoveGivenTask(row, actor, hierarchy.isAbove(actor.id, row.assigned_by))) return;
@@ -906,7 +988,7 @@ export class WorkspaceService {
      */
     static async loadAssigned(actorUserId: string, range?: { from?: string; to?: string }): Promise<{ tasks: AssignedTask[] }> {
         const actor = await this.requireUnlockedActor(actorUserId);
-        if (actor.role !== 'superuser' && !(await TaskAccessService.teamFeaturesFor(actor.department_id)).assignedTab) {
+        if (actor.role !== 'superuser' && !(await TaskAccessService.teamFeaturesFor(actor.department_id, actor.id)).assignedTab) {
             throw new WorkspaceError(403, 'The "Assigned by me" tab is not switched on for your team.', 'FEATURE_OFF');
         }
         const to = isDate(range?.to) ? range!.to : todayIST();
@@ -930,8 +1012,9 @@ export class WorkspaceService {
 
         const pool = await TaskDatabaseService.getAllEmployees();
         const nameOf = (id: string) => pool.find(e => e.id === id)?.name || 'Unknown';
-        const tasks: AssignedTask[] = [...(open.data || []), ...(done.data || [])]
-            .filter(r => isGivenByOther(r))
+        const given = [...(open.data || []), ...(done.data || [])].filter(r => isGivenByOther(r));
+        const extras = await loadTaskExtras(given.map(r => r.id as string), nameOf);
+        const tasks: AssignedTask[] = given
             .map(r => ({
                 id: r.id as string,
                 title: r.title as string,
@@ -946,6 +1029,9 @@ export class WorkspaceService {
                 assignerName: r.assigned_by === actor.id ? 'You' : nameOf(r.assigned_by as string),
                 mine: r.assigned_by === actor.id || actor.role === 'superuser',
                 isCarriedForward: (r.assigned_date as string) < from && from !== ALL_TIME_FROM,
+                ...(extras.get(r.id as string) ?? NO_EXTRAS),
+                canEditNotes: r.assigned_by === actor.id,
+                completionRemark: completionRemarkOf(r.description as string),
             }))
             .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
         return { tasks };
@@ -1158,7 +1244,7 @@ export class WorkspaceService {
         if (!input.taskId) throw new WorkspaceError(400, 'Missing task.');
         if (!input.targetUserId) throw new WorkspaceError(400, 'Choose who the task is pending on.');
         const actor = await this.requireUnlockedActor(actorUserId);
-        if (!(await TaskAccessService.teamFeaturesFor(actor.department_id)).pendingOn) {
+        if (!(await TaskAccessService.teamFeaturesFor(actor.department_id, actor.id)).pendingOn) {
             throw new WorkspaceError(403, '"Pending on" is not switched on for your team.', 'FEATURE_OFF');
         }
         if (input.targetUserId === actor.id) throw new WorkspaceError(400, 'Choose a colleague, not yourself.', 'SAME_PERSON');
@@ -1212,7 +1298,7 @@ export class WorkspaceService {
         if (ids.length > 50) throw new WorkspaceError(400, 'At most 50 tasks at a time.');
         const actor = await this.requireUnlockedActor(actorUserId);
         const isSuper = actor.role === 'superuser';
-        if (!isSuper && !input.crossDepartment && !(await TaskAccessService.teamFeaturesFor(actor.department_id)).assignedTab) {
+        if (!isSuper && !input.crossDepartment && !(await TaskAccessService.teamFeaturesFor(actor.department_id, actor.id)).assignedTab) {
             throw new WorkspaceError(403, 'Reminders come with the "Assigned by me" tab, which is not switched on for your team.', 'FEATURE_OFF');
         }
 
@@ -1329,23 +1415,55 @@ export class WorkspaceService {
     /** One grouped completion notice for tasks that were completed quietly (`notifyGiver: false`), e.g. "done all". */
     static async notifyCompleted(taskIds: string[]): Promise<number> {
         if (!taskIds.length) return 0;
-        const { data } = await supabaseAdmin.from('task_assignments').select('id, title, employee_id, assigned_by, status').in('id', taskIds);
-        return notifyGiversOfCompletion((data || []).filter(r => r.status === 'completed') as any[]);
+        const { data } = await supabaseAdmin.from('task_assignments').select('id, title, description, employee_id, assigned_by, status').in('id', taskIds);
+        // Owner 2026-10-28: the completion remark travels with the title (the approved template has no Remark line)
+        return notifyGiversOfCompletion((data || []).filter(r => r.status === 'completed')
+            .map(r => ({ ...r, title: withRemarkLabel(r.title as string, completionRemarkOf(r.description as string)) })) as any[]);
     }
 
-    static async setStatus(actorUserId: string, input: { taskId?: string; status?: string; notifyGiver?: boolean }): Promise<TaskAssignment> {
+    /**
+     * Owner 2026-10-28: only the person holding a task changes its status (nobody completes someone else's task). A
+     * `remark` sent with "completed" is saved as the task's completion remark and goes to the giver with the notice; when
+     * the holder's "Remark on completion" is 'required', a task cannot be marked done without one.
+     */
+    static async setStatus(actorUserId: string, input: { taskId?: string; status?: string; notifyGiver?: boolean; remark?: unknown }): Promise<TaskAssignment> {
         if (!input.taskId) throw new WorkspaceError(400, 'Missing task.');
         if (!['pending', 'in_progress', 'completed'].includes(input.status || '')) {
             throw new WorkspaceError(400, 'Status must be pending, in_progress or completed.');
         }
+        const remark = String(input.remark ?? '').replace(/\s+/g, ' ').trim();
+        if (remark.length > 300) throw new WorkspaceError(400, 'The remark is too long (300 characters at most).');
+        if (remark && input.status !== 'completed') throw new WorkspaceError(400, 'A completion remark goes with marking a task done.');
 
         const actor = await this.requireUnlockedActor(actorUserId);
 
         const { data: row, error } = await supabaseAdmin.from('task_assignments').select('*').eq('id', input.taskId).maybeSingle();
         if (error || !row) throw new WorkspaceError(404, 'Task not found.');
 
-        // Throws PermissionDeniedError unless: own task, a task of someone below you, or you are a superuser
-        await PermissionService.assertCanCompleteTask(actor.id, row as TaskAssignment);
+        if (row.employee_id !== actor.id) {
+            await TaskDatabaseService.logAudit({
+                eventType: 'permission_denied', actorId: actor.id, targetEmployeeId: row.employee_id, taskId: row.id,
+                details: { action: 'SET_STATUS', reason: 'Only the holder changes a task\'s status' },
+            });
+            throw new PermissionDeniedError('SET_STATUS', actorUserId, 'Only the person doing this task can change its status.');
+        }
+
+        let description = row.description as string | null;
+        if (input.status === 'completed' && row.status !== 'completed') {
+            if (!remark && (await TaskAccessService.completionRemarkFor(actor)) === 'required') {
+                throw new WorkspaceError(400, 'Please add a remark: what was done? On WhatsApp, reply "done <number>: what you did".', 'REMARK_REQUIRED');
+            }
+            if (remark) {
+                const next = withCompletionRemark(description, remark);
+                if (next.length > 1000) throw new WorkspaceError(400, 'This task already has a lot of notes, so the remark does not fit. Please shorten it.');
+                const { error: upError } = await supabaseAdmin.from('task_assignments').update({ description: next, updated_at: new Date().toISOString() }).eq('id', row.id);
+                if (upError) {
+                    console.error('[WorkspaceService] could not save the completion remark:', upError);
+                    throw new WorkspaceError(500, 'Could not save the remark just now. Please try again.');
+                }
+                description = next;
+            }
+        }
 
         const updated = await TaskDatabaseService.updateAssignmentStatus({
             assignmentId: row.id,
@@ -1357,11 +1475,13 @@ export class WorkspaceService {
             actorId: actor.id,
             targetEmployeeId: row.employee_id,
             taskId: row.id,
-            details: { title: row.title, from: row.status, to: input.status, via: 'web_tasks_tab' },
+            details: { title: row.title, from: row.status, to: input.status, via: 'web_tasks_tab', ...(remark ? { remark } : {}) },
         });
 
         // notifyGiver:false → the caller sends ONE grouped notice (or a superuser's reply is relayed instead).
-        if (input.status === 'completed' && row.status !== 'completed' && input.notifyGiver !== false) await this.notifyAssignerOfCompletion(row);
+        if (input.status === 'completed' && row.status !== 'completed' && input.notifyGiver !== false) {
+            await this.notifyAssignerOfCompletion({ ...row, title: withRemarkLabel(row.title as string, completionRemarkOf(description)) });
+        }
 
         return updated;
     }

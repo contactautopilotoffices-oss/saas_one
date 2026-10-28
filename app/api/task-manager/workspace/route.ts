@@ -134,6 +134,12 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ success: true, toName: result.toName });
         }
 
+        // Owner 2026-10-28: the completion remark of a task I already finished
+        if (body.action === 'set_completion_remark') {
+            const result = await WorkspaceService.setCompletionRemark(userId, { taskId: body.taskId, remark: body.remark });
+            return NextResponse.json({ success: true, id: result.id });
+        }
+
         if (body.action === 'add_note') {
             const result = await WorkspaceService.addNote(userId, { taskId: body.taskId, note: body.note, tellGiver: body.tellGiver === true });
             return NextResponse.json({ success: true, id: result.id });
@@ -151,7 +157,7 @@ export async function POST(request: NextRequest) {
         }
 
         if (body.action === 'set_status') {
-            const task = await WorkspaceService.setStatus(userId, { taskId: body.taskId, status: body.status });
+            const task = await WorkspaceService.setStatus(userId, { taskId: body.taskId, status: body.status, remark: body.remark });
             return NextResponse.json({ success: true, task });
         }
 

@@ -12,7 +12,8 @@ import { FoundTask, ResolvedQuery, formatFound, viewFor } from './findTasks';
  */
 
 export interface ExecIO {
-    setStatus(actorId: string, taskId: string, status: 'pending' | 'in_progress' | 'completed', opts?: { notifyGiver?: boolean }): Promise<void>;
+    /** Owner 2026-10-28: `remark` is saved as the completion remark and goes to the giver with the notice. */
+    setStatus(actorId: string, taskId: string, status: 'pending' | 'in_progress' | 'completed', opts?: { notifyGiver?: boolean; remark?: string }): Promise<void>;
     /** ONE grouped "task completed" notice to each giver for tasks completed quietly (optional: without it, each completion
      *  notifies on its own). */
     notifyCompleted?(actorId: string, taskIds: string[]): Promise<void>;
@@ -87,23 +88,23 @@ export async function executeAction(action: Action, ctx: BrainContext, io: ExecI
     const nameOf = (id: string) => (id === me ? 'you' : ctx.people.find(p => p.id === id)?.name ?? 'them');
 
     /** Mark tasks done; givers get ONE grouped "task completed" notice (or none when a relay already tells them). */
-    const completeAll = async (ids: string[], relayTells: boolean) => {
+    const completeAll = async (ids: string[], relayTells: boolean, remark?: string | null) => {
         const quiet = relayTells || (!!io.notifyCompleted && ids.length > 0);
         const doneIds: string[] = [];
-        const r = await each(ids, async id => { await io.setStatus(me, id, 'completed', quiet ? { notifyGiver: false } : undefined); doneIds.push(id); }, titleOf);
+        const opts = { ...(quiet ? { notifyGiver: false } : {}), ...(remark ? { remark } : {}) };
+        const r = await each(ids, async id => { await io.setStatus(me, id, 'completed', Object.keys(opts).length ? opts : undefined); doneIds.push(id); }, titleOf);
         if (!relayTells && io.notifyCompleted && doneIds.length) { try { await io.notifyCompleted(me, doneIds); } catch { /* the tasks are done; a failed notice must not fail them */ } }
         return { ...r, doneIds };
     };
 
     switch (action.type) {
         case 'complete_tasks': {
-            const r = await completeAll(action.taskIds, false);
+            // Owner 2026-10-28: the remark ("done 1: …") is saved as each task's completion remark in the same step as marking
+            // it done, so the giver's notice carries it. With "Remark on completion" required, a task without one is refused.
+            const r = await completeAll(action.taskIds, false, action.note);
             const res = outcome('Marked', 'mark', { one: 'task as done', many: 'tasks as done' }, r.done, r.failed);
-            // Owner 2026-10-26: the optional remark ("done 1: …") is saved on each task that was marked; the giver is told in the app.
-            if (!action.note || !r.doneIds.length || !io.addNote) return res;
-            const saved = await each(r.doneIds, id => io.addNote!(me, id, action.note!, { tellGiver: true }), titleOf);
-            const tail = saved.failed.length ? ` The remark could not be saved on ${saved.failed.length === 1 ? 'one task' : `${saved.failed.length} tasks`}.` : ' Your remark was saved.';
-            return { ...res, summary: `${res.summary}${tail}`, values: { ...res.values, details: [res.values.details, `Remark: ${action.note}`].filter(Boolean).join('\n') } };
+            if (!action.note || !r.doneIds.length) return res;
+            return { ...res, summary: `${res.summary} Your remark was saved.`, values: { ...res.values, details: [res.values.details, `Remark: ${action.note}`].filter(Boolean).join('\n') } };
         }
 
         case 'progress_update': {

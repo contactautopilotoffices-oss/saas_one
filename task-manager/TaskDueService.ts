@@ -59,10 +59,12 @@ export async function runDueReminders(now = Date.now()): Promise<{ sent: number;
     const result = { sent: 0, skipped: 0 };
     try {
         const on = await TaskAccessService.getDueDatesDepartments();
-        if (on.columnMissing || on.departments.size === 0) return result;
+        // Owner 2026-10-28: a person's own exception wins over their department's switch
+        const personal = await TaskAccessService.personalSwitches('due_dates');
+        if (on.columnMissing || (on.departments.size === 0 && !personal.anyOn)) return result;
 
-        // Only people in departments with the switch ON: tasks of other teams can never fill the batch
-        const people = (await TaskDatabaseService.getAllEmployees()).filter(e => e.active && !!e.department_id && on.departments.has(e.department_id));
+        // Only people with the switch ON: tasks of other teams can never fill the batch
+        const people = (await TaskDatabaseService.getAllEmployees()).filter(e => e.active && !!e.department_id && (personal.of(e.id) ?? on.departments.has(e.department_id)));
         if (people.length === 0) return result;
         const today = istDateOf(now);
         const rows: Array<Record<string, unknown>> = [];

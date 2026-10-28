@@ -456,3 +456,15 @@ department with the Task Manager ON, cut at 40 by name, so the active people fel
   the bot as that text and goes through the same `answer_request` path (natural-language users only).
 - **Evaluation**: `test_upgrades_2026_10_26.ts` section 5 updated ("Can't do it" with no reason → one YES → declined
   without a reason; +2 source checks). Prompt and intents unchanged. **L2** knowingly open (scripted model only).
+
+### Changes 2026-10-27 (d): "Accept" button in one tap
+
+- **Owner decision** `[BAA p.115]`: the request template's **Accept** quick-reply arrives as the exact text "Accept". It
+  is now an exact command in the "One front door" fast path (`frontDoor.ts`, plain code, no AI call): with **exactly one**
+  request from another department waiting, it is accepted at once (`answer_request`, same permission-checked
+  `CollaborationService.respond`). Several waiting, none waiting, any other wording, or a question still open → the AI path
+  as before (it asks which one; typed answers still get one YES). "Can't do it" is unchanged: one YES, because declining
+  tells the sender at once and cannot be taken back (owner chose option a).
+- Only while "One front door" is ON and nothing else is waiting for an answer (same rule as "done 2").
+- **Evaluation**: `test_front_door.ts` +3 checks (exact text only; one request → act; several / none → AI). **L2**
+  knowingly open (no live run).
