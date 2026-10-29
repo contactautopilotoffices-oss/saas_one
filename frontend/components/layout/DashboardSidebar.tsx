@@ -9,7 +9,7 @@ import {
     FileUp, Bot, Building2, Send, CalendarDays, Droplets, Coffee,
     Sparkles, DollarSign, ClipboardList, Target, TrendingUp,
     BellRing, HelpCircle, Megaphone, Radio, BookOpen, Smartphone, MessageSquarePlus,
-    ShieldCheck, Wallet, Zap, Gauge, UserCheck, Plus, UserCircle, FileText, DoorOpen
+    ShieldCheck, Wallet, Zap, Gauge, UserCheck, Plus, UserCircle, FileText, DoorOpen, Mic
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { CapabilityDomain } from '@/frontend/types/rbac';
@@ -90,6 +90,8 @@ export default function DashboardSidebar({
                 { label: 'Admin Config', href: `/${orgId}/hr-tickets?tab=config`, icon: Settings, domain: 'tickets' as const },
                 { label: 'Analytics', href: `/${orgId}/hr-tickets?tab=analytics`, icon: BarChart3, domain: 'tickets' as const },
                 { label: 'Task Manager', href: `/${orgId}/hr-tickets?tab=tasks`, icon: ClipboardList, domain: 'tickets' as const },
+                // Owner 2026-10-29: the HR team's own Meeting Assistant (separate from Tech's and the Super Admin's)
+                { label: 'Meeting Assistant', href: `/${orgId}/hr-tickets?tab=meeting_assistant`, icon: Mic, domain: 'tickets' as const },
             ];
         }
 

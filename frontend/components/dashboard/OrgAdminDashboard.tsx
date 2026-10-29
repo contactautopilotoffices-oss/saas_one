@@ -55,6 +55,7 @@ const PPMModule = dynamic(() => import('@/frontend/components/ppm/PPMModule'), {
 const AssetsModule = dynamic(() => import('@/frontend/components/assets/AssetsModule'), { loading: TabLoading });
 const DocumentBank = dynamic(() => import('@/frontend/components/audit/DocumentBank'), { loading: TabLoading });
 const MeetingsHome = dynamic(() => import('@/frontend/components/meetings/MeetingsHome'), { loading: TabLoading });
+const MeetingAssistantTab = dynamic(() => import('@/frontend/components/task-manager/meetings/MeetingsTab'), { loading: TabLoading });
 const WikiHome = dynamic(() => import('@/frontend/components/wiki/WikiHome'), { loading: TabLoading });
 const VendorManagement = dynamic(() => import('@/frontend/components/vendors/VendorManagement'), { loading: TabLoading });
 const TicketFlowMap = dynamic(() => import('../ops/TicketFlowMap'), { loading: TabLoading });
@@ -206,6 +207,9 @@ const OrgAdminDashboard = () => {
     const isOpsSuperAdmin = rawOrgRole.includes('ops_super_admin') || rawOrgRole.includes('ops super admin');
     // Reports → App usage is for org super admins only (the API enforces the same rule).
     const isOrgSuperAdmin = rawOrgRole.includes('org_super_admin');
+    // Owner 2026-10-29: the Super Admin's own Meeting Assistant. Kept mounted once opened, so switching tabs never stops a recording.
+    const [assistantOpened, setAssistantOpened] = useState(false);
+    if (activeTab === 'meeting_assistant' && isOrgSuperAdmin && !assistantOpened) setAssistantOpened(true);
     const reportsView: 'imports' | 'app_usage' = isOrgSuperAdmin && searchParams.get('report') === 'app_usage' ? 'app_usage' : 'imports';
     const setReportsView = (next: 'imports' | 'app_usage') => {
         const params = new URLSearchParams(window.location.search);
@@ -1209,6 +1213,19 @@ const OrgAdminDashboard = () => {
                                     Meetings (Ira)
                                 </button>
                             )}
+                            {/* Owner 2026-10-29: Meeting Assistant — record a meeting, get notes + tasks (Super Admin's own meetings) */}
+                            {isOrgSuperAdmin && (
+                                <button
+                                    onClick={() => handleTabChange('meeting_assistant')}
+                                    className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'meeting_assistant'
+                                        ? 'bg-primary text-text-inverse shadow-sm'
+                                        : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                        }`}
+                                >
+                                    <Mic className="w-4 h-4" />
+                                    Meeting Assistant
+                                </button>
+                            )}
                             <button
                                 onClick={() => handleTabChange('checklist')}
                                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'checklist'
@@ -1849,6 +1866,12 @@ const OrgAdminDashboard = () => {
                         {activeTab === 'meetings' && org && (
                             <div className="w-full min-h-screen bg-white">
                                 <MeetingsHome orgId={org.id} embedded />
+                            </div>
+                        )}
+
+                        {isOrgSuperAdmin && assistantOpened && (
+                            <div className={activeTab === 'meeting_assistant' ? 'w-full p-4 sm:p-6' : 'hidden'}>
+                                <MeetingAssistantTab space="admin" />
                             </div>
                         )}
 
