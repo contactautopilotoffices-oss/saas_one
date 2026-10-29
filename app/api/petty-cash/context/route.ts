@@ -5,14 +5,14 @@ import { pcError } from '@/backend/lib/pettyCash/api';
 export async function GET(request: NextRequest) {
     const access = await resolvePettyCashAccess(request, readOrgId(request));
     if (isPettyCashAccessError(access)) return access;
-    let query = supabaseAdmin.from('properties').select('id,name,code').eq('organization_id', access.organizationId).is('deleted_at', null).eq('is_active', true);
+    let query = supabaseAdmin.from('properties').select('id,name,code,petty_cash_proof_threshold').eq('organization_id', access.organizationId).is('deleted_at', null).eq('is_active', true);
     if (access.propertyIds.length) query = query.in('id', access.propertyIds);
     else query = query.in('id', []);
     const [properties, wallet, routes, configurationProperties, counts] = await Promise.all([
         query.order('name'),
-        access.isMasterAdmin && !access.roles.length ? Promise.resolve({ data: { balance: 0, received: 0, spent: 0, returned: 0, can_request: false, blocker: 'An active internal membership is required to request cash.' }, error: null }) : supabaseAdmin.rpc('pc_wallet', { actor: access.user.id, org: access.organizationId }),
+        access.isMasterAdmin && !access.roles.length ? Promise.resolve({ data: { balance: 0, received: 0, spent: 0, returned: 0, can_request: true, blocker: null }, error: null }) : supabaseAdmin.rpc('pc_wallet', { actor: access.user.id, org: access.organizationId }),
         supabaseAdmin.from('petty_cash_property_assignments').select('property_id,user_id,kind,user:users!user_id(id,full_name,email)').eq('organization_id', access.organizationId).eq('is_active', true).eq('is_primary', true).in('property_id', access.propertyIds),
-        access.canManageRouting ? supabaseAdmin.from('properties').select('id,name,code').eq('organization_id', access.organizationId).is('deleted_at', null).eq('is_active', true).order('name') : Promise.resolve({ data: [], error: null }),
+        access.canManageRouting ? supabaseAdmin.from('properties').select('id,name,code,petty_cash_proof_threshold').eq('organization_id', access.organizationId).is('deleted_at', null).eq('is_active', true).order('name') : Promise.resolve({ data: [], error: null }),
         Promise.resolve(supabaseAdmin.rpc('pc_pending_counts', { actor: access.user.id, org: access.organizationId })).catch(()=>({data:null,error:{message:'Counts unavailable'}})),
     ]);
     const error = properties.error || wallet.error || routes.error || configurationProperties.error;

@@ -5,7 +5,7 @@ import { inr, PC_CATEGORIES, PC_PAYMENT_MODES } from '@/frontend/lib/pettyCash/r
 import ProofUpload from './ProofUpload';
 import { pcFetch, pcJson, pettyCashToday, type Context, type Upload, type Expense } from './workflowTypes';
 import type { PettyCashOcrData } from '@/app/api/petty-cash/ocr/route';
-import { Sparkles, CheckCircle2, AlertCircle, ShieldAlert } from 'lucide-react';
+import { Sparkles, CheckCircle2, AlertCircle, ShieldAlert, Building2, Users, FileCheck2, FileWarning } from 'lucide-react';
 
 export default function ExpenseForm({
     context,
@@ -13,6 +13,7 @@ export default function ExpenseForm({
     balance,
     correction,
     existingExpenses,
+    proofThreshold = 500,
     onSaved
 }: {
     context: Context;
@@ -20,6 +21,7 @@ export default function ExpenseForm({
     balance: number;
     correction?: Expense;
     existingExpenses?: Expense[];
+    proofThreshold?: number;
     onSaved: () => void;
 }) {
     const [proofs, setProofs] = useState<Upload[]>([]);
@@ -28,6 +30,7 @@ export default function ExpenseForm({
     const [error, setError] = useState('');
     const [key] = useState(() => crypto.randomUUID());
     const [amount, setAmount] = useState('');
+    const [spendMode, setSpendMode] = useState<'Operation' | 'Client'>(correction?.spend_mode || 'Operation');
     const [selectedCategory, setSelectedCategory] = useState(correction?.category || PC_CATEGORIES[0] || 'Travel');
     const [customCategory, setCustomCategory] = useState('');
     const [vendor, setVendor] = useState(correction?.vendor || '');
@@ -36,6 +39,11 @@ export default function ExpenseForm({
     const [paymentRef, setPaymentRef] = useState(correction?.payment_ref || '');
     const [description, setDescription] = useState(correction?.description || '');
     const [ocrData, setOcrData] = useState<PettyCashOcrData | null>(null);
+
+    const effectiveThreshold = proofThreshold ?? 500;
+    const spendAmount = Number(amount) || 0;
+    const requiresProof = !correction && spendAmount > effectiveThreshold;
+    const missingProof = requiresProof && proofs.length === 0;
 
     const spendCents = Math.round(Number(amount) * 100);
     const validAmount =
@@ -134,6 +142,7 @@ export default function ExpenseForm({
                                 expense_date: expenseDate,
                                 payment_mode: paymentMode,
                                 payment_ref: paymentRef,
+                                spend_mode: spendMode,
                                 documents: proofs,
                                 idempotency_key: key
                             })
@@ -197,6 +206,37 @@ export default function ExpenseForm({
                             Remaining after this expense: {inr(remaining)}
                         </p>
                     )}
+
+                    {/* Spend Mode Selector: Operation vs Client */}
+                    <div>
+                        <span className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                            Spend Mode / Type <span className="text-rose-500">*</span>
+                        </span>
+                        <div className="grid grid-cols-2 gap-2.5">
+                            <button
+                                type="button"
+                                onClick={() => setSpendMode('Operation')}
+                                className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl border text-xs font-black transition-all ${
+                                    spendMode === 'Operation'
+                                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-500/25'
+                                        : 'bg-slate-50 dark:bg-[#21262d] text-slate-700 dark:text-slate-300 border-slate-200 dark:border-[#30363d] hover:bg-slate-100 dark:hover:bg-[#282e33]'
+                                }`}
+                            >
+                                <Building2 size={15} /> Operational Spend
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setSpendMode('Client')}
+                                className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl border text-xs font-black transition-all ${
+                                    spendMode === 'Client'
+                                        ? 'bg-amber-600 text-white border-amber-600 shadow-md shadow-amber-500/25'
+                                        : 'bg-slate-50 dark:bg-[#21262d] text-slate-700 dark:text-slate-300 border-slate-200 dark:border-[#30363d] hover:bg-slate-100 dark:hover:bg-[#282e33]'
+                                }`}
+                            >
+                                <Users size={15} /> Client Spend
+                            </button>
+                        </div>
+                    </div>
 
                     {/* Vision AI OCR Validation Card */}
                     {ocrData && (
@@ -361,6 +401,33 @@ export default function ExpenseForm({
                 />
             </label>
 
+            {/* Property Proof Rule Dynamic Badge */}
+            {!correction && spendAmount > 0 && (
+                <div className={`p-3 rounded-xl border text-xs flex items-center gap-2.5 ${
+                    requiresProof
+                        ? 'bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-900/50 text-amber-900 dark:text-amber-200'
+                        : 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-900/50 text-emerald-900 dark:text-emerald-200'
+                }`}>
+                    {requiresProof ? (
+                        <FileWarning size={16} className="shrink-0 text-amber-600 dark:text-amber-400" />
+                    ) : (
+                        <FileCheck2 size={16} className="shrink-0 text-emerald-600 dark:text-emerald-400" />
+                    )}
+                    <div>
+                        <p className="font-bold">
+                            {requiresProof
+                                ? `Bill / Proof Mandatory (Amount > ₹${effectiveThreshold})`
+                                : `No Bill Required (Amount ≤ ₹${effectiveThreshold})`}
+                        </p>
+                        <p className="text-[11px] opacity-90 mt-0.5">
+                            {requiresProof
+                                ? `Property rule requires a valid bill/receipt upload for expenses over ₹${effectiveThreshold}.`
+                                : `Property allows bill-free recording up to ₹${effectiveThreshold}. Ensure a clear description is entered.`}
+                        </p>
+                    </div>
+                </div>
+            )}
+
             <ProofUpload
                 org={context.organization_id}
                 requestId={requestId}
@@ -375,7 +442,7 @@ export default function ExpenseForm({
                 disabled={busy}
                 onBusyChange={setUploading}
                 onOcrExtracted={handleOcrExtracted}
-                label={correction ? 'Replacement bills / receipts' : 'Bills / receipts / payment screenshots'}
+                label={correction ? 'Replacement bills / receipts' : requiresProof ? 'Bills / receipts / payment screenshots (Required)' : 'Bills / receipts / payment screenshots (Optional)'}
             />
 
             {isBlockedDuplicate && (
@@ -393,10 +460,24 @@ export default function ExpenseForm({
                 </div>
             )}
 
+            {missingProof && (
+                <p role="alert" className="text-amber-700 dark:text-amber-400 text-xs font-semibold flex items-center gap-1.5">
+                    <AlertCircle size={14} /> Please attach bill/receipt proof before submitting (amount exceeds ₹{effectiveThreshold}).
+                </p>
+            )}
+
             {error && <p role="alert" className="text-red-600 text-xs">{error}</p>}
             <button
                 className="pc-button mt-2"
-                disabled={busy || uploading || (!!correction && !proofs.length) || (!correction && !validAmount) || isBlockedDuplicate}
+                disabled={
+                    busy ||
+                    uploading ||
+                    (!!correction && !proofs.length) ||
+                    (!correction && !validAmount) ||
+                    missingProof ||
+                    description.trim().length < 3 ||
+                    isBlockedDuplicate
+                }
             >
                 {busy ? 'Saving…' : correction ? 'Submit corrected proof' : 'Save expense'}
             </button>

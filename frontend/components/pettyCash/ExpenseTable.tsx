@@ -9,10 +9,19 @@ export default function ExpenseTable({ expenses, org, showRequest = true, onOpen
 }) {
     if (!expenses.length) return <div className="pc-empty"><ReceiptText size={24} /><h3>No expenses recorded</h3><p>Record any amount up to the remaining cash. Add bills or receipts if available.</p></div>;
     return <div className="pc-table-wrap"><table aria-label="Expense history" className="min-w-[850px]">
-        <thead><tr>{['Expense date', ...(showRequest ? ['Request', 'Property'] : []), 'Payee / purpose', 'Category', 'Amount', 'Payment', 'Bills / receipts', 'Review', ...(onOpen ? ['Details'] : [])].map(heading => <th key={heading}>{heading}</th>)}</tr></thead>
+        <thead><tr>{['Expense date', ...(showRequest ? ['Request', 'Property'] : []), 'Mode', 'Payee / purpose', 'Category', 'Amount', 'Payment', 'Bills / receipts', 'Review', ...(onOpen ? ['Details'] : [])].map(heading => <th key={heading}>{heading}</th>)}</tr></thead>
         <tbody>{expenses.map(expense => <tr key={expense.id}>
             <td className="whitespace-nowrap"><time dateTime={expense.expense_date.slice(0, 10)}>{pettyCashDate(expense.expense_date)}</time></td>
             {showRequest && <><td className="whitespace-nowrap font-medium">{expense.request?.request_no || '—'}</td><td>{expense.property?.name || '—'}</td></>}
+            <td className="whitespace-nowrap">
+                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${
+                    expense.spend_mode === 'Client'
+                        ? 'bg-amber-500/10 border-amber-500/20 text-amber-600 dark:text-amber-400'
+                        : 'bg-indigo-500/10 border-indigo-500/20 text-indigo-600 dark:text-indigo-400'
+                }`}>
+                    {expense.spend_mode || 'Operation'}
+                </span>
+            </td>
             <td className="min-w-44 max-w-xs"><p className="font-medium break-words">{expense.vendor}</p><p className="mt-1 text-xs text-text-secondary break-words">{expense.description}</p></td>
             <td>{expense.category}</td><td className="font-semibold whitespace-nowrap tabular-nums">{inr(expense.amount)}</td>
             <td><p>{expense.payment_mode}</p>{expense.payment_ref && <p className="text-xs text-text-secondary mt-1 break-words">{expense.payment_ref}</p>}</td>
