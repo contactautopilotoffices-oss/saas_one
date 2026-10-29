@@ -133,6 +133,12 @@ export class LeadOutreachService {
                 return { success: false, channel: 'none', error: 'Invalid phone number' };
             }
 
+            // Guard against duplicate Message 1 dispatch for the same lead
+            if (lead.outreach_button_tapped || lead.last_contacted) {
+                console.info(`[LeadOutreachService] Lead ${leadId} already received outreach/engaged; skipping duplicate send.`);
+                return { success: true, channel: 'none', skipped: 'already_contacted' };
+            }
+
             // 1. DEDUPLICATION: Check if this phone number already exists in CRM
             const { data: existingLeads } = await supabaseAdmin
                 .from('crm_leads')
@@ -488,19 +494,19 @@ This client is already in your pipeline (Lead ID: ${existingLead.id}). Skipping 
                     metadata: { action: 'call_me_now', raw_message_id: messageId },
                 });
 
-                // 4. Urgent WhatsApp alert to assigned rep via official crm_lead_assigned_v1 template
+                // 4. Urgent WhatsApp alert to assigned rep via official crm_lead_alert_v2 template
                 if (rep?.phone) {
-                    console.info(`[LeadOutreachService] Dispatching urgent rep alert to ${rep.phone} via crm_lead_assigned_v1`);
+                    console.info(`[LeadOutreachService] Dispatching urgent rep alert to ${rep.phone} via crm_lead_alert_v2`);
                     AiSensyService.sendTemplate({
                         phone: rep.phone,
-                        campaignName: 'crm_lead_assigned_v1',
+                        campaignName: process.env.AISENSY_LEAD_ALERT_CAMPAIGN || 'crm_lead_alert_v2',
                         templateParams: [
-                            rep.full_name || 'Advisor',
-                            lead.company_name || 'Individual',
+                            '🚨 HIGH PRIORITY: CALL ME NOW',
                             clientName,
                             lead.contact_number,
-                            lead.city ? `Managed Workspace - ${lead.city}` : 'Managed Workspace - Bangalore',
-                            'IMMEDIATE - Client tapped Call Me Now (5m SLA)',
+                            lead.company_name || 'Individual',
+                            `${lead.city || 'Bangalore'} • Meta Ad`,
+                            'Client requested immediate callback on WhatsApp',
                         ],
                         userName: rep.full_name || 'Advisor',
                     }).catch(e => console.error('[LeadOutreachService] Urgent rep alert error:', e));
@@ -560,18 +566,18 @@ This client is already in your pipeline (Lead ID: ${existingLead.id}). Skipping 
                     metadata: { action: slotName, scheduled_time: targetFollowup.toISOString(), raw_message_id: messageId },
                 });
 
-                // 2. Alert rep of scheduled call slot
+                // 2. Alert rep of scheduled call slot via crm_lead_alert_v2
                 if (rep?.phone) {
                     AiSensyService.sendTemplate({
                         phone: rep.phone,
-                        campaignName: 'crm_lead_assigned_v1',
+                        campaignName: process.env.AISENSY_LEAD_ALERT_CAMPAIGN || 'crm_lead_alert_v2',
                         templateParams: [
-                            rep.full_name || 'Advisor',
-                            lead.company_name || 'Individual',
+                            `📅 SCHEDULED CALL: ${slotName.toUpperCase()}`,
                             clientName,
                             lead.contact_number,
-                            lead.city ? `Managed Workspace - ${lead.city}` : 'Managed Workspace - Bangalore',
-                            `SCHEDULED: ${slotName} (${targetFollowup.toLocaleString()})`,
+                            lead.company_name || 'Individual',
+                            `${lead.city || 'Bangalore'} • Meta Ad`,
+                            `Client requested call ${slotName.toLowerCase()} around ${targetFollowup.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
                         ],
                         userName: rep.full_name || 'Advisor',
                     }).catch(e => console.error('[LeadOutreachService] Rep slot alert error:', e));
@@ -637,22 +643,29 @@ This client is already in your pipeline (Lead ID: ${existingLead.id}). Skipping 
                     metadata: { seat_band: band, seats: approximateSeats },
                 });
 
-                // Notify rep of qualified seat count via crm_lead_assigned_v1
+                // Notify rep of qualified seat count via crm_lead_alert_v2
                 if (rep?.phone) {
                     AiSensyService.sendTemplate({
                         phone: rep.phone,
-                        campaignName: 'crm_lead_assigned_v1',
+                        campaignName: process.env.AISENSY_LEAD_ALERT_CAMPAIGN || 'crm_lead_alert_v2',
                         templateParams: [
-                            rep.full_name || 'Advisor',
-                            lead.company_name || 'Individual',
+                            '📝 LEAD UPDATE: TEAM SIZE QUALIFIED',
                             clientName,
                             lead.contact_number,
-                            lead.city ? `Managed Workspace - ${lead.city}` : 'Managed Workspace - Bangalore',
-                            `QUALIFIED - Team Size: ${band} (~${approximateSeats} seats)`,
+                            lead.company_name || 'Individual',
+                            `${lead.city || 'Bangalore'} • Meta Ad`,
+                            `Team Size: ${band} (~${approximateSeats} seats)`,
                         ],
                         userName: rep.full_name || 'Advisor',
                     }).catch(() => {});
                 }
+
+                // Send warm confirmation to client acknowledging their requirement
+                const clientAck = `Perfect, noted ${band}! ${advisorName} has prepared matching options for your team in ${lead.city || 'Bangalore'} and will share them during your call. 🙏`;
+                WhatsAppService.sendAsync(phone, {
+                    message: clientAck,
+                    moduleName: 'crm',
+                }).catch(() => {});
 
                 return { handled: true, leadId: lead.id, action: 'team_size_captured' };
             }
@@ -707,50 +720,47 @@ This client is already in your pipeline (Lead ID: ${existingLead.id}). Skipping 
         }
 
         const formattedPhone = this.formatPhone(phone);
-        const freeformText = `Great, noted. Two quick details so we come prepared:\n1. Approx team size\n2. Preferred area and move in month\n\nTeam size:\n1. Under 50\n2. 50 to 150\n3. 150 to 500\n4. 500+\n\nReply with your option or team size.`;
-
-        // 1. If AiSensy Project Direct API is configured, send the interactive free-form text
-        let sent = false;
-        if (process.env.AISENSY_PROJECT_ID && process.env.AISENSY_PROJECT_API_KEY) {
-            try {
-                const res = await fetch(`https://apis.aisensy.com/project-apis/v1/project/${encodeURIComponent(process.env.AISENSY_PROJECT_ID)}/messages`, {
-                    method: 'POST',
-                    headers: {
-                        Accept: 'application/json',
-                        'Content-Type': 'application/json',
-                        'X-AiSensy-Project-API-Pwd': process.env.AISENSY_PROJECT_API_KEY,
-                    },
-                    body: JSON.stringify({
-                        to: formattedPhone,
-                        type: 'text',
-                        recipient_type: 'individual',
-                        text: { body: freeformText },
-                    }),
-                    signal: AbortSignal.timeout(10_000),
-                });
-                if (res.ok) {
-                    sent = true;
-                    console.info(`[LeadOutreachService] Message 2 sent via AiSensy Project API to ${formattedPhone}`);
-                }
-            } catch (e: any) {
-                console.warn('[LeadOutreachService] Project API delivery error, falling back to template:', e?.message);
-            }
+        const firstName = (lead.contact_person || '').trim().split(' ')[0] || 'there';
+        const city = lead.city || lead.location || 'Bangalore';
+        let advisorName = 'Harsh Patil';
+        if (lead.assigned_to) {
+            const { data: rep } = await supabaseAdmin
+                .from('users')
+                .select('full_name')
+                .eq('id', lead.assigned_to)
+                .maybeSingle();
+            if (rep?.full_name) advisorName = rep.full_name;
         }
 
-        // 2. Fallback to approved Meta template fms_whatsapp_select_v1
-        if (!sent) {
-            console.info(`[LeadOutreachService] Dispatching Message 2 via fms_whatsapp_select_v1 to ${formattedPhone}`);
-            await AiSensyService.sendTemplate({
-                phone: formattedPhone,
-                campaignName: 'fms_whatsapp_select_v1',
-                templateParams: [
-                    'Office Space',
-                    'approx team size',
-                    '1. Under 50 | 2. 50 to 150 | 3. 150 to 500 | 4. 500+',
-                ],
-                userName: (lead.contact_person || '').trim().split(' ')[0] || 'there',
-            }).catch(e => console.error('[LeadOutreachService] Message 2 template dispatch error:', e));
+        console.info(`[LeadOutreachService] Dispatching Message 2 qualification template (crm_lead_qualification_v1) to ${formattedPhone}`);
+        const templateRes = await AiSensyService.sendTemplate({
+            phone: formattedPhone,
+            campaignName: process.env.AISENSY_LEAD_QUALIFICATION_CAMPAIGN || 'crm_lead_qualification_v1',
+            templateParams: [
+                firstName,
+                advisorName,
+                city,
+            ],
+            userName: firstName,
+        });
+
+        if (templateRes.success) {
+            await this.logActivity({
+                leadId: lead.id,
+                userId: lead.assigned_to || null,
+                activityType: 'whatsapp_sent',
+                description: `Message 2 qualification buttons sent to lead (crm_lead_qualification_v1)`,
+                metadata: { channel: 'whatsapp', campaign: 'crm_lead_qualification_v1', advisor_name: advisorName },
+            });
+            return;
         }
+
+        // Fallback: If template dispatch fails, send clean professional text
+        const fallbackText = `Thank you, ${firstName}! 🙏\n\nOur Workspace Specialist, ${advisorName}, is currently shortlisting verified managed office options in ${city} for you.\n\nTo help us share the most suitable options and commercials, what is your approximate team size?\n1. Under 50 Seats\n2. 50 to 200 Seats\n3. 200+ Enterprise`;
+        await WhatsAppService.sendAsync(phone, {
+            message: fallbackText,
+            moduleName: 'crm',
+        }).catch(() => {});
     }
 
     /**
