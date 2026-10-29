@@ -9,7 +9,7 @@ import { personLabel, sendTaskAssigned, sendTaskDependency, sendTaskHandover, se
 import { shortList, taskBell } from './taskBell';
 import { notifyGiversOfCompletion } from './completionNotice';
 import { Employee, TaskAssignment, TaskStatus } from './types';
-import { NO_EXTRAS, linkTasks, loadTaskExtras } from './TaskLinks';
+import { NO_EXTRAS, linkTasks, loadTaskExtras, zohoTaskIds } from './TaskLinks';
 import { similarOpenTasks } from './taskSimilarity';
 import { aiDuplicateEnabled, aiSameTask, liveDuplicateLlm } from './aiDuplicate';
 import { TaskDue, checkDue, dueLabel, shortTime } from './dueDates';
@@ -70,6 +70,8 @@ export interface WorkspaceTask {
     canEditNotes: boolean;
     /** Owner 2026-10-28: what the holder wrote when they marked it done (shown on its own, not as a note). */
     completionRemark: string | null;
+    /** 2026-10-29: imported from Zoho Mail. */
+    fromZoho?: boolean;
 }
 
 /** Owner 2026-10-26: an open task that looks like the one about to be given (the "Duplicate task alert"). */
@@ -160,6 +162,8 @@ export interface ConsoleTask {
     department: string;
     /** Owner 2026-10-28: what the holder wrote when they marked it done. */
     completionRemark: string | null;
+    /** 2026-10-29: imported from Zoho Mail. */
+    fromZoho?: boolean;
 }
 
 export interface ConsoleResponse {
@@ -559,7 +563,8 @@ export class WorkspaceService {
             };
         };
         const newestFirst = (a: ConsoleTask, b: ConsoleTask) => b.assignedDate.localeCompare(a.assignedDate);
-        const mine = mineRows.map(r => view(r, 'mine')).sort(newestFirst);
+        const fromZoho = await zohoTaskIds(mineRows.map(r => r.id as string));
+        const mine = mineRows.map(r => ({ ...view(r, 'mine'), ...(fromZoho.has(r.id as string) ? { fromZoho: true } : {}) })).sort(newestFirst);
         const given = givenRows.map(r => view(r, 'given')).sort(newestFirst);
 
         // Owner 2026-10-22: the department filter lists only departments with the Task Manager switched ON (Control Center)

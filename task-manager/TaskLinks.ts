@@ -18,9 +18,11 @@ export interface TaskExtras {
     supportRequest: boolean;
     /** Owner 2026-10-27: the deadline (20261027100001_task_manager_due_dates.sql); null = due on its start date, as before. */
     due: TaskDue | null;
+    /** 2026-10-29: imported from Zoho Mail (20261029200001_task_manager_zoho_tasks.sql). */
+    fromZoho: boolean;
 }
 
-export const NO_EXTRAS: TaskExtras = { followUpOf: null, alsoWith: [], attachmentCount: 0, supportRequest: false, due: null };
+export const NO_EXTRAS: TaskExtras = { followUpOf: null, alsoWith: [], attachmentCount: 0, supportRequest: false, due: null, fromZoho: false };
 
 /** Postgres / PostgREST codes for "that column or table does not exist (yet)". */
 const MISSING_SCHEMA = new Set(['42703', '42P01', 'PGRST204', 'PGRST205']);
@@ -59,7 +61,7 @@ export async function loadTaskExtras(taskIds: string[], nameOf: (userId: string)
     if (taskIds.length === 0) return out;
     const extrasOf = (id: string) => {
         let e = out.get(id);
-        if (!e) { e = { followUpOf: null, alsoWith: [], attachmentCount: 0, supportRequest: false, due: null }; out.set(id, e); }
+        if (!e) { e = { followUpOf: null, alsoWith: [], attachmentCount: 0, supportRequest: false, due: null, fromZoho: false }; out.set(id, e); }
         return e;
     };
 
@@ -101,9 +103,27 @@ export async function loadTaskExtras(taskIds: string[], nameOf: (userId: string)
         if (!dues.missing) {
             for (const r of dues.rows) if (r.due_date) extrasOf(r.id).due = { date: r.due_date, time: shortTime(r.due_time) };
         }
+
+        for (const id of await zohoTaskIds(taskIds)) extrasOf(id).fromZoho = true;
     } catch (err) {
         // Extras are decoration: a failure here must never take the board down.
         console.error('[TaskLinks] could not load task extras:', err);
+    }
+    return out;
+}
+
+/**
+ * 2026-10-29: which of these tasks were imported from Zoho Mail. Read on its own: before the Zoho SQL file is applied the
+ * column is missing and the answer is simply "none". Never throws.
+ */
+export async function zohoTaskIds(taskIds: string[]): Promise<Set<string>> {
+    const out = new Set<string>();
+    if (taskIds.length === 0) return out;
+    try {
+        const sources = await selectIn<{ id: string; source: string | null }>('task_assignments', 'id, source', 'id', taskIds);
+        for (const r of sources.rows) if (r.source === 'zoho') out.add(r.id);
+    } catch (err) {
+        console.error('[TaskLinks] could not read task sources:', err);
     }
     return out;
 }
