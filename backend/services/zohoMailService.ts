@@ -417,6 +417,23 @@ export class ZohoMailService {
         return { token: data.access_token, apiDomain };
     }
 
+    /**
+     * GET one Zoho Mail API path (e.g. `/api/tasks/me?from=0&limit=200`) with a caller-supplied grant.
+     * Read-only by construction; used by the Task Manager's Zoho task import.
+     */
+    static async getJsonWithGrant(grant: { refreshToken: string; dc: string }, pathAndQuery: string): Promise<unknown> {
+        const t = await this.tokenFromGrant(grant);
+        const res = await fetch(`${t.apiDomain}${pathAndQuery}`, {
+            headers: { 'Authorization': `Zoho-oauthtoken ${t.token}`, Accept: 'application/json' },
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) {
+            const why = (data as { data?: { errorCode?: string }; status?: { description?: string } } | null);
+            throw new Error(`Zoho ${res.status}: ${why?.data?.errorCode ?? why?.status?.description ?? 'request failed'}`);
+        }
+        return data;
+    }
+
     /** Addresses reachable on a caller-supplied grant — a console connection. */
     static async listAddressesWithGrant(grant: { refreshToken: string; dc: string }): Promise<string[]> {
         const t = await this.tokenFromGrant(grant);

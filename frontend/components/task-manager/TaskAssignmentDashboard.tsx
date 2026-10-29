@@ -24,6 +24,7 @@ import {
     Zap
 } from 'lucide-react';
 import TaskProgressGauge from './TaskProgressGauge';
+import ZohoTasksButton from './ZohoTasksButton';
 import DateRangePicker, { DateRange, isSingleDay, localDay, rangeLabel, todayRange } from './DateRangePicker';
 import { createClient } from '@/frontend/utils/supabase/client';
 
@@ -68,6 +69,8 @@ interface TaskAssignmentItem {
         phone: string;
     };
     template?: TaskTemplate;
+    /** 'zoho' when imported from Zoho Mail. */
+    source?: string | null;
     /** Owner 2026-10-15: an unfinished task from before the chosen dates, shown under "Carry forward". */
     is_carried_forward?: boolean;
 }
@@ -746,6 +749,9 @@ export default function TaskAssignmentDashboard({
                         <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
                     </button>
 
+                    {/* Zoho Tasks import (the signed-in person's own Zoho account) */}
+                    <ZohoTasksButton onSynced={() => { void fetchData(true); }} />
+
                     {/* Action Buttons */}
                     {(isReportingManager || isSuperuser) && (
                         <>
@@ -1279,6 +1285,11 @@ export default function TaskAssignmentDashboard({
                                                                         ? <Zap className="w-2 h-2" />
                                                                         : <Layers className="w-2 h-2" />}
                                                                     {task.template.task_type.toUpperCase()}
+                                                                </span>
+                                                            )}
+                                                            {task.source === 'zoho' && (
+                                                                <span className="inline-flex items-center text-[8px] font-bold px-1.5 py-0.2 rounded-full bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 border border-amber-200/60 dark:border-amber-900/60 flex-shrink-0" title="Imported from Zoho Mail">
+                                                                    ZOHO
                                                                 </span>
                                                             )}
                                                         </div>
