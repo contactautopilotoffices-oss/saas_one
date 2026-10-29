@@ -24,6 +24,7 @@ import HRNotesTrackerTab from '@/frontend/components/hr/HRNotesTrackerTab';
 import { hrDataCache } from '@/frontend/components/hr/hrDataCache';
 import { createClient } from '@/frontend/utils/supabase/client';
 import DepartmentTasksTab from '@/frontend/components/task-manager/DepartmentTasksTab';
+import MeetingsTab from '@/frontend/components/task-manager/meetings/MeetingsTab';
 
 export function HRTicketsContent({ orgId }: { orgId: string }) {
     const { user, membership } = useAuth();
@@ -42,7 +43,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         );
     }, [orgId, membership, user]);
 
-    const [activeTab, setActiveTab] = useState<'tickets' | 'notes' | 'tree' | 'directory' | 'reconciliation' | 'config' | 'analytics' | 'tasks'>('tickets');
+    const [activeTab, setActiveTab] = useState<'tickets' | 'notes' | 'tree' | 'directory' | 'reconciliation' | 'config' | 'analytics' | 'tasks' | 'meeting_assistant'>('tickets');
     const [visitedTabs, setVisitedTabs] = useState<Set<string>>(new Set(['tickets']));
     const [viewMode, setViewMode] = useState<'kanban' | 'table' | 'properties'>('table');
 
@@ -106,6 +107,8 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
     // Only Org Super Admin & HR may inspect every assignee; everyone else (incl. Ops Super Admin) inspects only their reportee tree
     const canInspectAllAssignees = ['org_super_admin', 'master_admin', 'super_admin'].includes(userRole) || isHrRole;
     const isHrAdmin = canViewOrgWide;
+    // Owner 2026-10-29: the HR team's Meeting Assistant — the same roles the server accepts for the 'hr' space
+    const canUseMeetingAssistant = ['hr', 'hr_head', 'hr_manager', 'hr_ops'].includes(userRole);
     const isManager = ['manager', 'reporting_manager', 'soft_service_manager', 'soft_service_supervisor', 'property_admin', 'building_admin', 'mst_manager', 'supervisor', 'ops_super_admin', 'org_admin'].includes(userRole);
 
     useEffect(() => {
@@ -329,7 +332,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         const filterParam = searchParams.get('filter');
         const ticketIdParam = searchParams.get('ticketId');
 
-        if (tabParam && ['tickets', 'notes', 'tree', 'directory', 'reconciliation', 'config', 'analytics', 'tasks'].includes(tabParam)) {
+        if (tabParam && (['tickets', 'notes', 'tree', 'directory', 'reconciliation', 'config', 'analytics', 'tasks'].includes(tabParam) || (tabParam === 'meeting_assistant' && canUseMeetingAssistant))) {
             setActiveTab(tabParam as any);
         }
         if (actionParam === 'create') {
@@ -350,9 +353,9 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
             }
         }
         setSelectedPropertyId(propertyParam || 'all');
-    }, [searchParams, canViewOrgWide, isManager]);
+    }, [searchParams, canViewOrgWide, isManager, canUseMeetingAssistant]);
 
-    const handleNavigationTabSwitch = React.useCallback((newTab: 'tickets' | 'notes' | 'tree' | 'directory' | 'reconciliation' | 'config' | 'analytics' | 'tasks') => {
+    const handleNavigationTabSwitch = React.useCallback((newTab: 'tickets' | 'notes' | 'tree' | 'directory' | 'reconciliation' | 'config' | 'analytics' | 'tasks' | 'meeting_assistant') => {
         setActiveTab(newTab);
         if (typeof window !== 'undefined') {
             const currentPath = window.location.pathname;
@@ -1355,7 +1358,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                             <ShieldCheck className="w-5 h-5" />
                         </div>
                         <h1 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white tracking-tight">
-                            {activeTab === 'tasks' ? 'Task Manager' : activeTab === 'notes' ? 'HR Notes & Remarks Ledger' : activeTab === 'tree' ? 'Organization Reporting Tree & Workload Inspector' : isHrAdmin ? 'HR Helpdesk & Grievances' : isManager ? 'Team Grievance Requests' : 'My Requests & Grievances'}
+                            {activeTab === 'tasks' ? 'Task Manager' : activeTab === 'meeting_assistant' ? 'Meeting Assistant' : activeTab === 'notes' ? 'HR Notes & Remarks Ledger' : activeTab === 'tree' ? 'Organization Reporting Tree & Workload Inspector' : isHrAdmin ? 'HR Helpdesk & Grievances' : isManager ? 'Team Grievance Requests' : 'My Requests & Grievances'}
                         </h1>
                     </div>
                 </div>
@@ -2656,6 +2659,13 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
             {visitedTabs.has('tasks') && (
                 <div className={activeTab === 'tasks' ? 'block' : 'hidden'}>
                     <DepartmentTasksTab />
+                </div>
+            )}
+            {/* Owner 2026-10-29: the HR team's own Meeting Assistant (its meetings are separate from Tech's and the Super Admin's) */}
+            {/* Kept mounted once opened (hidden when another tab is shown), so switching tabs never stops a recording */}
+            {canUseMeetingAssistant && visitedTabs.has('meeting_assistant') && (
+                <div className={activeTab === 'meeting_assistant' ? 'block' : 'hidden'}>
+                    <MeetingsTab space="hr" />
                 </div>
             )}
 

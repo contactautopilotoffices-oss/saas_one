@@ -7,7 +7,7 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
     Building2, ChevronDown, ClipboardList, Droplets, FlaskConical, Fuel, GitBranch, Layers, LayoutDashboard, LogOut,
-    Menu, ScanFace, TrendingUp, Gauge, UserCircle, Users, Wrench, X, Zap,
+    Menu, Mic, ScanFace, TrendingUp, Gauge, UserCircle, Users, Wrench, X, Zap,
 } from 'lucide-react';
 import { createClient } from '@/frontend/utils/supabase/client';
 import { useAuth } from '@/frontend/context/AuthContext';
@@ -22,6 +22,7 @@ import TabLoading from './TabLoading';
 
 const TaskManagerSuperuserDashboard = dynamic(() => import('@/frontend/components/task-manager/TaskManagerSuperuserDashboard'), { loading: TabLoading });
 const TaskManagerTestingDashboard = dynamic(() => import('@/frontend/components/task-manager/TaskManagerTestingDashboard'), { loading: TabLoading });
+const MeetingsTab = dynamic(() => import('@/frontend/components/task-manager/meetings/MeetingsTab'), { loading: TabLoading });
 const WaterDashboard = dynamic(() => import('@/frontend/components/water/WaterDashboard').then(m => m.WaterDashboard), { loading: TabLoading });
 const WaterAnalyticsDashboard = dynamic(() => import('@/frontend/components/water/WaterAnalyticsDashboard'), { loading: TabLoading });
 const DieselStaffDashboard = dynamic(() => import('../diesel/DieselStaffDashboard'), { loading: TabLoading });
@@ -35,7 +36,7 @@ const EscalationHierarchyBuilder = dynamic(() => import('@/frontend/components/e
 const PPMModule = dynamic(() => import('@/frontend/components/ppm/PPMModule'), { loading: TabLoading });
 
 type TechTab =
-    | 'tasks' | 'control_centre' | 'vms_face'
+    | 'tasks' | 'control_centre' | 'meetings' | 'vms_face'
     | 'water_logger' | 'water' | 'diesel_logger' | 'diesel' | 'electricity_logger' | 'ppm'
     | 'org_progress' | 'org_efficiency' | 'visitors' | 'escalation'
     | 'profile';
@@ -48,6 +49,8 @@ const NAV: Array<{ section: string; items: NavItem[] }> = [
         items: [
             { id: 'tasks', label: 'Task Manager', icon: ClipboardList },
             { id: 'control_centre', label: 'Control Centre', icon: FlaskConical },
+            // Owner 2026-10-29: Meeting Assistant (record a meeting, review the task list, send the tasks)
+            { id: 'meetings', label: 'Meeting Assistant', icon: Mic },
             { id: 'vms_face', label: 'VMS Face (Testing)', icon: ScanFace },
         ],
     },
@@ -101,6 +104,9 @@ export default function TechDashboard() {
 
     const tabParam = searchParams.get('tab');
     const activeTab: TechTab = isTechTab(tabParam) ? tabParam : DEFAULT_TAB;
+    // Owner 2026-10-29: the Meeting Assistant stays mounted once opened (hidden on other tabs), so switching tabs never stops a recording
+    const [assistantOpened, setAssistantOpened] = useState(false);
+    if (activeTab === 'meetings' && !assistantOpened) setAssistantOpened(true);
     const selectedPropertyId = searchParams.get('propertyId') || 'all';
 
     const [org, setOrg] = useState<Organization | null>(null);
@@ -238,7 +244,7 @@ export default function TechDashboard() {
                         </button>
                         <h1 className="truncate font-display text-xl font-semibold tracking-tight text-text-primary md:text-2xl">{tabLabel}</h1>
                     </div>
-                    {activeTab !== 'tasks' && activeTab !== 'control_centre' && activeTab !== 'profile' && propertySelector}
+                    {activeTab !== 'tasks' && activeTab !== 'control_centre' && activeTab !== 'meetings' && activeTab !== 'profile' && propertySelector}
                 </header>
 
                 <div className="p-4 md:p-8">
@@ -254,6 +260,7 @@ export default function TechDashboard() {
                         <>
                             {activeTab === 'tasks' && <TaskManagerSuperuserDashboard orgId={org?.id || ''} />}
                             {activeTab === 'control_centre' && <TaskManagerTestingDashboard orgId={org?.id || ''} />}
+                            {assistantOpened && <div className={activeTab === 'meetings' ? '' : 'hidden'}><MeetingsTab space="tech" /></div>}
                             {activeTab === 'vms_face' && propertyFilter && org && <VMSFaceDashboard key={propertyFilter} orgId={org.id} propertyId={propertyFilter} propertyName={activeProperty?.name || ''} />}
                             {activeTab === 'water_logger' && propertyFilter && <WaterDashboard propertyId={propertyFilter} />}
                             {activeTab === 'water' && <WaterAnalyticsDashboard key="water-analytics-tab" propertyId={propertyFilter} orgId={org?.id} properties={properties} />}
