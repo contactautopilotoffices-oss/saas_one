@@ -12,7 +12,7 @@ import { claimTaskImport } from '@/task-manager/TaskImportInbound';
 import { scheduleShadow } from '@/task-manager/brain/shadow';
 import { claimSmartChat } from '@/task-manager/brain/live';
 import { claimVoiceNote } from '@/task-manager/voice/VoiceIntake';
-import { markRoute, recordInbound } from '@/task-manager/InboundLedger';
+import { markRoute, markReplied, recordInbound } from '@/task-manager/InboundLedger';
 import { apologiseAfterCrash } from '@/task-manager/NeverSilentWatchdog';
 import { appendTurn } from '@/task-manager/ConversationMemory';
 import { isInterpreterPilot, lookupQuotedContext, getConversationRoutingState } from '@/backend/lib/whatsapp/interpreter/context';
@@ -147,6 +147,7 @@ export async function POST(req: NextRequest) {
                 });
                 if (leadReply.handled) {
                     await markRoute(input.messageId, 'crm_lead_reply', input.phone, input.text);
+                    await markReplied(input.phone);
                     console.info('[AiSensyWebhook] Inbound routed to CRM_LEAD_REPLY', {
                         phone: input.phone,
                         leadId: leadReply.leadId,
