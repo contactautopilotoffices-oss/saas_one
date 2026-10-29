@@ -58,7 +58,7 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
             const employeeRoles = [
                 'staff', 'mst', 'property_admin', 'soft_service_manager', 
                 'soft_service_supervisor', 'soft_service_staff', 'org_admin', 
-                'org_super_admin', 'ops_super_admin', 'master_admin', 'hr', 'hr_head'
+                'org_super_admin', 'ops_super_admin', 'master_admin', 'hr', 'hr_head', 'it', 'design'
             ];
             const hasEmployeeRole = userRoles.some(r => employeeRoles.includes((r.role || '').toLowerCase()));
             if (!hasEmployeeRole) return true;

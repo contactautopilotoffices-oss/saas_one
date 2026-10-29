@@ -48,7 +48,7 @@ async function run() {
     check('Engy plain ids only count when the council provider is Engy', !S.keyReady('engy', 'wa_reply', { OPENAI_API_KEY: 'o', COUNCIL_API_KEY: 'k', COUNCIL_BASE_URL: 'https://example.invalid/v1' }));
     const ks = JSON.stringify(S.keyStatus(env));
     check('key status never carries a value', !ks.includes('"x"') && !ks.includes('"y"') && !ks.includes('"z"') && !ks.includes('"k"') && !ks.includes('example.invalid'));
-    check('defaults follow the two env vars that already changed models', S.defaultsFor('superuser_chat', { GROQ_TASK_CHAT_MODEL: 'openai/gpt-oss-20b' })[0] === 'groq:openai/gpt-oss-20b' && S.defaultsFor('learning_loop', { BOT_AUTOTUNE_DRAFT_MODELS: 'gemini-x' })[0] === 'gemini-x');
+    check('defaults follow the two env vars that already changed models', S.defaultsFor('superuser_chat', { GROQ_TASK_CHAT_MODEL: 'openai/gpt-oss-20b' })[0] === 'groq:openai/gpt-oss-20b' && S.defaultsFor('learning_loop', { BOT_AUTOTUNE_DRAFT_MODELS: 'gemini-x' })[1] === 'gemini-x');
 
     console.log('\n4. Reading the setting: problems fall back to today\'s models');
     let table: any = { error: { code: '42P01', message: 'missing' } };

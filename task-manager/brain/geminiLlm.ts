@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenerativeAI, type GenerationConfig } from '@google/generative-ai';
 import type { BrainLlm, LlmRequest, LlmResponse } from './llm';
 
 /**
@@ -28,8 +28,11 @@ export function geminiLlm(key: string | null = geminiKey(), timeoutMs = 45_000):
     const client = new GoogleGenerativeAI(key);
     return {
         async complete(req: LlmRequest): Promise<LlmResponse> {
+            // gemini-2.5-flash thinks by default and that counts against maxOutputTokens: JSON replies were cut off mid-string.
+            // thinkingConfig is a REST field this SDK version has no type for; the SDK passes it through as-is.
+            const thinkingOff = /^gemini-2\.5-flash/.test(req.model) ? { thinkingConfig: { thinkingBudget: 0 } } : {};
             const model = client.getGenerativeModel(
-                { model: req.model, systemInstruction: req.system, generationConfig: { maxOutputTokens: req.maxTokens ?? 1200, ...(req.json ? { responseMimeType: 'application/json' } : {}) } },
+                { model: req.model, systemInstruction: req.system, generationConfig: { maxOutputTokens: req.maxTokens ?? 1200, ...(req.json ? { responseMimeType: 'application/json' } : {}), ...thinkingOff } as GenerationConfig },
                 { timeout: timeoutMs },
             );
             const res = await model.generateContent(req.user);

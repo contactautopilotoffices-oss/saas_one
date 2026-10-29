@@ -18,7 +18,8 @@ import { supabaseAdmin } from '@/backend/lib/supabase/admin';
  */
 
 const TENANT_LIKE_ROLES = ['tenant', 'tenant_user', 'super_tenant', 'vendor'];
-const ORG_ADMIN_ROLES = ['org_super_admin', 'org_admin', 'master_admin', 'ops_super_admin', 'owner'];
+// The IT team (org-level role, no property memberships) sees and manages every asset in the org (owner 2026-10-28).
+const ORG_ADMIN_ROLES = ['org_super_admin', 'org_admin', 'master_admin', 'ops_super_admin', 'owner', 'it'];
 const MANAGER_ROLES = [
     ...ORG_ADMIN_ROLES,
     'property_admin', 'manager_executive', 'soft_service_manager', 'soft_service_supervisor', 'accounts',

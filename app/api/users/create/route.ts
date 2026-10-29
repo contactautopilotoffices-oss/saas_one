@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
         const ALLOWED_ROLES = [
             'master_admin', 'org_super_admin', 'ops_super_admin', 'property_admin',
             'staff', 'mst', 'tenant', 'procurement', 'accounts', 'vendor', 'super_tenant',
-            'hr', 'hr_head', 'security', 'soft_service_staff', 'soft_service_supervisor', 'soft_service_manager', 'tech'
+            'hr', 'hr_head', 'security', 'soft_service_staff', 'soft_service_supervisor', 'soft_service_manager', 'tech', 'it', 'design'
         ] as const;
         if (!ALLOWED_ROLES.includes(role as any)) {
             return NextResponse.json(

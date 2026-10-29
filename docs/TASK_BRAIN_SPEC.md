@@ -312,6 +312,41 @@ rewrite every step and example) was always cut off, and the one that finished we
 - Unchanged: the cost cap, the eval gate before any version is used, owner approval, rollback.
 - **Evaluation**: `task-manager/tests/test_autotune_edits.ts` (13 checks); `test_phase5_learning_loop.ts` passes.
 
+### Changes 2026-10-28: Claude Sonnet 5.5 drafts first; the three draft failures fixed
+
+Every draft from 26–28 Oct was rejected, each model for its own reason: `gemini-3.8-flash` failed to fetch or timed out
+(the HTTP status was cut off by the 120-character error clip), `gemini-2.5-flash` returned cut-off JSON (its built-in
+thinking used up the 1,800-token limit), and `glm-5.3-flash` gave wrong line numbers.
+
+**1. Workflow or agent?** Unchanged: **workflow**. `[BAA p.104]` Justification (a/b): unchanged, the model only proposes
+   wording `[BAA p.115]`. Head-to-head `[BAA pp.94–95, 99]`: **not run** (no live calls were made, owner instruction).
+**2. Context** `[BAA p.112]` Unchanged, except each current line is now sent as `[index] text`, so the model does not have to count.
+**3. Cost of a false positive** `[BAA p.112]` **high** (unchanged) → model tier: **Claude Sonnet 5.5** first (owner
+   2026-10-28), then `gemini-3.8-flash`, `gemini-2.5-flash`, `glm-5.3-flash`, because a stronger drafter gives fewer
+   rejected nights; the eval gate and human activation still guard live traffic.
+**4. Tools** `[BAA pp.93–94, 107]` None. Errors still become a rejected version with a reason; the reason now drops URLs and
+   keeps 200 characters, so the provider's HTTP status is visible. Args validated: `applyPromptEdits` also strips a copied
+   `[n] ` prefix. MCP: no `[BAA p.106]`.
+**5. Prompt** `[BAA pp.105, 114]` Numbered steps: yes (6). No-skip clause: yes. Single-shot example: yes. Terminal state
+   written to data: yes (unchanged). Step 5 now says the index is the `[number]`, and the text must be non-empty, ≤600 chars.
+**6. Memory** `[BAA pp.100–103]` Unchanged (none).
+**7. Multi-agent?** `[BAA p.116]` Unchanged (single workflow).
+**8. Evaluation** `[BAA pp.118–119]`
+   System: Claude prices added to the cost cap (`PRICE`, Anthropic list prices: Haiku 5.5 $0.10/$0.50, Sonnet 5.5 $2/$10,
+   Opus 5.5 $4/$20, Fable 5.1 $10/$50 per 1M tokens). Before this, every Claude call was refused by the cap, **including
+   the live bot's Haiku during the nightly safety test, which silently fell back to glm**. The safety test now measures Haiku.
+   Quality assurance (rubric: family none, tier none, scale none, manual audit 100% of activations) `[BAA pp.96–98]`: unchanged.
+   Tool interaction: N/A `[BAA p.95]`. Efficiency `[BAA p.119]`: draft limit 1,800 → 3,000 tokens (thinking room; only
+   used tokens are charged); `gemini-2.5-flash` thinking off (`thinkingBudget: 0`); nightly cap unchanged.
+**9. Trace** `[BAA pp.119–120]` Unchanged; the drafting model is still recorded in `change_summary`. Ad-hoc testing:
+   offline only (`test_autotune_edits.ts`, 17 checks; `test_ai_models_2026_10_28.ts`; `test_phase5_learning_loop.ts`).
+**10. Laws knowingly violated, and why:**
+   - **L6** `[BAA pp.96–97]`: the drafter (Claude Sonnet) is now the same family as the live bot (Claude Haiku). Owner
+     decision 2026-10-28. The grader is still the deterministic scorer plus human activation, not a model, so no
+     same-family *grading* is introduced.
+   - **L2** `[BAA pp.94–95]`: no paid head-to-head of Sonnet vs Gemini drafts; first real result is the next nightly run.
+   - The "Learning loop" chain also drives **review summaries** (`BotReviewSummary.ts`), so they now try Sonnet first too.
+
 ### Changes 2026-10-21: suggest the task when unsure; a clear answer saves it with undo
 
 Sanil wrote "Task. / Add Sailee rest FNF": the model read "Sailee" as the person, found no one, and the bot kept asking.
