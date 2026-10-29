@@ -677,6 +677,14 @@ This client is already in your pipeline (Lead ID: ${existingLead.id}). Skipping 
                 })
                 .eq('id', lead.id);
 
+            await this.logActivity({
+                leadId: lead.id,
+                userId: lead.assigned_to || null,
+                activityType: 'whatsapp_received',
+                description: `Client WhatsApp reply: "${clean}"`,
+                metadata: { raw_text: clean, action: 'text_reply' },
+            });
+
             return { handled: true, leadId: lead.id, action: 'text_reply' };
         } catch (err: any) {
             console.error('[LeadOutreachService] Error handling inbound lead reply:', err);
