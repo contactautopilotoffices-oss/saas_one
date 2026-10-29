@@ -10,6 +10,7 @@ import { registerSessionCache } from '@/frontend/lib/dashboard/sessionCaches';
 import { DateRange, localDay, shiftDay } from './DateRangePicker';
 import TaskRangeFilter from './assign/TaskRangeFilter';
 import SelectMenu from './assign/SelectMenu';
+import ZohoTasksButton from './ZohoTasksButton';
 
 /**
  * The superuser's own Task Manager view across ALL departments:
@@ -28,6 +29,8 @@ interface ConsoleTask {
     isCarriedForward?: boolean;
     /** Owner 2026-10-28: what the holder wrote when they marked it done. */
     completionRemark?: string | null;
+    /** 2026-10-29: imported from Zoho Mail. */
+    fromZoho?: boolean;
 }
 export interface ConsoleData {
     actor: { userId: string; name: string };
@@ -203,7 +206,7 @@ export function ConsoleTasksView({ c }: { c: ConsoleState }) {
     const boardTasks: WTask[] = useMemo(() => (data ? mine.map(t => ({
         id: t.id, title: t.title, description: null, ownerId: data.actor.userId, ownerName: data.actor.name, status: t.status,
         assignedDate: t.assignedDate, isCarriedForward: !!t.isCarriedForward, canChange: true, locked: t.locked, canLock: t.canLock,
-        meta: { from: t.personName, department: t.department }, completionRemark: t.completionRemark ?? null,
+        meta: { from: t.personName, department: t.department }, completionRemark: t.completionRemark ?? null, fromZoho: !!t.fromZoho,
     })) : []), [data, mine]);
     const completingTask = completingId ? boardTasks.find(t => t.id === completingId) || null : null;
 
@@ -244,6 +247,8 @@ export function ConsoleTasksView({ c }: { c: ConsoleState }) {
                             ]} />
                     </div>
                 )}
+                {/* 2026-10-29: copy the signed-in person's own Zoho Mail tasks into their list */}
+                <ZohoTasksButton onSynced={() => { void c.reload(); }} />
                 <button type="button" onClick={c.reload} disabled={c.refreshing} aria-label="Refresh"
                     className="flex h-10 w-10 items-center justify-center rounded-xl border border-zinc-200 bg-white text-zinc-500 hover:text-zinc-800 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:text-zinc-200">
                     {c.refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}

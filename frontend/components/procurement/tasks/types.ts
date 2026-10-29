@@ -48,6 +48,8 @@ export interface WTask {
     canEditNotes?: boolean;
     /** Owner 2026-10-28: what the holder wrote when they marked it done. */
     completionRemark?: string | null;
+    /** 2026-10-29: imported from Zoho Mail. */
+    fromZoho?: boolean;
 }
 
 /** Owner 2026-10-26: a file on a task, with a download link that works for 10 minutes. */
