@@ -1122,7 +1122,6 @@ export const EventProcessor = {
 
         if (!enabled || emails.length === 0) return;
 
-        const leadData = lead || payload;
         await EmailService.sendLeadAssignedEmail({
             emailTo: emails,
             lead: {
