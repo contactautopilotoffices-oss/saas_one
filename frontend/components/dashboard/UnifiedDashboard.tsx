@@ -35,6 +35,7 @@ const SecurityDashboard = dynamic(() => import('./SecurityDashboard'), { loading
 const PropertyAdminDashboard = dynamic(() => import('./PropertyAdminDashboard'), { loading: RoleLoading });
 const OrgAdminDashboard = dynamic(() => import('./OrgAdminDashboard'), { loading: RoleLoading });
 const TechDashboard = dynamic(() => import('./TechDashboard'), { loading: RoleLoading });
+const DepartmentConsole = dynamic(() => import('./DepartmentConsole'), { loading: RoleLoading });
 const MasterAdminDashboard = dynamic(() => import('./MasterAdminDashboard'), { loading: RoleLoading });
 const SoftServiceManagerDashboard = dynamic(() => import('./SoftServiceManagerDashboard'), { loading: RoleLoading });
 const SuperTenantDashboard = dynamic(() => import('./SuperTenantDashboard'), { loading: RoleLoading });
@@ -230,6 +231,12 @@ const UnifiedDashboard = () => {
     // plus the Task Manager Control Centre
     if (role === 'tech') {
         return <TechDashboard />;
+    }
+
+    // IT and Design consoles (owner 2026-10-28): Meeting Room, Grievances, Task Manager, Feedback, Settings, Profile;
+    // IT also gets Assets
+    if (role === 'it' || role === 'design') {
+        return <DepartmentConsole department={role} />;
     }
 
     // Ops Super Admin — operations management dashboard with all property access & pending validation card

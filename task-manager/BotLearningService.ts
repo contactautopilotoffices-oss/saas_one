@@ -130,6 +130,22 @@ export async function deletePrompt(id: string, actor: string) {
     await TaskDatabaseService.logAudit({ eventType: 'bot_prompt_deleted', details: { promptId: id, version: data[0].version, actor } }).catch(() => undefined);
 }
 
+/** Owner 2026-10-29: "Clear all" on the To review list. Same rule as one delete, for every waiting item (loaded or not). */
+export async function deleteAllReviews(actor: string) {
+    const { data, error } = await supabaseAdmin.from(REVIEW).delete().eq('status', 'waiting').select('id');
+    if (error) throw error;
+    await TaskDatabaseService.logAudit({ eventType: 'bot_review_deleted', details: { all: true, count: data?.length ?? 0, actor } }).catch(() => undefined);
+    return data?.length ?? 0;
+}
+
+/** Owner 2026-10-29: "Clear all" on Prompt versions. Same rule as one delete: never the version the bot is using now. */
+export async function deleteAllPrompts(actor: string) {
+    const { data, error } = await supabaseAdmin.from(PROMPTS).delete().neq('status', 'active').select('version');
+    if (error) throw error;
+    await TaskDatabaseService.logAudit({ eventType: 'bot_prompt_deleted', details: { all: true, versions: (data || []).map(r => r.version), actor } }).catch(() => undefined);
+    return data?.length ?? 0;
+}
+
 export async function ignoreReview(id: string, actor: string) { const { error } = await supabaseAdmin.from(REVIEW).update({ status: 'ignored', reviewed_at: new Date().toISOString(), reviewed_by: actor, updated_at: new Date().toISOString() }).eq('id', id).eq('status', 'waiting'); if (error) throw error; }
 export async function labelReview(id: string, raw: unknown, actor: string) { const checked = validateReviewLabel(raw); if (!checked.ok) throw new Error(checked.error); const { data, error } = await supabaseAdmin.rpc('whatsapp_bot_label_review', { p_review_id: id, p_label: checked.value, p_reviewer: actor }); if (error) throw error; return data; }
 

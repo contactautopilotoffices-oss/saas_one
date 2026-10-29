@@ -40,6 +40,23 @@ async function run() {
     check('the AI is asked for edits only (never the whole text)', /Return ONLY the edits/.test(calls[0].system) && /"edits"/.test(calls[0].system));
     check('one small edit → a valid new version, one line longer', draft.sections.examples.length === BUILTIN_PROMPT_SECTIONS.examples.length + 1 && draft.sections.examples[0].includes('lock_task') && draft.sections.steps.length === BUILTIN_PROMPT_SECTIONS.steps.length, draft.sections.examples.slice(0, 2));
     check('the change summary is kept', draft.changeSummary === 'Add a lock example.');
+    check('the AI sees each line with its [index]', JSON.parse(calls[0].user).current.steps[0].startsWith('[0] '));
+    check('a copied "[3] " prefix is dropped from the new line', H.applyPromptEdits(current, [{ section: 'steps', op: 'replace', index: 0, text: '[0] 1. Read it.' }]).steps[0] === '1. Read it.');
+
+    console.log('\n2b. Owner 2026-10-28: Claude drafts first; failures stay readable');
+    const st2: any = { ...state, costUsd: 0 };
+    const claudeCalls: string[] = [];
+    const scripted = { complete: async (req: any) => {
+        claudeCalls.push(req.model);
+        if (req.model.startsWith('gemini-')) throw new Error('[GoogleGenerativeAI Error]: Error fetching from https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent: [404 Not Found] model not found');
+        if (req.model === 'glm-5.3-flash') throw new Error('edit line out of range');
+        return { text: JSON.stringify({ edits: [{ section: 'examples', op: 'insert_after', index: -1, text: 'Example. lock' }], change_summary: 'x' }), tokensIn: 100, tokensOut: 50 };
+    } };
+    const viaClaude = await H.draftCandidate(BUILTIN_PROMPT_SECTIONS, [], st2, scripted as any, scripted as any, ['anthropic:claude-sonnet-5-5', 'gemini-3.8-flash']);
+    check('a Claude model has a price, so the cost cap lets it run', viaClaude.model === 'anthropic:claude-sonnet-5-5' && st2.costUsd > 0, { model: viaClaude.model, cost: st2.costUsd });
+    let reason = '';
+    try { await H.draftCandidate(BUILTIN_PROMPT_SECTIONS, [], { ...state, costUsd: 0 } as any, scripted as any, scripted as any, ['gemini-3.8-flash', 'glm-5.3-flash']); } catch (e: any) { reason = e.message; }
+    check('the HTTP status survives in the reason (the long URL is removed)', reason.includes('[404 Not Found]') && !reason.includes('https://') && reason.includes('glm-5.3-flash: edit line out of range'), reason);
 
     console.log('\n3. Its own nightly slot');
     const vercel = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../vercel.json'), 'utf8'));

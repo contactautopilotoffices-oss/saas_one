@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireControlCentre } from '@/app/api/task-manager/_shared/adminGuard';
-import { activatePrompt, approveReview, deletePrompt, deleteReview, ignoreReview, labelReview, listDeveloperItems, listPromptVersions, listReviewItems, rejectPrompt, reviewSchemaV2, rollbackPrompt, saveAlertAdmins, setDevState, summarizeReview, undoReview } from '@/task-manager/BotLearningService';
+import { activatePrompt, approveReview, deleteAllPrompts, deleteAllReviews, deletePrompt, deleteReview, ignoreReview, labelReview, listDeveloperItems, listPromptVersions, listReviewItems, rejectPrompt, reviewSchemaV2, rollbackPrompt, saveAlertAdmins, setDevState, summarizeReview, undoReview } from '@/task-manager/BotLearningService';
 import { readBotHealth } from '@/task-manager/BotHealthRuntime';
 import { TaskDatabaseService } from '@/task-manager/TaskDatabaseService';
 
@@ -17,6 +17,8 @@ export async function POST(request: NextRequest) {
     else if (b.action === 'ignore') await ignoreReview(String(b.id), guard.label);
     else if (b.action === 'delete_review') await deleteReview(String(b.id), guard.label);
     else if (b.action === 'delete_prompt') await deletePrompt(String(b.id), guard.label);
+    else if (b.action === 'delete_all_reviews') return NextResponse.json({ success: true, deleted: await deleteAllReviews(guard.label) });
+    else if (b.action === 'delete_all_prompts') return NextResponse.json({ success: true, deleted: await deleteAllPrompts(guard.label) });
     else if (b.action === 'summarize') return NextResponse.json({ success: true, summary: await summarizeReview(String(b.id), guard.label, typeof b.note === 'string' ? b.note : null) });
     else if (b.action === 'approve') await approveReview(String(b.id), b.owner, guard.label);
     else if (b.action === 'undo') await undoReview(String(b.id), guard.label);

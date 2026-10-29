@@ -58,7 +58,8 @@ export function defaultsFor(job: AiJob, env: Env = process.env): string[] {
     if (job === 'superuser_chat') return [`groq:${String(env.GROQ_TASK_CHAT_MODEL || '').trim() || 'llama-3.3-70b-versatile'}`];
     if (job === 'learning_loop') {
         const drafts = String(env.BOT_AUTOTUNE_DRAFT_MODELS || '').split(',').map(s => s.trim()).filter(Boolean);
-        return [...(drafts.length ? drafts : ['gemini-3.8-flash', 'gemini-2.5-flash']), 'glm-5.3-flash'];
+        // Owner 2026-10-28: Claude Sonnet 5.5 drafts first; Gemini and glm stay as backups.
+        return ['anthropic:claude-sonnet-5-5', ...(drafts.length ? drafts : ['gemini-3.8-flash', 'gemini-2.5-flash']), 'glm-5.3-flash'];
     }
     return [...(jobInfo(job)?.defaults ?? [])];
 }
