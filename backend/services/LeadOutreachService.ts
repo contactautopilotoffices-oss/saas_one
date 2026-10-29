@@ -111,7 +111,9 @@ export class LeadOutreachService {
                     created_by,
                     property_interest,
                     lead_source,
-                    campaign
+                    campaign,
+                    outreach_button_tapped,
+                    last_contacted
                 `)
                 .eq('id', leadId)
                 .single();
@@ -134,7 +136,8 @@ export class LeadOutreachService {
             }
 
             // Guard against duplicate Message 1 dispatch for the same lead
-            if (lead.outreach_button_tapped || lead.last_contacted) {
+            const leadRecord = lead as any;
+            if (leadRecord.outreach_button_tapped || leadRecord.last_contacted) {
                 console.info(`[LeadOutreachService] Lead ${leadId} already received outreach/engaged; skipping duplicate send.`);
                 return { success: true, channel: 'none', skipped: 'already_contacted' };
             }
