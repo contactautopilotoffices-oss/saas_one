@@ -1580,6 +1580,19 @@ export const WhatsAppEventProcessor = {
         if (!organizationId) return;
 
         const leadData = lead || payload;
+
+        // Check if this is a test lead / test campaign
+        const isTestLead =
+            (leadData.campaign || '').toLowerCase().includes('test') ||
+            (leadData.company_name || '').toLowerCase().includes('test sandbox') ||
+            leadData.email === 'test@autopilotoffices.com' ||
+            (leadData.contact_number && String(leadData.contact_number).includes('7028232515'));
+
+        if (isTestLead) {
+            console.info(`[WhatsAppEventProcessor] Suppressing sales team WhatsApp broadcast for test lead ${leadId}`);
+            return;
+        }
+
         const sourceName = lead?.source_info?.name || leadData.lead_source || await this.getLeadSourceName(payload.lead_source);
         const propName = lead?.property?.name || await this.getPropertyName(payload.property_interest);
         
@@ -1652,12 +1665,24 @@ export const WhatsAppEventProcessor = {
         const organizationId = lead?.organization_id || payload.organization_id || await this.resolveLeadOrganizationId(payload);
         if (!organizationId) return;
 
+        const leadData = lead || payload;
+
+        // Check if this is a test lead / test campaign
+        const isTestLead =
+            (leadData.campaign || '').toLowerCase().includes('test') ||
+            (leadData.company_name || '').toLowerCase().includes('test sandbox') ||
+            leadData.email === 'test@autopilotoffices.com' ||
+            (leadData.contact_number && String(leadData.contact_number).includes('7028232515'));
+
+        if (isTestLead) {
+            console.info(`[WhatsAppEventProcessor] Suppressing sales team WhatsApp assignment broadcast for test lead ${leadId}`);
+            return;
+        }
+
         const assigneeId = lead?.assigned_to || payload.assigned_to;
         const assignee = lead?.assignee?.full_name 
             ? { name: lead.assignee.full_name, phone: lead.assignee.phone } 
             : await this.getUserDetails(assigneeId);
-
-        const leadData = lead || payload;
         const propName = lead?.property?.name || await this.getPropertyName(payload.property_interest);
         
         // Resolve location, campaign, and market for clear tracking in WhatsApp

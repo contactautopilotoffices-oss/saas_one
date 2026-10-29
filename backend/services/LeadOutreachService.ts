@@ -570,7 +570,28 @@ This client is already in your pipeline (Lead ID: ${existingLead.id}). Skipping 
                     }).catch(e => console.error('[LeadOutreachService] Rep slot alert error:', e));
                 }
 
-                // 3. Send Message 2 (Team size selection)
+                // 3. Create call task in activity log for the rep
+                await this.logActivity({
+                    leadId: lead.id,
+                    userId: lead.assigned_to || null,
+                    activityType: 'call',
+                    description: `Call Task: ${slotName} with ${clientName} (${lead.contact_number}) scheduled for ${targetFollowup.toLocaleString()}`,
+                    metadata: {
+                        task_type: 'scheduled_call',
+                        scheduled_time: targetFollowup.toISOString(),
+                        status: 'pending',
+                        slot_name: slotName,
+                    },
+                });
+
+                // 4. Send confirmation with advisor's direct number to client
+                const confirmationMsg = `Confirmed! ${advisorName} from Autopilot Offices will call you ${slotName.toLowerCase()} around ${targetFollowup.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}. If urgent, you can reach ${advisorName} directly on ${advisorPhone}.`;
+                WhatsAppService.sendAsync(phone, {
+                    message: confirmationMsg,
+                    moduleName: 'crm',
+                }).catch(e => console.error('[LeadOutreachService] Slot confirmation error:', e));
+
+                // 5. Send Message 2 (Team size selection)
                 await this.sendMessage2Qualification(lead, phone);
 
                 return { handled: true, leadId: lead.id, action: slotName };

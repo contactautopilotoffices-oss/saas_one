@@ -312,6 +312,9 @@ export interface CRMLead {
     city?: string | null;
     campaign?: string | null;
     cohort?: string | null;
+    outreach_button_tapped?: string | null;
+    first_call_at?: string | null;
+    call_sla_breached?: boolean;
     // Joined data
     status_info?: LeadStatusConfig;
     source_info?: LeadSource;
