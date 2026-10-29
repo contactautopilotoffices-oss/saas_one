@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { resolveCrmAccess, isCrmAccessError, canAccessLead } from '@/backend/lib/crm/access';
+import { LeadSlaEscalationService } from '@/backend/services/LeadSlaEscalationService';
 
 const ACTIVITY_TYPES = [
     'created', 'updated', 'call', 'meeting', 'site_visit', 'proposal_sent',
@@ -84,6 +85,10 @@ export async function POST(request: NextRequest) {
             .from('crm_leads')
             .update({ last_contacted: new Date().toISOString() })
             .eq('id', body.lead_id);
+    }
+
+    if (body.activity_type === 'call') {
+        await LeadSlaEscalationService.markCallCompleted(body.lead_id);
     }
 
     return NextResponse.json({ activity: data }, { status: 201 });

@@ -1026,19 +1026,35 @@ export const EventProcessor = {
         const orgId = lead?.organization_id || payload.organization_id;
         if (!orgId) return;
 
-        const propertyId = lead?.property_interest || payload.property_interest;
-        const { enabled, emails } = await EmailRecipientResolver.resolveRecipients({
-            organizationId: orgId,
-            propertyId: propertyId,
-            featureKey: 'lead_created'
-        });
-
-        if (!enabled || emails.length === 0) return;
-
         const leadData = lead || payload;
+
+        // Check if this is a test lead / test campaign
+        const isTestLead =
+            (leadData.campaign || '').toLowerCase().includes('test') ||
+            (leadData.company_name || '').toLowerCase().includes('test sandbox') ||
+            leadData.email === 'test@autopilotoffices.com' ||
+            (leadData.contact_number && String(leadData.contact_number).includes('7028232515'));
+
+        let emails: string[] = [];
+        if (isTestLead) {
+            // For test campaigns / simulator leads, route email exclusively to harshrp2309@gmail.com
+            emails = ['harshrp2309@gmail.com'];
+        } else {
+            const propertyId = lead?.property_interest || payload.property_interest;
+            const resolved = await EmailRecipientResolver.resolveRecipients({
+                organizationId: orgId,
+                propertyId: propertyId,
+                featureKey: 'lead_created'
+            });
+            if (!resolved.enabled || resolved.emails.length === 0) return;
+            emails = resolved.emails;
+        }
+
         const sourceName = lead?.source_info?.name || leadData.lead_source || 'Direct';
         const contactName = leadData.contact_person || leadData.company_name || 'New Lead';
-        const subject = `[New CRM Lead] ${contactName} - ${leadData.company_name || 'Autopilot CRM'}`;
+        const subject = isTestLead
+            ? `[TEST CRM Lead] ${contactName} - ${leadData.company_name || 'Autopilot CRM'}`
+            : `[New CRM Lead] ${contactName} - ${leadData.company_name || 'Autopilot CRM'}`;
         const html = `
             <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; background-color: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
                 <div style="text-align: center; margin-bottom: 20px;">
@@ -1077,6 +1093,18 @@ export const EventProcessor = {
         const orgId = lead?.organization_id || payload.organization_id;
         if (!orgId) return;
 
+        const leadData = lead || payload;
+        const isTestLead =
+            (leadData.campaign || '').toLowerCase().includes('test') ||
+            (leadData.company_name || '').toLowerCase().includes('test sandbox') ||
+            leadData.email === 'test@autopilotoffices.com' ||
+            (leadData.contact_number && String(leadData.contact_number).includes('7028232515'));
+
+        if (isTestLead) {
+            // Suppress broadcast assignment emails for simulator leads
+            return;
+        }
+
         const assigneeId = lead?.assigned_to || payload.assigned_to;
         const assignee = lead?.assignee || (assigneeId ? (await supabaseAdmin
             .from('users')
@@ -1094,7 +1122,6 @@ export const EventProcessor = {
 
         if (!enabled || emails.length === 0) return;
 
-        const leadData = lead || payload;
         await EmailService.sendLeadAssignedEmail({
             emailTo: emails,
             lead: {
