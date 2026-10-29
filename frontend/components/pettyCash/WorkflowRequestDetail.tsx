@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useState, useMemo } from 'react';
 import { inr, PC_STATUS_META, PC_PAYMENT_MODES } from '@/frontend/lib/pettyCash/roles';
+import { Button } from '@/frontend/components/ui/button';
 import WorkflowModal from './WorkflowModal';
 import ProofUpload from './ProofUpload';
 import ExpenseForm from './ExpenseForm';
@@ -30,8 +31,12 @@ import {
     ExternalLink,
     Cpu,
     ChevronDown,
-    ChevronUp
+    ChevronUp,
+    Download,
+    FileSpreadsheet,
+    Users
 } from 'lucide-react';
+import { exportExpensesToCsv, exportExpensesToExcel } from '@/frontend/lib/pettyCash/exportExpenses';
 
 export default function WorkflowRequestDetail({
     context,
@@ -47,6 +52,7 @@ export default function WorkflowRequestDetail({
     const [detail, setDetail] = useState<Detail | null>(null);
     const [error, setError] = useState('');
     const [busy, setBusy] = useState(false);
+    const [requestModeFilter, setRequestModeFilter] = useState<'all' | 'Operation' | 'Client'>('all');
     const [legacyAmounts, setLegacyAmounts] = useState<Record<string, string>>({});
     const [action, setAction] = useState('');
     const [proofs, setProofs] = useState<Upload[]>([]);
@@ -724,6 +730,7 @@ export default function WorkflowRequestDetail({
                                 balance={detail.balance}
                                 correction={correction}
                                 existingExpenses={detail.expenses}
+                                proofThreshold={context.properties.find(p => p.id === r?.property_id)?.petty_cash_proof_threshold ?? 500}
                                 onSaved={() => { void changed(); }}
                             />
                         </div>
@@ -829,26 +836,96 @@ export default function WorkflowRequestDetail({
                     )}
 
                     {/* Expenses and Bills Section */}
-                    <div className="space-y-3 pt-2">
-                        <div className="flex flex-wrap justify-between items-center gap-2">
-                            <div>
-                                <h3 className="font-bold text-base text-slate-900 dark:text-white flex items-center gap-2">
-                                    <Receipt size={17} className="text-primary" /> Expenses & Receipt Audits
-                                </h3>
-                                <p className="text-xs text-slate-500 dark:text-slate-400">
-                                    {detail.expenses.length} {detail.expenses.length === 1 ? 'expense' : 'expenses'} recorded against this request
-                                </p>
-                            </div>
-                        </div>
+                    {(() => {
+                        const reqExpenses = detail.expenses || [];
+                        const opTotal = reqExpenses.filter(e => (e.spend_mode || 'Operation') === 'Operation').reduce((s, e) => s + Number(e.amount || 0), 0);
+                        const clientTotal = reqExpenses.filter(e => e.spend_mode === 'Client').reduce((s, e) => s + Number(e.amount || 0), 0);
+                        const filtered = reqExpenses.filter(e => requestModeFilter === 'all' || (e.spend_mode || 'Operation') === requestModeFilter);
+                        return (
+                            <div className="space-y-3 pt-2">
+                                <div className="flex flex-wrap justify-between items-center gap-3">
+                                    <div>
+                                        <h3 className="font-bold text-base text-slate-900 dark:text-white flex items-center gap-2">
+                                            <Receipt size={17} className="text-primary" /> Expenses & Receipt Audits
+                                        </h3>
+                                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                                            {reqExpenses.length} {reqExpenses.length === 1 ? 'expense' : 'expenses'} recorded against this request
+                                            {reqExpenses.length > 0 && (
+                                                <span className="ml-2 font-semibold">
+                                                    (Op: <strong className="text-indigo-600 dark:text-indigo-400">{inr(opTotal)}</strong> · Client: <strong className="text-amber-600 dark:text-amber-400">{inr(clientTotal)}</strong>)
+                                                </span>
+                                            )}
+                                        </p>
+                                    </div>
 
-                        <ExpenseTable
-                            org={context.organization_id}
-                            showRequest={false}
-                            busy={busy}
-                            expenses={detail.expenses.map(entry => ({
-                                ...entry,
-                                documents: detail.documents.filter(document => document.expense_id === entry.id)
-                            }))}
+                                    {reqExpenses.length > 0 && (
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <div className="flex items-center p-0.5 bg-slate-100 dark:bg-[#21262d] rounded-xl text-xs font-bold">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setRequestModeFilter('all')}
+                                                    className={`px-2 py-0.5 rounded-lg transition-all ${
+                                                        requestModeFilter === 'all'
+                                                            ? 'bg-white dark:bg-[#30363d] text-slate-900 dark:text-white shadow-xs'
+                                                            : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                                                    }`}
+                                                >
+                                                    All
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setRequestModeFilter('Operation')}
+                                                    className={`px-2 py-0.5 rounded-lg transition-all flex items-center gap-1 ${
+                                                        requestModeFilter === 'Operation'
+                                                            ? 'bg-white dark:bg-[#30363d] text-indigo-600 dark:text-indigo-400 shadow-xs'
+                                                            : 'text-slate-600 dark:text-slate-400 hover:text-indigo-600'
+                                                    }`}
+                                                >
+                                                    <Building2 size={11} /> Op
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setRequestModeFilter('Client')}
+                                                    className={`px-2 py-0.5 rounded-lg transition-all flex items-center gap-1 ${
+                                                        requestModeFilter === 'Client'
+                                                            ? 'bg-white dark:bg-[#30363d] text-amber-600 dark:text-amber-400 shadow-xs'
+                                                            : 'text-slate-600 dark:text-slate-400 hover:text-amber-600'
+                                                    }`}
+                                                >
+                                                    <Users size={11} /> Client
+                                                </button>
+                                            </div>
+
+                                            <Button
+                                                variant="solid"
+                                                size="sm"
+                                                onClick={() => exportExpensesToCsv(filtered, `${r?.request_no || 'request'}_expenses`)}
+                                                title="Export clean UTF-8 CSV with BOM"
+                                                className="gap-1 rounded-xl text-xs font-bold h-7 px-2"
+                                            >
+                                                <Download size={12} /> CSV
+                                            </Button>
+                                            <Button
+                                                variant="solid"
+                                                size="sm"
+                                                onClick={() => exportExpensesToExcel(filtered, `${r?.request_no || 'request'}_expenses`)}
+                                                title="Export formatted Excel (.xls) with bold headers"
+                                                className="gap-1 rounded-xl text-xs font-bold h-7 px-2 text-emerald-600 dark:text-emerald-400 hover:text-emerald-700"
+                                            >
+                                                <FileSpreadsheet size={12} /> Excel
+                                            </Button>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <ExpenseTable
+                                    org={context.organization_id}
+                                    showRequest={false}
+                                    busy={busy}
+                                    expenses={filtered.map(entry => ({
+                                        ...entry,
+                                        documents: detail.documents.filter(document => document.expense_id === entry.id)
+                                    }))}
                             onCorrect={owner ? entry => { setCorrection(entry); setExpense(false); } : undefined}
                             onReview={finance && r?.status !== 'closed' ? async (expenseId, reviewStatus) => {
                                 const remark = reviewStatus === 'rejected' ? window.prompt('Reason for rejecting proof') : undefined;
@@ -899,6 +976,8 @@ export default function WorkflowRequestDetail({
                             </div>
                         )}
                     </div>
+                    );
+                    })()}
 
                     {/* Activity Audit Timeline */}
                     <div className="space-y-3 pt-3">
