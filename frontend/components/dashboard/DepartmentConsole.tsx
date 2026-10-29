@@ -6,7 +6,7 @@ import Image from 'next/image';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
-    Boxes, Building2, Bug, ChevronDown, ClipboardList, DoorOpen, LayoutDashboard, LogOut, Menu, Settings, ShieldCheck,
+    Boxes, Building2, Bug, ChevronDown, ClipboardList, DoorOpen, FolderOpen, LayoutDashboard, LogOut, Menu, Settings, ShieldCheck,
     UserCircle, X,
 } from 'lucide-react';
 import { createClient } from '@/frontend/utils/supabase/client';
@@ -28,10 +28,12 @@ const HRTicketsContent = dynamic(() => import('@/frontend/components/hr/HRTicket
 const SettingsView = dynamic(() => import('./SettingsView'), { loading: TabLoading });
 // The same booking screen HR and CRM open at /{orgId}/book-room (property, then room and slot; no credits).
 const BookMeetingRoom = dynamic(() => import('@/app/(dashboard)/[orgId]/book-room/page'), { loading: TabLoading });
+// Owner 2026-10-29: the drive Design shares with the Tech team (the Tech console has the same tab)
+const FilesTab = dynamic(() => import('@/frontend/components/files/FilesTab'), { loading: TabLoading });
 
 export type ConsoleDepartment = 'it' | 'design';
 
-type ConsoleTab = 'tasks' | 'assets' | 'meeting_room' | 'grievance' | 'settings' | 'profile';
+type ConsoleTab = 'tasks' | 'assets' | 'meeting_room' | 'grievance' | 'files' | 'settings' | 'profile';
 
 interface NavItem { id: ConsoleTab | 'feedback'; label: string; icon: React.ComponentType<{ className?: string }> }
 
@@ -51,6 +53,7 @@ const DEPARTMENTS: Record<ConsoleDepartment, { name: string; work: NavItem[] }> 
             { id: 'meeting_room', label: 'Meeting Room', icon: DoorOpen },
             { id: 'grievance', label: 'Grievances', icon: ShieldCheck },
             { id: 'tasks', label: 'Task Manager', icon: ClipboardList },
+            { id: 'files', label: 'Files', icon: FolderOpen },
         ],
     },
 };
@@ -272,6 +275,7 @@ export default function DepartmentConsole({ department }: { department: ConsoleD
                     )}
                     {activeTab === 'meeting_room' && <BookMeetingRoom />}
                     {activeTab === 'grievance' && org && <HRTicketsContent orgId={org.id} />}
+                    {activeTab === 'files' && org && <FilesTab orgId={org.id} team="design" />}
                     {activeTab === 'settings' && <SettingsView />}
                     {activeTab === 'profile' && (
                         <div className="flex justify-center py-8">

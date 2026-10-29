@@ -315,6 +315,10 @@ export class TaskDatabaseService {
         assignedDate?: string; // YYYY-MM-DD
         assignedBy?: string;
         status?: TaskStatus; // optional; omitted = 'pending' (unchanged for every existing caller)
+        // Zoho task import (2026-10-29). Only written when given, so every existing caller inserts exactly as before.
+        dueDate?: string | null; // YYYY-MM-DD
+        source?: string;
+        externalId?: string;
     }): Promise<TaskAssignment> {
         const assignedDate = params.assignedDate || new Date().toISOString().slice(0, 10);
         const status: TaskStatus = params.status || 'pending';
@@ -344,7 +348,10 @@ export class TaskDatabaseService {
                 assigned_date: assignedDate,
                 status,
                 assigned_by: params.assignedBy || null,
-                ...(status === 'completed' ? { completed_at: new Date().toISOString() } : {})
+                ...(status === 'completed' ? { completed_at: new Date().toISOString() } : {}),
+                ...(params.dueDate ? { due_date: params.dueDate } : {}),
+                ...(params.source ? { source: params.source } : {}),
+                ...(params.externalId ? { external_id: params.externalId } : {})
             })
             .select('*')
             .single();
