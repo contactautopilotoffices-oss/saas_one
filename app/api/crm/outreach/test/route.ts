@@ -73,6 +73,9 @@ export async function POST(request: NextRequest) {
                     outreach_button_tapped: null,
                     outreach_tapped_at: null,
                     call_sla_breached: false,
+                    first_call_at: null,
+                    requirement: null,
+                    seats: null,
                     is_smb_nurture: false,
                     updated_at: new Date().toISOString(),
                 })
@@ -88,7 +91,7 @@ export async function POST(request: NextRequest) {
                     email: 'test@autopilotoffices.com',
                     city,
                     location: city,
-                    seats: 30,
+                    seats: null,
                     status: 'edac5b61-6567-4acb-8fc6-1ccc9d0bd277',
                     priority: 'High',
                     lead_source: defaultSource?.id || null,

@@ -519,7 +519,14 @@ This client is already in your pipeline (Lead ID: ${existingLead.id}). Skipping 
                     }).catch(e => console.error('[LeadOutreachService] Push alert error:', e));
                 }
 
-                // 6. Send Message 2 (Interactive List Picker / Selection for Team Size)
+                // 6. Send instant confirmation to client that advisor is calling now
+                const callNowConfirm = `Got it! Our Workspace Specialist ${advisorName} is placing a call to you right now. 📞\n\nIf urgent, you can reach ${advisorName} directly on ${advisorPhone}.`;
+                WhatsAppService.sendAsync(phone, {
+                    message: callNowConfirm,
+                    moduleName: 'crm',
+                }).catch(e => console.error('[LeadOutreachService] Call now confirmation error:', e));
+
+                // 7. Send Message 2 (Interactive List Picker / Selection for Team Size if needed)
                 await this.sendMessage2Qualification(lead, phone);
 
                 return { handled: true, leadId: lead.id, action: 'call_me_now' };
