@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { resolveCrmAccess, isCrmAccessError, readOrgId } from '@/backend/lib/crm/access';
 import { LeadOutreachService } from '@/backend/services/LeadOutreachService';
 import { CampaignOutreachConfigService } from '@/backend/services/CampaignOutreachConfigService';
+import { EmailService } from '@/backend/services/EmailService';
 
 const DEFAULT_BANGALORE_ADVISOR_ID = '0889c23c-0028-4b08-af18-b95d602fde28';
 
@@ -108,6 +109,28 @@ export async function POST(request: NextRequest) {
         // 2. Trigger automated lead outreach flow
         console.info(`[OutreachTestAPI] Triggering live test outreach for ${formattedPhone} (Lead: ${leadId})`);
         const dispatchResult = await LeadOutreachService.sendLeadFollowupOutreach(leadId);
+
+        // 3. Dispatch test notification email exclusively to harshrp2309@gmail.com
+        EmailService.sendNewLeadEmail({
+            emailTo: 'harshrp2309@gmail.com',
+            subject: `[TEST CRM Lead] ${clientName} - Test Sandbox`,
+            html: `
+                <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; background-color: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <h2 style="color: #6366f1; margin: 0; font-size: 20px;">🎯 Test Campaign Lead Simulation</h2>
+                        <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Automated outreach test lead dispatched</p>
+                    </div>
+                    <div style="background-color: #f8fafc; border-left: 4px solid #6366f1; padding: 16px; border-radius: 6px; margin: 18px 0;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                            <tr><td style="padding: 4px 0; color: #64748b; width: 130px;"><b>Client:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: bold;">${clientName}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Phone:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: 600;">${formattedPhone}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>Campaign:</b></td><td style="padding: 4px 0; color: #0f172a;">${campaignName}</td></tr>
+                            <tr><td style="padding: 4px 0; color: #64748b;"><b>City:</b></td><td style="padding: 4px 0; color: #0f172a;">${city}</td></tr>
+                        </table>
+                    </div>
+                </div>
+            `,
+        }).catch(err => console.error('[OutreachTestAPI] Email dispatch error:', err));
 
         return NextResponse.json({
             success: true,
