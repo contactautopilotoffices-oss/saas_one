@@ -286,6 +286,33 @@ export class MeetingService {
         return { ok: true };
     }
 
+    /**
+     * Owner 2026-10-30: "Start over" — a recording started by mistake. Deletes every audio piece recorded so far and keeps
+     * the meeting open for recording (name, people and confidential setting stay). Only the person who started it, and
+     * only while it is still recording. If any piece could not be deleted, nothing is reset and the person is told —
+     * old audio must never be mixed into the new recording.
+     */
+    static async resetRecording(userId: string, id: string) {
+        const m = await this.owned(userId, id);
+        if (m.status !== 'recording') throw new MeetingError(409, 'This meeting has already finished recording.');
+        try {
+            await this.removeAudioFiles(id);
+        } catch (err) {
+            console.error('[MeetingService] reset: could not delete the audio:', id, err instanceof Error ? err.message : err);
+            throw new MeetingError(500, 'Could not delete the recording. Please try again.');
+        }
+        // Check: no audio file may be left (an empty folder may still be listed for a moment, that is fine)
+        for (const seg of await this.segments(id)) {
+            const { data, error } = await supabaseAdmin.storage.from(MEETING_BUCKET).list(`${id}/${seg}`, { limit: 1 });
+            if (error || data?.length) throw new MeetingError(500, 'Could not delete the whole recording. Please try again.');
+        }
+        const { error } = await supabaseAdmin.from('meeting_notes').update({ stt: null, error: null, updated_at: new Date().toISOString() })
+            .eq('id', id).eq('status', 'recording');
+        if (error) dbFail(error, 'Could not reset the recording');
+        await TaskDatabaseService.logAudit({ eventType: 'meeting_recording_reset', actorId: userId, details: { meetingId: id } });
+        return { ok: true };
+    }
+
     /** Owner 2026-10-29: change the meeting's name (anyone who can open the meeting). */
     static async rename(userId: string, id: string, input: { title?: unknown }) {
         await this.visible(userId, id);
@@ -377,17 +404,23 @@ export class MeetingService {
     }
 
     /** Owner rule: transcript only. Removes every stored piece of this meeting's audio. */
+    /** Removes every stored audio piece of a meeting. Throws if anything could not be listed or removed. */
+    private static async removeAudioFiles(id: string): Promise<void> {
+        const paths: string[] = [];
+        for (const seg of await this.segments(id)) {
+            const { data, error } = await supabaseAdmin.storage.from(MEETING_BUCKET).list(`${id}/${seg}`, { limit: 10_000 });
+            if (error) throw error;
+            for (const f of data ?? []) paths.push(`${id}/${seg}/${f.name}`);
+        }
+        for (let i = 0; i < paths.length; i += 500) {
+            const { error } = await supabaseAdmin.storage.from(MEETING_BUCKET).remove(paths.slice(i, i + 500));
+            if (error) throw error;
+        }
+    }
+
     private static async deleteAudio(id: string): Promise<void> {
         try {
-            const paths: string[] = [];
-            for (const seg of await this.segments(id)) {
-                const { data } = await supabaseAdmin.storage.from(MEETING_BUCKET).list(`${id}/${seg}`, { limit: 10_000 });
-                for (const f of data ?? []) paths.push(`${id}/${seg}/${f.name}`);
-            }
-            for (let i = 0; i < paths.length; i += 500) {
-                const { error } = await supabaseAdmin.storage.from(MEETING_BUCKET).remove(paths.slice(i, i + 500));
-                if (error) throw error;
-            }
+            await this.removeAudioFiles(id);
             const m = await supabaseAdmin.from('meeting_notes').select('stt').eq('id', id).maybeSingle();
             await supabaseAdmin.from('meeting_notes').update({ stt: { ...((m.data?.stt as Record<string, unknown> | null) ?? {}), audioDeleted: true } }).eq('id', id);
         } catch (err) {

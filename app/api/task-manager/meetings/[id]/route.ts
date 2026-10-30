@@ -17,6 +17,7 @@ export const maxDuration = 300;
  *     upload_url  { segment, seq, mimeType } a one-time private upload link for one audio piece
  *     finish                                 recording done → processing starts
  *     discard                                delete the meeting (and any audio)
+ *     reset_recording                        "Start over": delete the audio so far, keep the meeting open for recording
  *     retry                                  try a failed meeting again
  *     rename      { title }                  change the meeting's name
  *     send_notes                             summary + decisions + each person's tasks on WhatsApp to those present
@@ -59,6 +60,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
             case 'upload_url': return NextResponse.json({ success: true, ...(await MeetingService.uploadUrl(userId, id, { segment: body.segment, seq: body.seq, mimeType: body.mimeType })) });
             case 'finish': return NextResponse.json({ success: true, ...(await MeetingService.finish(userId, id)) });
             case 'discard': return NextResponse.json({ success: true, ...(await MeetingService.discard(userId, id)) });
+            case 'reset_recording': return NextResponse.json({ success: true, ...(await MeetingService.resetRecording(userId, id)) });
             case 'retry': return NextResponse.json({ success: true, ...(await MeetingService.retry(userId, id)) });
             case 'rename': return NextResponse.json({ success: true, ...(await MeetingService.rename(userId, id, { title: body.title })) });
             case 'send_notes': return NextResponse.json({ success: true, ...(await MeetingService.sendNotes(userId, id)) });

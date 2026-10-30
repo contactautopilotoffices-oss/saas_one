@@ -1,11 +1,11 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { ChevronRight, Loader2, Lock, Mic, Plus, Users } from 'lucide-react';
+import { Check, ChevronRight, Loader2, Lock, Mic, Pencil, Plus, Users } from 'lucide-react';
 import MeetingRecorder from './MeetingRecorder';
 import MeetingReview from './MeetingReview';
 import NewMeeting from './NewMeeting';
-import { PROCESSING, STATUS_LABEL, call, clock, meetingsUrl, niceDate, type MeetingListItem, type MeetingPerson, type MeetingSpace } from './api';
+import { PROCESSING, STATUS_LABEL, call, clock, meetingUrl, meetingsUrl, niceDate, type MeetingListItem, type MeetingPerson, type MeetingSpace } from './api';
 
 /**
  * Owner 2026-10-29: the Tech dashboard's "Meetings" tab. The Tech team runs the meeting: they record it on one phone,
@@ -30,6 +30,21 @@ export default function MeetingsTab({ space }: { space: MeetingSpace }) {
     const [meetings, setMeetings] = useState<MeetingListItem[] | null>(null);
     const [people, setPeople] = useState<MeetingPerson[]>([]);
     const [error, setError] = useState<string | null>(null);
+    /** The meeting being renamed from the list, and its new name */
+    const [renaming, setRenaming] = useState<{ id: string; title: string } | null>(null);
+    const [savingName, setSavingName] = useState(false);
+
+    /** Same "rename" action as inside a meeting; the list is updated in place on success */
+    const saveName = async () => {
+        if (!renaming || !renaming.title.trim() || savingName) return;
+        setSavingName(true);
+        const r = await call<{ title: string }>(meetingUrl(renaming.id, space), { action: 'rename', title: renaming.title });
+        setSavingName(false);
+        if (!r.ok) { setError(r.error); return; }
+        setMeetings(list => list?.map(x => (x.id === renaming.id ? { ...x, title: r.title } : x)) ?? list);
+        setError(null);
+        setRenaming(null);
+    };
 
     // (Re)load whenever the list is shown again, e.g. after coming back from a meeting
     useEffect(() => {
@@ -49,7 +64,7 @@ export default function MeetingsTab({ space }: { space: MeetingSpace }) {
         return <NewMeeting space={space} people={people} onCancel={() => setView({ kind: 'list' })} onStarted={(id, title, file) => setView({ kind: 'record', id, title, file })} />;
     }
     if (view.kind === 'record') {
-        return <MeetingRecorder space={space} meetingId={view.id} title={view.title} file={view.file} onDone={() => setView({ kind: 'review', id: view.id })} onBack={() => setView({ kind: 'review', id: view.id })} />;
+        return <MeetingRecorder space={space} meetingId={view.id} title={view.title} file={view.file} onDone={() => setView({ kind: 'review', id: view.id })} onBack={() => setView({ kind: 'review', id: view.id })} onDiscarded={() => setView({ kind: 'list' })} />;
     }
     if (view.kind === 'review') {
         return <MeetingReview space={space} meetingId={view.id} onBack={() => setView({ kind: 'list' })} onContinueRecording={(id, title) => setView({ kind: 'record', id, title, file: null })} />;
@@ -80,10 +95,30 @@ export default function MeetingsTab({ space }: { space: MeetingSpace }) {
                 </div>
             ) : (
                 <ul className="space-y-2">
-                    {meetings.map(m => (
+                    {meetings.map(m => renaming?.id === m.id ? (
+                        // Owner 2026-10-30: rename straight from the list
                         <li key={m.id}>
+                            <form onSubmit={e => { e.preventDefault(); void saveName(); }}
+                                className="flex flex-wrap items-center gap-2 rounded-2xl border border-indigo-300 bg-white p-3 shadow-sm dark:border-indigo-700 dark:bg-zinc-900">
+                                <input autoFocus value={renaming.title} maxLength={150} aria-label="Meeting name"
+                                    onChange={e => setRenaming({ id: m.id, title: e.target.value })}
+                                    onKeyDown={e => { if (e.key === 'Escape') setRenaming(null); }}
+                                    className="min-w-0 flex-1 rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm font-bold text-zinc-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100" />
+                                <button type="submit" disabled={savingName || !renaming.title.trim()}
+                                    className="flex h-9 items-center gap-1 rounded-xl bg-indigo-600 px-3 text-xs font-black text-white hover:bg-indigo-700 disabled:opacity-40">
+                                    {savingName ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} Save
+                                </button>
+                                <button type="button" onClick={() => setRenaming(null)} className="h-9 rounded-xl px-3 text-xs font-bold text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800">Cancel</button>
+                            </form>
+                        </li>
+                    ) : (
+                        <li key={m.id} className="flex items-stretch rounded-2xl border border-zinc-200 bg-white shadow-sm transition-colors hover:border-indigo-300 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-indigo-700">
+                            <button type="button" onClick={() => setRenaming({ id: m.id, title: m.title })} aria-label={`Rename ${m.title}`} title="Rename"
+                                className="order-last flex w-11 shrink-0 items-center justify-center rounded-r-2xl border-l border-zinc-100 text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 dark:border-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200">
+                                <Pencil className="h-4 w-4" />
+                            </button>
                             <button type="button" onClick={() => setView({ kind: 'review', id: m.id })}
-                                className="flex w-full items-center gap-4 rounded-2xl border border-zinc-200 bg-white p-4 text-left shadow-sm transition-colors hover:border-indigo-300 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-indigo-700">
+                                className="flex min-w-0 flex-1 items-center gap-4 rounded-l-2xl p-4 text-left">
                                 <div className="min-w-0 flex-1">
                                     <p className="flex items-center gap-1.5 truncate text-sm font-black text-zinc-900 dark:text-zinc-100">
                                         {m.confidential && <Lock className="h-3.5 w-3.5 shrink-0 text-zinc-400" aria-label="Confidential" />}
