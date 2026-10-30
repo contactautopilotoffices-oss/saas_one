@@ -22,25 +22,34 @@ export function generateCsvContent(expenses: Expense[]): string {
         'Payment Reference',
         'Purpose / Description',
         'Bills Attached',
+        'No Bill Reason',
         'Review Status',
         'Review Remarks'
     ];
 
-    const rows = expenses.map(exp => [
-        exp.expense_date ? exp.expense_date.slice(0, 10) : '',
-        exp.request?.request_no || '',
-        exp.property?.name || '',
-        exp.spend_mode || 'Operation',
-        exp.vendor || '',
-        exp.category || '',
-        exp.amount !== undefined ? Number(exp.amount).toFixed(2) : '0.00',
-        exp.payment_mode || '',
-        exp.payment_ref || '',
-        exp.description || '',
-        exp.documents?.length ? `${exp.documents.length} bill(s)` : 'None',
-        exp.review_status || 'pending',
-        exp.review_remarks || ''
-    ]);
+    const rows = expenses.map(exp => {
+        const docNames = exp.documents?.map(d => d.file_name).filter(Boolean) || [];
+        const billsAttached = docNames.length
+            ? `${docNames.length} bill(s) (${docNames.join('; ')})`
+            : (exp.no_bill_reason ? 'No bill required' : 'None');
+
+        return [
+            exp.expense_date ? exp.expense_date.slice(0, 10) : '',
+            exp.request?.request_no || (exp as any).request_no || '',
+            exp.property?.name || (exp as any).property_name || '',
+            exp.spend_mode || 'Operation',
+            exp.vendor || '',
+            exp.category || '',
+            exp.amount !== undefined ? Number(exp.amount).toFixed(2) : '0.00',
+            exp.payment_mode || '',
+            exp.payment_ref || '',
+            exp.description || '',
+            billsAttached,
+            exp.no_bill_reason || '',
+            exp.review_status || 'pending',
+            exp.review_remarks || ''
+        ];
+    });
 
     const csvBody = [
         headers.map(escapeCsvField).join(','),
@@ -64,6 +73,7 @@ export function generateExcelHtml(expenses: Expense[]): string {
         'Payment Reference',
         'Purpose / Description',
         'Bills Attached',
+        'No Bill Reason',
         'Review Status',
         'Review Remarks'
     ];
@@ -72,10 +82,15 @@ export function generateExcelHtml(expenses: Expense[]): string {
         const bg = idx % 2 === 0 ? '#ffffff' : '#f8fafc';
         const modeBg = exp.spend_mode === 'Client' ? '#fef3c7' : '#e0e7ff';
         const modeColor = exp.spend_mode === 'Client' ? '#92400e' : '#3730a3';
+        const docNames = exp.documents?.map(d => d.file_name).filter(Boolean) || [];
+        const billsText = docNames.length
+            ? `${docNames.length} bill(s) (${docNames.join('; ')})`
+            : (exp.no_bill_reason ? 'No bill required' : 'None');
+
         return `<tr style="background-color: ${bg}; font-family: sans-serif; font-size: 12px;">
             <td style="padding: 8px 12px; border: 1px solid #e2e8f0; white-space: nowrap;">${exp.expense_date ? exp.expense_date.slice(0, 10) : ''}</td>
-            <td style="padding: 8px 12px; border: 1px solid #e2e8f0; font-weight: bold;">${exp.request?.request_no || '—'}</td>
-            <td style="padding: 8px 12px; border: 1px solid #e2e8f0;">${exp.property?.name || '—'}</td>
+            <td style="padding: 8px 12px; border: 1px solid #e2e8f0; font-weight: bold;">${exp.request?.request_no || (exp as any).request_no || '—'}</td>
+            <td style="padding: 8px 12px; border: 1px solid #e2e8f0;">${exp.property?.name || (exp as any).property_name || '—'}</td>
             <td style="padding: 8px 12px; border: 1px solid #e2e8f0; text-align: center;">
                 <span style="background-color: ${modeBg}; color: ${modeColor}; padding: 3px 8px; border-radius: 9999px; font-weight: bold; font-size: 10px; text-transform: uppercase;">
                     ${exp.spend_mode || 'Operation'}
@@ -87,7 +102,8 @@ export function generateExcelHtml(expenses: Expense[]): string {
             <td style="padding: 8px 12px; border: 1px solid #e2e8f0;">${exp.payment_mode || ''}</td>
             <td style="padding: 8px 12px; border: 1px solid #e2e8f0; font-family: monospace; font-size: 11px;">${exp.payment_ref || ''}</td>
             <td style="padding: 8px 12px; border: 1px solid #e2e8f0;">${exp.description || ''}</td>
-            <td style="padding: 8px 12px; border: 1px solid #e2e8f0; text-align: center;">${exp.documents?.length ? `${exp.documents.length} bill(s)` : 'None'}</td>
+            <td style="padding: 8px 12px; border: 1px solid #e2e8f0; text-align: center;">${billsText}</td>
+            <td style="padding: 8px 12px; border: 1px solid #e2e8f0;">${exp.no_bill_reason || '—'}</td>
             <td style="padding: 8px 12px; border: 1px solid #e2e8f0; text-transform: capitalize;">${(exp.review_status || 'pending').replace('_', ' ')}</td>
             <td style="padding: 8px 12px; border: 1px solid #e2e8f0;">${exp.review_remarks || ''}</td>
         </tr>`;
