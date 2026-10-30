@@ -731,6 +731,7 @@ export default function WorkflowRequestDetail({
                                 correction={correction}
                                 existingExpenses={detail.expenses}
                                 proofThreshold={context.properties.find(p => p.id === r?.property_id)?.petty_cash_proof_threshold ?? 500}
+                                requestDate={r?.created_at ? new Date(r.created_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) : undefined}
                                 onSaved={() => { void changed(); }}
                             />
                         </div>
@@ -927,6 +928,24 @@ export default function WorkflowRequestDetail({
                                         documents: detail.documents.filter(document => document.expense_id === entry.id)
                                     }))}
                             onCorrect={owner ? entry => { setCorrection(entry); setExpense(false); } : undefined}
+                            onWithdraw={(owner || finance) && r?.status !== 'closed' ? async entry => {
+                                const remark = window.prompt(`Withdraw the ₹${entry.amount} expense "${entry.description}"? Its amount goes back to the wallet and must be returned to accounts. Reason:`);
+                                if (!remark?.trim()) return;
+                                setBusy(true);
+                                setError('');
+                                try {
+                                    await pcFetch(`/api/petty-cash/expenses/${entry.id}`, pcJson({
+                                        organization_id: context.organization_id,
+                                        action: 'withdraw',
+                                        remark
+                                    }, 'PATCH'));
+                                    await changed();
+                                } catch (reason) {
+                                    setError(reason instanceof Error ? reason.message : 'Withdraw failed');
+                                } finally {
+                                    setBusy(false);
+                                }
+                            } : undefined}
                             onReview={finance && r?.status !== 'closed' ? async (expenseId, reviewStatus) => {
                                 const remark = reviewStatus === 'rejected' ? window.prompt('Reason for rejecting proof') : undefined;
                                 if (reviewStatus === 'rejected' && !remark?.trim()) return;

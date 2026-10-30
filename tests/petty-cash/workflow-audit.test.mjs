@@ -1,13 +1,11 @@
 // Petty cash workflow audit, 2026-10-30.
 //
 // Unlike database.mjs alone, this suite applies EVERY petty cash migration in order
-// (including 2026-10-07 omnichannel, 2026-10-13 UTR + no-proof payout, 2026-10-29
-// enhancements), so it exercises the SQL that production actually runs.
+// (2026-10-07 omnichannel, 2026-10-13 UTR + no-proof payout, 2026-10-29 enhancements and
+// the 2026-10-30 audit fixes), so it exercises the SQL that production actually runs.
 //
-// Conventions:
-//   - plain tests       = controls that work today, or current policy recorded as-is
-//   - { todo: 'BUG-n' } = asserts the CORRECT behaviour; currently fails. Reported as
-//                         "# TODO" so CI stays green. When a bug is fixed, drop the todo.
+// Plain tests cover controls, the bug fixes and the rules agreed on 30 Oct. "POLICY" tests
+// record behaviour that is intended today but worth revisiting.
 // Bug IDs match docs/testing/petty-cash-workflow-audit-2026-10-30.md.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,17 +20,19 @@ const LATER_MIGRATIONS = [
     '20261013000001_petty_cash_duplicate_utr_prevention.sql',
     '20261013000002_petty_cash_disbursement_no_proof_required.sql',
     '20261029000001_petty_cash_enhancements.sql',
+    '20261030000001_petty_cash_audit_fixes.sql',
 ];
+const istDate = (offsetDays = 0) => new Date(Date.now() + offsetDays * 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+const TODAY = istDate();
+const NO_BILL = 'Auto rickshaw fare, driver gives no receipt';
 
 // Fixture users (database.mjs): 10 org_super_admin, 11 mst (requester), 12 staff (allocator),
 // 13 property_admin (approver), 14 accounts, 15 food_vendor, 16 staff. Property A = id(3), B = id(4).
-async function current({ isolateFromBug1 = false } = {}) {
+async function current() {
     const db = await setup();
     await db.exec(`ALTER TABLE users ADD COLUMN phone text;
      CREATE TABLE event_outbox(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),event_type text,entity_id uuid,payload jsonb,status text DEFAULT 'pending',retry_count int DEFAULT 0,created_at timestamptz DEFAULT now(),updated_at timestamptz DEFAULT now());`);
     for (const file of LATER_MIGRATIONS) await db.exec(await readFile(new URL('../../supabase/migrations/' + file, import.meta.url), 'utf8'));
-    // BUG-1 blocks every expense; tests about later stages drop the trigger so they can reach them.
-    if (isolateFromBug1) await db.exec('DROP TRIGGER pc_activity_outbox ON petty_cash_activity');
     return db;
 }
 const upload = async (db, owner) => {
@@ -43,18 +43,19 @@ const upload = async (db, owner) => {
 const act = (db, user, r, kind, extra = {}) => call(db, 'pc_action', [id(user), r.id, kind, { expected_version: r.version, ...extra }]);
 const create = (db, extra = {}, user = 11) => call(db, 'pc_create_request', [id(user), id(1), { amount_requested: 5000, purpose: 'Site pantry', property_id: id(3), ...extra }]);
 const reload = async (db, r) => (await db.query('select * from petty_cash_requests where id=$1', [r.id])).rows[0];
-const expense = (db, r, extra = {}) => call(db, 'pc_expense', [id(11), r.id, { idempotency_key: randomUUID(), amount: 100, description: 'Tea', category: 'Pantry', vendor: 'Chai Point', expense_date: '2026-10-20', payment_mode: 'Cash', ...extra }]);
+const expense = (db, r, extra = {}) => call(db, 'pc_expense', [id(11), r.id, { idempotency_key: randomUUID(), amount: 100, description: 'Tea', category: 'Pantry', vendor: 'Chai Point', expense_date: TODAY, payment_mode: 'Cash', no_bill_reason: NO_BILL, ...extra }]);
+const billed = async (db, r, extra = {}) => expense(db, r, { documents: [{ upload_id: await upload(db, 11) }], no_bill_reason: undefined, ...extra });
 async function funded(db, amount = 5000) {
     let r = await create(db, { amount_requested: amount });
     r = await act(db, 12, r, 'allocate', { allocated_amount: amount });
     r = await act(db, 13, r, 'approve');
     return act(db, 14, r, 'pay', { paid_mode: 'UPI', payment_ref: 'UTR' + randomUUID().slice(0, 8), documents: [{ upload_id: await upload(db, 14) }] });
 }
-const run = async (opts, fn) => { const db = await current(opts); try { await fn(db); } finally { await db.close(); } };
+const run = async fn => { const db = await current(); try { await fn(db); } finally { await db.close(); } };
 
 // ---------------------------------------------------------------- working controls
 
-test('happy path: request, allocate (partial), approve, pay, spend, return, settle, accept, close', () => run({ isolateFromBug1: true }, async db => {
+test('happy path: request, allocate (partial), approve, pay, spend, return, settle, accept, close', () => run(async db => {
     let r = await create(db, { amount_requested: 5000 });
     assert.equal(r.status, 'submitted');
     r = await act(db, 12, r, 'allocate', { allocated_amount: 4000, remark: 'Trim to monthly norm' });
@@ -63,7 +64,7 @@ test('happy path: request, allocate (partial), approve, pay, spend, return, sett
     assert.equal(Number(r.approved_amount), 4000);
     r = await act(db, 14, r, 'pay', { paid_mode: 'Cash', documents: [] });
     assert.equal(r.status, 'paid');
-    const e1 = await expense(db, r, { amount: 1200, documents: [{ upload_id: await upload(db, 11) }] });
+    const e1 = await billed(db, r, { amount: 1200 });
     const e2 = await expense(db, r, { amount: 300, vendor: 'Stationery Mart' });
     assert.equal(Number(await call(db, 'pc_balance', [id(1), id(11), r.id])), 2500);
     r = await act(db, 14, await reload(db, r), 'return', { amount_returned: 2500, remark: 'Unused cash received at front desk' });
@@ -72,14 +73,15 @@ test('happy path: request, allocate (partial), approve, pay, spend, return, sett
     for (const e of [e1, e2]) await call(db, 'pc_review_expense', [id(14), e.id, 'accepted', '']);
     r = await act(db, 14, await reload(db, r), 'close', { remark: 'Reconciled' });
     assert.equal(r.status, 'closed');
+    assert.ok(Number((await db.query("select count(*) n from event_outbox where event_type='PETTY_CASH_EXPENSE_RECORDED'")).rows[0].n) === 2);
 }));
 
-test('allocation limits: cannot exceed requested, be zero, negative or have 3 decimals', () => run({}, async db => {
+test('allocation limits: cannot exceed requested, be zero, negative or have 3 decimals', () => run(async db => {
     const r = await create(db, { amount_requested: 1000 });
     for (const bad of [1000.01, 1500, 0, -5, 10.005]) await assert.rejects(act(db, 12, r, 'allocate', { allocated_amount: bad }), /Invalid allocated amount/);
 }));
 
-test('approver cannot change the allocated amount; must send back', () => run({}, async db => {
+test('approver cannot change the allocated amount; must send back', () => run(async db => {
     let r = await create(db, { amount_requested: 1000 });
     r = await act(db, 12, r, 'allocate', { allocated_amount: 800 });
     await assert.rejects(act(db, 13, r, 'approve', { approved_amount: 900 }), /Send back to change amount/);
@@ -92,7 +94,7 @@ test('approver cannot change the allocated amount; must send back', () => run({}
     assert.equal(Number(r.amount_requested), 900);
 }));
 
-test('wrong actor, stale screen and self action are blocked', () => run({}, async db => {
+test('wrong actor, stale screen and self action are blocked', () => run(async db => {
     const r = await create(db, { amount_requested: 1000 });
     await assert.rejects(act(db, 13, r, 'allocate', { allocated_amount: 500 }), /Forbidden/); // approver at allocation stage
     await assert.rejects(act(db, 11, r, 'allocate', { allocated_amount: 500 }), /self action/);
@@ -102,7 +104,7 @@ test('wrong actor, stale screen and self action are blocked', () => run({}, asyn
     await assert.rejects(act(db, 12, r, 'reject'), /Reason is required/);
 }));
 
-test('payment validations: accounts only, exact amount, reference for non-cash, no future date, no cancel after paid', () => run({}, async db => {
+test('payment validations: accounts only, exact amount, reference for non-cash, no future date, no cancel after paid', () => run(async db => {
     let r = await create(db, { amount_requested: 1000 });
     r = await act(db, 12, r, 'allocate', { allocated_amount: 800 });
     r = await act(db, 13, r, 'approve');
@@ -110,23 +112,23 @@ test('payment validations: accounts only, exact amount, reference for non-cash, 
     await assert.rejects(act(db, 14, r, 'pay', { paid_mode: 'Cash', paid_amount: 1000 }), /must equal approved/);
     await assert.rejects(act(db, 14, r, 'pay', { paid_mode: 'UPI' }), /Payment reference required/);
     await assert.rejects(act(db, 14, r, 'pay', { paid_mode: 'Cheque' }), /Payment mode required/);
-    await assert.rejects(act(db, 14, r, 'pay', { paid_mode: 'Cash', payment_date: '2027-01-01' }), /future/);
+    await assert.rejects(act(db, 14, r, 'pay', { paid_mode: 'Cash', payment_date: '2099-01-01' }), /future/);
     r = await act(db, 14, r, 'pay', { paid_mode: 'Cash' });
     assert.equal(Number(r.paid_amount), 800);
     await assert.rejects(act(db, 11, r, 'cancel'), /Cannot cancel funded request/);
 }));
 
-test('expense validations: balance, future date, proof above threshold, spend mode', () => run({ isolateFromBug1: true }, async db => {
+test('expense validations: balance, future date, proof above threshold, spend mode, reference', () => run(async db => {
     const r = await funded(db, 2000);
     await assert.rejects(expense(db, r, { amount: 2000.01 }), /insufficient balance/);
-    await assert.rejects(expense(db, r, { expense_date: '2027-01-01' }), /valid date/);
+    await assert.rejects(expense(db, r, { expense_date: '2099-01-01' }), /valid date/);
     await assert.rejects(expense(db, r, { amount: 501 }), /Proof \/ bill is required for expenses exceeding ₹500/);
-    await expense(db, r, { amount: 500 }); // exactly at threshold: no bill needed
+    await expense(db, r, { amount: 500 }); // exactly at threshold: no bill needed, reason given
     await assert.rejects(expense(db, r, { spend_mode: 'Personal' }), /Invalid spend mode/);
     await assert.rejects(expense(db, r, { payment_mode: 'UPI', payment_ref: '' }), /Payment details required/);
 }));
 
-test('settle and close gates: zero balance to settle, every expense accepted to close, requester cannot close', () => run({ isolateFromBug1: true }, async db => {
+test('settle and close gates: zero balance to settle, every expense accepted to close, requester cannot close', () => run(async db => {
     let r = await funded(db, 1000);
     const e = await expense(db, r, { amount: 400 });
     await assert.rejects(act(db, 11, await reload(db, r), 'settle'), /Wallet balance must be zero/);
@@ -139,72 +141,53 @@ test('settle and close gates: zero balance to settle, every expense accepted to 
     await assert.rejects(act(db, 11, await reload(db, r), 'close'), /Forbidden/);
 }));
 
-// ---------------------------------------------------------------- current policy (works as coded, flagged in report)
+// ---------------------------------------------------------------- rules agreed on 30 Oct
 
-test('POLICY: no monetary ceiling on a petty cash request (999,999,999,999.99 accepted)', () => run({}, async db => {
-    const r = await create(db, { amount_requested: 999999999999.99 });
-    assert.equal(r.status, 'submitted');
-}));
-
-test('POLICY: unlimited parallel advances; new request allowed while holding unspent cash', () => run({ isolateFromBug1: true }, async db => {
+test('RULE: parallel requests stay allowed, even while holding unspent cash', () => run(async db => {
     const first = await funded(db, 5000);
     await expense(db, first, { amount: 100 });
     assert.equal(Number(await call(db, 'pc_balance', [id(1), id(11), first.id])), 4900);
-    const second = await create(db, { amount_requested: 3000 });
-    const third = await create(db, { amount_requested: 3000 });
-    assert.equal(second.status, 'submitted');
-    assert.equal(third.status, 'submitted');
+    assert.equal((await create(db, { amount_requested: 3000 })).status, 'submitted');
+    assert.equal((await create(db, { amount_requested: 3000 })).status, 'submitted');
 }));
 
-test('POLICY: proof threshold is per line, so a ₹900 bill split into 2 × ₹450 needs no proof', () => run({ isolateFromBug1: true }, async db => {
+test('RULE: bill date cannot be before the request date; same day and later are fine', () => run(async db => {
     const r = await funded(db, 2000);
-    await expense(db, r, { amount: 450, vendor: 'Hardware Store', description: 'Pipe fittings (1/2)' });
-    await expense(db, r, { amount: 450, vendor: 'Hardware Store', description: 'Pipe fittings (2/2)', expense_date: '2026-10-21' });
+    await db.query("update petty_cash_requests set created_at=now()-interval '10 days' where id=$1", [r.id]);
+    await assert.rejects(expense(db, r, { expense_date: istDate(-11) }), /Bill date cannot be before the request date/);
+    await assert.rejects(expense(db, r, { expense_date: '2019-01-01' }), /Bill date cannot be before the request date/);
+    await expense(db, r, { expense_date: istDate(-10), amount: 10 });
+    await expense(db, r, { expense_date: istDate(-3), amount: 11 });
 }));
 
-test('POLICY: expense date has no lower bound (a 2019 bill is accepted on a 2026 advance)', () => run({ isolateFromBug1: true }, async db => {
+test('RULE: an expense without a bill needs a reason of at least 10 characters', () => run(async db => {
     const r = await funded(db, 2000);
-    const e = await expense(db, r, { amount: 10, expense_date: '2019-01-01' });
-    assert.equal(e.expense_date, '2019-01-01');
+    await assert.rejects(expense(db, r, { no_bill_reason: undefined }), /Explain why there is no bill/);
+    await assert.rejects(expense(db, r, { no_bill_reason: '  NA  ' }), /Explain why there is no bill/);
+    const e = await expense(db, r, { amount: 40, no_bill_reason: `  ${NO_BILL}  ` });
+    assert.equal(e.no_bill_reason, NO_BILL);
+    const withBill = await billed(db, r, { amount: 60, no_bill_reason: 'ignored because a bill is attached' });
+    assert.equal(withBill.no_bill_reason, null);
+    await assert.rejects(expense(db, r, { amount: 700, no_bill_reason: NO_BILL }), /Proof \/ bill is required/); // reason never replaces a required bill
 }));
 
-test('POLICY: out-of-pocket overspend cannot be recorded (no extra claim path)', () => run({ isolateFromBug1: true }, async db => {
-    const r = await funded(db, 1000);
-    await expense(db, r, { amount: 1000, documents: [{ upload_id: await upload(db, 11) }] });
-    await assert.rejects(expense(db, r, { amount: 150 }), /insufficient balance/);
-}));
+// ---------------------------------------------------------------- bug fixes
 
-test('POLICY: super admin cannot cancel a stuck request; only the requester can', () => run({}, async db => {
-    const r = await create(db, { amount_requested: 1000 });
-    await assert.rejects(act(db, 10, r, 'cancel', { remark: 'Duplicate' }), /Forbidden/);
-}));
-
-test('POLICY: if the primary allocator leaves, nobody at that property can raise requests until routing is reset', () => run({}, async db => {
-    await db.exec(`update property_memberships set is_active=false where user_id='${id(12)}'`);
-    await assert.rejects(create(db, {}, 16), /Property routing is not configured or inactive/);
-}));
-
-// ---------------------------------------------------------------- bugs and control gaps (todo = currently failing)
-
-test('BUG-1: recording an expense works with all migrations applied', { todo: 'BUG-1 critical: 2026-10-29 pc_expense dropped metadata.expense_id; omnichannel trigger rejects every expense' }, () => run({}, async db => {
+test('BUG-1 fixed: expenses save and notify with the exact expense identity', () => run(async db => {
     const r = await funded(db, 1000);
     const e = await expense(db, r, { amount: 100 });
-    assert.equal(Number(e.amount), 100);
+    const event = (await db.query("select payload from event_outbox where event_type='PETTY_CASH_EXPENSE_RECORDED'")).rows[0];
+    assert.equal(event.payload.expense_id, e.id);
 }));
 
-test('BUG-1 (evidence): the exact failure message users see', () => run({}, async db => {
-    const r = await funded(db, 1000);
-    await assert.rejects(expense(db, r, { amount: 100 }), /Expense event requires exact expense identity/);
-}));
-
-test('BUG-2: one accountant can disburse twice without uploading proof', { todo: 'BUG-2 high: actions.ts voucher storage_path is fixed per user and UNIQUE; 2nd payout fails' }, () => run({}, async db => {
+test('BUG-2 fixed: one accountant can disburse many times without uploading proof', () => run(async db => {
     const supabaseAdmin = {
         from: () => ({ insert: async row => { try { await db.query('insert into petty_cash_uploads(id,organization_id,uploaded_by,storage_path,file_name,file_type) values ($1,$2,$3,$4,$5,$6)', [row.id, row.organization_id, row.uploaded_by, row.storage_path, row.file_name, row.file_type]); return { error: null }; } catch (error) { return { error }; } } }),
         rpc: async (_fn, args) => { try { return { data: await call(db, 'pc_action', [args.actor, args.rid, args.action, args.body]), error: null }; } catch (error) { return { data: null, error }; } },
     };
     const { applyPettyCashAction } = loadTs('backend/lib/pettyCash/actions.ts', { '@/backend/lib/supabase/admin': { supabaseAdmin } });
     const access = { user: { id: id(14) }, organizationId: id(1) };
-    for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < 3; i++) {
         let r = await call(db, 'pc_create_request', [id(11), id(1), { amount_requested: 100, purpose: 'Payout ' + i, property_id: id(3) }]);
         r = await act(db, 12, r, 'allocate', { allocated_amount: 100 });
         r = await act(db, 13, r, 'approve');
@@ -214,87 +197,172 @@ test('BUG-2: one accountant can disburse twice without uploading proof', { todo:
     }
 }));
 
-test('BUG-3: an old read-only reimbursement does not block new requests', { todo: 'BUG-3 high: 2026-10-29 pc_gate dropped the request_type=advance filter' }, () => run({}, async db => {
+test('BUG-2 fixed: a failed voucher insert stops the payout instead of pointing at a missing file', async () => {
+    let rpcCalled = false;
+    const supabaseAdmin = { from: () => ({ insert: async () => ({ error: { message: 'storage down' } }) }), rpc: async () => { rpcCalled = true; return { data: null, error: null }; } };
+    const { applyPettyCashAction } = loadTs('backend/lib/pettyCash/actions.ts', { '@/backend/lib/supabase/admin': { supabaseAdmin } });
+    const { error } = await applyPettyCashAction({ user: { id: id(14) }, organizationId: id(1) }, id(50), 'pay', { paid_mode: 'Cash' });
+    assert.equal(error.message, 'storage down');
+    assert.equal(rpcCalled, false);
+});
+
+test('BUG-3 fixed: an old read-only reimbursement does not block new requests', () => run(async db => {
     await db.query(`insert into petty_cash_requests(organization_id,property_id,requester_id,request_type,amount_requested,purpose,status,paid_amount,paid_at,workflow_version) values($1,$2,$3,'reimbursement',800,'Old reimbursement','paid',800,now()-interval '60 days',1)`, [id(1), id(3), id(11)]);
-    const r = await create(db);
-    assert.equal(r.status, 'submitted');
+    assert.equal((await create(db)).status, 'submitted');
 }));
 
-test('BUG-3 (evidence): the reimbursement cannot be closed either, so the block is permanent', () => run({}, async db => {
-    await db.query(`insert into petty_cash_requests(organization_id,property_id,requester_id,request_type,amount_requested,purpose,status,paid_amount,paid_at,workflow_version) values($1,$2,$3,'reimbursement',800,'Old reimbursement','paid',800,now()-interval '60 days',1)`, [id(1), id(3), id(11)]);
+test('BUG-3 guard: an unreconciled old ADVANCE still blocks new requests', () => run(async db => {
+    await db.query(`insert into petty_cash_requests(organization_id,property_id,requester_id,request_type,amount_requested,purpose,status,paid_amount,paid_at,workflow_version) values($1,$2,$3,'advance',800,'Old advance','paid',800,now()-interval '60 days',1)`, [id(1), id(3), id(11)]);
     await assert.rejects(create(db), /Reconcile existing advance balance/);
-    const legacy = (await db.query("select * from petty_cash_requests where request_type='reimbursement'")).rows[0];
-    await assert.rejects(act(db, 14, legacy, 'close', { remark: 'Clear it' }), /Historical reimbursements are read-only/);
 }));
 
-test('BUG-4: a rejected (non-claimable) expense can be resolved by recovering the cash', { todo: 'BUG-4 high: rejected expense keeps its wallet debit; only fix is new proof + finance accepting it' }, () => run({ isolateFromBug1: true }, async db => {
-    const r = await funded(db, 1000);
-    const e = await expense(db, r, { amount: 300 });
-    await call(db, 'pc_review_expense', [id(14), e.id, 'rejected', 'Personal purchase, not claimable']);
-    // Accounts collects the ₹300 back from the employee and should be able to record it.
-    await act(db, 14, await reload(db, r), 'return', { amount_returned: 1000, remark: 'Unspent 700 + recovered 300' });
-}));
-
-test('BUG-4 (evidence): rejected expense blocks settle, close and every future request', () => run({ isolateFromBug1: true }, async db => {
-    const r = await funded(db, 1000);
-    const e = await expense(db, r, { amount: 300 });
-    await call(db, 'pc_review_expense', [id(14), e.id, 'rejected', 'Personal purchase']);
-    await assert.rejects(call(db, 'pc_correct_expense', [id(11), e.id, { amount: 0 }]), /needs replacement proof/);
-    await act(db, 14, await reload(db, r), 'return', { amount_returned: 700, remark: 'Unspent' });
-    await assert.rejects(act(db, 11, await reload(db, r), 'settle'), /Correct rejected proof/);
+test('BUG-4 fixed: a rejected expense is withdrawn, cash recovered, request closed and new requests allowed', () => run(async db => {
+    let r = await funded(db, 1000);
+    const good = await expense(db, r, { amount: 200 });
+    const bad = await expense(db, r, { amount: 300, vendor: 'Mall' });
+    await call(db, 'pc_review_expense', [id(14), bad.id, 'rejected', 'Personal purchase, not claimable']);
     await assert.rejects(create(db, { amount_requested: 100 }), /Resolve rejected expense proofs/);
+    await assert.rejects(call(db, 'pc_withdraw_expense', [id(11), bad.id, '  ']), /reason is required/);
+    const withdrawn = await call(db, 'pc_withdraw_expense', [id(11), bad.id, 'Agreed, will pay back']);
+    assert.equal(withdrawn.review_status, 'withdrawn');
+    assert.equal(Number(await call(db, 'pc_balance', [id(1), id(11), r.id])), 800);
+    assert.equal(Number((await reload(db, r)).actual_spent), 200);
+    const wallet = await call(db, 'pc_wallet', [id(11), id(1)]);
+    assert.equal(Number(wallet.spent), 200);
+    assert.equal(wallet.can_request, true);
+    await act(db, 14, await reload(db, r), 'return', { amount_returned: 800, remark: 'Unspent 500 + recovered 300' });
+    r = await act(db, 11, await reload(db, r), 'settle');
+    await call(db, 'pc_review_expense', [id(14), good.id, 'accepted', '']);
+    r = await act(db, 14, await reload(db, r), 'close', { remark: 'Reconciled' });
+    assert.equal(r.status, 'closed');
+    assert.equal((await create(db, { amount_requested: 100 })).status, 'submitted');
+    const report = await call(db, 'pc_report', [id(10), id(1)]);
+    assert.equal(Number(report.rows.find(x => x.id === r.id).spent), 200);
 }));
 
-test('BUG-5: duplicate UPI reference returns a clear message, not a raw constraint error', { todo: 'BUG-5 medium: 2026-10-29 pc_expense dropped the friendly duplicate-UTR check' }, () => run({ isolateFromBug1: true }, async db => {
+test('BUG-4 guards: only rejected expenses, only the requester or accounts, never reviewed again, once only', () => run(async db => {
     const r = await funded(db, 1000);
-    await expense(db, r, { amount: 20, payment_mode: 'UPI', payment_ref: 'X123456' });
-    await assert.rejects(expense(db, r, { amount: 21, payment_mode: 'UPI', payment_ref: 'x123456 ' }), /Duplicate payment reference/);
+    const pending = await expense(db, r, { amount: 100 });
+    await assert.rejects(call(db, 'pc_withdraw_expense', [id(11), pending.id, 'Changed my mind']), /Only a rejected expense/);
+    await call(db, 'pc_review_expense', [id(14), pending.id, 'rejected', 'No purpose given']);
+    await assert.rejects(call(db, 'pc_withdraw_expense', [id(16), pending.id, 'Coworker tries']), /Forbidden/);
+    await assert.rejects(call(db, 'pc_withdraw_expense', [id(12), pending.id, 'Allocator tries']), /Forbidden/);
+    await call(db, 'pc_withdraw_expense', [id(14), pending.id, 'Accounts recovering on behalf']);
+    await assert.rejects(call(db, 'pc_withdraw_expense', [id(14), pending.id, 'Again']), /Only a rejected expense/);
+    await assert.rejects(call(db, 'pc_review_expense', [id(14), pending.id, 'accepted', '']), /withdrawn expense cannot be reviewed/);
+    await assert.rejects(call(db, 'pc_correct_expense', [id(11), pending.id, { documents: [{ upload_id: await upload(db, 11) }] }]), /needs replacement proof/);
 }));
 
-test('BUG-5b: cash expenses with a placeholder reference ("NA") are not treated as duplicate UTRs', { todo: 'BUG-5b medium: unique index covers Cash rows too' }, () => run({ isolateFromBug1: true }, async db => {
+test('BUG-5 fixed: duplicate UPI reference gets a clear message', () => run(async db => {
+    const r = await funded(db, 1000);
+    await billed(db, r, { amount: 20, payment_mode: 'UPI', payment_ref: 'X123456' });
+    await assert.rejects(billed(db, r, { amount: 21, payment_mode: 'UPI', payment_ref: 'x123456 ' }), /Duplicate payment reference: x123456 was already claimed/);
+}));
+
+test('BUG-5 fixed: a reference freed by a withdrawn expense can be claimed again', () => run(async db => {
+    const r = await funded(db, 1000);
+    const e = await billed(db, r, { amount: 20, payment_mode: 'UPI', payment_ref: 'X123456' });
+    await call(db, 'pc_review_expense', [id(14), e.id, 'rejected', 'Wrong request']);
+    await call(db, 'pc_withdraw_expense', [id(11), e.id, 'Logged on the wrong request']);
+    await billed(db, r, { amount: 20, payment_mode: 'UPI', payment_ref: 'X123456' });
+}));
+
+test('BUG-5b fixed: cash expenses with a placeholder reference ("NA") are not duplicates', () => run(async db => {
     const r = await funded(db, 1000);
     await expense(db, r, { amount: 30, payment_ref: 'NA' });
     await expense(db, r, { amount: 31, payment_ref: 'NA', vendor: 'Auto' });
 }));
 
-test('BUG-6: separation of duties, the approver of a request cannot also disburse it', { todo: 'BUG-6 medium: an accounts user can be the routed approver and then pay' }, () => run({}, async db => {
+test('BUG-6 fixed: whoever approved a request cannot also disburse it; another accountant can', () => run(async db => {
+    await db.query(`insert into organization_memberships(user_id,organization_id,role) values($1,$2,'accounts')`, [id(17), id(1)]);
     await call(db, 'pc_set_routing', [id(10), id(3), id(12), id(14), [], [], null]);
     let r = await create(db, { amount_requested: 2000 });
     r = await act(db, 12, r, 'allocate', { allocated_amount: 2000 });
     r = await act(db, 14, r, 'approve');
-    await assert.rejects(act(db, 14, r, 'pay', { paid_mode: 'Cash' }), /Forbidden/);
+    await assert.rejects(act(db, 14, r, 'pay', { paid_mode: 'Cash' }), /cannot also disburse/);
+    assert.equal((await act(db, 17, r, 'pay', { paid_mode: 'Cash' })).status, 'paid');
 }));
 
-test('BUG-7: saving routing with the primary allocator also ticked as a backup keeps the primary', { todo: 'BUG-7 low (API only today): 7-arg pc_set_routing demotes the primary; property stops accepting requests' }, () => run({}, async db => {
-    await call(db, 'pc_set_routing', [id(10), id(3), id(12), id(13), [id(12)], [], null]);
-    const r = await create(db);
-    assert.equal(r.assigned_allocator_id, id(12));
+test('BUG-7 fixed: routing refuses a primary listed as its own backup, duplicates and over 25 backups; records backups', () => run(async db => {
+    await assert.rejects(call(db, 'pc_set_routing', [id(10), id(3), id(12), id(13), [id(12)], [], null]), /distinct eligible primary and backup/);
+    await assert.rejects(call(db, 'pc_set_routing', [id(10), id(3), id(12), id(13), [id(16), id(16)], [], null]), /distinct eligible primary and backup/);
+    await assert.rejects(call(db, 'pc_set_routing', [id(10), id(3), id(12), id(13), Array.from({ length: 26 }, (_, i) => id(100 + i)), [], null]), /At most 25/);
+    await call(db, 'pc_set_routing', [id(10), id(3), id(12), id(13), [id(16)], [], 750]);
+    assert.equal((await create(db)).assigned_allocator_id, id(12));
+    const history = (await db.query('select allocator_backups from petty_cash_configuration_activity order by created_at desc limit 1')).rows[0];
+    assert.deepEqual(history.allocator_backups, [id(16)]);
+    assert.equal(Number((await db.query('select petty_cash_proof_threshold t from properties where id=$1', [id(3)])).rows[0].t), 750);
 }));
 
 const fraudGuard = rows => {
-    const builder = () => { const b = { select: () => b, eq: () => b, neq: () => b, order: () => b, limit: async () => ({ data: rows, error: null }) }; return b; };
+    const builder = () => { const b = { select: () => b, eq: () => b, neq: () => b, not: () => b, order: () => b, limit: async () => ({ data: rows, error: null }) }; return b; };
     return loadTs('backend/lib/pettyCash/fraudDetection.ts', { '@/backend/lib/supabase/admin': { supabaseAdmin: { from: builder } } }).detectDuplicateExpense;
 };
 const row = extra => ({ id: 'e1', request_id: 'r1', expense_date: '2026-10-20', payment_mode: 'Cash', payment_ref: null, request: { request_no: 'PC-1' }, ...extra });
 
-test('BUG-8a: two auto rides at the same fare on the same day are both claimable', { todo: 'BUG-8 medium: fraud guard blocks same amount + date + vendor within a request' }, async () => {
-    const detect = fraudGuard([row({ amount: 50, vendor: 'Auto rickshaw' })]);
-    assert.equal((await detect({ organizationId: 'o', requestId: 'r1', amount: 50, vendor: 'Auto rickshaw', expenseDate: '2026-10-20', paymentMode: 'Cash' })).isDuplicate, false);
+test('BUG-8 fixed: same fare twice, same shop by two employees and near UPI refs only warn', async () => {
+    let result = await fraudGuard([row({ amount: 50, vendor: 'Auto rickshaw' })])({ organizationId: 'o', requestId: 'r1', amount: 50, vendor: 'Auto rickshaw', expenseDate: '2026-10-20', paymentMode: 'Cash' });
+    assert.equal(result.isDuplicate, false); assert.match(result.warning, /Possible duplicate/);
+    result = await fraudGuard([row({ request_id: 'rX', amount: 200, vendor: 'Chai Point' })])({ organizationId: 'o', requestId: 'r1', amount: 200, vendor: 'Chai Point', expenseDate: '2026-10-20', paymentMode: 'Cash' });
+    assert.equal(result.isDuplicate, false); assert.match(result.warning, /Possible duplicate/);
+    result = await fraudGuard([row({ request_id: 'rX', amount: 120, vendor: 'Zepto', payment_mode: 'UPI', payment_ref: '428910289418' })])({ organizationId: 'o', requestId: 'r1', amount: 340, vendor: 'Blinkit', expenseDate: '2026-10-21', paymentMode: 'UPI', paymentRef: '428910289419' });
+    assert.equal(result.isDuplicate, false); assert.match(result.warning, /nearly identical/);
 });
 
-test('BUG-8b: two employees buying ₹200 tea at the same shop on the same day are both claimable', { todo: 'BUG-8 medium: fraud guard blocks same amount + date + vendor across the org' }, async () => {
-    const detect = fraudGuard([row({ request_id: 'rX', amount: 200, vendor: 'Chai Point', request: { request_no: 'PC-9' } })]);
-    assert.equal((await detect({ organizationId: 'o', requestId: 'r1', amount: 200, vendor: 'Chai Point', expenseDate: '2026-10-20', paymentMode: 'Cash' })).isDuplicate, false);
+test('BUG-8 guard: an exact UTR still blocks, even when a near match appears earlier in the list', async () => {
+    const detect = fraudGuard([
+        row({ id: 'near', payment_mode: 'UPI', payment_ref: '428910289419', amount: 10 }),
+        row({ id: 'exact', payment_mode: 'UPI', payment_ref: '428910289418', amount: 20 }),
+    ]);
+    const result = await detect({ organizationId: 'o', requestId: 'r9', amount: 99, vendor: 'X', expenseDate: '2026-10-22', paymentMode: 'UPI', paymentRef: '4289 1028 9418' });
+    assert.equal(result.isDuplicate, true);
+    assert.equal(result.matchedExpenseId, 'exact');
 });
 
-test('BUG-8c: a genuinely different UPI reference one digit apart is not flagged as a duplicate', { todo: 'BUG-8 medium: near-match rule (edit distance <= 2) blocks real sequential UPI refs' }, async () => {
-    const detect = fraudGuard([row({ request_id: 'rX', amount: 120, vendor: 'Zepto', payment_mode: 'UPI', payment_ref: '428910289418' })]);
-    assert.equal((await detect({ organizationId: 'o', requestId: 'r1', amount: 340, vendor: 'Blinkit', expenseDate: '2026-10-21', paymentMode: 'UPI', paymentRef: '428910289419' })).isDuplicate, false);
+test('BUG-8 guard: a cash placeholder reference never matches a UPI reference', async () => {
+    const detect = fraudGuard([row({ payment_mode: 'Cash', payment_ref: '428910289418', amount: 20 })]);
+    const result = await detect({ organizationId: 'o', requestId: 'r9', amount: 99, vendor: 'X', expenseDate: '2026-10-22', paymentMode: 'UPI', paymentRef: '428910289418' });
+    assert.equal(result.isDuplicate, false);
 });
 
-test('BUG-9: phone JPEGs with data after the end marker are accepted as evidence', { todo: 'BUG-9 low: evidenceType requires FFD9 as the very last bytes' }, () => {
+test('BUG-9 fixed: phone JPEGs with data after the end marker are accepted; non-images are not', () => {
     const { evidenceType } = loadTs('backend/lib/pettyCash/evidence.ts');
     const jpeg = [255, 216, 255, 224, 0, 16, 74, 70, 73, 70, 0, 1, 1, 1, 255, 217];
     assert.equal(evidenceType(new Uint8Array(jpeg)), 'image/jpeg');
     assert.equal(evidenceType(new Uint8Array([...jpeg, 83, 69, 70, 84, 0, 0])), 'image/jpeg');
+    assert.equal(evidenceType(new TextEncoder().encode('not an image at all')), null);
 });
+
+test('wallet totals net out a withdrawn expense', () => {
+    const { requestWalletTotals } = loadTs('backend/lib/pettyCash/wallet.ts');
+    assert.deepEqual({ ...requestWalletTotals([{ kind: 'credit', amount: '1000' }, { kind: 'debit', amount: '200' }, { kind: 'debit', amount: '300.10' }, { kind: 'reversal', amount: '300.10' }, { kind: 'return', amount: '800' }]) },
+        { received: 1000, spent: 200, returned: 800, balance: 0 });
+});
+
+// ---------------------------------------------------------------- current policy (intended today, flagged in report)
+
+test('POLICY: no monetary ceiling on a petty cash request (999,999,999,999.99 accepted)', () => run(async db => {
+    assert.equal((await create(db, { amount_requested: 999999999999.99 })).status, 'submitted');
+}));
+
+test('POLICY: proof threshold is per line, so a ₹900 bill split into 2 × ₹450 needs no bill (reason still required)', () => run(async db => {
+    const r = await funded(db, 2000);
+    await expense(db, r, { amount: 450, vendor: 'Hardware Store', description: 'Pipe fittings (1/2)' });
+    await expense(db, r, { amount: 450, vendor: 'Hardware Store', description: 'Pipe fittings (2/2)' });
+}));
+
+test('POLICY: out-of-pocket overspend cannot be recorded (no extra claim path)', () => run(async db => {
+    const r = await funded(db, 1000);
+    await billed(db, r, { amount: 1000 });
+    await assert.rejects(expense(db, r, { amount: 150 }), /insufficient balance/);
+}));
+
+test('POLICY: super admin cannot cancel a stuck request; only the requester can', () => run(async db => {
+    const r = await create(db, { amount_requested: 1000 });
+    await assert.rejects(act(db, 10, r, 'cancel', { remark: 'Duplicate' }), /Forbidden/);
+}));
+
+test('POLICY: if the primary allocator leaves, nobody at that property can raise requests until routing is reset', () => run(async db => {
+    await db.exec(`update property_memberships set is_active=false where user_id='${id(12)}'`);
+    await assert.rejects(create(db, {}, 16), /Property routing is not configured or inactive/);
+}));
