@@ -343,3 +343,90 @@
 .inboxList { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .inboxList li { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; border: 1px solid var(--s-line); border-radius: 10px; padding: 10px 12px; }
 .inboxList li > button { flex-shrink: 0; }
+
+/* ======================================================================== */
+/* overview: friendly hero numbers + the voice-agent status                  */
+/* Built for a purchase desk that is not technical: plain words, one number   */
+/* per card, and motion only where something is really happening.             */
+
+/* how-it-works explainer (toggled from the header) */
+.howCard { border-color: color-mix(in srgb, var(--s-accent) 30%, var(--s-line)); background: color-mix(in srgb, var(--s-accent) 3%, var(--s-card)); }
+
+/* KPI row --------------------------------------------------------------------- */
+.kpiRow { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+@media (max-width: 1040px) { .kpiRow { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 460px) { .kpiRow { grid-template-columns: 1fr; } }
+.kpiCard { display: flex; align-items: center; gap: 13px; background: var(--s-card); border: 1px solid var(--s-line); border-radius: var(--s-radius);
+  padding: 15px 16px; box-shadow: var(--s-shadow); min-width: 0; transition: border-color 0.15s, transform 0.12s; }
+.kpiCard:hover { border-color: color-mix(in srgb, var(--s-accent) 30%, var(--s-line)); transform: translateY(-1px); }
+.kpiIcon { flex: none; display: grid; place-items: center; width: 42px; height: 42px; border-radius: 12px; color: var(--s-accent);
+  background: color-mix(in srgb, var(--s-accent) 12%, transparent); }
+.kpi_info { color: var(--s-info); background: color-mix(in srgb, var(--s-info) 12%, transparent); }
+.kpi_good { color: var(--s-good); background: color-mix(in srgb, var(--s-good) 13%, transparent); }
+.kpi_warn { color: var(--s-warn); background: color-mix(in srgb, var(--s-warn) 14%, transparent); }
+.kpi_accent { color: var(--s-accent); background: color-mix(in srgb, var(--s-accent) 13%, transparent); }
+.kpiBody { min-width: 0; flex: 1; }
+.kpiValue { font-size: 26px; font-weight: 800; line-height: 1.05; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.kpiDash { display: inline-block; width: 34px; height: 22px; border-radius: 6px; vertical-align: -3px;
+  background: linear-gradient(90deg, var(--s-sunken), var(--s-line), var(--s-sunken)); background-size: 200% 100%; animation: shimmer 1.4s infinite; }
+.kpiLabel { font-size: 12.5px; color: var(--s-muted); font-weight: 600; margin-top: 2px; }
+.kpiDelta { flex: none; display: inline-flex; flex-direction: column; align-items: flex-end; gap: 1px; font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 9px;
+  background: color-mix(in srgb, currentColor 10%, transparent); }
+.kpiDelta svg { vertical-align: -2px; }
+.kpiDelta em { font-style: normal; font-size: 9.5px; font-weight: 600; color: var(--s-muted); text-transform: uppercase; letter-spacing: 0.03em; }
+.kpiSub { flex: none; max-width: 92px; text-align: right; font-size: 11px; color: var(--s-muted); line-height: 1.3; }
+
+/* the two-up band: start-an-outreach card + the voice agent ------------------- */
+.band { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 0.95fr); gap: 16px; align-items: stretch; margin-bottom: 18px; }
+@media (max-width: 1040px) { .band { grid-template-columns: 1fr; } }
+.startCard { margin-bottom: 0; display: flex; flex-direction: column; }
+
+/* numbered steps, the plain-English "how it works" */
+.stepsBig { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 8px; }
+.stepsBig li { display: flex; align-items: flex-start; gap: 11px; padding: 9px 11px; border-radius: 11px; background: var(--s-sunken); border: 1px solid var(--s-line); }
+.stepsBig li > div { display: grid; gap: 1px; min-width: 0; }
+.stepsBig b { font-size: 13px; font-weight: 650; }
+.stepsBig span { font-size: 11.5px; color: var(--s-muted); }
+.stepNo { flex: none; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; font-size: 12px; font-weight: 800; color: #fff;
+  background: linear-gradient(140deg, var(--s-accent), color-mix(in srgb, var(--s-accent) 55%, #1e2a30)); }
+
+/* quick-start category chips */
+.quickRow { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin-bottom: 14px; }
+.quickLabel { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--s-muted); margin-right: 2px; }
+.catChip { font: inherit; font-size: 12.5px; font-weight: 600; padding: 6px 12px; border-radius: 99px; border: 1px solid var(--s-line); background: var(--s-card); color: var(--s-ink); cursor: pointer;
+  transition: border-color 0.14s, color 0.14s, background 0.14s; }
+.catChip:hover { border-color: var(--s-accent); color: var(--s-accent); background: color-mix(in srgb, var(--s-accent) 6%, var(--s-card)); }
+.startCard > .primary { align-self: flex-start; margin-top: auto; }
+
+/* AI voice agent panel -------------------------------------------------------- */
+.vaCard { margin-bottom: 0; display: flex; flex-direction: column; overflow: hidden; position: relative;
+  background:
+    radial-gradient(120% 70% at 85% 0%, color-mix(in srgb, var(--s-accent) 10%, transparent), transparent 60%),
+    var(--s-card); }
+.vaHead { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.vaTitle { display: inline-flex; align-items: center; gap: 7px; font-size: 14.5px; font-weight: 700; }
+.vaTitle svg { color: var(--s-accent); }
+.wave { display: flex; align-items: center; justify-content: center; gap: 3px; height: 56px; padding: 8px 4px; margin-bottom: 10px; border-radius: 12px;
+  background: color-mix(in srgb, var(--s-accent) 5%, var(--s-sunken)); }
+.wave span { width: 3px; border-radius: 3px; height: 22%; background: color-mix(in srgb, var(--s-accent) 40%, var(--s-line)); }
+.waveOn span { background: linear-gradient(var(--s-accent), color-mix(in srgb, var(--s-accent) 60%, #1e2a30)); animation: eq 1.1s ease-in-out infinite; }
+@keyframes eq { 0%, 100% { height: 18%; } 50% { height: 86%; } }
+.vaBig { font-size: 16px; font-weight: 750; letter-spacing: -0.01em; }
+.vaCard .muted { margin: 3px 0 12px; }
+.vaList { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 7px; }
+.vaList li { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--s-ink); }
+.vaList li svg { flex: none; color: var(--s-good); }
+.vaToday { font-size: 12px; color: var(--s-ink); background: color-mix(in srgb, var(--s-good) 9%, transparent); border: 1px solid color-mix(in srgb, var(--s-good) 30%, transparent);
+  border-radius: 9px; padding: 7px 10px; margin-bottom: 10px; }
+.vaToday b { color: var(--s-good); }
+.vaFoot { margin-top: auto; font-size: 11.5px; color: var(--s-muted); border-top: 1px dashed var(--s-line); padding-top: 10px; }
+
+/* grouped sections inside the new / edit form */
+.formSection { grid-column: 1 / -1; margin: 6px 0 2px; }
+.formSection:first-of-type { margin-top: 0; }
+.formSectionTitle { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--s-muted); display: flex; align-items: center; gap: 7px; }
+.formSectionTitle::after { content: ''; flex: 1; height: 1px; background: var(--s-line); }
+.modalIntro { display: flex; align-items: center; gap: 11px; padding: 11px 13px; border-radius: 12px; margin: 12px 0 4px;
+  background: color-mix(in srgb, var(--s-accent) 5%, var(--s-sunken)); border: 1px solid color-mix(in srgb, var(--s-accent) 20%, var(--s-line)); }
+.modalIntro p { margin: 0; font-size: 12.5px; color: var(--s-muted); }
+.modalIntro b { color: var(--s-ink); font-size: 13px; }
