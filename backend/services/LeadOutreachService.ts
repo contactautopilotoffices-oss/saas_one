@@ -6,6 +6,7 @@ import { AiSensyService } from './AiSensyService';
 import { WhatsAppService } from './WhatsAppService';
 import { NotificationService } from './NotificationService';
 import { LeadSlaEscalationService } from './LeadSlaEscalationService';
+import { sendSessionReply } from '@/backend/lib/whatsapp/interpreter/delivery.mjs';
 
 export interface LeadFollowupResult {
     success: boolean;
@@ -534,10 +535,7 @@ This client is already in your pipeline (Lead ID: ${existingLead.id}). Skipping 
 
                 // 6. Send instant confirmation to client that advisor is calling now
                 const callNowConfirm = `Got it! Our Workspace Specialist ${advisorName} is placing a call to you right now. 📞\n\nIf urgent, you can reach ${advisorName} directly on ${advisorPhone}.`;
-                WhatsAppService.sendAsync(phone, {
-                    message: callNowConfirm,
-                    moduleName: 'crm',
-                }).catch(e => console.error('[LeadOutreachService] Call now confirmation error:', e));
+                sendSessionReply(phone, callNowConfirm, new Date().toISOString()).catch(e => console.error('[LeadOutreachService] Call now confirmation error:', e));
 
                 // 7. Send Message 2 (Interactive List Picker / Selection for Team Size if needed)
                 await this.sendMessage2Qualification(lead, phone);
@@ -606,10 +604,7 @@ This client is already in your pipeline (Lead ID: ${existingLead.id}). Skipping 
 
                 // 4. Send confirmation with advisor's direct number to client
                 const confirmationMsg = `Confirmed! ${advisorName} from Autopilot Offices will call you ${slotName.toLowerCase()} around ${targetFollowup.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}. If urgent, you can reach ${advisorName} directly on ${advisorPhone}.`;
-                WhatsAppService.sendAsync(phone, {
-                    message: confirmationMsg,
-                    moduleName: 'crm',
-                }).catch(e => console.error('[LeadOutreachService] Slot confirmation error:', e));
+                sendSessionReply(phone, confirmationMsg, new Date().toISOString()).catch(e => console.error('[LeadOutreachService] Slot confirmation error:', e));
 
                 // 5. Send Message 2 (Team size selection)
                 await this.sendMessage2Qualification(lead, phone);
@@ -618,20 +613,17 @@ This client is already in your pipeline (Lead ID: ${existingLead.id}). Skipping 
             }
 
             // ── ACTION 3: Team size list picker responses ────────────────────────────────
-            const seatMatch = clean.match(/(under 50|50 to 150|150 to 500|500\+|1|2|3|4)/i);
+            const seatMatch = clean.match(/(under 50|50 to 200|50 to 150|200\+|150 to 500|500\+|1|2|3)/i);
             if (seatMatch) {
                 const matched = seatMatch[1].toLowerCase();
                 let band = 'Under 50';
                 let approximateSeats = 40;
-                if (matched === '2' || matched.includes('50 to 150')) {
-                    band = '50 to 150';
+                if (matched === '2' || matched.includes('50 to 200') || matched.includes('50 to 150')) {
+                    band = '50 to 200';
                     approximateSeats = 100;
-                } else if (matched === '3' || matched.includes('150 to 500')) {
-                    band = '150 to 500';
+                } else if (matched === '3' || matched.includes('200+') || matched.includes('150 to 500') || matched.includes('500+')) {
+                    band = '200+ Enterprise';
                     approximateSeats = 300;
-                } else if (matched === '4' || matched.includes('500+')) {
-                    band = '500+';
-                    approximateSeats = 600;
                 }
 
                 await supabaseAdmin
@@ -667,12 +659,9 @@ This client is already in your pipeline (Lead ID: ${existingLead.id}). Skipping 
                     }).catch(() => {});
                 }
 
-                // Send warm confirmation to client acknowledging their requirement
+                // Send warm confirmation to client acknowledging their requirement (freeform session reply within active 24h window)
                 const clientAck = `Perfect, noted ${band}! ${advisorName} has prepared matching options for your team in ${lead.city || 'Bangalore'} and will share them during your call. 🙏`;
-                WhatsAppService.sendAsync(phone, {
-                    message: clientAck,
-                    moduleName: 'crm',
-                }).catch(() => {});
+                sendSessionReply(phone, clientAck, new Date().toISOString()).catch(e => console.error('[LeadOutreachService] Session ack error:', e));
 
                 return { handled: true, leadId: lead.id, action: 'team_size_captured' };
             }
