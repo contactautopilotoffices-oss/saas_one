@@ -179,7 +179,7 @@ export default function AttemptReportPage({ params }: { params: Promise<{ attemp
                     )}
                     <p className="mt-2 text-xs text-slate-500">
                         {attempt.ai_flags} of {attempt.ai_checks} camera checks were flagged{flags.length ? '' : ' — none'}.
-                        {test.ai_monitoring ? ` The test closes after ${test.look_away_strikes} warnings about looking away.` : ' Camera checks were off for this test.'}
+                        {test.ai_monitoring ? ` The test closes after ${test.look_away_strikes} camera warnings (looking away, no face, another person, or a phone or device). Voice warnings are shown to the candidate but do not count.` : ' Camera checks were off for this test.'}
                     </p>
                 </section>
 

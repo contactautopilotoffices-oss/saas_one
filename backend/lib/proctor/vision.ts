@@ -16,8 +16,11 @@ import { visionExtract, DEFAULT_VISION_MODEL } from '@/backend/lib/ocr/vision';
  *    so neither agent justification applies `[BAA p.115]`; default to workflow `[BAA p.104]`.
  *    No prior deterministic path exists to compare against `[BAA pp.94–95, 99]`.
  * 2. Context: one image and a fixed checklist; knows nothing about the test or the person `[BAA p.112]`.
- * 3. Cost of a false positive: low — a verdict only flags the attempt for a human; it never
- *    ends the test or spends a chance. So the cheap, fast multimodal tier `[BAA p.112]`:
+ * 3. Cost of a false positive: medium — every flagged category (no face, looking away, a phone,
+ *    a second face) warns the taker and counts as a strike, and at the test's strike limit
+ *    (default 3) the attempt closes, using up a chance. One misread frame does not end a test,
+ *    and the frames for phone/second-face are kept for a human to overrule. Still the cheap,
+ *    fast multimodal tier `[BAA p.112]`, because the 20s cadence rules out slower models:
  *    glm-5.3-flash on ENGY, measured at 3–10s and ~500 tokens a frame (≈₹0.8 for a 30-minute
  *    test). qwen3.8-27b is cheaper but ran a steady 15s, too slow for a 20s cadence.
  * 4. Tools: none.
@@ -31,7 +34,9 @@ import { visionExtract, DEFAULT_VISION_MODEL } from '@/backend/lib/ocr/vision';
  *    audited after the fact `[BAA p.98]`; tool interaction = N/A; efficiency = one call per frame.
  * 9. Trace: every verdict is a proctor_events row `[BAA pp.119–120]`.
  * 10. Knowingly violated: L6 — no rubric grader and no ~5% manual audit behind those numbers.
- *     Acceptable only because a verdict never acts alone; a human reads every flag.
+ *     L10 — the false-positive cost rose (strikes can close an attempt) but the model tier did
+ *     not `[BAA p.112]`; the strike limit is the only buffer. Close the item-8 gap (one real
+ *     person at a laptop, NOT flagged) before relying on this for hiring decisions.
  */
 
 export interface FrameVerdict {
