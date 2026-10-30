@@ -3,7 +3,9 @@
 Branch: `audit/petty-cash-workflow-test` (PR #132)
 Tests: `tests/petty-cash/workflow-audit.test.mjs`
 Run them: `node --test tests/petty-cash/workflow-audit.test.mjs`
-Database fix: `supabase/migrations/20261030000001_petty_cash_audit_fixes.sql` (**not applied yet**)
+Database changes (**not applied yet**, apply in this order):
+- `supabase/migrations/20261030000001_petty_cash_audit_fixes.sql`
+- `supabase/migrations/20261030000002_petty_cash_cancel_after_payout.sql`
 
 ## Summary
 
@@ -11,10 +13,11 @@ The first pass of this audit found 9 bugs. The worst: after the 29 Oct migration
 
 - **A bill cannot be dated before its request.** The same day or later is fine.
 - **An expense without a bill needs a written reason** (at least 10 characters).
+- **A requester can cancel after payout** if nothing is spent. Accounts confirms the cash is back, then the request is cancelled.
 
 As you confirmed, people can still raise a new request while they hold cash or have another request open.
 
-**Tests:** 32 cases in the audit suite, all passing, run against every petty cash migration in order, including the new one. All 77 existing petty cash tests were run as well. 76 pass. The one that fails is a dashboard navigation check that also fails on `main`.
+**Tests:** 35 cases in the audit suite, all passing, run against every petty cash migration in order, including the new one. All 77 existing petty cash tests were run as well. 76 pass. The one that fails is a dashboard navigation check that also fails on `main`.
 
 **Nothing has been applied to the live database.** Someone needs to apply the migration and deploy the code. See section 6.
 
@@ -34,7 +37,7 @@ raise request -->  set amount   -->    approve    -->    pay out    -->      log
 
 - **Send back** (allocator or approver, reason required): back to the requester, who edits and resubmits.
 - **Reject** (allocator or approver, reason required): final.
-- **Cancel**: requester only, any time before payout.
+- **Cancel**: requester only. Before payout it is immediate. After payout (new), it works only if nothing is spent and needs a reason. The request shows "Cancellation pending", no new expenses or settlement are allowed, and it becomes **Cancelled** when accounts confirms the full cash is back with "Confirm Returned Cash". Partial returns keep it pending.
 - **Reassign**: super admin moves a stuck request to another allocator or approver.
 - **Wallet**: payout credits it, each expense debits it, cash handed back is a "return". Settle needs the wallet at exactly zero. Close needs every expense accepted (or withdrawn).
 - **New: Withdraw**: a rejected expense can be withdrawn by the requester or accounts, with a reason. Its amount goes back into the wallet, and accounts then collects that cash as a normal return.
@@ -54,6 +57,7 @@ raise request -->  set amount   -->    approve    -->    pay out    -->      log
 | Payment proof on payout | Optional | No (now works every time) |
 | Open requests per person | Unlimited, even while holding cash | No (confirmed by you) |
 | What blocks a new request | A rejected expense not yet fixed or withdrawn, or an old unreconciled v1 advance | **Yes**: old reimbursements no longer block |
+| Cancel | Requester only. Before payout: immediate. After payout: only if nothing is spent, reason required, completed when accounts confirms the full cash return. After settlement: not allowed | **New** (after payout) |
 | Expense amount | Up to what is left in that request's wallet | No |
 | Bill on an expense | Required when one line is above the property threshold (default ₹500) | No |
 | No bill attached | **A reason of at least 10 characters is required** | **New** |
@@ -85,6 +89,10 @@ raise request -->  set amount   -->    approve    -->    pay out    -->      log
 - Updated: `pc_balance`, `pc_gate`, `pc_wallet`, `pc_expense`, `pc_review_expense`, `pc_action`, `pc_report`, `pc_set_routing`, `pc_activity_outbox`. New: `pc_withdraw_expense`.
 - The duplicate-reference index is rebuilt to skip Cash and withdrawn expenses.
 
+**Database, cancel after payout** (second migration, `20261030000002`):
+- New nullable columns on requests: `cancel_requested_at`, `cancel_requested_by`, `cancel_reason`.
+- Updated: `pc_action` (paid cancel, settle blocked while pending, a full return completes the cancel, activity logged as `cancel_requested`), `pc_expense` (no expenses while pending), and `pc_can_read`. The `pc_can_read` change means accounts can still open a request they paid out after it is cancelled. Before this, accounts could not see cancelled requests at all.
+
 **Server:** `backend/lib/pettyCash/actions.ts`, `wallet.ts`, `evidence.ts`, `fraudDetection.ts`; routes `app/api/petty-cash/[id]/expenses`, `expenses/[expenseId]` (new `withdraw` action), `ocr`.
 
 **Screens:**
@@ -93,8 +101,9 @@ raise request -->  set amount   -->    approve    -->    pay out    -->      log
   - The date picker cannot go before the request date.
   - Possible duplicates show as an amber warning instead of a block. An exact UTR still blocks.
 - Expense table: shows the no-bill reason and a **Withdraw expense** button on rejected expenses (for the requester and accounts).
+- Request page: **Cancel Request (return cash)** on a paid request with nothing spent, a required reason, and a "Cancellation pending" banner that tells the requester how much to return and tells accounts how much to collect. Record Expense and Submit Reconciliation are hidden while it is pending.
 
-## 5. Test cases (all 32 pass)
+## 5. Test cases (all 35 pass)
 
 | # | Scenario | Result |
 |---|---|---|
@@ -108,6 +117,9 @@ raise request -->  set amount   -->    approve    -->    pay out    -->      log
 | 8 | Two more requests while holding ₹4,900 | Allowed (your rule) |
 | 9 | Request 10 days old: bill 11 days old, bill from 2019, bill same day as request, bill 3 days old | First two refused, last two saved |
 | 10 | No bill and no reason; reason "NA"; proper reason; bill attached with a reason; ₹700 with only a reason | Refused, refused, saved, saved (reason dropped), refused |
+| 10a | Cancel after payout, nothing spent: accounts or admin tries; requester cancels; cancels again; adds expense; settles; accounts returns ₹400 then ₹600 | Refused x2; pending; refused; refused; refused; still pending after ₹400, Cancelled after ₹600; accounts can still see it; new request allowed |
+| 10b | Cancel after payout with ₹100 spent; then that expense is rejected and withdrawn | Refused ("already spent"); then allowed and completed |
+| 10c | Cancel an approved (unpaid) request; cancel after settlement | Immediate; refused |
 | 11 | Record expense with all migrations | Saved, notification carries the expense id |
 | 12 | Same accountant pays 3 requests without proof | All paid |
 | 13 | Voucher cannot be created | Payout stops with the real error |
@@ -130,7 +142,7 @@ raise request -->  set amount   -->    approve    -->    pay out    -->      log
 ## 6. To go live
 
 1. **Deploy the app code first.** The new screens send the no-bill reason. The current database simply ignores it, so this is safe on its own.
-2. **Then apply** `supabase/migrations/20261030000001_petty_cash_audit_fixes.sql`. If you apply it before the code, the old screen will not send a reason, and no-bill expenses will be refused until the code is live.
+2. **Then apply** `20261030000001_petty_cash_audit_fixes.sql` and then `20261030000002_petty_cash_cancel_after_payout.sql`. If you apply them before the code, the old screen will not send a reason, and no-bill expenses will be refused until the code is live.
 3. After applying, run Q1 below. It should return `true`.
 
 Read-only checks for the Supabase SQL editor:
@@ -173,7 +185,8 @@ These work as coded. I did not change them because they are business decisions:
 - **No out-of-pocket claim.** If someone spends more than they were given, there is no way to claim the difference.
 - **Only the requester can cancel.** A super admin cannot cancel a stuck request.
 - **Backups do not take over automatically.** If the primary allocator or approver is deactivated, that property is blocked until routing is changed.
-- **No notification on withdraw.** Withdrawing an expense shows on the request timeline, but no email or WhatsApp is sent (there is no template for it).
+- **No notification on withdraw or on a cancel request.** Both show on the request timeline, and a pending cancel shows on accounts' reconciliation list, but no email or WhatsApp is sent (there are no templates for them). When accounts confirms the cash, the usual "return confirmed" message goes out.
+- **A cancel request cannot be undone by the requester.** If they change their mind, accounts records the return and they raise a new request.
 - **iPhone HEIC photos** are still not accepted.
 
 ## 8. What was and was not checked

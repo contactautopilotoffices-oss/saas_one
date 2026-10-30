@@ -21,6 +21,7 @@ const LATER_MIGRATIONS = [
     '20261013000002_petty_cash_disbursement_no_proof_required.sql',
     '20261029000001_petty_cash_enhancements.sql',
     '20261030000001_petty_cash_audit_fixes.sql',
+    '20261030000002_petty_cash_cancel_after_payout.sql',
 ];
 const istDate = (offsetDays = 0) => new Date(Date.now() + offsetDays * 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 const TODAY = istDate();
@@ -104,7 +105,7 @@ test('wrong actor, stale screen and self action are blocked', () => run(async db
     await assert.rejects(act(db, 12, r, 'reject'), /Reason is required/);
 }));
 
-test('payment validations: accounts only, exact amount, reference for non-cash, no future date, no cancel after paid', () => run(async db => {
+test('payment validations: accounts only, exact amount, reference for non-cash, no future date, cancel after payout needs a reason', () => run(async db => {
     let r = await create(db, { amount_requested: 1000 });
     r = await act(db, 12, r, 'allocate', { allocated_amount: 800 });
     r = await act(db, 13, r, 'approve');
@@ -115,7 +116,7 @@ test('payment validations: accounts only, exact amount, reference for non-cash, 
     await assert.rejects(act(db, 14, r, 'pay', { paid_mode: 'Cash', payment_date: '2099-01-01' }), /future/);
     r = await act(db, 14, r, 'pay', { paid_mode: 'Cash' });
     assert.equal(Number(r.paid_amount), 800);
-    await assert.rejects(act(db, 11, r, 'cancel'), /Cannot cancel funded request/);
+    await assert.rejects(act(db, 11, r, 'cancel'), /A reason is required to cancel a paid request/);
 }));
 
 test('expense validations: balance, future date, proof above threshold, spend mode, reference', () => run(async db => {
@@ -169,6 +170,51 @@ test('RULE: an expense without a bill needs a reason of at least 10 characters',
     const withBill = await billed(db, r, { amount: 60, no_bill_reason: 'ignored because a bill is attached' });
     assert.equal(withBill.no_bill_reason, null);
     await assert.rejects(expense(db, r, { amount: 700, no_bill_reason: NO_BILL }), /Proof \/ bill is required/); // reason never replaces a required bill
+}));
+
+test('RULE: cancel after payout, nothing spent: pending until accounts confirms the full cash is back', () => run(async db => {
+    let r = await funded(db, 1000);
+    await assert.rejects(act(db, 14, r, 'cancel', { remark: 'Accounts tries' }), /Forbidden/);
+    await assert.rejects(act(db, 10, r, 'cancel', { remark: 'Admin tries' }), /Forbidden/);
+    r = await act(db, 11, r, 'cancel', { remark: 'Event postponed' });
+    assert.equal(r.status, 'paid');
+    assert.equal(r.cancel_reason, 'Event postponed');
+    assert.ok(r.cancel_requested_at);
+    const logged = (await db.query("select action from petty_cash_activity where request_id=$1 order by created_at desc limit 1", [r.id])).rows[0];
+    assert.equal(logged.action, 'cancel_requested');
+    await assert.rejects(act(db, 11, r, 'cancel', { remark: 'Again' }), /already requested/);
+    await assert.rejects(expense(db, r, { amount: 10 }), /Cancellation requested; no new expenses/);
+    await assert.rejects(act(db, 11, r, 'settle'), /Cancellation pending/);
+    r = await act(db, 14, r, 'return', { amount_returned: 400, remark: 'First part back' });
+    assert.equal(r.status, 'paid'); // still ₹600 out
+    r = await act(db, 14, r, 'return', { amount_returned: 600, remark: 'Rest back' });
+    assert.equal(r.status, 'cancelled');
+    assert.equal(Number(await call(db, 'pc_balance', [id(1), id(11), r.id])), 0);
+    assert.equal(await call(db, 'pc_can_read', [id(14), r.id]), true); // accounts still see what they paid out
+    assert.equal(Number((await db.query("select count(*) n from event_outbox where event_type='PETTY_CASH_CANCELLED'")).rows[0].n), 0);
+    assert.equal((await create(db, { amount_requested: 100 })).status, 'submitted');
+}));
+
+test('RULE: cancel after payout is refused once anything is spent; allowed again after the spend is withdrawn', () => run(async db => {
+    let r = await funded(db, 1000);
+    const e = await expense(db, r, { amount: 100 });
+    await assert.rejects(act(db, 11, await reload(db, r), 'cancel', { remark: 'Not needed' }), /already spent/);
+    await call(db, 'pc_review_expense', [id(14), e.id, 'rejected', 'Wrong request']);
+    await call(db, 'pc_withdraw_expense', [id(11), e.id, 'Logged on the wrong request']);
+    r = await act(db, 11, await reload(db, r), 'cancel', { remark: 'Not needed after all' });
+    r = await act(db, 14, r, 'return', { amount_returned: 1000, remark: 'All back' });
+    assert.equal(r.status, 'cancelled');
+}));
+
+test('RULE: cancel before payout is still immediate; after settlement it is refused', () => run(async db => {
+    let r = await create(db, { amount_requested: 500 });
+    r = await act(db, 12, r, 'allocate', { allocated_amount: 500 });
+    r = await act(db, 13, r, 'approve');
+    assert.equal((await act(db, 11, r, 'cancel')).status, 'cancelled');
+    let s = await funded(db, 300);
+    await expense(db, s, { amount: 300 });
+    s = await act(db, 11, await reload(db, s), 'settle');
+    await assert.rejects(act(db, 11, s, 'cancel', { remark: 'Too late' }), /Cannot cancel funded request/);
 }));
 
 // ---------------------------------------------------------------- bug fixes

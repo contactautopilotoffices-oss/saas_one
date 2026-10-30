@@ -109,6 +109,8 @@ export default function WorkflowRequestDetail({
     const finance = context.caps.canDisburse && r && !owner;
     const funded = !!r && ['paid', 'settlement_submitted', 'closed'].includes(r.status);
     const missingCredit = !!(r?.workflow_version === 2 && funded && Number(r.paid_amount) > 0 && detail?.wallet && detail.wallet.received === 0);
+    const cancelPending = !!(r?.cancel_requested_at && r.status === 'paid');
+    const nothingSpent = !(detail?.expenses || []).some(entry => entry.review_status !== 'withdrawn');
 
     const actions: { key: string; label: string; primary?: boolean; danger?: boolean }[] = [];
     if (canAllocate) actions.push({ key: 'allocate', label: 'Allocate Cash', primary: true });
@@ -123,11 +125,15 @@ export default function WorkflowRequestDetail({
     }
     if (owner && r?.status === 'sent_back') actions.push({ key: 'resubmit', label: 'Correct and Resubmit', primary: true });
     if (owner && r?.status === 'draft') actions.push({ key: 'submit', label: 'Edit or Submit Draft', primary: true });
-    if (owner && r && !missingCredit && ['paid', 'settlement_submitted'].includes(r.status) && (!detail?.balance || r.workflow_version === 1)) {
+    if (owner && r && !missingCredit && !cancelPending && ['paid', 'settlement_submitted'].includes(r.status) && (!detail?.balance || r.workflow_version === 1)) {
         actions.push({ key: 'settle', label: 'Submit Reconciliation', primary: true });
     }
     if (owner && r && ['draft', 'submitted', 'pending_approval', 'sent_back', 'approved'].includes(r.status)) {
         actions.push({ key: 'cancel', label: 'Cancel Request', danger: true });
+    }
+    // Paid but nothing spent: the requester asks to cancel; accounts completes it by confirming the cash is back.
+    if (owner && r?.workflow_version === 2 && r.status === 'paid' && !cancelPending && !missingCredit && nothingSpent) {
+        actions.push({ key: 'cancel', label: 'Cancel Request (return cash)', danger: true });
     }
     if (context.caps.canManageRouting && r && ['submitted', 'pending_approval', 'sent_back'].includes(r.status)) {
         actions.push({ key: 'reassign', label: 'Reassign Routing' });
@@ -462,6 +468,18 @@ export default function WorkflowRequestDetail({
                         </div>
                     )}
 
+                    {cancelPending && (
+                        <div role="status" className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 text-amber-800 dark:text-amber-200 text-xs font-semibold flex items-center gap-2">
+                            <AlertTriangle size={16} className="shrink-0 text-amber-500" />
+                            <span>
+                                Cancellation pending{r?.cancel_reason ? ` (${r.cancel_reason})` : ''}.{' '}
+                                {owner
+                                    ? `Return ${inr(detail?.balance || 0)} to accounts. The request is cancelled once accounts confirms the cash.`
+                                    : `Collect ${inr(detail?.balance || 0)} from the requester and use Confirm Returned Cash; the request is then cancelled.`}
+                            </span>
+                        </div>
+                    )}
+
                     {/* Action Buttons Bar */}
                     <div className="flex flex-wrap items-center gap-2.5 pt-1">
                         {actions.map(a => (
@@ -486,7 +504,7 @@ export default function WorkflowRequestDetail({
                             </button>
                         ))}
 
-                        {owner && r?.workflow_version === 2 && ['paid', 'settlement_submitted'].includes(r.status) && (
+                        {owner && r?.workflow_version === 2 && ['paid', 'settlement_submitted'].includes(r.status) && !cancelPending && (
                             <button
                                 disabled={busy || missingCredit || currentBalance <= 0}
                                 className="pc-button gap-1.5 shadow-sm"
@@ -677,14 +695,14 @@ export default function WorkflowRequestDetail({
 
                             <label className="block">
                                 <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                                    Remarks {['send_back', 'reject', 'return'].includes(action) && <span className="text-red-500">*</span>}
+                                    Remarks {(['send_back', 'reject', 'return'].includes(action) || (action === 'cancel' && r?.status === 'paid')) && <span className="text-red-500">*</span>}
                                 </span>
                                 <textarea
                                     name="remark"
                                     className="pc-input mt-1"
                                     rows={2}
                                     placeholder="Add any notes or justification..."
-                                    required={['send_back', 'reject', 'return'].includes(action)}
+                                    required={['send_back', 'reject', 'return'].includes(action) || (action === 'cancel' && r?.status === 'paid')}
                                 />
                             </label>
 
