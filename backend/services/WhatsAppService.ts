@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { AiSensyService } from '@/backend/services/AiSensyService';
+import { sendSessionReply } from '@/backend/lib/whatsapp/interpreter/delivery.mjs';
 
 export interface WhatsAppOptions {
     message: string;
@@ -45,6 +46,10 @@ export class WhatsAppService {
 
         const campaignName = options.templateName;
         if (!campaignName) {
+            if (options.message) {
+                const sessionRes = await sendSessionReply(formattedPhone, options.message, new Date().toISOString());
+                if (sessionRes.success) return true;
+            }
             console.warn('[WhatsAppService] ⚠️ No templateName specified for sendAsync to', formattedPhone, '— skipping to avoid unwanted template broadcast.');
             return false;
         }
