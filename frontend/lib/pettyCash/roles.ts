@@ -80,6 +80,9 @@ export interface PettyCashRequest {
     recipient_name?: string | null;
     recipient_phone?: string | null;
     assigned_approver_id?: string | null;
+    /** Who allocated and who approved; neither may also disburse the same request. */
+    allocated_by?: string | null;
+    approver_id?: string | null;
     status: string;
     approved_amount?: number | null;
     approved_at?: string | null;

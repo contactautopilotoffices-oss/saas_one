@@ -17,7 +17,7 @@ The first pass of this audit found 9 bugs. The worst: after the 29 Oct migration
 
 As you confirmed, people can still raise a new request while they hold cash or have another request open.
 
-**Tests:** 35 cases in the audit suite, all passing, run against every petty cash migration in order, including the new one. All 77 existing petty cash tests were run as well. 76 pass. The one that fails is a dashboard navigation check that also fails on `main`.
+**Tests:** 39 cases in the audit suite, all passing, run against every petty cash migration in order, including the new one. All 77 existing petty cash tests were run as well. 76 pass. The one that fails is a dashboard navigation check that also fails on `main`.
 
 **Nothing has been applied to the live database.** Someone needs to apply the migration and deploy the code. See section 6.
 
@@ -138,6 +138,31 @@ raise request -->  set amount   -->    approve    -->    pay out    -->      log
 | 26 | JPEG with trailing data; plain text pretending to be an image | Accepted; rejected |
 | 27 | Wallet totals with a withdrawn expense | Spent and balance correct |
 | 28 to 32 | Policy checks: no money cap, split bills, no overspend path, admin cannot cancel, allocator leaving blocks a property | Behaviour recorded as-is |
+
+## 5b. Bulk actions and row buttons (added 30 Oct)
+
+**Before:** To Allocate and To Approve had bulk processing with no way to add remarks. To Pay had no bulk option (the API refused it on purpose). Rows had only a "Track" button.
+
+**Now:**
+- **Bulk bar** on To Allocate, To Approve and To Pay:
+  - An optional **Remarks** box, saved on every request processed.
+  - To Pay also has **Payment mode** and **Payment date** for the whole batch, plus a **UTR / reference box in each row**, required for non-cash modes.
+  - Payment proof is optional; a voucher is attached automatically.
+  - After a run, the message lists which requests failed and why.
+- **Compact icon buttons on each row**, pinned to the right so they stay visible on a wide table. Each has a tooltip.
+  - **Allocator:** ✓ Allocate (uses the amount typed in the row), ↩ Send back, ✕ Reject.
+  - **Approver:** ✓ Approve, ↩ Send back, ✕ Reject.
+  - **Accounts (To Pay):** pay icon, using the mode, date and that row's UTR.
+  - Every row keeps the eye icon to open the details.
+  - Send back and Reject always ask for a reason, and nothing is sent if it is left empty.
+- Rows only show the buttons the database would allow. For example, accounts cannot pay a request they allocated or approved; that row's checkbox is disabled with an explanation.
+- **Not included:** Reject and Send back are not bulk actions on purpose, because each needs its own reason.
+
+**Known minor side effect:** if a payment fails validation (for example, a missing UTR), an unused voucher record is left behind. It is never attached to anything. This already happened before for single payments.
+
+**Tests:**
+- 4 new audit tests drive the real bulk route against the real database rules: bulk allocate with remarks, bulk UPI pay with one row missing its UTR, blocked payers, and bulk reject refused.
+- A browser check of the real screen (11 checks, Chromium, stubbed API) confirmed what each button sends, that UPI without a UTR is stopped on screen, and that the page renders at phone width. This check is a scratch script and is not in the repo.
 
 ## 6. To go live
 
