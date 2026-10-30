@@ -15,12 +15,12 @@ import { AlertTriangle, Camera, CheckCircle2, Clock, Lock, Mic, ShieldAlert, Vid
  * app (blur), leaving fullscreen incl. Esc, close/refresh (pagehide → beacon),
  * camera off.
  *
- * Every ~20s a webcam frame goes to the vision model:
- *   · not looking at the screen → the taker is asked to look at the camera, and
- *     it counts as a strike; after the test's limit the attempt closes.
- *   · a phone, or a second face → nothing is shown. The frame is kept for the
- *     reviewer instead, so nobody learns what the camera catches.
- * The microphone is watched for a voice nearby; that is recorded, never shown.
+ * Every ~20s a webcam frame goes to the vision model. Not looking at the
+ * screen, no face, a phone, or a second face → the taker is warned and it
+ * counts as a strike; after the test's limit the attempt closes. For a phone or
+ * a second face the frame is also kept for the reviewer.
+ * The microphone is watched for a voice nearby; that is recorded and the taker
+ * is warned, but it does not count as a strike (loudness alone is too crude).
  */
 
 type Phase = 'loading' | 'blocked' | 'identify' | 'setup' | 'ready' | 'running' | 'terminated' | 'submitted';
@@ -37,6 +37,7 @@ const SNAPSHOT_EVERY_MS = 20_000;
 const VOICE_RMS_THRESHOLD = 0.035;
 const VOICE_SUSTAIN_SAMPLES = 3;   // ~1.5s above the threshold
 const VOICE_REPORT_GAP_MS = 30_000;
+const VOICE_WARNING_MS = 10_000;   // how long the "keep the room quiet" notice stays up
 
 const REASON_LABEL: Record<string, string> = {
     tab_hidden: 'You switched tabs or minimised the browser.',
@@ -45,7 +46,7 @@ const REASON_LABEL: Record<string, string> = {
     page_unload: 'The page was closed or refreshed.',
     camera_lost: 'Your camera was turned off.',
     reopened: 'The test was opened again before it was finished.',
-    looking_away: 'You were asked to look at the camera too many times.',
+    looking_away: 'You received too many camera warnings.',
 };
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -64,6 +65,7 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
     const [answers, setAnswers] = useState<Record<string, number>>({});
     const [remaining, setRemaining] = useState(0);
     const [cameraWarning, setCameraWarning] = useState<string | null>(null);
+    const [voiceWarning, setVoiceWarning] = useState(false);
     const [endReason, setEndReason] = useState<string | null>(null);
     const [previousNote, setPreviousNote] = useState<string | null>(null);
     const [chancesLeft, setChancesLeft] = useState(0);
@@ -286,7 +288,7 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
         return () => { clearTimeout(first); clearInterval(loop); };
     }, [phase, test?.ai_monitoring, authHeaders, acceptServerTermination]);
 
-    // ── Microphone: a voice in the room is recorded, never shown ─────────────
+    // ── Microphone: a voice in the room is recorded and warned about, no strike ─
     useEffect(() => {
         if (phase !== 'running' || !streamRef.current) return;
         const audioTrack = streamRef.current.getAudioTracks()[0];
@@ -305,6 +307,7 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
 
         let loudSamples = 0;
         let lastReported = 0;
+        let hideWarning: ReturnType<typeof setTimeout> | undefined;
 
         const sample = () => {
             if (endedRef.current) return;
@@ -318,6 +321,9 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
             if (loudSamples >= VOICE_SUSTAIN_SAMPLES && Date.now() - lastReported > VOICE_REPORT_GAP_MS) {
                 lastReported = Date.now();
                 loudSamples = 0;
+                setVoiceWarning(true);
+                clearTimeout(hideWarning);
+                hideWarning = setTimeout(() => setVoiceWarning(false), VOICE_WARNING_MS);
                 fetch(`/api/proctor/attempts/${attemptIdRef.current}/event`, {
                     method: 'POST',
                     headers: authHeaders(),
@@ -331,7 +337,7 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
         };
 
         const timer = setInterval(sample, 500);
-        return () => { clearInterval(timer); ctx.close().catch(() => {}); };
+        return () => { clearInterval(timer); clearTimeout(hideWarning); ctx.close().catch(() => {}); };
     }, [phase, authHeaders]);
 
     // ── Setup steps ──────────────────────────────────────────────────────────
@@ -529,7 +535,8 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
                             <li>Switching tabs, switching apps, pressing <b>Esc</b>, leaving fullscreen, or closing/refreshing the page <b>ends the test immediately</b>.</li>
                             <li>You have {plural(chancesLeft, 'chance')}. Leaving the page uses one up; once you submit, the test is finished.</li>
                             <li>Your <b>camera and microphone stay on</b> for the whole test. What they record is sent to your reviewer.</li>
-                            <li>Look at the screen. After {plural(test?.look_away_strikes || 3, 'warning')} about looking away, the test closes.</li>
+                            <li>Stay alone, facing the screen, with phones and other devices put away. The camera warns you if it sees otherwise; after {plural(test?.look_away_strikes || 3, 'warning')}, the test closes.</li>
+                            <li>Keep the room quiet. Voices or noise nearby also show a warning, but these do not count towards the limit.</li>
                             <li>Close other apps and turn off notifications before you begin.</li>
                         </ul>
                     </div>
@@ -628,9 +635,14 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
                 Recording: camera, microphone and screen activity are sent to your reviewer
             </div>
 
-            {cameraWarning && (
-                <div className="sticky top-[53px] z-30 flex items-center gap-2 bg-amber-100 px-4 py-2 text-sm font-bold text-amber-900">
-                    <ShieldAlert className="w-4 h-4" /> {cameraWarning}
+            {(cameraWarning || voiceWarning) && (
+                <div className="sticky top-[53px] z-30 divide-y divide-amber-200 bg-amber-100 text-sm font-bold text-amber-900">
+                    {cameraWarning && (
+                        <p className="flex items-center gap-2 px-4 py-2"><ShieldAlert className="w-4 h-4" /> {cameraWarning}</p>
+                    )}
+                    {voiceWarning && (
+                        <p className="flex items-center gap-2 px-4 py-2"><Mic className="w-4 h-4" /> Voices or noise picked up nearby — please keep the room quiet</p>
+                    )}
                 </div>
             )}
 

@@ -5,11 +5,20 @@ import { checkFrame, type FrameVerdict } from '@/backend/lib/proctor/vision';
 
 const MAX_IMAGE_CHARS = 400_000; // ~300 KB of JPEG; the page sends ~20 KB frames
 
-/** What the frame was flagged for. The first three are silent; the others warn the taker. */
+/** What the frame was flagged for. Every category warns the taker and counts towards the strike limit. */
 type FlagCategory = 'multiple_faces' | 'phone' | 'no_face' | 'looking_away';
 
-/** Flags the taker is told about — and which count towards the strike limit. */
-const WARNING_CATEGORIES: FlagCategory[] = ['no_face', 'looking_away'];
+const WARNING_CATEGORIES: FlagCategory[] = ['no_face', 'multiple_faces', 'phone', 'looking_away'];
+
+/** Flags a reviewer has to judge for themselves, so the frame is kept as evidence. */
+const EVIDENCE_CATEGORIES: FlagCategory[] = ['multiple_faces', 'phone'];
+
+const WARNING_MESSAGE: Record<FlagCategory, string> = {
+    no_face: 'Your face is not visible — look into the camera',
+    multiple_faces: 'Only you should be in view — someone else was seen on camera',
+    phone: 'Put away phones and other devices',
+    looking_away: 'Please look into the camera',
+};
 
 function categorise(v: FrameVerdict): FlagCategory | null {
     if (v.face_count === 0) return 'no_face';
@@ -23,12 +32,10 @@ function categorise(v: FrameVerdict): FlagCategory | null {
  * POST /api/proctor/attempts/[id]/snapshot — one webcam frame, checked by the
  * vision model.
  *
- * Two different outcomes, deliberately:
- *   · Not looking at the screen / no face → the taker is told to look at the
- *     camera, and it counts as a strike. After the test's strike limit
- *     (default 3) the attempt closes.
- *   · A phone, or a second person in frame → nothing is shown to the taker.
- *     The frame is saved to a private bucket for the reviewer instead.
+ * Any flag — not looking at the screen, no face, a phone, or a second person
+ * in frame — warns the taker and counts as a strike. After the test's strike
+ * limit (default 3) the attempt closes. For a phone or a second person the
+ * frame is also saved to a private bucket for the reviewer.
  *
  * Body: { image: "data:image/jpeg;base64,...", attempt_token? }
  */
@@ -67,7 +74,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     // Evidence: keep the frame only when it is the kind of flag a reviewer has
     // to judge for themselves (a phone, someone else in the room).
     let evidencePath: string | null = null;
-    if (category && !warns) {
+    if (category && EVIDENCE_CATEGORIES.includes(category)) {
         const path = `${id}/${Date.now()}-${category}.jpg`;
         const { error: uploadError } = await supabaseAdmin.storage
             .from(EVIDENCE_BUCKET)
@@ -89,7 +96,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     ]);
 
     if (!warns) {
-        // Silent: the taker is told nothing, so nobody learns what the camera catches.
         return NextResponse.json({ ok: true, warn: false });
     }
 
@@ -101,7 +107,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         .eq('kind', 'ai_flag');
     const strikes = (flagRows || []).filter((r) => {
         const c = (r.detail as { category?: string } | null)?.category;
-        return c === 'no_face' || c === 'looking_away';
+        return WARNING_CATEGORIES.includes(c as FlagCategory);
     }).length;
     const allowed = test.look_away_strikes || 3;
 
@@ -126,7 +132,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return NextResponse.json({
         ok: true,
         warn: true,
-        message: verdict.face_count === 0 ? 'Your face is not visible — look into the camera' : 'Please look into the camera',
+        message: WARNING_MESSAGE[category],
         strikes,
         strikes_allowed: allowed,
     });
