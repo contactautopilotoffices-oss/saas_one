@@ -25,6 +25,7 @@ import { hrDataCache } from '@/frontend/components/hr/hrDataCache';
 import { createClient } from '@/frontend/utils/supabase/client';
 import DepartmentTasksTab from '@/frontend/components/task-manager/DepartmentTasksTab';
 import MeetingsTab from '@/frontend/components/task-manager/meetings/MeetingsTab';
+import ProctorHub from '@/frontend/components/proctor/ProctorHub';
 
 export function HRTicketsContent({ orgId }: { orgId: string }) {
     const { user, membership } = useAuth();
@@ -43,7 +44,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         );
     }, [orgId, membership, user]);
 
-    const [activeTab, setActiveTab] = useState<'tickets' | 'notes' | 'tree' | 'directory' | 'reconciliation' | 'config' | 'analytics' | 'tasks' | 'meeting_assistant'>('tickets');
+    const [activeTab, setActiveTab] = useState<'tickets' | 'notes' | 'tree' | 'directory' | 'reconciliation' | 'config' | 'analytics' | 'tasks' | 'meeting_assistant' | 'assessments'>('tickets');
     const [visitedTabs, setVisitedTabs] = useState<Set<string>>(new Set(['tickets']));
     const [viewMode, setViewMode] = useState<'kanban' | 'table' | 'properties'>('table');
 
@@ -332,7 +333,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         const filterParam = searchParams.get('filter');
         const ticketIdParam = searchParams.get('ticketId');
 
-        if (tabParam && (['tickets', 'notes', 'tree', 'directory', 'reconciliation', 'config', 'analytics', 'tasks'].includes(tabParam) || (tabParam === 'meeting_assistant' && canUseMeetingAssistant))) {
+        if (tabParam && (['tickets', 'notes', 'tree', 'directory', 'reconciliation', 'config', 'analytics', 'tasks', 'assessments'].includes(tabParam) || (tabParam === 'meeting_assistant' && canUseMeetingAssistant))) {
             setActiveTab(tabParam as any);
         }
         if (actionParam === 'create') {
@@ -1358,7 +1359,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                             <ShieldCheck className="w-5 h-5" />
                         </div>
                         <h1 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white tracking-tight">
-                            {activeTab === 'tasks' ? 'Task Manager' : activeTab === 'meeting_assistant' ? 'Meeting Assistant' : activeTab === 'notes' ? 'HR Notes & Remarks Ledger' : activeTab === 'tree' ? 'Organization Reporting Tree & Workload Inspector' : isHrAdmin ? 'HR Helpdesk & Grievances' : isManager ? 'Team Grievance Requests' : 'My Requests & Grievances'}
+                            {activeTab === 'assessments' ? 'Assessments' : activeTab === 'tasks' ? 'Task Manager' : activeTab === 'meeting_assistant' ? 'Meeting Assistant' : activeTab === 'notes' ? 'HR Notes & Remarks Ledger' : activeTab === 'tree' ? 'Organization Reporting Tree & Workload Inspector' : isHrAdmin ? 'HR Helpdesk & Grievances' : isManager ? 'Team Grievance Requests' : 'My Requests & Grievances'}
                         </h1>
                     </div>
                 </div>
@@ -2666,6 +2667,11 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
             {canUseMeetingAssistant && visitedTabs.has('meeting_assistant') && (
                 <div className={activeTab === 'meeting_assistant' ? 'block' : 'hidden'}>
                     <MeetingsTab space="hr" />
+                </div>
+            )}
+            {visitedTabs.has('assessments') && (
+                <div className={activeTab === 'assessments' ? 'block' : 'hidden'}>
+                    <ProctorHub orgId={orgId} embedded />
                 </div>
             )}
 
