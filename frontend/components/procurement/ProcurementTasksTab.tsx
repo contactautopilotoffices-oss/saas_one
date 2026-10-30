@@ -6,6 +6,7 @@ import { AlertTriangle, Bell, CheckCircle2, ClipboardList, LayoutGrid, Lock, Plu
 import { EASE, Status, WTask, todayIST } from './tasks/types';
 import { DateRange } from '@/frontend/components/task-manager/DateRangePicker';
 import TaskRangeFilter from '@/frontend/components/task-manager/assign/TaskRangeFilter';
+import ZohoTasksButton from '@/frontend/components/task-manager/ZohoTasksButton';
 import { useWorkspace } from './tasks/useWorkspace';
 import StatCards from './tasks/StatCards';
 import Board from './tasks/Board';
@@ -219,6 +220,8 @@ export default function ProcurementTasksTab({ departmentName = 'Procurement' }: 
                 <div className="flex flex-wrap items-center gap-2">
                     {/* Owner 2026-10-26: the same date filter as the superadmin console (quick picks, one day or a range of up to 31 days) */}
                     <TaskRangeFilter value={range} onChange={setRange} align="right" />
+                    {/* 2026-10-29: copy the signed-in person's own Zoho Mail tasks into their list */}
+                    <ZohoTasksButton onSynced={() => { void reload(); }} />
                     <button type="button" onClick={reload} disabled={refreshing} aria-label="Refresh" className="rounded-2xl border border-zinc-200 bg-white p-2.5 text-zinc-500 transition-colors hover:text-zinc-800 disabled:opacity-60 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:text-zinc-200">
                         <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
                     </button>

@@ -7,6 +7,7 @@ import { evaluateRuleSchedule } from '@/task-manager/NotificationSchedule';
 import { SuperuserPingService } from '@/task-manager/SuperuserPingService';
 import { runBotHousekeeping } from '@/task-manager/NeverSilentWatchdog';
 import { runDueReminders } from '@/task-manager/TaskDueService';
+import { ZohoTaskSync } from '@/task-manager/ZohoTaskSync';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -106,6 +107,9 @@ async function handleRequest(request: NextRequest) {
         // Owner 2026-10-27: one "due soon" reminder per task with a deadline, for departments with the Due dates switch ON.
         // Does nothing while every team has it OFF or before its SQL file is applied. Never throws.
         if (!dryRun) await runDueReminders();
+        // 2026-10-29: copy open Zoho Mail tasks for everyone who connected Zoho Tasks. Read-only towards Zoho. Does nothing with
+        // no connections or before its SQL file is applied. Never throws.
+        if (!dryRun) await ZohoTaskSync.runAll();
 
         const targetRuleId = request.nextUrl.searchParams.get('ruleId') || undefined;
 

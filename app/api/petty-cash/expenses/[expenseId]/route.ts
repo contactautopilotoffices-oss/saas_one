@@ -13,7 +13,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (!req) return NextResponse.json({ error: 'Not found' }, { status: 404 });
     const result = body.action === 'correct'
         ? await supabaseAdmin.rpc('pc_correct_expense', { actor: access.user.id, eid: expenseId, body })
-        : await supabaseAdmin.rpc('pc_review_expense', { actor: access.user.id, eid: expenseId, result: body.review_status, remark: body.remark || '' });
+        : body.action === 'withdraw'
+            ? await supabaseAdmin.rpc('pc_withdraw_expense', { actor: access.user.id, eid: expenseId, remark: body.remark || '' })
+            : await supabaseAdmin.rpc('pc_review_expense', { actor: access.user.id, eid: expenseId, result: body.review_status, remark: body.remark || '' });
     if (result.error) return pcError(result.error);
     return NextResponse.json({ expense: result.data });
 }

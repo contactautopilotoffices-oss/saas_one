@@ -129,6 +129,9 @@ function CardBody({ task, meId, floating = false, pending, onDelete, onLock, onV
                 {task.supportRequest && (
                     <span className="rounded-md bg-orange-100 px-1.5 py-0.5 text-[10px] font-black text-orange-800 dark:bg-orange-900/40 dark:text-orange-300">Support request</span>
                 )}
+                {task.fromZoho && (
+                    <span className="rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-black text-amber-800 dark:bg-amber-900/40 dark:text-amber-300" title="Imported from Zoho Mail">Zoho</span>
+                )}
                 {task.alsoWith && task.alsoWith.length > 0 && (
                     <span className="flex items-center gap-1 rounded-md bg-teal-100 px-1.5 py-0.5 text-[10px] font-black text-teal-800 dark:bg-teal-900/40 dark:text-teal-300">
                         <Users className="h-3 w-3" /> Also with {task.alsoWith.map(p => p.name.split(' ')[0]).join(', ')}

@@ -22,8 +22,9 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
-    Check, ChevronDown, ClipboardCopy, FileSpreadsheet, Globe, Loader2, MessageSquare, Pencil, PhoneCall,
-    PhoneOff, Play, Plus, RefreshCw, Search, Trash2, Trophy, X,
+    ArrowRight, BadgeCheck, Check, ChevronDown, ClipboardCopy, FileSpreadsheet, FileText, Globe, HelpCircle,
+    Loader2, MessageSquare, Mic, Pencil, PhoneCall, PhoneIncoming, PhoneOff, Play, Plus, RefreshCw, Search,
+    Sparkles, Trash2, TrendingDown, TrendingUp, Trophy, X,
 } from 'lucide-react';
 import AgentActivity from '@/frontend/components/agents/AgentActivity';
 import SatejChat from './SatejChat';
@@ -49,6 +50,21 @@ type Setup = {
     paused: boolean;
     voice: { checked: boolean; found?: boolean; name?: string; webhookMapped?: boolean; webhookHost?: string | null; unfilledVariables?: string[]; error?: string };
 };
+
+type Metric = { total: number; thisWeek: number; prevWeek: number; deltaPct: number | null };
+type Stats = {
+    ready: boolean;
+    callsMade: Metric; connected: Metric; quotesReceived: Metric;
+    qualifiedVendors: { total: number };
+    campaigns: { total: number; active: number; waiting: number; completed: number };
+    today: { calls: number; connected: number; quotes: number; noAnswer: number; inProgress: number };
+};
+
+/** Friendly head-starts for the form. Free text underneath — these only pre-fill the title. */
+const QUICK_STARTS = [
+    'Office furniture', 'HVAC', 'Electrical', 'Civil & interiors',
+    'IT hardware', 'Pantry & housekeeping', 'Security services', 'Signage',
+];
 
 const API = '/api/satej/requirements';
 
@@ -111,6 +127,7 @@ export default function SatejConsole({ orgId }: { orgId: string }) {
     const [list, setList] = useState<Summary[] | null>(null);
     const [selected, setSelected] = useState<string | null>(null);
     const [showForm, setShowForm] = useState(false);
+    const [howOpen, setHowOpen] = useState(false);
     const [error, setError] = useState('');
     const [view, setView] = useState<'requirements' | 'rates' | 'faq' | 'script' | 'runs'>('requirements');
     /** A requirement form pre-filled from a purchase@ email. */
@@ -148,18 +165,25 @@ export default function SatejConsole({ orgId }: { orgId: string }) {
         <div className={s.page}>
             <header className={s.header}>
                 <div className={s.headTitle}>
-                    <div className={s.avatarLg}>S<span className={`${s.presence} ${working ? s.presenceBusy : ''}`} /></div>
+                    <div className={s.avatarLg}>M<span className={`${s.presence} ${working ? s.presenceBusy : ''}`} /></div>
                     <div>
-                        <h1>Meera · Vendor discovery</h1>
+                        <h1>Meera · Vendor Voice Agent</h1>
                         <p className={s.muted}>
-                            {list === null ? 'Loading…' : `${working} in progress${needsYou ? ` · ${needsYou} waiting for you` : ''} · Meera makes the calls`}
+                            {list === null ? 'Loading…' : (working || needsYou)
+                                ? `${working} outreach${working === 1 ? '' : 's'} running${needsYou ? ` · ${needsYou} waiting for you` : ''} · Meera makes the calls`
+                                : 'Automated vendor outreach. Meera calls, asks for quotes and ranks them, so you don’t have to.'}
                         </p>
                     </div>
                 </div>
-                <button className={s.primary} onClick={() => setShowForm(true)}><Plus size={15} /> New requirement</button>
+                <div className={s.actions}>
+                    <button className={s.ghost} onClick={() => setHowOpen((v) => !v)}><HelpCircle size={15} /> How Meera works</button>
+                    <button className={s.primary} onClick={() => setShowForm(true)}><Plus size={15} /> Start new outreach</button>
+                </div>
             </header>
 
+            {howOpen && <HowItWorks onClose={() => setHowOpen(false)} />}
             <SetupPanel orgId={orgId} />
+            <Overview orgId={orgId} working={working} needsYou={needsYou} onNew={() => setShowForm(true)} onQuickStart={(cat) => { setDraft({ title: cat }); setShowForm(true); }} />
 
             <div className={s.tabs} role="tablist">
                 <button role="tab" aria-selected={view === 'requirements'} className={`${s.tab} ${view === 'requirements' ? s.tabActive : ''}`} onClick={() => setView('requirements')}>Requirements</button>
@@ -236,6 +260,166 @@ export default function SatejConsole({ orgId }: { orgId: string }) {
 }
 
 /* ======================================================================== */
+/* overview: friendly hero numbers + the voice-agent status                  */
+
+const FLOW = [
+    { n: 1, title: 'Tell Meera what you need', hint: 'A short form: item, quantity, city.' },
+    { n: 2, title: 'She finds local vendors', hint: 'Meera searches the web for you.' },
+    { n: 3, title: 'You approve the list', hint: 'Keep only the ones you want called.' },
+    { n: 4, title: 'Meera makes the calls', hint: 'She asks your questions and notes the answers.' },
+    { n: 5, title: 'You get a ranked shortlist', hint: 'Best vendors first, on WhatsApp.' },
+];
+
+function HowItWorks({ onClose }: { onClose: () => void }) {
+    return (
+        <section className={`${s.card} ${s.howCard}`}>
+            <div className={s.boardHead}>
+                <h3><HelpCircle size={15} /> How Meera works</h3>
+                <button className={s.iconBtn} onClick={onClose} aria-label="Close"><X size={16} /></button>
+            </div>
+            <p className={s.muted} style={{ marginBottom: 12 }}>
+                Meera is your vendor calling agent. You tell her what to buy; she finds vendors, phones each one in Hindi or English,
+                asks for rates and details, and hands you a ranked shortlist. No scripts to write, no numbers to dial.
+            </p>
+            <ol className={s.stepsBig}>
+                {FLOW.map((f) => (
+                    <li key={f.n}><span className={s.stepNo}>{f.n}</span><div><b>{f.title}</b><span>{f.hint}</span></div></li>
+                ))}
+            </ol>
+        </section>
+    );
+}
+
+function fmtDelta(m?: Metric) {
+    if (!m || m.deltaPct == null) return null;
+    return m.deltaPct;
+}
+
+function StatCard({ icon, tint, label, value, metric, sub }: {
+    icon: React.ReactNode; tint: string; label: string; value?: number; metric?: Metric; sub: string;
+}) {
+    const delta = fmtDelta(metric);
+    return (
+        <div className={s.kpiCard}>
+            <div className={`${s.kpiIcon} ${s[`kpi_${tint}`] ?? ''}`}>{icon}</div>
+            <div className={s.kpiBody}>
+                <div className={s.kpiValue}>{value == null ? <span className={s.kpiDash} aria-label="loading" /> : value.toLocaleString('en-IN')}</div>
+                <div className={s.kpiLabel}>{label}</div>
+            </div>
+            {delta != null
+                ? <span className={`${s.kpiDelta} ${delta >= 0 ? s.good : s.bad}`}>{delta >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}{delta >= 0 ? '+' : ''}{delta}%<em>vs last week</em></span>
+                : <span className={s.kpiSub}>{metric && metric.thisWeek > 0 ? `${metric.thisWeek} this week` : sub}</span>}
+        </div>
+    );
+}
+
+function voiceState(setup: Setup | null): { label: string; cls: string; ready: boolean } {
+    if (!setup) return { label: 'Checking…', cls: s.info, ready: false };
+    if (setup.mockMode) return { label: 'Demo mode', cls: s.info, ready: false };
+    if (setup.paused) return { label: 'Paused', cls: s.warn, ready: false };
+    const v = setup.voice;
+    const broken = !setup.database.ready || setup.missing.length > 0
+        || (!!v.error) || (v.checked && !v.found) || (v.found && !v.webhookMapped) || (v.unfilledVariables?.length ?? 0) > 0;
+    if (broken) return { label: 'Setup needed', cls: s.warn, ready: false };
+    return { label: 'Active', cls: s.good, ready: true };
+}
+
+function VoiceAgentPanel({ setup, today }: { setup: Setup | null; today?: Stats['today'] }) {
+    const st = voiceState(setup);
+    const big = st.ready ? 'Ready to make calls'
+        : setup?.paused ? 'Paused. Resume in the Agent Console'
+        : setup?.mockMode ? 'Demo mode. No real calls go out'
+        : !setup ? 'Checking the voice line…'
+        : 'Finish setup to start calling';
+    const DOES = [
+        'Introduces Autopilot Offices',
+        'Asks your product or service specifics',
+        'Collects price, availability, MOQ & delivery',
+        'Logs every response automatically',
+        'Schedules a follow-up when needed',
+    ];
+    return (
+        <section className={`${s.card} ${s.vaCard}`}>
+            <div className={s.vaHead}>
+                <span className={s.vaTitle}><Mic size={16} /> AI Voice Agent</span>
+                <span className={`${s.chip} ${st.cls}`}>{st.ready && <span className={s.pulseDot} />}{st.label}</span>
+            </div>
+            <div className={`${s.wave} ${st.ready ? s.waveOn : ''}`} aria-hidden>
+                {Array.from({ length: 36 }).map((_, i) => <span key={i} style={{ animationDelay: `${(i % 12) * 0.08}s` }} />)}
+            </div>
+            <div className={s.vaBig}>{big}</div>
+            <p className={s.muted}>Meera introduces herself, asks your questions and notes every answer, in Hindi or English.</p>
+            <ul className={s.vaList}>
+                {DOES.map((d) => <li key={d}><Check size={14} />{d}</li>)}
+            </ul>
+            {st.ready && today && today.calls > 0 && (
+                <div className={s.vaToday}>
+                    <b>Today</b> · {today.calls} called · {today.connected} connected{today.quotes ? ` · ${today.quotes} quoted` : ''}{today.inProgress ? ` · ${today.inProgress} live` : ''}
+                </div>
+            )}
+            <div className={s.vaFoot}>
+                Calls through {setup?.voice?.name ?? 'the voice line'} · {setup?.autoStartCalls ? 'calls start automatically' : 'you approve each list first'}
+            </div>
+        </section>
+    );
+}
+
+function Overview({ orgId, working, needsYou, onNew, onQuickStart }: {
+    orgId: string; working: number; needsYou: number; onNew: () => void; onQuickStart: (category: string) => void;
+}) {
+    const [stats, setStats] = useState<Stats | null>(null);
+    const [setup, setSetup] = useState<Setup | null>(null);
+
+    useEffect(() => {
+        let live = true;
+        const loadStats = () => api(`/api/satej/stats?organizationId=${orgId}`).then((d) => { if (live) setStats(d); }).catch(() => {});
+        void loadStats();
+        api(`/api/satej/setup?organizationId=${orgId}`).then((d) => { if (live) setSetup(d); }).catch(() => {});
+        const t = setInterval(loadStats, 15000);
+        return () => { live = false; clearInterval(t); };
+    }, [orgId]);
+
+    const c = stats?.campaigns;
+    const qualSub = c && c.total > 0 ? `across ${c.total} outreach${c.total === 1 ? '' : 'es'}` : 'ready to shortlist';
+
+    return (
+        <>
+            <div className={s.kpiRow}>
+                <StatCard icon={<PhoneCall size={18} />} tint="info" label="Calls made" value={stats?.callsMade.total} metric={stats?.callsMade} sub="vendor calls so far" />
+                <StatCard icon={<PhoneIncoming size={18} />} tint="good" label="Connected" value={stats?.connected.total} metric={stats?.connected} sub="vendors picked up" />
+                <StatCard icon={<FileText size={18} />} tint="accent" label="Quotes received" value={stats?.quotesReceived.total} metric={stats?.quotesReceived} sub="rates captured on call" />
+                <StatCard icon={<BadgeCheck size={18} />} tint="warn" label="Qualified vendors" value={stats?.qualifiedVendors.total} sub={qualSub} />
+            </div>
+
+            <div className={s.band}>
+                <section className={`${s.card} ${s.startCard}`}>
+                    <h3><Sparkles size={15} /> Start a vendor outreach</h3>
+                    <p className={s.muted} style={{ marginBottom: 12 }}>
+                        {working || needsYou
+                            ? `You have ${working} outreach${working === 1 ? '' : 'es'} running${needsYou ? ` and ${needsYou} waiting for your go-ahead` : ''}. Start another whenever you need quotes.`
+                            : 'Tell Meera what you want to buy. She does the finding, the calling and the ranking.'}
+                    </p>
+                    <ol className={s.stepsBig}>
+                        {FLOW.map((f) => (
+                            <li key={f.n}><span className={s.stepNo}>{f.n}</span><div><b>{f.title}</b><span>{f.hint}</span></div></li>
+                        ))}
+                    </ol>
+                    <div className={s.quickRow}>
+                        <span className={s.quickLabel}>Quick start</span>
+                        {QUICK_STARTS.map((cat) => (
+                            <button key={cat} type="button" className={s.catChip} onClick={() => onQuickStart(cat)}>{cat}</button>
+                        ))}
+                    </div>
+                    <button className={s.primary} onClick={onNew}><Plus size={15} /> New requirement <ArrowRight size={14} /></button>
+                </section>
+
+                <VoiceAgentPanel setup={setup} today={stats?.today} />
+            </div>
+        </>
+    );
+}
+
+/* ======================================================================== */
 /* quote requests that came to purchase@ by email                            */
 
 function InboxAsks({ orgId, onDraft, onOpen }: { orgId: string; onDraft: (d: Record<string, any>) => void; onOpen: (code: string) => void }) {
@@ -308,13 +492,8 @@ function SetupPanel({ orgId }: { orgId: string }) {
     if (v.unfilledVariables?.length) problems.push(`The voice prompt uses variables Meera does not send: ${v.unfilledVariables.join(', ')}.`);
     if (!setup.whatsappConfigured) problems.push('AiSensy is not configured, so WhatsApp updates will not go out. Everything still shows here.');
 
-    if (!problems.length && !setup.mockMode) {
-        return (
-            <p className={s.ready}>
-                <Check size={13} /> Ready · calls through {v.name ?? 'Bolna'} · {setup.autoStartCalls ? 'calls start automatically' : 'you approve each call list before anyone is phoned'}
-            </p>
-        );
-    }
+    // Readiness is shown in the AI Voice Agent panel below; only surface problems here.
+    if (!problems.length && !setup.mockMode) return null;
     return (
         <details className={s.noteBox}>
             <summary><b>{setup.mockMode ? 'Mock mode: no real searches, calls or messages.' : `Meera is not fully set up yet (${problems.length})`}</b></summary>
@@ -402,9 +581,15 @@ function RequirementForm({ orgId, existing, draft, onClose, onDone }: {
                 animate={{ opacity: 1, y: 0 }}
             >
                 <div className={s.modalHead}>
-                    <h2>{editing ? `Edit ${existing.code}` : 'New requirement'}</h2>
+                    <h2>{editing ? `Edit ${existing.code}` : 'Start a vendor outreach'}</h2>
                     <button type="button" className={s.iconBtn} onClick={onClose} aria-label="Close"><X size={16} /></button>
                 </div>
+                {!editing && (
+                    <div className={s.modalIntro}>
+                        <div className={s.avatar}>M</div>
+                        <p><b>Meera takes it from here.</b> Fill this in like a quick note to a colleague, and she writes the brief, finds vendors and calls them for you.</p>
+                    </div>
+                )}
                 {editing && (
                     <div className={preCall ? s.infoBox : s.noteBox}>
                         {preCall
@@ -413,6 +598,7 @@ function RequirementForm({ orgId, existing, draft, onClose, onDone }: {
                     </div>
                 )}
                 <div className={s.grid}>
+                    <div className={s.formSection}><div className={s.formSectionTitle}>Who should Meera call?</div></div>
                     <div className={s.full}>
                         <div className={s.fieldLabel}>Which vendors should Meera call?</div>
                         <div className={s.sourcePick}>
@@ -424,6 +610,7 @@ function RequirementForm({ orgId, existing, draft, onClose, onDone }: {
                         </div>
                         {!editing && f.vendorSource !== 'discover' && <p className={s.muted} style={{ marginTop: 6 }}>You add or import your vendors on the next screen, once Meera has written the brief.</p>}
                     </div>
+                    <div className={s.formSection}><div className={s.formSectionTitle}>What do you need?</div></div>
                     <label className={s.full}>Title<input required value={f.title} onChange={set('title')} placeholder="Gypsum false ceiling, Lower Parel office" /></label>
                     <label>Type
                         <select value={f.spendType} onChange={set('spendType')}>
@@ -437,12 +624,15 @@ function RequirementForm({ orgId, existing, draft, onClose, onDone }: {
                     </label>
                     <label>Quantity<input value={f.quantity} onChange={set('quantity')} placeholder="1200" /></label>
                     <label>Unit<input value={f.unit} onChange={set('unit')} placeholder="sqft / nos / rmt / month" /></label>
+                    <div className={s.formSection}><div className={s.formSectionTitle}>Where &amp; when</div></div>
                     <label>City<input required value={f.locationCity} onChange={set('locationCity')} placeholder="Mumbai" /></label>
                     <label>Area / locality<input value={f.locationArea} onChange={set('locationArea')} placeholder="Lower Parel" /></label>
                     <label>Site name<input value={f.siteName} onChange={set('siteName')} placeholder="Mafatlal Chambers" /></label>
                     <label>Timeline<input value={f.timeline} onChange={set('timeline')} placeholder="within 15 days" /></label>
+                    <div className={s.formSection}><div className={s.formSectionTitle}>How many &amp; budget</div></div>
                     <label>Budget hint (internal, never said on calls)<input value={f.budgetHint} onChange={set('budgetHint')} /></label>
                     <label>{f.vendorSource === 'own' ? 'Vendors to call (from your list)' : 'Vendors to call'}<input type="number" min={3} max={40} value={f.vendorTarget} onChange={set('vendorTarget')} /></label>
+                    <div className={s.formSection}><div className={s.formSectionTitle}>Stay in the loop</div></div>
                     {!editing && <label>Requested by<input value={f.requestedBy} onChange={set('requestedBy')} placeholder="Defaults to you" /></label>}
                     <label>Send updates to WhatsApp<input value={f.notifyWhatsapp} onChange={set('notifyWhatsapp')} placeholder="+91 98xxxxxxxx" /></label>
                     <label className={s.full}>Notes<textarea rows={2} value={f.notes} onChange={set('notes')} /></label>

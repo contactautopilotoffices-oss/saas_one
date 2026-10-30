@@ -1,10 +1,10 @@
 'use client';
-import { useCallback, useEffect, useState, useRef } from 'react';
+import { useCallback, useEffect, useState, useRef, type ReactNode } from 'react';
 import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { ArrowDownLeft, ArrowUpRight, CheckCircle2, ChevronLeft, ChevronRight, Clock, Eye, FilePlus2, Inbox, Loader2, Plus, RefreshCw, RotateCcw, Search, Wallet } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, Banknote, Check, CheckCircle2, ChevronLeft, ChevronRight, Clock, CornerUpLeft, Eye, FilePlus2, Inbox, Loader2, Plus, RefreshCw, RotateCcw, Search, Wallet, X } from 'lucide-react';
 import { Button } from '@/frontend/components/ui/button';
 import PettyCashStyles from './PettyCashStyles';
-import { inr, PC_STATUS_META } from '@/frontend/lib/pettyCash/roles';
+import { inr, PC_PAYMENT_MODES, PC_STATUS_META } from '@/frontend/lib/pettyCash/roles';
 import NewRequestModal from './NewRequestModal';
 import WorkflowRequestDetail from './WorkflowRequestDetail';
 import PropertyRoutingSettings from './PropertyRoutingSettings';
@@ -12,7 +12,19 @@ import ExpenseHistory from './ExpenseHistory';
 import { createClient } from '@/frontend/utils/supabase/client';
 import ConsolidatedOverview from './ConsolidatedOverview';
 import VisionUsageAudit from './VisionUsageAudit';
-import { pcFetch, pcJson, pettyCashDate, type Context, type PettyCashRequest } from './workflowTypes';
+import { pcFetch, pcJson, pettyCashDate, pettyCashToday, type Context, type PettyCashRequest } from './workflowTypes';
+const DONE: Record<string, string> = { allocate: 'allocated', approve: 'approved', pay: 'marked paid', send_back: 'sent back', reject: 'rejected' };
+const ICON_TONES = {
+    go: 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700',
+    back: 'bg-white dark:bg-[#21262d] text-amber-600 border-amber-300 dark:border-amber-800 hover:bg-amber-50 dark:hover:bg-amber-950/40',
+    stop: 'bg-white dark:bg-[#21262d] text-rose-600 border-rose-300 dark:border-rose-900 hover:bg-rose-50 dark:hover:bg-rose-950/40',
+    view: 'bg-white dark:bg-[#21262d] text-slate-600 dark:text-slate-300 border-slate-200 dark:border-[#30363d] hover:bg-slate-100 dark:hover:bg-[#30363d]',
+};
+/** Compact 32px row action: icon only, with a tooltip and an accessible name. */
+function IconAction({ label, hint, tone, disabled, onClick, children }: { label: string; hint?: string; tone: keyof typeof ICON_TONES; disabled?: boolean; onClick: () => void; children: ReactNode }) {
+    return <button type="button" aria-label={label} title={hint || label} disabled={disabled} onClick={onClick}
+        className={`inline-flex items-center justify-center w-8 h-8 shrink-0 rounded-lg border shadow-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${ICON_TONES[tone]}`}>{children}</button>;
+}
 export default function PettyCashDashboard() {
     const { orgId } = useParams<{ orgId: string }>();
     const router=useRouter();const pathname=usePathname();const searchParams=useSearchParams();const linkedRequest=searchParams.get('request_id');
@@ -27,7 +39,8 @@ export default function PettyCashDashboard() {
     const closeDetail=()=>{setDetailTarget(undefined);if(linkedRequest!==null){const remaining=new URLSearchParams(searchParams.toString());remaining.delete('request_id');router.replace(`${pathname}${remaining.size?`?${remaining}`:''}`,{scroll:false});}};
     const [selected, setSelected] = useState<string[]>([]); const [amounts, setAmounts] = useState<Record<string, string>>({}); const [message, setMessage] = useState(''); const [page, setPage] = useState(1); const [pages, setPages] = useState(1); const [revision, setRevision] = useState(0);
     const [searchQuery, setSearchQuery] = useState('');
-    const [bulkRemark, setBulkRemark] = useState('');
+    // Typed once in the bulk bar; used by both the bulk button and the per-row buttons.
+    const [bulkRemark, setBulkRemark] = useState(''); const [payMode, setPayMode] = useState('Cash'); const [payDate, setPayDate] = useState(pettyCashToday()); const [refs, setRefs] = useState<Record<string, string>>({});
     const [loading,setLoading]=useState(true);const [contextLoading,setContextLoading]=useState(true);const [contextError,setContextError]=useState('');const [requestError,setRequestError]=useState('');const [requestsOrg,setRequestsOrg]=useState('');
     const contextSequence=useRef(0);const requestSequence=useRef(0);
     const loadContext=useCallback(async(signal?:AbortSignal)=>{const sequence=++contextSequence.current;setContextLoading(true);setContextError('');try{const data=await pcFetch<Context>(`/api/petty-cash/context?org_id=${orgId}`,{signal});if(!signal?.aborted&&sequence===contextSequence.current)setContext(data);}catch(reason){if(!signal?.aborted&&sequence===contextSequence.current){setContext(undefined);setContextError(reason instanceof Error?reason.message:'Could not load wallet and permissions');}}finally{if(!signal?.aborted&&sequence===contextSequence.current)setContextLoading(false);}},[orgId]);
@@ -51,7 +64,29 @@ export default function PettyCashDashboard() {
         ...(context?.caps.isAdmin ? [{ key: 'all', label: 'All Requests' }, { key: 'vision_usage', label: 'Vision AI Usage' }] : []),
         ...(context?.caps.canManageRouting ? [{ key: 'routing', label: 'Property Routing' }] : []),
     ];
-    const isBulk = tab === 'allocations' || tab === 'approvals';
+    const isBulk = tab === 'allocations' || tab === 'approvals' || tab === 'disbursements';
+    const bulkAction = tab === 'allocations' ? 'allocate' : tab === 'approvals' ? 'approve' : 'pay';
+    const me = context?.user_id;
+    // Mirrors the database rules so a row only offers what will succeed; the database still decides.
+    const rowCan = (r: PettyCashRequest) => ({
+        allocate: r.workflow_version === 2 && r.status === 'submitted' && r.assigned_allocator_id === me && r.requester_id !== me,
+        approve: r.workflow_version === 2 && r.status === 'pending_approval' && r.assigned_approver_id === me && r.requester_id !== me,
+        pay: tab === 'disbursements' && !!context?.caps.canDisburse && r.status === 'approved' && r.requester_id !== me && r.allocated_by !== me && r.approver_id !== me,
+    });
+    const allocationOf = (r: PettyCashRequest) => amounts[r.id] || String(r.amount_requested);
+    const payableOf = (r: PettyCashRequest) => Number(r.approved_amount ?? r.amount_requested);
+    const missingRefs = (rows: PettyCashRequest[]) => payMode === 'Cash' ? [] : rows.filter(r => !(refs[r.id] || '').trim()).map(r => r.request_no);
+    const actOnRow = async (r: PettyCashRequest, action: string, extra: Record<string, unknown> = {}) => {
+        setBusy(true); setError(''); setMessage('');
+        try {
+            await pcFetch(`/api/petty-cash/${r.id}`, pcJson({ organization_id: orgId, action, expected_version: r.version, ...extra }, 'PATCH'));
+            setMessage(`${r.request_no} ${DONE[action] || 'updated'}.`); setSelected(prev => prev.filter(id => id !== r.id)); await refresh();
+        } catch (e) { setError(`${r.request_no}: ${e instanceof Error ? e.message : 'Action failed'}`); } finally { setBusy(false); }
+    };
+    const askReason = (r: PettyCashRequest, action: 'send_back' | 'reject') => {
+        const reason = window.prompt(`${action === 'reject' ? 'Reason for rejecting' : 'Reason for sending back'} ${r.request_no} (required)`);
+        if (reason?.trim()) void actOnRow(r, action, { remark: reason.trim() });
+    };
     const summary = [{ key: 'received', label: 'Received', icon: ArrowDownLeft }, { key: 'spent', label: 'Spent', icon: ArrowUpRight }, { key: 'returned', label: 'Returned', icon: RotateCcw }, { key: 'balance', label: 'Available balance', icon: Wallet }] as const;
     return <div className="petty-cash-workflow space-y-6">
         <PettyCashStyles />
@@ -103,7 +138,7 @@ export default function PettyCashDashboard() {
                         title={context?.counts?.[t.key as keyof NonNullable<Context['counts']>] === undefined ? t.label : `${t.label}: ${context.counts[t.key as keyof NonNullable<Context['counts']>]} pending items`}
                         aria-pressed={t.key === tab}
                         disabled={busy}
-                        onClick={() => { if (t.key === tab) return; setTab(t.key); setRequests([]); setSelected([]); setPage(1); setMessage(''); }}
+                        onClick={() => { if (t.key === tab) return; setTab(t.key); setRequests([]); setSelected([]); setPage(1); setMessage(''); setBulkRemark(''); setRefs({}); }}
                         className={`shrink-0 px-4 py-2.5 text-xs font-bold rounded-xl whitespace-nowrap transition-all ${t.key === tab ? 'bg-white dark:bg-[#21262d] text-slate-900 dark:text-white font-black shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-[#21262d]/50'}`}
                     >
                         {t.label}
@@ -116,22 +151,47 @@ export default function PettyCashDashboard() {
                 ))}
             </nav>
             {tab === 'routing' && context ? <PropertyRoutingSettings context={context} onSaved={() => { void loadContext(); }} /> : tab === 'expenses' ? <ExpenseHistory key={revision} org={orgId} onOpen={setDetailId} /> : tab === 'overview' ? <ConsolidatedOverview key={revision} countsIssue={context?.counts_error||undefined} org={orgId} onOpen={setDetailId} context={context} /> : tab === 'vision_usage' ? <VisionUsageAudit key={revision} org={orgId} onOpenRequest={setDetailId} /> : <>
-                {isBulk && <div className="pc-panel p-4 flex flex-wrap gap-3 items-center rounded-2xl bg-white dark:bg-[#161b22] border border-slate-100 dark:border-[#30363d] shadow-sm"><button disabled={busy || loading || !selected.length} className="pc-button" onClick={async () => {
-                    const total = requests.filter(r => selected.includes(r.id)).reduce((sum, r) => sum + Number(tab === 'allocations' ? amounts[r.id] || r.amount_requested : r.allocated_amount || r.amount_requested), 0);
-                    if (!window.confirm(`${tab === 'allocations' ? 'Allocate' : 'Approve'} ${selected.length} requests totalling ${inr(total)}?`)) return;
-                    setBusy(true); setMessage(''); try {
-                        const data = await pcFetch<{ results: { id: string; ok: boolean; error?: string }[] }>('/api/petty-cash/bulk', pcJson({ organization_id: orgId, action: tab === 'allocations' ? 'allocate' : 'approve', items: requests.filter(r => selected.includes(r.id)).map(r => ({ id: r.id, expected_version: r.version, ...(tab === 'allocations' ? { allocated_amount: amounts[r.id] || r.amount_requested } : {}) })) }));
-                        setSelected(data.results.filter(r => !r.ok).map(r => r.id)); setMessage(`${data.results.filter(r => r.ok).length} succeeded. ${data.results.filter(r => !r.ok).map(r => r.error).join('; ')}`); await refresh();
-                    } catch (e) { setError(e instanceof Error ? e.message : 'Bulk action failed'); } finally { setBusy(false); }
-                }}>Process selected ({selected.length})</button><p className="text-xs text-text-secondary">Each request follows its configured approver. Allocation amounts can be edited below.</p></div>}
+                {isBulk && <div className="pc-panel p-4 flex flex-wrap gap-3 items-end rounded-2xl bg-white dark:bg-[#161b22] border border-slate-100 dark:border-[#30363d] shadow-sm">
+                    <label className="flex-1 min-w-56 text-xs font-bold text-slate-700 dark:text-slate-300">Remarks (optional, saved on each request you process)
+                        <input className="pc-input mt-1.5" value={bulkRemark} maxLength={500} disabled={busy} onChange={e => setBulkRemark(e.target.value)} placeholder={tab === 'disbursements' ? 'e.g. Paid from site cash box' : 'e.g. Within monthly norm'} />
+                    </label>
+                    {tab === 'disbursements' && <>
+                        <label className="text-xs font-bold text-slate-700 dark:text-slate-300">Payment mode
+                            <select className="pc-input mt-1.5" value={payMode} disabled={busy} onChange={e => setPayMode(e.target.value)}>{PC_PAYMENT_MODES.map(m => <option key={m} value={m}>{m}</option>)}</select>
+                        </label>
+                        <label className="text-xs font-bold text-slate-700 dark:text-slate-300">Payment date
+                            <input className="pc-input mt-1.5" type="date" value={payDate} max={pettyCashToday()} disabled={busy} onChange={e => setPayDate(e.target.value)} />
+                        </label>
+                    </>}
+                    <button disabled={busy || loading || !selected.length} className="pc-button" onClick={async () => {
+                        const rows = requests.filter(r => selected.includes(r.id));
+                        if (bulkAction === 'pay') { const missing = missingRefs(rows); if (missing.length) { setError(`Enter the ${payMode} reference for ${missing.join(', ')}`); return; } }
+                        const total = rows.reduce((sum, r) => sum + Number(bulkAction === 'allocate' ? allocationOf(r) : bulkAction === 'approve' ? r.allocated_amount || r.amount_requested : payableOf(r)), 0);
+                        const verb = bulkAction === 'allocate' ? 'Allocate' : bulkAction === 'approve' ? 'Approve' : `Pay (${payMode})`;
+                        if (!window.confirm(`${verb} ${rows.length} requests totalling ${inr(total)}?`)) return;
+                        setBusy(true); setMessage(''); setError(''); try {
+                            const data = await pcFetch<{ results: { id: string; ok: boolean; error?: string }[] }>('/api/petty-cash/bulk', pcJson({
+                                organization_id: orgId, action: bulkAction, remark: bulkRemark,
+                                ...(bulkAction === 'pay' ? { paid_mode: payMode, payment_date: payDate } : {}),
+                                items: rows.map(r => ({ id: r.id, expected_version: r.version, ...(bulkAction === 'allocate' ? { allocated_amount: allocationOf(r) } : {}), ...(bulkAction === 'pay' ? { payment_ref: (refs[r.id] || '').trim() } : {}) })),
+                            }));
+                            const numberOf = (id: string) => rows.find(r => r.id === id)?.request_no || id;
+                            const failed = data.results.filter(r => !r.ok);
+                            setSelected(failed.map(r => r.id));
+                            setMessage(`${data.results.length - failed.length} of ${data.results.length} ${DONE[bulkAction]}.${failed.length ? ` Not done: ${failed.map(r => `${numberOf(r.id)} (${r.error})`).join('; ')}` : ''}`);
+                            await refresh();
+                        } catch (e) { setError(e instanceof Error ? e.message : 'Bulk action failed'); } finally { setBusy(false); }
+                    }}>{bulkAction === 'allocate' ? 'Allocate' : bulkAction === 'approve' ? 'Approve' : 'Pay'} selected ({selected.length})</button>
+                    <p className="w-full text-xs text-text-secondary">{tab === 'allocations' ? 'Allocation amounts can be edited in each row.' : tab === 'disbursements' ? 'Payment proof is optional; add a reference (UTR) in each row for non-cash payments. You cannot pay a request you allocated or approved.' : 'Approves the allocated amount; to change it, send the request back.'} Each row also has its own buttons.</p>
+                </div>}
                 {message && <p role="status" className="pc-success"><CheckCircle2 size={18} />{message}</p>}
                 <div className="pc-table-wrap rounded-2xl border border-slate-200/80 dark:border-[#30363d] bg-white dark:bg-[#161b22] shadow-sm overflow-hidden" aria-busy={loading}>
                     <table className="w-full text-sm min-w-[850px]">
                         <thead>
                             <tr className="bg-slate-50/70 dark:bg-[#1c2128] border-b border-slate-100 dark:border-[#30363d]">
                                 {isBulk && <th className="p-3.5"><input type="checkbox" aria-label="Select all visible requests" disabled={loading || busy} checked={!!requests.length && requests.every(r => selected.includes(r.id))} onChange={e => setSelected(e.target.checked ? requests.map(r => r.id) : [])} /></th>}
-                                {['Request & Purpose', 'Property', 'Requester', 'Stage / Status', 'Requested', 'Allocated', 'Available Balance', 'Action Required By', ''].map(h => (
-                                    <th className="p-3.5 text-left text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500" key={h}>{h}</th>
+                                {['Request & Purpose', 'Property', 'Requester', 'Stage / Status', 'Requested', 'Allocated', 'Available Balance', 'Action Required By', 'Actions'].map(h => (
+                                    <th className={`p-3.5 text-left text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500${h === 'Actions' ? ' sticky right-0 z-10 bg-slate-50 dark:bg-[#1c2128]' : ''}`} key={h}>{h}</th>
                                 ))}
                             </tr>
                         </thead>
@@ -143,10 +203,11 @@ export default function PettyCashDashboard() {
                                 const returnedAmt = Number(r.amount_returned ?? 0);
                                 const availAmt = isPaidStage ? Math.max(0, advancePaid - spentAmt - returnedAmt) : 0;
                                 const percentSpent = advancePaid > 0 ? Math.min(100, Math.round((spentAmt / advancePaid) * 100)) : 0;
+                                const can = rowCan(r);
 
                                 return (
                                 <tr key={r.id} className="border-t border-slate-100 dark:border-[#30363d]/60 hover:bg-slate-50/60 dark:hover:bg-[#21262d]/50 transition-colors">
-                                    {isBulk && <td className="p-3.5"><input type="checkbox" aria-label={`Select ${r.request_no}`} disabled={loading || busy} checked={selected.includes(r.id)} onChange={e => setSelected(prev => e.target.checked ? [...prev, r.id] : prev.filter(id => id !== r.id))} /></td>}
+                                    {isBulk && <td className="p-3.5"><input type="checkbox" aria-label={`Select ${r.request_no}`} disabled={loading || busy || (tab === 'disbursements' && !can.pay)} title={tab === 'disbursements' && !can.pay ? 'You allocated or approved this request, so another accountant must pay it' : undefined} checked={selected.includes(r.id)} onChange={e => setSelected(prev => e.target.checked ? [...prev, r.id] : prev.filter(id => id !== r.id))} /></td>}
                                     <td className="p-3.5">
                                         <div className="flex flex-col gap-0.5">
                                             <span className="font-black text-slate-900 dark:text-white tracking-tight">{r.request_no}</span>
@@ -243,16 +304,19 @@ export default function PettyCashDashboard() {
                                             <span>{r.assigned_approver?.full_name || r.assigned_approver?.email || '—'}</span>
                                         )}
                                     </td>
-                                    <td className="p-3.5 whitespace-nowrap text-right">
-                                        <Button
-                                            variant="solid"
-                                            size="sm"
-                                            className="rounded-xl font-black text-xs gap-1.5 shadow-sm hover:scale-[1.02] active:scale-95 transition-all"
-                                            disabled={!context}
-                                            onClick={() => setDetailId(r.id)}
-                                        >
-                                            <Eye size={13} /> Track
-                                        </Button>
+                                    {/* Pinned so the row buttons stay visible while the wide table scrolls. */}
+                                    <td className="p-3.5 whitespace-nowrap text-right sticky right-0 z-10 bg-white dark:bg-[#161b22] shadow-[-10px_0_12px_-12px_rgba(15,23,42,0.35)]">
+                                        <div className="flex flex-nowrap justify-end items-center gap-1">
+                                        {can.pay && <input className="pc-input !w-32 !py-1.5 text-xs" aria-label={`Payment reference ${r.request_no}`} placeholder={payMode === 'Cash' ? 'Ref (optional)' : `${payMode} ref / UTR`} value={refs[r.id] || ''} maxLength={100} disabled={busy} onChange={e => setRefs(prev => ({ ...prev, [r.id]: e.target.value }))} />}
+                                        {can.allocate && <IconAction label="Allocate" hint={`Allocate ${inr(Number(allocationOf(r)))}`} tone="go" disabled={busy} onClick={() => { if (window.confirm(`Allocate ${inr(Number(allocationOf(r)))} to ${r.request_no}?`)) void actOnRow(r, 'allocate', { allocated_amount: allocationOf(r), remark: bulkRemark }); }}><Check size={16} /></IconAction>}
+                                        {can.approve && <IconAction label="Approve" hint={`Approve ${inr(r.allocated_amount || r.amount_requested)}`} tone="go" disabled={busy} onClick={() => { if (window.confirm(`Approve ${inr(r.allocated_amount || r.amount_requested)} for ${r.request_no}?`)) void actOnRow(r, 'approve', { remark: bulkRemark }); }}><Check size={16} /></IconAction>}
+                                        {can.pay && <IconAction label="Pay" hint={`Pay ${inr(payableOf(r))} by ${payMode}`} tone="go" disabled={busy} onClick={() => { if (missingRefs([r]).length) { setError(`Enter the ${payMode} reference for ${r.request_no}`); return; } if (window.confirm(`Pay ${inr(payableOf(r))} to ${r.requester?.full_name || r.request_no} by ${payMode}?`)) void actOnRow(r, 'pay', { paid_mode: payMode, payment_ref: (refs[r.id] || '').trim(), payment_date: payDate, remark: bulkRemark, documents: [] }); }}><Banknote size={16} /></IconAction>}
+                                        {(can.allocate || can.approve) && <>
+                                            <IconAction label="Send back" hint="Send back to the requester (reason required)" tone="back" disabled={busy} onClick={() => askReason(r, 'send_back')}><CornerUpLeft size={16} /></IconAction>
+                                            <IconAction label="Reject" hint="Reject (reason required)" tone="stop" disabled={busy} onClick={() => askReason(r, 'reject')}><X size={16} /></IconAction>
+                                        </>}
+                                        <IconAction label="Track" hint="Open request details" tone="view" disabled={!context} onClick={() => setDetailId(r.id)}><Eye size={16} /></IconAction>
+                                        </div>
                                     </td>
                                 </tr>
                                 );
