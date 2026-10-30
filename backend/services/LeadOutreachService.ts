@@ -137,7 +137,11 @@ export class LeadOutreachService {
 
             // Guard against duplicate Message 1 dispatch for the same lead
             const leadRecord = lead as any;
-            if (leadRecord.outreach_button_tapped || leadRecord.last_contacted) {
+            const isTestSandboxLead = (lead.company_name || '').toLowerCase().includes('test sandbox') ||
+                (lead.contact_person || '').toLowerCase().includes('test sandbox') ||
+                raw10Phone === '7028232515';
+
+            if (!isTestSandboxLead && (leadRecord.outreach_button_tapped || leadRecord.last_contacted)) {
                 console.info(`[LeadOutreachService] Lead ${leadId} already received outreach/engaged; skipping duplicate send.`);
                 return { success: true, channel: 'none', skipped: 'already_contacted' };
             }
@@ -152,7 +156,7 @@ export class LeadOutreachService {
                 .order('created_at', { ascending: false })
                 .limit(1);
 
-            const isTestClientPhone = raw10Phone === '7028232515';
+            const isTestClientPhone = isTestSandboxLead || raw10Phone === '7028232515';
             if (!isTestClientPhone && existingLeads && existingLeads.length > 0) {
                 const existingLead = existingLeads[0];
                 const existingAssignee: any = existingLead.assignee;
@@ -205,7 +209,7 @@ This client is already in your pipeline (Lead ID: ${existingLead.id}). Skipping 
                 contact_number: lead.contact_number,
             });
 
-            if (!outreachConfig.enabled) {
+            if (!isTestSandboxLead && !outreachConfig.enabled) {
                 console.info(`[LeadOutreachService] ⏸️ Outreach paused/disabled for campaign '${outreachConfig.matchedCampaign}'. Skipping automated WhatsApp dispatch.`);
                 await this.logActivity({
                     leadId: lead.id,

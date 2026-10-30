@@ -72,6 +72,7 @@ export async function POST(request: NextRequest) {
                     priority: 'High',
                     outreach_button_tapped: null,
                     outreach_tapped_at: null,
+                    last_contacted: null,
                     call_sla_breached: false,
                     first_call_at: null,
                     requirement: null,
