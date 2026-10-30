@@ -335,7 +335,7 @@ export class CampaignOutreachConfigService {
     }> {
         const leadCampaign = (params.campaign || '').toLowerCase().trim();
         const rawPhone = (params.contact_number || '').replace(/\D/g, '');
-        const isTestClientPhone = rawPhone.endsWith('7028232515');
+        const isTestClientPhone = rawPhone.endsWith('7028232515') || rawPhone.endsWith('8433649199') || leadCampaign.includes('test');
 
         const orgId = params.organization_id || '211e1330-ad83-446d-941f-dcea48396798';
         const configs = await this.getAllCampaignConfigs(orgId);
