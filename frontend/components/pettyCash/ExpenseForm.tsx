@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import { inr, PC_CATEGORIES, PC_PAYMENT_MODES } from '@/frontend/lib/pettyCash/roles';
 import ProofUpload from './ProofUpload';
 import { pcFetch, pcJson, pettyCashToday, type Context, type Upload, type Expense } from './workflowTypes';
@@ -14,6 +14,7 @@ export default function ExpenseForm({
     correction,
     existingExpenses,
     proofThreshold = 500,
+    requestDate,
     onSaved
 }: {
     context: Context;
@@ -22,6 +23,8 @@ export default function ExpenseForm({
     correction?: Expense;
     existingExpenses?: Expense[];
     proofThreshold?: number;
+    /** Request date (YYYY-MM-DD, India time). Bills dated before it are not accepted. */
+    requestDate?: string;
     onSaved: () => void;
 }) {
     const [proofs, setProofs] = useState<Upload[]>([]);
@@ -38,12 +41,16 @@ export default function ExpenseForm({
     const [paymentMode, setPaymentMode] = useState(correction?.payment_mode || PC_PAYMENT_MODES[0] || 'Cash');
     const [paymentRef, setPaymentRef] = useState(correction?.payment_ref || '');
     const [description, setDescription] = useState(correction?.description || '');
+    const [noBillReason, setNoBillReason] = useState('');
     const [ocrData, setOcrData] = useState<PettyCashOcrData | null>(null);
 
     const effectiveThreshold = proofThreshold ?? 500;
     const spendAmount = Number(amount) || 0;
     const requiresProof = !correction && spendAmount > effectiveThreshold;
     const missingProof = requiresProof && proofs.length === 0;
+    const needsNoBillReason = !correction && !requiresProof && proofs.length === 0;
+    const missingNoBillReason = needsNoBillReason && noBillReason.trim().length < 10;
+    const billBeforeRequest = !correction && !!requestDate && !!expenseDate && expenseDate < requestDate;
 
     const spendCents = Math.round(Number(amount) * 100);
     const validAmount =
@@ -54,29 +61,11 @@ export default function ExpenseForm({
         spendCents <= Math.round(balance * 100);
     const remaining = (Math.round(balance * 100) - spendCents) / 100;
 
-    const clientDuplicate = useMemo(() => {
-        if (!existingExpenses || !existingExpenses.length) return null;
-        const normRef = paymentRef.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-        const isNonCash = paymentMode !== 'Cash';
-        for (const exp of existingExpenses) {
-            if (correction && exp.id === correction.id) continue;
-            const expNorm = (exp.payment_ref || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-            if (isNonCash && normRef && expNorm && normRef === expNorm) {
-                return `UTR '${paymentRef}' is already claimed in this request for ₹${exp.amount} (${exp.vendor}).`;
-            }
-            if (amount && Number(amount) === Number(exp.amount) && expenseDate === exp.expense_date?.slice(0, 10)) {
-                const normVendor = vendor.trim().toLowerCase();
-                const expVendor = (exp.vendor || '').trim().toLowerCase();
-                if (normVendor && expVendor && (normVendor === expVendor || normVendor.includes(expVendor) || expVendor.includes(normVendor))) {
-                    return `Identical expense of ₹${amount} for '${exp.vendor}' on ${expenseDate} is already recorded in this request.`;
-                }
-            }
-        }
-        return null;
-    }, [existingExpenses, paymentRef, paymentMode, amount, vendor, expenseDate, correction]);
+    const { clientDuplicate, clientSimilar } = findClientDuplicates(existingExpenses, correction, paymentRef, paymentMode, amount, vendor, expenseDate);
 
     const isBlockedDuplicate = Boolean(ocrData?.is_duplicate_ref || clientDuplicate);
-    const duplicateMessage = ocrData?.duplicate_warning || clientDuplicate;
+    const duplicateMessage = ocrData?.is_duplicate_ref ? ocrData.duplicate_warning : clientDuplicate;
+    const similarWarning = !isBlockedDuplicate ? (ocrData?.duplicate_warning || clientSimilar) : null;
 
     const handleOcrExtracted = (ocr: PettyCashOcrData) => {
         setOcrData(ocr);
@@ -144,6 +133,7 @@ export default function ExpenseForm({
                                 payment_ref: paymentRef,
                                 spend_mode: spendMode,
                                 documents: proofs,
+                                ...(proofs.length === 0 ? { no_bill_reason: noBillReason.trim() } : {}),
                                 idempotency_key: key
                             })
                         );
@@ -194,6 +184,7 @@ export default function ExpenseForm({
                                 name="expense_date"
                                 type="date"
                                 value={expenseDate}
+                                min={requestDate}
                                 max={pettyCashToday()}
                                 onChange={e => setExpenseDate(e.target.value)}
                                 required
@@ -422,7 +413,7 @@ export default function ExpenseForm({
                         <p className="text-[11px] opacity-90 mt-0.5">
                             {requiresProof
                                 ? `Property rule requires a valid bill/receipt upload for expenses over ₹${effectiveThreshold}.`
-                                : `Property allows bill-free recording up to ₹${effectiveThreshold}. Ensure a clear description is entered.`}
+                                : `Property allows bill-free recording up to ₹${effectiveThreshold}. If you have no bill, give the reason below.`}
                         </p>
                     </div>
                 </div>
@@ -444,6 +435,34 @@ export default function ExpenseForm({
                 onOcrExtracted={handleOcrExtracted}
                 label={correction ? 'Replacement bills / receipts' : requiresProof ? 'Bills / receipts / payment screenshots (Required)' : 'Bills / receipts / payment screenshots (Optional)'}
             />
+
+            {needsNoBillReason && (
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                    Reason there is no bill <span className="text-rose-500">*</span>
+                    <textarea
+                        className="pc-input mt-1.5"
+                        name="no_bill_reason"
+                        value={noBillReason}
+                        onChange={e => setNoBillReason(e.target.value)}
+                        placeholder="e.g. Auto rickshaw fare, driver gives no receipt"
+                        required
+                        minLength={10}
+                        maxLength={500}
+                    />
+                </label>
+            )}
+
+            {billBeforeRequest && (
+                <p role="alert" className="text-amber-700 dark:text-amber-400 text-xs font-semibold flex items-center gap-1.5">
+                    <AlertCircle size={14} /> Bill date cannot be before the request date ({requestDate}).
+                </p>
+            )}
+
+            {similarWarning && (
+                <p role="status" className="p-3 rounded-xl border bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-900/50 text-amber-900 dark:text-amber-200 text-xs flex items-start gap-2">
+                    <AlertCircle size={14} className="shrink-0 mt-0.5" /> <span>Possible duplicate: {similarWarning} Accounts will see this note.</span>
+                </p>
+            )}
 
             {isBlockedDuplicate && (
                 <div className="p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border-2 border-rose-500/50 text-rose-800 dark:text-rose-200 text-xs space-y-1 animate-in fade-in duration-200">
@@ -475,6 +494,8 @@ export default function ExpenseForm({
                     (!!correction && !proofs.length) ||
                     (!correction && !validAmount) ||
                     missingProof ||
+                    missingNoBillReason ||
+                    billBeforeRequest ||
                     description.trim().length < 3 ||
                     isBlockedDuplicate
                 }
@@ -483,4 +504,30 @@ export default function ExpenseForm({
             </button>
         </form>
     );
+}
+
+// Exact UTR reuse blocks; a same amount/date/vendor match only warns (two auto rides can cost the same).
+function findClientDuplicates(
+    existingExpenses: Expense[] | undefined, correction: Expense | undefined,
+    paymentRef: string, paymentMode: string, amount: string, vendor: string, expenseDate: string
+): { clientDuplicate: string | null; clientSimilar: string | null } {
+    const normRef = paymentRef.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    const isNonCash = paymentMode !== 'Cash';
+    let similar: string | null = null;
+    for (const exp of existingExpenses || []) {
+        if (correction && exp.id === correction.id) continue;
+        if (exp.review_status === 'rejected' || exp.review_status === 'withdrawn') continue;
+        const expNorm = (exp.payment_ref || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+        if (isNonCash && exp.payment_mode !== 'Cash' && normRef && expNorm && normRef === expNorm) {
+            return { clientDuplicate: `UTR '${paymentRef}' is already claimed in this request for ₹${exp.amount} (${exp.vendor}).`, clientSimilar: null };
+        }
+        if (!similar && amount && Number(amount) === Number(exp.amount) && expenseDate === exp.expense_date?.slice(0, 10)) {
+            const normVendor = vendor.trim().toLowerCase();
+            const expVendor = (exp.vendor || '').trim().toLowerCase();
+            if (normVendor && expVendor && (normVendor === expVendor || normVendor.includes(expVendor) || expVendor.includes(normVendor))) {
+                similar = `An expense of ₹${amount} for '${exp.vendor}' on ${expenseDate} is already recorded in this request. Save only if this is a separate purchase.`;
+            }
+        }
+    }
+    return { clientDuplicate: null, clientSimilar: similar };
 }

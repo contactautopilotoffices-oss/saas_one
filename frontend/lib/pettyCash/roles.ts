@@ -80,6 +80,9 @@ export interface PettyCashRequest {
     recipient_name?: string | null;
     recipient_phone?: string | null;
     assigned_approver_id?: string | null;
+    /** Who allocated and who approved; neither may also disburse the same request. */
+    allocated_by?: string | null;
+    approver_id?: string | null;
     status: string;
     approved_amount?: number | null;
     approved_at?: string | null;
@@ -96,6 +99,9 @@ export interface PettyCashRequest {
     settled_at?: string | null;
     closed_at?: string | null;
     close_remarks?: string | null;
+    /** Set when the requester asks to cancel a paid request; it becomes cancelled once accounts confirms the cash is back. */
+    cancel_requested_at?: string | null;
+    cancel_reason?: string | null;
     remarks?: string | null;
     created_at: string;
     requester?: { id: string; full_name?: string; email?: string } | null;
