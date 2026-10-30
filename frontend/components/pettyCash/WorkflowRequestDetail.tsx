@@ -42,24 +42,32 @@ export default function WorkflowRequestDetail({
     context,
     id,
     onClose,
-    onChanged
+    onChanged,
+    initialAction
 }: {
     context: Context;
     id: string;
     onClose: () => void;
     onChanged: () => void;
+    initialAction?: string;
 }) {
     const [detail, setDetail] = useState<Detail | null>(null);
     const [error, setError] = useState('');
     const [busy, setBusy] = useState(false);
     const [requestModeFilter, setRequestModeFilter] = useState<'all' | 'Operation' | 'Client'>('all');
     const [legacyAmounts, setLegacyAmounts] = useState<Record<string, string>>({});
-    const [action, setAction] = useState('');
+    const [action, setAction] = useState(initialAction || '');
     const [proofs, setProofs] = useState<Upload[]>([]);
     const [uploading, setUploading] = useState(false);
     const [expense, setExpense] = useState(false);
     const [correction, setCorrection] = useState<Expense>();
     const [showVisionAudit, setShowVisionAudit] = useState(false);
+
+    useEffect(() => {
+        if (initialAction) {
+            setAction(initialAction);
+        }
+    }, [initialAction]);
 
     const refresh = useCallback(async () => {
         try {
@@ -651,6 +659,13 @@ export default function WorkflowRequestDetail({
                                         <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Payment Reference / UTR</span>
                                         <input name="payment_ref" className="pc-input mt-1" placeholder="e.g. UPI Ref / Cheque No / Voucher ID" />
                                     </label>
+                                    <div className="pt-1">
+                                        <div className="flex items-center justify-between mb-1.5">
+                                            <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Payment Receipt / Proof</span>
+                                            <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">Optional — document is not required to confirm payment</span>
+                                        </div>
+                                        <ProofUpload org={context.organization_id} value={proofs} onChange={setProofs} disabled={busy} onBusyChange={setUploading} />
+                                    </div>
                                 </div>
                             )}
 

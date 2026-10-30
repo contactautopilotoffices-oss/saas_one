@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useState, useRef, type ReactNode } from 'react';
 import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { ArrowDownLeft, ArrowUpRight, Banknote, Check, CheckCircle2, ChevronLeft, ChevronRight, Clock, CornerUpLeft, Eye, FilePlus2, Inbox, Loader2, Plus, RefreshCw, RotateCcw, Wallet, X } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, Banknote, Check, CheckCircle2, ChevronLeft, ChevronRight, Clock, CornerUpLeft, Eye, FilePlus2, Inbox, Loader2, Plus, RefreshCw, RotateCcw, Search, Wallet, X } from 'lucide-react';
 import { Button } from '@/frontend/components/ui/button';
 import PettyCashStyles from './PettyCashStyles';
 import { inr, PC_PAYMENT_MODES, PC_STATUS_META } from '@/frontend/lib/pettyCash/roles';
@@ -30,10 +30,15 @@ export default function PettyCashDashboard() {
     const router=useRouter();const pathname=usePathname();const searchParams=useSearchParams();const linkedRequest=searchParams.get('request_id');
     const invalidLink=linkedRequest!==null&&!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(linkedRequest);
     const [storedContext, setContext] = useState<Context>();const context=storedContext?.organization_id===orgId?storedContext:undefined; const [requests, setRequests] = useState<PettyCashRequest[]>([]); const [selectedTab, setTab] = useState<string|null>(null);const tab=selectedTab || (context?.caps.isAdmin?'overview':'mine');
-    const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [showNew, setShowNew] = useState(false); const [detailTarget,setDetailTarget]=useState<{organizationId:string;id:string}>();const detailId=detailTarget?.organizationId===orgId?detailTarget.id:'';const setDetailId=(id:string)=>setDetailTarget({organizationId:orgId,id});
+    const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [showNew, setShowNew] = useState(false);
+    const [detailTarget, setDetailTarget] = useState<{ organizationId: string; id: string; action?: string }>();
+    const detailId = detailTarget?.organizationId === orgId ? detailTarget.id : '';
+    const detailAction = detailTarget?.organizationId === orgId ? detailTarget.action : undefined;
+    const setDetailId = (id: string, action?: string) => setDetailTarget({ organizationId: orgId, id, action });
     useEffect(()=>setDetailTarget(linkedRequest&&!invalidLink?{organizationId:orgId,id:linkedRequest}:undefined),[orgId,linkedRequest,invalidLink]);
     const closeDetail=()=>{setDetailTarget(undefined);if(linkedRequest!==null){const remaining=new URLSearchParams(searchParams.toString());remaining.delete('request_id');router.replace(`${pathname}${remaining.size?`?${remaining}`:''}`,{scroll:false});}};
     const [selected, setSelected] = useState<string[]>([]); const [amounts, setAmounts] = useState<Record<string, string>>({}); const [message, setMessage] = useState(''); const [page, setPage] = useState(1); const [pages, setPages] = useState(1); const [revision, setRevision] = useState(0);
+    const [searchQuery, setSearchQuery] = useState('');
     // Typed once in the bulk bar; used by both the bulk button and the per-row buttons.
     const [bulkRemark, setBulkRemark] = useState(''); const [payMode, setPayMode] = useState('Cash'); const [payDate, setPayDate] = useState(pettyCashToday()); const [refs, setRefs] = useState<Record<string, string>>({});
     const [loading,setLoading]=useState(true);const [contextLoading,setContextLoading]=useState(true);const [contextError,setContextError]=useState('');const [requestError,setRequestError]=useState('');const [requestsOrg,setRequestsOrg]=useState('');
