@@ -80,7 +80,7 @@ export function readAttemptToken(request: NextRequest, body?: { attempt_token?: 
 export async function loadOwnAttempt(attemptId: string, attemptToken?: string | null) {
     const { data: attempt } = await supabaseAdmin
         .from('proctor_attempts')
-        .select('id, test_id, user_id, status, started_at, attempt_no, attempt_token, candidate_name, candidate_email, test:proctor_tests(id, organization_id, questions, duration_minutes, ai_monitoring, max_attempts, look_away_strikes)')
+        .select('id, test_id, user_id, status, started_at, attempt_no, attempt_token, candidate_name, candidate_email, question_order, answers, test:proctor_tests(id, organization_id, questions, duration_minutes, ai_monitoring, max_attempts, look_away_strikes)')
         .eq('id', attemptId)
         .maybeSingle();
     if (!attempt) return { error: NextResponse.json({ error: 'Attempt not found' }, { status: 404 }) };

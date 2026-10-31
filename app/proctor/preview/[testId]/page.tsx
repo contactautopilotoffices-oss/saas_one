@@ -80,12 +80,13 @@ export default function ProctorPreviewPage({ params }: { params: Promise<{ testI
                     <Lock className="w-3.5 h-3.5" /> The candidate sees this locked to one screen, with camera and microphone on. Correct answers below are visible to you only.
                 </p>
 
-                {test.sections.map((section) => {
+                {test.sections.map((section, si) => {
                     const inSection = test.questions.filter((q) => (q.section || 'general') === section.key);
                     if (!inSection.length) return null;
                     return (
                         <section key={section.key} className="space-y-3">
                             <div className="border-b border-slate-200 pb-1">
+                                <p className="text-xs font-black uppercase tracking-wider text-slate-400">Section {si + 1} of {test.sections.length}</p>
                                 <h2 className="text-base font-black text-slate-900">{section.title}</h2>
                                 {section.description && <p className="text-xs text-slate-500">{section.description}</p>}
                             </div>
