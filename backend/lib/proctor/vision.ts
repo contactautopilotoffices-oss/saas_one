@@ -1,3 +1,4 @@
+﻿import Anthropic from '@anthropic-ai/sdk';
 import { resolveProvider } from '@/backend/lib/council/llm';
 import { visionExtract, DEFAULT_VISION_MODEL } from '@/backend/lib/ocr/vision';
 
@@ -25,6 +26,10 @@ import { visionExtract, DEFAULT_VISION_MODEL } from '@/backend/lib/ocr/vision';
  *    test at the old 20s cadence; ≈₹1.6 at 10s). qwen3.8-27b is cheaper but ran a steady 15s,
  *    too slow for a 10s cadence. At most one strike per 20s, so a burst of misread frames
  *    can't close a test in seconds.
+ *    Owner 2026-10-31: Claude Haiku 5.5 (claude-haiku-5-5) at effort "medium" when ANTHROPIC_API_KEY is
+ *    set — the cheapest current Claude (~$0.03–0.06 per 30-min test, ~2–4s a frame, estimated), with
+ *    JSON-schema output; the ENGY model above stays as the fallback. Sonnet 5.5 is the step up if
+ *    hard cases (part-hidden phone, edge-of-frame face) are still missed `[BAA p.112]`.
  * 4. Tools: none.
  * 5. Prompt: fixed checklist, JSON only, observation written before the verdict `[BAA pp.105, 114]`, `[BAA p.97]`.
  *    Owner 2026-10-31: head turned OR eyes off the screen counts as looking away (the "slight
@@ -81,10 +86,77 @@ function modelForProvider(provider: string): string {
     return DEFAULT_VISION_MODEL; // custom (ENGY): glm-5.3-flash
 }
 
+// ── Claude (owner 2026-10-31: Haiku 5.5 "for now") ──────────────────────────
+/**
+ * Used when ANTHROPIC_API_KEY is set (or PROCTOR_VISION_PROVIDER=anthropic);
+ * PROCTOR_VISION_PROVIDER=council forces the old path. Medium effort (the
+ * model's default) takes ~2–4s, inside the 10s cadence, and the JSON schema means the answer
+ * always has exactly the fields the route reads. On any failure the frame goes
+ * to the council provider instead, so a check is never lost.
+ */
+const CLAUDE_VISION_MODEL = process.env.PROCTOR_CLAUDE_VISION_MODEL || 'claude-haiku-5-5';
+
+const VERDICT_SCHEMA = {
+    type: 'object',
+    properties: {
+        observation: { type: 'string' },
+        face_count: { type: 'integer' },
+        looking_at_screen: { type: 'boolean' },
+        phone_or_device_visible: { type: 'boolean' },
+        flagged: { type: 'boolean' },
+        reason: { type: 'string' },
+    },
+    required: ['observation', 'face_count', 'looking_at_screen', 'phone_or_device_visible', 'flagged', 'reason'],
+    additionalProperties: false,
+};
+
+function claudeEnabled() {
+    const choice = (process.env.PROCTOR_VISION_PROVIDER || '').toLowerCase();
+    if (choice === 'anthropic') return true;
+    if (choice === 'council') return false;
+    return !!process.env.ANTHROPIC_API_KEY;
+}
+
+let claude: Anthropic | null = null;
+
+async function claudeVerdict(base64: string): Promise<Partial<Record<keyof FrameVerdict, unknown>> | { error: string }> {
+    // One retry at most and a 9s ceiling, so a slow call can't overrun the next check.
+    claude ??= new Anthropic({ timeout: 9_000, maxRetries: 1 });
+    try {
+        const res = await claude.messages.create({
+            model: CLAUDE_VISION_MODEL,
+            max_tokens: 1024,
+            // Owner 2026-10-31: medium (Haiku 5.5's default) — a little more care on borderline frames.
+            output_config: { effort: 'medium', format: { type: 'json_schema', schema: VERDICT_SCHEMA } },
+            messages: [{
+                role: 'user',
+                content: [
+                    { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: base64 } },
+                    { type: 'text', text: PROMPT },
+                ],
+            }],
+        });
+        if (res.stop_reason === 'refusal') return { error: 'Claude declined to check this frame' };
+        if (res.stop_reason === 'max_tokens') return { error: 'Claude ran out of tokens on this frame' };
+        const text = res.content.find((b) => b.type === 'text');
+        if (!text || text.type !== 'text') return { error: 'Claude returned no answer' };
+        return JSON.parse(text.text);
+    } catch (err) {
+        if (err instanceof Anthropic.APIError) return { error: `Claude ${err.status ?? ''} ${err.message}`.trim() };
+        return { error: err instanceof Error ? err.message : 'Claude check failed' };
+    }
+}
+
 /** Returns a verdict, or an error string — never throws. */
 export async function checkFrame(imageDataUrl: string): Promise<FrameVerdict | { error: string }> {
     const base64 = imageDataUrl.split(',')[1] || '';
     if (!base64) return { error: 'Frame was empty' };
+
+    if (claudeEnabled()) {
+        const fromClaude = await claudeVerdict(base64);
+        if (!('error' in fromClaude) && typeof fromClaude.face_count === 'number') return toVerdict(fromClaude);
+        console.warn('[proctor] Claude frame check failed, using the council model:', 'error' in fromClaude ? fromClaude.error : 'no face_count');
+    }
 
     const { provider } = resolveProvider();
     const result = await visionExtract({
@@ -112,6 +184,11 @@ export async function checkFrame(imageDataUrl: string): Promise<FrameVerdict | {
         return { error: `Unreadable AI response: ${(result.text || '').slice(0, 200)}` };
     }
 
+    return toVerdict(parsed);
+}
+
+/** A model's answer → a verdict, with the flag re-derived from the fields. */
+function toVerdict(parsed: Partial<Record<keyof FrameVerdict, unknown>>): FrameVerdict {
     const faceCount = Math.max(0, Math.round(parsed.face_count as number));
     const looking = parsed.looking_at_screen !== false;
     const device = parsed.phone_or_device_visible === true;
