@@ -106,7 +106,11 @@ export default function AttemptReportPage({ params }: { params: Promise<{ attemp
                 {/* Verdict line */}
                 <section className="grid gap-3 sm:grid-cols-3">
                     <Tile label="Outcome" value={OUTCOME[attempt.status] || attempt.status} sub={attempt.termination_reason ? REASON[attempt.termination_reason] || attempt.termination_reason : undefined} />
-                    <Tile label="Score" value={attempt.total ? `${attempt.score}/${attempt.total}` : '—'} sub={pct !== null ? `${pct}%` : undefined} />
+                    <Tile
+                        label="Score"
+                        value={attempt.total ? `${attempt.score}/${attempt.total}` : '—'}
+                        sub={pct !== null ? `${pct}%${attempt.status === 'terminated' ? ' · partial, closed early' : ''}` : undefined}
+                    />
                     <Tile label="Proctor flags" value={`${attempt.ai_flags} of ${attempt.ai_checks} checks`} sub={voices.length ? `${voices.length} voice note${voices.length === 1 ? '' : 's'}` : 'No voice picked up'} />
                 </section>
 
@@ -116,13 +120,13 @@ export default function AttemptReportPage({ params }: { params: Promise<{ attemp
                         <h2 className="mb-2 text-sm font-black uppercase tracking-wider text-slate-500">Score by section</h2>
                         <table className="w-full text-sm">
                             <tbody>
-                                {test.sections.map((s) => {
+                                {test.sections.map((s, si) => {
                                     const sc = attempt.section_scores[s.key];
                                     if (!sc) return null;
                                     const p = sc.total ? Math.round((sc.score / sc.total) * 100) : 0;
                                     return (
                                         <tr key={s.key} className="border-b border-slate-100">
-                                            <td className="py-2 font-bold text-slate-900">{s.title}</td>
+                                            <td className="py-2 font-bold text-slate-900"><span className="mr-1.5 text-slate-400">{si + 1}.</span>{s.title}</td>
                                             <td className="py-2 text-right tabular-nums font-bold">{sc.score}/{sc.total}</td>
                                             <td className="w-1/2 py-2 pl-4">
                                                 <div className="h-2 w-full rounded-full bg-slate-100">
@@ -170,7 +174,7 @@ export default function AttemptReportPage({ params }: { params: Promise<{ attemp
                             {report.log.map((l, i) => (
                                 <li key={i} className="flex gap-3 border-b border-slate-50 py-1">
                                     <span className="w-20 shrink-0 tabular-nums text-xs text-slate-400">{new Date(l.created_at).toLocaleTimeString()}</span>
-                                    <span className={l.kind === 'ai_flag' ? 'text-amber-800' : l.kind === 'voice_detected' ? 'text-indigo-800' : l.kind === 'ai_error' ? 'text-slate-400' : 'font-bold text-rose-700'}>
+                                    <span className={l.kind === 'ai_flag' ? 'text-amber-800' : l.kind === 'voice_detected' ? 'text-indigo-800' : l.kind === 'ai_error' ? 'text-slate-400' : ['resumed', 'hr_extra_chance', 'hr_reset'].includes(l.kind) ? 'font-bold text-sky-800' : 'font-bold text-rose-700'}>
                                         {describe(l)}
                                     </span>
                                 </li>
@@ -223,6 +227,10 @@ function Tile({ label, value, sub }: { label: string; value: string; sub?: strin
     );
 }
 
+function formatGap(seconds: number) {
+    return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
 function describe(l: LogRow) {
     const d = l.detail || {};
     if (l.kind === 'ai_flag') {
@@ -232,5 +240,9 @@ function describe(l: LogRow) {
     if (l.kind === 'voice_detected') return `Microphone: a voice was picked up${d.level ? ` (level ${d.level})` : ''}`;
     if (l.kind === 'ai_error') return `Camera check failed: ${d.error || ''}`;
     if (l.kind === 'looking_away') return `Test closed after ${d.strikes} camera warnings`;
+    if (l.kind === 'resumed') return `Resumed after the page went silent for ${formatGap(Number(d.gap_seconds) || 0)} (crash or lost connection)`;
+    if (l.kind === 'hr_extra_chance' || l.kind === 'hr_reset') {
+        return `${l.kind === 'hr_reset' ? 'HR reset the attempts' : 'HR gave another chance'} — ${d.by || 'HR'}${d.note ? `: “${d.note}”` : ' (no reason given)'}`;
+    }
     return `Test closed: ${REASON[l.kind] || l.kind}`;
 }

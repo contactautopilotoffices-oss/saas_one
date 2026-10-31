@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { loadOwnAttempt, readAttemptToken } from '@/backend/lib/proctor/access';
+import { toOriginalAnswers } from '@/backend/lib/proctor/order';
+import { grade } from '@/backend/lib/proctor/grade';
 
 /** Leaving the locked page in any of these ways ends the attempt. */
 const TERMINATING = new Set(['tab_hidden', 'window_blur', 'fullscreen_exit', 'page_unload', 'camera_lost']);
@@ -11,18 +13,19 @@ const LOGGED_ONLY = new Set(['voice_detected', 'mic_lost']);
 /**
  * POST /api/proctor/attempts/[id]/event — the locked page reporting that the
  * taker left. Also receives navigator.sendBeacon on tab close, which posts
- * text/plain, so the body is read as text.
- * Body: { kind, detail?, attempt_token? }
+ * text/plain, so the body is read as text. A terminating event grades the
+ * answers given so far, so the reviewer sees a partial score.
+ * Body: { kind, detail?, attempt_token?, answers? }
  */
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
     const { id } = await params;
 
-    let body: { kind?: string; detail?: Record<string, unknown>; attempt_token?: string } = {};
+    let body: { kind?: string; detail?: Record<string, unknown>; attempt_token?: string; answers?: Record<string, unknown> } = {};
     try { body = JSON.parse(await request.text()); } catch { /* empty beacon */ }
 
     const loaded = await loadOwnAttempt(id, readAttemptToken(request, body));
     if ('error' in loaded) return loaded.error;
-    const { attempt } = loaded;
+    const { attempt, test } = loaded;
 
     const kind = String(body.kind || '');
     if (!TERMINATING.has(kind) && !LOGGED_ONLY.has(kind)) {
@@ -39,9 +42,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     // Already submitted/ended (e.g. fullscreen exits after a normal submit) — nothing to do.
     if (attempt.status !== 'in_progress') return NextResponse.json({ status: attempt.status });
 
+    // The answers given so far still count, as a partial score: the page's own copy if it sent
+    // one (newest), otherwise the last autosave.
+    const answers = body.answers && typeof body.answers === 'object'
+        ? toOriginalAnswers(test.questions || [], attempt.question_order, body.answers)
+        : (attempt.answers || {}) as Record<string, number>;
+
     const { data: updated } = await supabaseAdmin
         .from('proctor_attempts')
-        .update({ status: 'terminated', termination_reason: kind, ended_at: new Date().toISOString() })
+        .update({ status: 'terminated', termination_reason: kind, answers, ...grade(test.questions || [], answers), ended_at: new Date().toISOString() })
         .eq('id', id)
         .eq('status', 'in_progress')
         .select('id')

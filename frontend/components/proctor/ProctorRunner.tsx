@@ -10,14 +10,20 @@ import { AlertTriangle, Camera, CheckCircle2, Clock, Lock, Mic, ShieldAlert, Vid
  *     their name and email, and the attempt is identified from then on by the
  *     attempt_token the server issues at start.
  *
+ * Answers are saved as they are picked, with a heartbeat every 20s. If the page
+ * dies without reporting (crash, power, network), opening the link again within
+ * 5 minutes continues the same attempt: same questions, saved answers, and the
+ * time it had left.
+ *
  * Camera and microphone on → fullscreen → questions appear. From then on, any
  * of these ends the attempt and the server records why: tab switch, switching
  * app (blur), leaving fullscreen incl. Esc, close/refresh (pagehide → beacon),
  * camera off.
  *
- * Every ~20s a webcam frame goes to the vision model. Not looking at the
- * screen, no face, a phone, or a second face → the taker is warned and it
- * counts as a strike; after the test's limit the attempt closes. For a phone or
+ * Every ~10s a webcam frame goes to the vision model. Not looking at the
+ * screen, no face, a phone, or a second face → the taker is warned; at most one
+ * warning every 20s counts as a strike, so they have time to put it right.
+ * After the test's limit the attempt closes. For a phone or
  * a second face the frame is also kept for the reviewer.
  * The microphone is watched for a voice nearby; that is recorded and the taker
  * is warned, but it does not count as a strike (loudness alone is too crude).
@@ -32,12 +38,17 @@ type TestInfo = {
 };
 type MyAttempt = { attempt_no: number; status: string; termination_reason: string | null };
 
-const SNAPSHOT_EVERY_MS = 20_000;
+const SNAPSHOT_EVERY_MS = 10_000;
 /** Rough loudness that counts as a voice in the room. Logged with the event so it can be tuned. */
 const VOICE_RMS_THRESHOLD = 0.035;
 const VOICE_SUSTAIN_SAMPLES = 3;   // ~1.5s above the threshold
 const VOICE_REPORT_GAP_MS = 30_000;
 const VOICE_WARNING_MS = 10_000;   // how long the "keep the room quiet" notice stays up
+const WARNING_POPUP_MS = 4_000;    // how long each camera warning pop-up stays up
+/** Autosave: soon after an answer changes, and a heartbeat this often regardless (it keeps a crashed attempt resumable). */
+const SAVE_DEBOUNCE_MS = 800;
+const HEARTBEAT_MS = 20_000;
+const RESUMABLE_NOTE = 'Your last attempt was interrupted. When you start, you will continue where you left off with your saved answers. The timer kept running while you were away.';
 
 const REASON_LABEL: Record<string, string> = {
     tab_hidden: 'You switched tabs or minimised the browser.',
@@ -65,6 +76,12 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
     const [answers, setAnswers] = useState<Record<string, number>>({});
     const [remaining, setRemaining] = useState(0);
     const [cameraWarning, setCameraWarning] = useState<string | null>(null);
+    /** A pop-up for each new camera warning, so the 2nd and 3rd don't look like the 1st still showing. */
+    const [warningPopup, setWarningPopup] = useState<{ text: string; strikes: number; allowed: number; id: number } | null>(null);
+    // Stable, so the pop-up's timer isn't restarted by the countdown's re-render every second.
+    const closeWarningPopup = useCallback(() => setWarningPopup(null), []);
+    /** The warning that closed the test, shown on the closed screen. */
+    const [finalWarning, setFinalWarning] = useState<string | null>(null);
     const [voiceWarning, setVoiceWarning] = useState(false);
     const [endReason, setEndReason] = useState<string | null>(null);
     const [previousNote, setPreviousNote] = useState<string | null>(null);
@@ -115,7 +132,9 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
                     setMessage(`You have used all your chances at this test.${lastReason ? ` Your last attempt was closed: ${lastReason}` : ''}`);
                     setPhase('blocked');
                 } else {
-                    if (last) {
+                    if (data.resumable) {
+                        setPreviousNote(RESUMABLE_NOTE);
+                    } else if (last) {
                         setPreviousNote(`Your previous attempt was closed: ${lastReason || 'it was not finished.'} ` +
                             (data.chances_left === 1 ? 'This is your last chance.' : `You have ${plural(data.chances_left, 'chance')} left.`));
                     }
@@ -153,7 +172,8 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
         if (endedRef.current || !attemptIdRef.current) return;
         endedRef.current = true;
         const url = `/api/proctor/attempts/${attemptIdRef.current}/event`;
-        const body = JSON.stringify({ kind, detail: { at: new Date().toISOString() }, attempt_token: attemptTokenRef.current });
+        // The answers so far go with it, so they are graded as a partial score.
+        const body = JSON.stringify({ kind, detail: { at: new Date().toISOString() }, attempt_token: attemptTokenRef.current, answers: answersRef.current });
         if (kind === 'page_unload' && navigator.sendBeacon) {
             navigator.sendBeacon(url, body);
         } else {
@@ -251,6 +271,28 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
         return () => clearInterval(t);
     }, [phase, submit]);
 
+    // ── Autosave + heartbeat: answers survive a crash, and the attempt stays resumable ─
+    const saveProgress = useCallback(() => {
+        if (endedRef.current || !attemptIdRef.current) return;
+        fetch(`/api/proctor/attempts/${attemptIdRef.current}/progress`, {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({ answers: answersRef.current, attempt_token: attemptTokenRef.current }),
+        }).catch(() => { /* the next save or heartbeat tries again */ });
+    }, [authHeaders]);
+
+    useEffect(() => {
+        if (phase !== 'running') return;
+        const t = setTimeout(saveProgress, SAVE_DEBOUNCE_MS);
+        return () => clearTimeout(t);
+    }, [phase, answers, saveProgress]);
+
+    useEffect(() => {
+        if (phase !== 'running') return;
+        const t = setInterval(saveProgress, HEARTBEAT_MS);
+        return () => clearInterval(t);
+    }, [phase, saveProgress]);
+
     // ── AI frame checks ──────────────────────────────────────────────────────
     useEffect(() => {
         if (phase !== 'running' || !test?.ai_monitoring) return;
@@ -273,13 +315,16 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
                 });
                 const data = await res.json().catch(() => ({}));
                 if (data.status === 'terminated') {
+                    if (data.message) setFinalWarning(`${data.message} (warning ${data.strikes} of ${data.strikes_allowed})`);
                     acceptServerTermination('looking_away');
                 } else if (data.ok && data.warn) {
                     setCameraWarning(`${data.message} (warning ${data.strikes} of ${data.strikes_allowed})`);
+                    // Only a warning that counted gets a pop-up; one inside the 20s gap just keeps the banner up.
+                    if (data.counted !== false) setWarningPopup({ text: data.message, strikes: data.strikes, allowed: data.strikes_allowed, id: Date.now() });
                 } else if (data.ok) {
                     setCameraWarning(null);
                 }
-            } catch { /* a missed check is fine; the next one runs in 20s */ }
+            } catch { /* a missed check is fine; the next one runs in 10s */ }
             finally { inFlight = false; }
         };
 
@@ -366,7 +411,9 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
                     return;
                 }
                 setChancesLeft(data.chances_left);
-                if (data.attempts_used > 0 && !previousNote) {
+                if (data.resumable) {
+                    setPreviousNote(RESUMABLE_NOTE);
+                } else if (data.attempts_used > 0 && !previousNote) {
                     setPreviousNote(`This is attempt ${data.attempts_used + 1} of ${data.max_attempts}.` +
                         (data.last_reason ? ` Your previous one was closed: ${REASON_LABEL[data.last_reason] || 'you left the test window.'}` : ''));
                 }
@@ -419,8 +466,10 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
             attemptTokenRef.current = data.attempt_token;
             setAttemptNo(data.attempt_no);
             setChancesLeft(Math.max(0, data.max_attempts - data.attempt_no));
-            deadlineRef.current = Date.now() + data.duration_minutes * 60_000;
+            // The server's clock: a resumed attempt keeps the time it had left.
+            deadlineRef.current = Date.now() + (data.remaining_seconds ?? data.duration_minutes * 60) * 1000;
             setQuestions(data.questions || []);
+            setAnswers(data.answers || {});
             endedRef.current = false;
             setPhase('running');
         } catch (err) {
@@ -474,8 +523,14 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
             <Centered>
                 <XCircle className="w-12 h-12 text-rose-500" />
                 <h1 className="text-xl font-black text-slate-900">Test closed</h1>
+                {finalWarning && endReason === 'looking_away' && (
+                    <p className="flex items-center gap-2 rounded-xl bg-amber-100 px-3 py-2 text-sm font-bold text-amber-900 max-w-md">
+                        <ShieldAlert className="w-4 h-4 shrink-0" /> Last warning: {finalWarning}
+                    </p>
+                )}
                 <p className="text-sm text-slate-600 max-w-md">
                     {endReason ? REASON_LABEL[endReason] : 'This attempt had already ended.'} The reason has been recorded for your reviewer.
+                    {' '}The answers you gave before it closed are saved.
                 </p>
                 <p className="text-sm font-bold text-slate-900 max-w-md">
                     {chancesLeft > 0
@@ -518,9 +573,9 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
                         <div className="rounded-2xl border border-slate-200 bg-white p-4">
                             <p className="text-xs font-bold uppercase tracking-wider text-slate-400">What the test covers</p>
                             <ul className="mt-2 space-y-2">
-                                {sections.map((s) => (
+                                {sections.map((s, si) => (
                                     <li key={s.key} className="text-sm">
-                                        <span className="font-bold text-slate-900">{s.title}</span>
+                                        <span className="font-bold text-slate-900">Section {si + 1} · {s.title}</span>
                                         <span className="text-slate-400"> · {plural(s.question_count, 'question')}</span>
                                         {s.description && <p className="text-slate-600">{s.description}</p>}
                                     </li>
@@ -646,14 +701,17 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
                 </div>
             )}
 
+            {warningPopup && <WarningPopup key={warningPopup.id} {...warningPopup} onDone={closeWarningPopup} />}
+
             <main className="mx-auto max-w-2xl space-y-6 px-4 py-6 pb-40">
-                {sections.map((section) => {
+                {sections.map((section, si) => {
                     const inSection = questions.filter((q) => (q.section || 'general') === section.key);
                     if (!inSection.length) return null;
                     return (
                         <section key={section.key} className="space-y-4">
                             {sections.length > 1 && (
                                 <div className="border-b border-slate-200 pb-1">
+                                    <p className="text-xs font-black uppercase tracking-wider text-slate-400">Section {si + 1} of {sections.length}</p>
                                     <h2 className="text-base font-black text-slate-900">{section.title}</h2>
                                     {section.description && <p className="text-xs text-slate-500">{section.description}</p>}
                                 </div>
@@ -696,6 +754,25 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
             </main>
 
             {cameraView}
+        </div>
+    );
+}
+
+/** Centre-screen notice for one camera warning; it fades after a few seconds and doesn't block the test. */
+function WarningPopup({ text, strikes, allowed, onDone }: { text: string; strikes: number; allowed: number; onDone: () => void }) {
+    useEffect(() => {
+        const t = setTimeout(onDone, WARNING_POPUP_MS);
+        return () => clearTimeout(t);
+    }, [onDone]);
+    const last = strikes >= allowed - 1;
+    return (
+        <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center px-6" role="alert">
+            <div className={`max-w-sm rounded-2xl border-2 p-5 text-center shadow-2xl ${last ? 'border-rose-400 bg-rose-50' : 'border-amber-400 bg-amber-50'}`}>
+                <ShieldAlert className={`mx-auto mb-2 w-8 h-8 ${last ? 'text-rose-600' : 'text-amber-600'}`} />
+                <p className={`text-xs font-black uppercase tracking-wider ${last ? 'text-rose-700' : 'text-amber-700'}`}>Warning {strikes} of {allowed}</p>
+                <p className="mt-1 text-base font-black text-slate-900">{text}</p>
+                {last && <p className="mt-2 text-sm font-bold text-rose-700">One more warning and the test closes.</p>}
+            </div>
         </div>
     );
 }

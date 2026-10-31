@@ -2,7 +2,7 @@ import { resolveProvider } from '@/backend/lib/council/llm';
 import { visionExtract, DEFAULT_VISION_MODEL } from '@/backend/lib/ocr/vision';
 
 /**
- * One webcam frame → one vision-model verdict. Called every ~20s during a
+ * One webcam frame → one vision-model verdict. Called every ~10s during a
  * proctored test.
  *
  * Goes through the repo's existing vision helper (backend/lib/ocr/vision.ts),
@@ -20,9 +20,11 @@ import { visionExtract, DEFAULT_VISION_MODEL } from '@/backend/lib/ocr/vision';
  *    a second face) warns the taker and counts as a strike, and at the test's strike limit
  *    (default 3) the attempt closes, using up a chance. One misread frame does not end a test,
  *    and the frames for phone/second-face are kept for a human to overrule. Still the cheap,
- *    fast multimodal tier `[BAA p.112]`, because the 20s cadence rules out slower models:
+ *    fast multimodal tier `[BAA p.112]`, because the 10s cadence rules out slower models:
  *    glm-5.3-flash on ENGY, measured at 3–10s and ~500 tokens a frame (≈₹0.8 for a 30-minute
- *    test). qwen3.8-27b is cheaper but ran a steady 15s, too slow for a 20s cadence.
+ *    test at the old 20s cadence; ≈₹1.6 at 10s). qwen3.8-27b is cheaper but ran a steady 15s,
+ *    too slow for a 10s cadence. At most one strike per 20s, so a burst of misread frames
+ *    can't close a test in seconds.
  * 4. Tools: none.
  * 5. Prompt: fixed checklist, JSON only, observation written before the verdict `[BAA pp.105, 114]`, `[BAA p.97]`.
  * 6. Memory: none — frames don't repeat in a way memory helps `[BAA pp.100–103]`.
