@@ -773,6 +773,8 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
                             <li>Your <b>camera and microphone stay on</b> for the whole test. What they record is sent to your reviewer.</li>
                             <li>Stay alone, facing the screen, with phones and other devices put away. The camera warns you if it sees otherwise; after {plural(test?.look_away_strikes || 3, 'warning')}, the test closes.</li>
                             <li>Keep the room quiet. Voices or noise nearby also show a warning, but these do not count towards the limit.</li>
+                            <li>Sit alone in a quiet, well-lit room against a plain, clutter-free background. Keep your face clearly visible and centred in the camera, with no bright window or light behind you.</li>
+                            <li>Clear your desk of books, notes, phones and other devices.</li>
                             <li>Close other apps and turn off notifications before you begin.</li>
                         </ul>
                     </div>
