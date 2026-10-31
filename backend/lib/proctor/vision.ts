@@ -27,6 +27,11 @@ import { visionExtract, DEFAULT_VISION_MODEL } from '@/backend/lib/ocr/vision';
  *    can't close a test in seconds.
  * 4. Tools: none.
  * 5. Prompt: fixed checklist, JSON only, observation written before the verdict `[BAA pp.105, 114]`, `[BAA p.97]`.
+ *    Owner 2026-10-31: head turned OR eyes off the screen counts as looking away (the "slight
+ *    head tilt" exemption was removed). The route decides from the fields, not `flagged`
+ *    `[BAA p.94]`. This check is now the backstop: the 2-second warnings come from the
+ *    MediaPipe detector in the candidate's browser (frontend/lib/proctor/deviceDetector.ts),
+ *    and both feed the same strike rules (backend/lib/proctor/flags.ts).
  * 6. Memory: none — frames don't repeat in a way memory helps `[BAA pp.100–103]`.
  * 7. Multi-agent: no — single call `[BAA p.116]`.
  * 8. Evaluation `[BAA pp.118–119]`: system = ai_error events; quality = PARTIAL — hand-checked on
@@ -54,14 +59,15 @@ const PROMPT = `You are proctoring an online test. The image is a webcam frame o
 
 Check, in this order:
 1. How many human faces are visible? (0, 1, 2, ...)
-2. Is the person facing the screen (roughly toward the camera), not turned away or looking down at something?
-3. Is a phone, tablet, second screen, book or paper being looked at or held?
+2. Are the person's head AND eyes on the screen (roughly toward the camera)? Answer false if the head is turned to a side, up or down, or if the eyes are clearly looking away from the screen (to a side, or down at something below it), even when the head faces forward.
+3. Is a phone, tablet, second screen, book or paper visible, held or being looked at? A phone partly in view counts.
+4. Count any face, even one only partly visible at the edge of the frame.
 
-Flag the frame if: no face, more than one face, the person is clearly turned away, or a phone/device/notes are in use.
-Do not flag for poor lighting, glasses, a normal blink, or a slight head tilt.
+Flag the frame if: no face, more than one face, head or eyes off the screen, or a phone/device/notes in view.
+Do not flag for poor lighting, glasses, or a normal blink.
 
 Return ONLY raw JSON, no markdown:
-{"observation":"<one sentence on what you see>","face_count":<int>,"looking_at_screen":<bool>,"phone_or_device_visible":<bool>,"flagged":<bool>,"reason":"<short reason if flagged, else empty>"}`;
+{"observation":"<one sentence on what you see, including where the head and eyes point>","face_count":<int>,"looking_at_screen":<bool>,"phone_or_device_visible":<bool>,"flagged":<bool>,"reason":"<short reason if flagged, else empty>"}`;
 
 /**
  * Vision model per provider. A model id is provider-specific, so the ENGY

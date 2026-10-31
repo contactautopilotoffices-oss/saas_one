@@ -235,8 +235,10 @@ function describe(l: LogRow) {
     const d = l.detail || {};
     if (l.kind === 'ai_flag') {
         const label = CATEGORY[String(d.category)] || String(d.reason || 'flagged');
-        return `Camera: ${label}${d.observation ? ` — ${d.observation}` : ''}`;
+        return `${d.source === 'device' ? 'Live check' : 'Camera'}: ${label}${d.observation ? ` — ${d.observation}` : ''}${d.counted === false ? ' (reminder, not counted)' : ''}`;
     }
+    if (l.kind === 'left_warning') return `Left the test: ${REASON[String(d.reason)] || 'left the window'} — warning ${d.n} of ${d.allowed}`;
+    if (l.kind === 'detector_unavailable') return "Live check couldn't run in this browser — only the 10-second camera check was used";
     if (l.kind === 'voice_detected') return `Microphone: a voice was picked up${d.level ? ` (level ${d.level})` : ''}`;
     if (l.kind === 'ai_error') return `Camera check failed: ${d.error || ''}`;
     if (l.kind === 'looking_away') return `Test closed after ${d.strikes} camera warnings`;

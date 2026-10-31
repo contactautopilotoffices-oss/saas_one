@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Camera, CheckCircle2, Clock, Lock, Mic, ShieldAlert, Video, XCircle } from 'lucide-react';
+import { createDeviceDetector, type DeviceDetector, type DeviceObservation } from '@/frontend/lib/proctor/deviceDetector';
 
 /**
  * The locked test page, used two ways:
@@ -20,10 +21,13 @@ import { AlertTriangle, Camera, CheckCircle2, Clock, Lock, Mic, ShieldAlert, Vid
  * app (blur), leaving fullscreen incl. Esc, close/refresh (pagehide → beacon),
  * camera off.
  *
- * Every ~10s a webcam frame goes to the vision model. Not looking at the
- * screen, no face, a phone, or a second face → the taker is warned; at most one
- * warning every 20s counts as a strike, so they have time to put it right.
- * After the test's limit the attempt closes. For a phone or
+ * A detector in the browser (MediaPipe, frontend/lib/proctor/deviceDetector.ts)
+ * watches the camera several times a second; a problem held for 1.5s — head or
+ * eyes off the screen, no face, a second face, a phone — is reported, so the
+ * warning pops up within about two seconds. Every ~10s a frame also goes to the
+ * server's vision model, as the backstop and for evidence frames. Either way at
+ * most one warning every 20s counts as a strike, so the taker has time to put
+ * it right; after the test's limit the attempt closes. For a phone or
  * a second face the frame is also kept for the reviewer.
  * The microphone is watched for a voice nearby; that is recorded and the taker
  * is warned, but it does not count as a strike (loudness alone is too crude).
@@ -39,6 +43,12 @@ type TestInfo = {
 type MyAttempt = { attempt_no: number; status: string; termination_reason: string | null };
 
 const SNAPSHOT_EVERY_MS = 10_000;
+/** Switching tab/app or leaving fullscreen: this many warnings, then the test closes (matches the event route). */
+const LEAVE_WARNINGS = 2;
+/** On-device detector: look this often, warn once a problem has lasted this long, and repeat while it lasts. */
+const DEVICE_TICK_MS = 250;
+const DEVICE_HOLD_MS = 1_500;
+const DEVICE_REPEAT_MS = 20_000;
 /** Rough loudness that counts as a voice in the room. Logged with the event so it can be tuned. */
 const VOICE_RMS_THRESHOLD = 0.035;
 const VOICE_SUSTAIN_SAMPLES = 3;   // ~1.5s above the threshold
@@ -195,6 +205,48 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
         if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     }, [stopMedia]);
 
+    // ── Left the test (tab/app switch, fullscreen exit): warnings first, then it closes ─
+    /** Set while the "you left the test" screen is up. warnings = 0 until the server answers. */
+    const [away, setAway] = useState<{ warnings: number; allowed: number } | null>(null);
+    /** One switch fires hidden + blur + fullscreen exit together; report only the first. */
+    const leavingRef = useRef(false);
+
+    const leave = useCallback(async (kind: string) => {
+        if (endedRef.current || !attemptIdRef.current || leavingRef.current) return;
+        leavingRef.current = true;
+        setAway((a) => a || { warnings: 0, allowed: LEAVE_WARNINGS });
+        try {
+            const res = await fetch(`/api/proctor/attempts/${attemptIdRef.current}/event`, {
+                method: 'POST',
+                headers: authHeaders(),
+                keepalive: true,
+                body: JSON.stringify({ kind, detail: { at: new Date().toISOString() }, attempt_token: attemptTokenRef.current, answers: answersRef.current }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (data.status === 'warned') {
+                setAway({ warnings: data.warnings, allowed: data.allowed });
+            } else if (data.status === 'terminated' || (data.status && data.status !== 'in_progress')) {
+                setAway(null);
+                acceptServerTermination(kind);
+                return;
+            }
+        } catch { /* offline: the screen stays up; the server hears about it on the next call */ }
+        // Back on the page already (e.g. only Esc was pressed): the next departure is a new one.
+        if (document.visibilityState === 'visible' && document.hasFocus()) leavingRef.current = false;
+    }, [authHeaders, acceptServerTermination]);
+
+    const returnToTest = async () => {
+        try {
+            await document.documentElement.requestFullscreen();
+        } catch {
+            setError('Fullscreen was blocked. Allow fullscreen for this site, then press Return to the test.');
+            return;
+        }
+        leavingRef.current = false;
+        setAway(null);
+        setError(null);
+    };
+
     // ── Submit ───────────────────────────────────────────────────────────────
     const submit = useCallback(async (auto = false) => {
         if (endedRef.current || !attemptIdRef.current) return;
@@ -233,9 +285,14 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
     useEffect(() => {
         if (phase !== 'running') return;
 
-        const onVisibility = () => { if (document.visibilityState === 'hidden') terminate('tab_hidden'); };
-        const onBlur = () => terminate('window_blur');
-        const onFullscreen = () => { if (!document.fullscreenElement) terminate('fullscreen_exit'); };
+        // Switching away gets warnings (leave); closing the page or losing the camera ends it at once.
+        const onVisibility = () => {
+            if (document.visibilityState === 'hidden') leave('tab_hidden');
+            else leavingRef.current = false; // back: the next departure counts again
+        };
+        const onBlur = () => leave('window_blur');
+        const onFocus = () => { leavingRef.current = false; };
+        const onFullscreen = () => { if (!document.fullscreenElement) leave('fullscreen_exit'); };
         const onPageHide = () => terminate('page_unload');
         const block = (e: Event) => e.preventDefault();
         const track = streamRef.current?.getVideoTracks()[0];
@@ -243,6 +300,7 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
 
         document.addEventListener('visibilitychange', onVisibility);
         window.addEventListener('blur', onBlur);
+        window.addEventListener('focus', onFocus);
         document.addEventListener('fullscreenchange', onFullscreen);
         window.addEventListener('pagehide', onPageHide);
         ['contextmenu', 'copy', 'cut', 'paste'].forEach((ev) => document.addEventListener(ev, block));
@@ -251,12 +309,13 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
         return () => {
             document.removeEventListener('visibilitychange', onVisibility);
             window.removeEventListener('blur', onBlur);
+            window.removeEventListener('focus', onFocus);
             document.removeEventListener('fullscreenchange', onFullscreen);
             window.removeEventListener('pagehide', onPageHide);
             ['contextmenu', 'copy', 'cut', 'paste'].forEach((ev) => document.removeEventListener(ev, block));
             track?.removeEventListener('ended', onTrackEnded);
         };
-    }, [phase, terminate]);
+    }, [phase, terminate, leave]);
 
     // ── Countdown ────────────────────────────────────────────────────────────
     useEffect(() => {
@@ -270,6 +329,12 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
         const t = setInterval(tick, 1000);
         return () => clearInterval(t);
     }, [phase, submit]);
+
+    // The questions replace a long start page; without this the browser keeps that scroll
+    // position and the test opens part-way down (around question 3) instead of at Q1.
+    useEffect(() => {
+        if (phase === 'running') window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    }, [phase]);
 
     // ── Autosave + heartbeat: answers survive a crash, and the attempt stays resumable ─
     const saveProgress = useCallback(() => {
@@ -293,37 +358,53 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
         return () => clearInterval(t);
     }, [phase, saveProgress]);
 
-    // ── AI frame checks ──────────────────────────────────────────────────────
+    // ── Warnings: one handler for the server's camera check and the on-device detector ─
+    /** What the device detector sees right now; a clean camera check doesn't clear a live problem. */
+    const deviceProblemRef = useRef<string | null>(null);
+    /** The MediaPipe detector, started during setup so it's ready (and warmed up) when the test starts. */
+    const detectorPromiseRef = useRef<Promise<DeviceDetector | null> | null>(null);
+
+    const applyFlagResult = useCallback((data: {
+        ok?: boolean; warn?: boolean; status?: string; counted?: boolean; message?: string; strikes?: number; strikes_allowed?: number;
+    }) => {
+        if (data.status === 'terminated') {
+            if (data.message) setFinalWarning(`${data.message} (warning ${data.strikes} of ${data.strikes_allowed})`);
+            acceptServerTermination('looking_away');
+        } else if (data.ok && data.warn && data.message) {
+            setCameraWarning(`${data.message} (warning ${data.strikes} of ${data.strikes_allowed})`);
+            // Only a warning that counted gets a pop-up; one inside the 20s gap just keeps the banner up.
+            if (data.counted !== false) setWarningPopup({ text: data.message, strikes: data.strikes || 0, allowed: data.strikes_allowed || 0, id: Date.now() });
+        } else if (data.ok && !deviceProblemRef.current) {
+            setCameraWarning(null);
+        }
+    }, [acceptServerTermination]);
+
+    /** A 320×240 JPEG of the current camera frame. */
+    const grabFrame = useCallback((canvas: HTMLCanvasElement) => {
+        const video = videoRef.current;
+        if (!video || video.readyState < 2) return null;
+        canvas.getContext('2d')?.drawImage(video, 0, 0, canvas.width, canvas.height);
+        return canvas.toDataURL('image/jpeg', 0.6);
+    }, []);
+
+    // ── AI frame checks (server, every ~10s): the backstop, and the evidence frames ─
     useEffect(() => {
         if (phase !== 'running' || !test?.ai_monitoring) return;
         let inFlight = false;
-        const canvas = document.createElement('canvas');
-        canvas.width = 320;
-        canvas.height = 240;
+        const canvas = Object.assign(document.createElement('canvas'), { width: 320, height: 240 });
 
         const snap = async () => {
-            const video = videoRef.current;
-            if (inFlight || endedRef.current || !video || video.readyState < 2) return;
+            if (inFlight || endedRef.current) return;
+            const image = grabFrame(canvas);
+            if (!image) return;
             inFlight = true;
             try {
-                canvas.getContext('2d')?.drawImage(video, 0, 0, canvas.width, canvas.height);
-                const image = canvas.toDataURL('image/jpeg', 0.6);
                 const res = await fetch(`/api/proctor/attempts/${attemptIdRef.current}/snapshot`, {
                     method: 'POST',
                     headers: authHeaders(),
                     body: JSON.stringify({ image, attempt_token: attemptTokenRef.current }),
                 });
-                const data = await res.json().catch(() => ({}));
-                if (data.status === 'terminated') {
-                    if (data.message) setFinalWarning(`${data.message} (warning ${data.strikes} of ${data.strikes_allowed})`);
-                    acceptServerTermination('looking_away');
-                } else if (data.ok && data.warn) {
-                    setCameraWarning(`${data.message} (warning ${data.strikes} of ${data.strikes_allowed})`);
-                    // Only a warning that counted gets a pop-up; one inside the 20s gap just keeps the banner up.
-                    if (data.counted !== false) setWarningPopup({ text: data.message, strikes: data.strikes, allowed: data.strikes_allowed, id: Date.now() });
-                } else if (data.ok) {
-                    setCameraWarning(null);
-                }
+                applyFlagResult(await res.json().catch(() => ({})));
             } catch { /* a missed check is fine; the next one runs in 10s */ }
             finally { inFlight = false; }
         };
@@ -331,7 +412,100 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
         const first = setTimeout(snap, 3000);
         const loop = setInterval(snap, SNAPSHOT_EVERY_MS);
         return () => { clearTimeout(first); clearInterval(loop); };
-    }, [phase, test?.ai_monitoring, authHeaders, acceptServerTermination]);
+    }, [phase, test?.ai_monitoring, authHeaders, applyFlagResult, grabFrame]);
+
+    // ── On-device detector (MediaPipe, several times a second): the ~2-second warnings ─
+    useEffect(() => {
+        if (phase !== 'running' || !test?.ai_monitoring) return;
+        let stopped = false;
+        let detector: DeviceDetector | null = null;
+        let timer: ReturnType<typeof setInterval> | undefined;
+        const canvas = Object.assign(document.createElement('canvas'), { width: 320, height: 240 });
+
+        // The problem being held right now, since when, and when it was last reported.
+        let held: { category: string; since: number; reportedAt: number } | null = null;
+        let tick = 0;
+
+        const report = async (obs: DeviceObservation, heldMs: number) => {
+            try {
+                const res = await fetch(`/api/proctor/attempts/${attemptIdRef.current}/flag`, {
+                    method: 'POST',
+                    headers: authHeaders(),
+                    body: JSON.stringify({
+                        category: obs.category,
+                        detail: { observation: obs.observation, yaw: obs.yaw, pitch: obs.pitch, score: obs.score, faces: obs.faces, held_ms: heldMs },
+                        // The frame goes with every warning, for the reviewer's report.
+                        image: grabFrame(canvas),
+                        attempt_token: attemptTokenRef.current,
+                    }),
+                });
+                applyFlagResult(await res.json().catch(() => ({})));
+            } catch { /* the camera check every 10s still runs */ }
+        };
+
+        (async () => {
+            // Usually already loaded and warmed up during the camera step (see the preload below).
+            detector = await (detectorPromiseRef.current ??= createDeviceDetector());
+            if (stopped) { detector?.close(); detectorPromiseRef.current = null; return; }
+            if (!detector) {
+                // This browser can't run it: say so in the log; the 10s camera check carries on alone.
+                fetch(`/api/proctor/attempts/${attemptIdRef.current}/event`, {
+                    method: 'POST',
+                    headers: authHeaders(),
+                    body: JSON.stringify({ kind: 'detector_unavailable', detail: { at: new Date().toISOString() }, attempt_token: attemptTokenRef.current }),
+                }).catch(() => {});
+                return;
+            }
+            timer = setInterval(() => {
+                const video = videoRef.current;
+                if (endedRef.current || !detector || !video || video.readyState < 2) return;
+                let obs: DeviceObservation;
+                try {
+                    obs = detector.analyse(video, tick++ % 2 === 0); // phone model every other tick
+                } catch { return; }
+
+                const now = Date.now();
+                if (!obs.category) {
+                    if (deviceProblemRef.current) setCameraWarning(null);
+                    deviceProblemRef.current = null;
+                    held = null;
+                    return;
+                }
+                if (!held || held.category !== obs.category) held = { category: obs.category, since: now, reportedAt: 0 };
+                const heldMs = now - held.since;
+                // Held long enough to be real; while it lasts, report again every 20s (the next strike).
+                if (heldMs >= DEVICE_HOLD_MS && now - held.reportedAt >= DEVICE_REPEAT_MS) {
+                    held.reportedAt = now;
+                    deviceProblemRef.current = obs.category;
+                    report(obs, heldMs);
+                }
+            }, DEVICE_TICK_MS);
+        })();
+
+        return () => {
+            stopped = true;
+            clearInterval(timer);
+            detector?.close();
+            if (detector) detectorPromiseRef.current = null;
+            deviceProblemRef.current = null;
+        };
+    }, [phase, test?.ai_monitoring, authHeaders, applyFlagResult, grabFrame]);
+
+    // Load MediaPipe while the candidate is still on the setup screen (from the moment the camera
+    // is on), and run it once on the preview so its one-time compile happens here. Otherwise that
+    // ~1-2s freeze lands right after pressing Start.
+    useEffect(() => {
+        if (phase !== 'ready' || !test?.ai_monitoring || detectorPromiseRef.current) return;
+        const loading = createDeviceDetector();
+        detectorPromiseRef.current = loading;
+        loading.then((d) => {
+            const video = videoRef.current;
+            if (d && video && detectorPromiseRef.current === loading) d.warmUp(video);
+        });
+    }, [phase, test?.ai_monitoring]);
+
+    // Leaving the page before the test started: release the preloaded models.
+    useEffect(() => () => { detectorPromiseRef.current?.then((d) => d?.close()); }, []);
 
     // ── Microphone: a voice in the room is recorded and warned about, no strike ─
     useEffect(() => {
@@ -587,7 +761,8 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
                     <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4">
                         <p className="flex items-center gap-2 text-sm font-black text-rose-900"><Lock className="w-4 h-4" /> Once you start, the test is locked to this screen</p>
                         <ul className="mt-2 list-disc pl-5 text-sm text-rose-900/80 space-y-1">
-                            <li>Switching tabs, switching apps, pressing <b>Esc</b>, leaving fullscreen, or closing/refreshing the page <b>ends the test immediately</b>.</li>
+                            <li>Switching tabs, switching apps, pressing <b>Esc</b> or leaving fullscreen gives you a warning. You get {plural(LEAVE_WARNINGS, 'warning')}; the next time <b>ends the test</b>.</li>
+                            <li>Closing or refreshing the page, or turning off the camera, <b>ends the test immediately</b>.</li>
                             <li>You have {plural(chancesLeft, 'chance')}. Leaving the page uses one up; once you submit, the test is finished.</li>
                             <li>Your <b>camera and microphone stay on</b> for the whole test. What they record is sent to your reviewer.</li>
                             <li>Stay alone, facing the screen, with phones and other devices put away. The camera warns you if it sees otherwise; after {plural(test?.look_away_strikes || 3, 'warning')}, the test closes.</li>
@@ -702,6 +877,30 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
             )}
 
             {warningPopup && <WarningPopup key={warningPopup.id} {...warningPopup} onDone={closeWarningPopup} />}
+
+            {/* Left the test: the questions stay hidden until they come back to fullscreen. */}
+            {away && (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/95 px-6" role="alertdialog" aria-labelledby="left-title">
+                    <div className="max-w-md space-y-4 text-center text-white">
+                        <AlertTriangle className="mx-auto w-12 h-12 text-amber-400" />
+                        <h2 id="left-title" className="text-2xl font-black">You left the test</h2>
+                        {away.warnings > 0 && (
+                            <p className="text-sm font-black uppercase tracking-wider text-amber-300">Warning {away.warnings} of {away.allowed}</p>
+                        )}
+                        <p className="text-sm text-white/80">
+                            Switching tabs or apps, pressing Esc or leaving fullscreen is recorded for your reviewer.
+                            {away.warnings >= away.allowed
+                                ? ' This was your last warning: the next time, the test closes.'
+                                : ` After ${plural(away.allowed, 'warning')} the test closes.`}
+                            {' '}The timer is still running.
+                        </p>
+                        {error && <p className="text-sm font-bold text-rose-300">{error}</p>}
+                        <button onClick={returnToTest} className="rounded-2xl bg-white px-6 py-3 text-sm font-black text-slate-900">
+                            Return to the test
+                        </button>
+                    </div>
+                </div>
+            )}
 
             <main className="mx-auto max-w-2xl space-y-6 px-4 py-6 pb-40">
                 {sections.map((section, si) => {

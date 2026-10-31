@@ -28,7 +28,7 @@ type TestRow = {
 };
 type ProctorEvent = {
     kind: string;
-    detail: { reason?: string; observation?: string; error?: string; category?: string; level?: number; strikes?: number; gap_seconds?: number; note?: string | null; by?: string } | null;
+    detail: { reason?: string; observation?: string; error?: string; category?: string; level?: number; strikes?: number; gap_seconds?: number; note?: string | null; by?: string; source?: string; counted?: boolean; n?: number; allowed?: number } | null;
     created_at: string;
     evidence_url?: string | null;
 };
@@ -796,7 +796,7 @@ function Results({ test, onBack }: { test: TestRow; onBack: () => void }) {
 }
 
 function eventTone(kind: string) {
-    if (kind === 'ai_flag') return 'text-amber-800';
+    if (kind === 'ai_flag' || kind === 'left_warning') return 'text-amber-800';
     if (['resumed', 'hr_extra_chance', 'hr_reset'].includes(kind)) return 'font-bold text-sky-800';
     if (kind === 'voice_detected') return 'text-indigo-800';
     if (kind === 'ai_error') return 'text-slate-500';
@@ -806,7 +806,13 @@ function eventTone(kind: string) {
 function describeEvent(e: ProctorEvent) {
     if (e.kind === 'ai_flag') {
         const label = CATEGORY_LABEL[e.detail?.category || ''] || e.detail?.reason || 'flagged';
-        return `Camera: ${label}${e.detail?.observation ? ` — ${e.detail.observation}` : ''}`;
+        return `${e.detail?.source === 'device' ? 'Live check' : 'Camera'}: ${label}${e.detail?.observation ? ` — ${e.detail.observation}` : ''}${e.detail?.counted === false ? ' (reminder, not counted)' : ''}`;
+    }
+    if (e.kind === 'left_warning') {
+        return `Left the test: ${REASON[e.detail?.reason || ''] || 'left the window'} — warning ${e.detail?.n} of ${e.detail?.allowed}`;
+    }
+    if (e.kind === 'detector_unavailable') {
+        return "Live check couldn't run in this browser — only the 10-second camera check was used";
     }
     if (e.kind === 'voice_detected') return `Microphone: a voice was picked up${e.detail?.level ? ` (level ${e.detail.level})` : ''}`;
     if (e.kind === 'ai_error') return `Camera check failed: ${e.detail?.error || ''}`;
