@@ -13,7 +13,10 @@ import Link from 'next/link';
  */
 
 type Section = { key: string; title: string; description?: string; question_count: number };
-type ReviewRow = { number: number; section: string; text: string; options: string[]; picked: number | null; correct: number; is_correct: boolean };
+type ReviewRow = { number: number; section: string; text: string; options: string[]; multi?: boolean; picked: number[] | null; correct: number[]; is_correct: boolean };
+
+/** Option texts for a list of indexes: "Lock the door; Call security". */
+const optionList = (options: string[], indexes: number[]) => indexes.map((i) => options[i]).filter(Boolean).join('; ');
 type LogRow = { kind: string; detail: Record<string, unknown> | null; created_at: string; image?: string | null };
 type Report = {
     organisation: string | null;
@@ -198,10 +201,11 @@ export default function AttemptReportPage({ params }: { params: Promise<{ attemp
                                         {q.is_correct ? <Check className="h-3 w-3" /> : q.picked === null ? null : <X className="h-3 w-3" />}
                                     </span>
                                     Q{q.number}. {q.text}
+                                    {q.multi && <span className="ml-1.5 text-[11px] font-bold text-slate-400">(select all that apply)</span>}
                                 </p>
                                 <p className="pl-6 text-xs text-slate-600">
-                                    Answered: <b>{q.picked === null ? 'not answered' : q.options[q.picked]}</b>
-                                    {!q.is_correct && <> · Correct: <b>{q.options[q.correct]}</b></>}
+                                    Answered: <b>{q.picked === null ? 'not answered' : optionList(q.options, q.picked)}</b>
+                                    {!q.is_correct && <> · Correct: <b>{optionList(q.options, q.correct)}</b></>}
                                 </p>
                             </div>
                         ))}

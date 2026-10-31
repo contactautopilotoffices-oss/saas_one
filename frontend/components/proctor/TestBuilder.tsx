@@ -8,7 +8,7 @@ import {
 } from '@dnd-kit/core';
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Check, Copy, GripVertical, Plus, Trash2 } from 'lucide-react';
+import { Check, Copy, GripVertical, Plus, Sparkles, Trash2 } from 'lucide-react';
 import { useAppZoom, unzoomTransform } from '@/frontend/hooks/useAppZoom';
 
 /**
@@ -23,10 +23,19 @@ import { useAppZoom, unzoomTransform } from '@/frontend/hooks/useAppZoom';
  */
 
 export type SectionDraft = { key: string; title: string; description: string };
-export type Draft = { uid: string; section: string; text: string; options: string[]; answer_index: number };
+export type Draft = {
+    uid: string; section: string; text: string; options: string[];
+    /** The correct option (single answer). */
+    answer_index: number;
+    /** "Select all that apply": several correct options, scored all or nothing. */
+    multi: boolean;
+    answer_indexes: number[];
+    /** The pasted text gave no answer and the AI chose one: shown until HR touches the answer. */
+    aiPicked?: boolean;
+};
 
 export const newUid = () => Math.random().toString(36).slice(2, 10);
-export const emptyQuestion = (section: string): Draft => ({ uid: newUid(), section, text: '', options: ['', '', '', ''], answer_index: -1 });
+export const emptyQuestion = (section: string): Draft => ({ uid: newUid(), section, text: '', options: ['', '', '', ''], answer_index: -1, multi: false, answer_indexes: [] });
 
 /** Questions in the order candidates (without shuffle) and the saved test see them: by section, then within. */
 export function orderedQuestions(sections: SectionDraft[], questions: Draft[]) {
@@ -293,6 +302,9 @@ function Handle({ label, ...props }: HandleProps & { label: string }) {
     );
 }
 
+/** Is this option one of the right ones? */
+const isCorrect = (q: Draft, oi: number) => (q.multi ? q.answer_indexes.includes(oi) : q.answer_index === oi);
+
 function QuestionCard({
     q, n, locked, handle, sections, canDelete, onChange, onMove, onDuplicate, onDelete,
 }: {
@@ -302,11 +314,14 @@ function QuestionCard({
     if (locked) {
         return (
             <div className="space-y-1.5 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                <p className="text-sm font-bold text-slate-900"><span className="mr-1 text-xs font-black text-slate-400">Q{n}</span> {q.text}</p>
+                <p className="text-sm font-bold text-slate-900">
+                    <span className="mr-1 text-xs font-black text-slate-400">Q{n}</span> {q.text}
+                    {q.multi && <span className="ml-1.5 text-[11px] font-bold text-slate-400">(select all that apply)</span>}
+                </p>
                 <ul className="space-y-1 pl-7">
-                    {q.options.filter((o) => o.trim()).map((o, oi) => (
-                        <li key={oi} className={`flex items-center gap-1.5 text-sm ${oi === q.answer_index ? 'font-bold text-emerald-800' : 'text-slate-600'}`}>
-                            {oi === q.answer_index ? <Check className="w-3.5 h-3.5" /> : <span className="w-3.5" />} {o}
+                    {q.options.map((o, oi) => ({ o, oi })).filter(({ o }) => o.trim()).map(({ o, oi }) => (
+                        <li key={oi} className={`flex items-center gap-1.5 text-sm ${isCorrect(q, oi) ? 'font-bold text-emerald-800' : 'text-slate-600'}`}>
+                            {isCorrect(q, oi) ? <Check className="w-3.5 h-3.5" /> : <span className="w-3.5" />} {o}
                         </li>
                     ))}
                 </ul>
@@ -339,9 +354,39 @@ function QuestionCard({
                     </button>
                 )}
             </div>
+            <div className="flex flex-wrap items-center gap-3 pl-14">
+                <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-bold text-slate-600" title="Candidates tick every option that is right; they score only if they tick exactly the right ones">
+                    <input
+                        type="checkbox"
+                        checked={q.multi}
+                        onChange={(e) => onChange(e.target.checked
+                            // Turning it on keeps the current answer as the first ticked one; off keeps the first ticked.
+                            ? { multi: true, answer_indexes: q.answer_index >= 0 ? [q.answer_index] : [], aiPicked: false }
+                            : { multi: false, answer_index: q.answer_indexes[0] ?? -1, aiPicked: false })}
+                    />
+                    Multiple answers <span className="font-medium text-slate-400">(select all that apply)</span>
+                </label>
+                {q.aiPicked && (
+                    <span className="inline-flex items-center gap-1 rounded-md bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-800">
+                        <Sparkles className="w-3 h-3" /> AI-picked answer — please check
+                    </span>
+                )}
+            </div>
             {q.options.map((opt, oi) => (
                 <div key={oi} className="flex items-center gap-2 pl-14">
-                    <input type="radio" name={`answer-${q.uid}`} checked={q.answer_index === oi} onChange={() => onChange({ answer_index: oi })} title="Mark as correct" />
+                    {q.multi ? (
+                        <input
+                            type="checkbox"
+                            checked={q.answer_indexes.includes(oi)}
+                            onChange={() => onChange({
+                                answer_indexes: q.answer_indexes.includes(oi) ? q.answer_indexes.filter((x) => x !== oi) : [...q.answer_indexes, oi].sort((a, b) => a - b),
+                                aiPicked: false,
+                            })}
+                            title="Tick every correct option"
+                        />
+                    ) : (
+                        <input type="radio" name={`answer-${q.uid}`} checked={q.answer_index === oi} onChange={() => onChange({ answer_index: oi, aiPicked: false })} title="Mark as correct" />
+                    )}
                     <input
                         className={input}
                         placeholder={`Option ${oi + 1}${oi > 1 ? ' (optional)' : ''}`}
@@ -350,7 +395,16 @@ function QuestionCard({
                     />
                 </div>
             ))}
-            <p className="pl-14 text-xs text-slate-400">Select the circle next to the correct (or best) option.</p>
+            <div className="flex flex-wrap items-center gap-3 pl-14">
+                <p className="text-xs text-slate-400">
+                    {q.multi ? 'Tick every correct option.' : 'Select the circle next to the correct (or best) option.'}
+                </p>
+                {q.options.length < 8 && (
+                    <button type="button" onClick={() => onChange({ options: [...q.options, ''] })} className="inline-flex items-center gap-1 text-xs font-bold text-slate-500 hover:text-slate-900">
+                        <Plus className="w-3.5 h-3.5" /> Add option
+                    </button>
+                )}
+            </div>
         </div>
     );
 }

@@ -34,7 +34,13 @@ import { createDeviceDetector, type DeviceDetector, type DeviceObservation } fro
  */
 
 type Phase = 'loading' | 'blocked' | 'identify' | 'setup' | 'ready' | 'running' | 'terminated' | 'submitted';
-type Question = { id: string; section?: string; text: string; options: string[] };
+type Question = { id: string; section?: string; text: string; options: string[]; multi?: boolean };
+/** One option index, or for a "select all that apply" question, the options ticked. */
+type Answer = number | number[];
+
+const isPicked = (a: Answer | undefined, oi: number) => (Array.isArray(a) ? a.includes(oi) : a === oi);
+/** Answered = something picked (an emptied multiple-answer question counts as not answered). */
+const isAnswered = (a: Answer | undefined) => (Array.isArray(a) ? a.length > 0 : a !== undefined);
 type Section = { key: string; title: string; description?: string; question_count: number };
 type TestInfo = {
     title: string; instructions: string | null; duration_minutes: number; ai_monitoring: boolean;
@@ -83,7 +89,7 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
     const [email, setEmail] = useState('');
 
     const [questions, setQuestions] = useState<Question[]>([]);
-    const [answers, setAnswers] = useState<Record<string, number>>({});
+    const [answers, setAnswers] = useState<Record<string, Answer>>({});
     const [remaining, setRemaining] = useState(0);
     const [cameraWarning, setCameraWarning] = useState<string | null>(null);
     /** A pop-up for each new camera warning, so the 2nd and 3rd don't look like the 1st still showing. */
@@ -250,7 +256,7 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
     // ── Submit ───────────────────────────────────────────────────────────────
     const submit = useCallback(async (auto = false) => {
         if (endedRef.current || !attemptIdRef.current) return;
-        if (!auto && !confirmPending && Object.keys(answersRef.current).length < questions.length) {
+        if (!auto && !confirmPending && Object.values(answersRef.current).filter(isAnswered).length < questions.length) {
             setConfirmPending(true);
             return;
         }
@@ -663,7 +669,7 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
     // ── Render ───────────────────────────────────────────────────────────────
     const mm = String(Math.floor(remaining / 60)).padStart(2, '0');
     const ss = String(remaining % 60).padStart(2, '0');
-    const answeredCount = Object.keys(answers).length;
+    const answeredCount = Object.values(answers).filter(isAnswered).length;
     const sections = test?.sections || [];
 
     const cameraView = stream && (phase === 'ready' || phase === 'running') ? (
@@ -918,14 +924,19 @@ export default function ProctorRunner({ mode, testId, token }: { mode: 'authed' 
                             {inSection.map((q) => (
                                 <div key={q.id} role="group" aria-labelledby={`label-${q.id}`} className="rounded-2xl border border-slate-200 p-4">
                                     <p id={`label-${q.id}`} className="text-sm font-black text-slate-900">Q{questions.indexOf(q) + 1}. {q.text}</p>
+                                    {q.multi && <p className="mt-0.5 text-xs font-bold text-slate-500">Select all that apply</p>}
                                     <div className="mt-3 space-y-2">
                                         {q.options.map((opt, oi) => (
-                                            <label key={oi} className={`flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2 text-sm ${answers[q.id] === oi ? 'border-slate-900 bg-slate-50 font-bold' : 'border-slate-200'}`}>
+                                            <label key={oi} className={`flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2 text-sm ${isPicked(answers[q.id], oi) ? 'border-slate-900 bg-slate-50 font-bold' : 'border-slate-200'}`}>
                                                 <input
-                                                    type="radio"
+                                                    type={q.multi ? 'checkbox' : 'radio'}
                                                     name={q.id}
-                                                    checked={answers[q.id] === oi}
-                                                    onChange={() => setAnswers((a) => ({ ...a, [q.id]: oi }))}
+                                                    checked={isPicked(answers[q.id], oi)}
+                                                    onChange={() => setAnswers((a) => {
+                                                        if (!q.multi) return { ...a, [q.id]: oi };
+                                                        const now = Array.isArray(a[q.id]) ? a[q.id] as number[] : [];
+                                                        return { ...a, [q.id]: now.includes(oi) ? now.filter((x) => x !== oi) : [...now, oi] };
+                                                    })}
                                                 />
                                                 {opt}
                                             </label>

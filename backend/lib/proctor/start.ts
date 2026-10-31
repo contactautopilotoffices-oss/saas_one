@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
-import { type ProctorQuestion } from '@/backend/lib/proctor/access';
+import { type ProctorAnswer, type ProctorQuestion } from '@/backend/lib/proctor/access';
 import { loadStanding, type Identity } from '@/backend/lib/proctor/chances';
 import { buildOrder, presentQuestions, toShownAnswers } from '@/backend/lib/proctor/order';
 import { grade } from '@/backend/lib/proctor/grade';
@@ -54,7 +54,7 @@ export type StartOutcome =
           ai_monitoring: boolean;
           questions: ReturnType<typeof presentQuestions>;
           resumed: boolean;
-          answers: Record<string, number>;
+          answers: Record<string, ProctorAnswer>;
       };
 
 function remainingSeconds(startedAt: string, durationMinutes: number) {

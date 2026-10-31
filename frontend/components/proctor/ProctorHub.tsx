@@ -2,7 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Check, Copy, CopyPlus, Eye, FileText, Lock, Mic, MoreVertical, Pencil, Plus, RotateCcw, ShieldAlert, Shuffle, Sparkles, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Check, ClipboardPaste, Copy, CopyPlus, Eye, FileText, Lock, Mic, MoreVertical, Pencil, Plus, RotateCcw, ShieldAlert, Shuffle, Sparkles, Trash2, X } from 'lucide-react';
 import { useAuth } from '@/frontend/context/AuthContext';
 import Loader from '@/frontend/components/ui/Loader';
 import { DEFAULT_SECTIONS } from '@/frontend/lib/proctor/sections';
@@ -282,6 +282,9 @@ function TestEditor({ orgId, source, onDone, onCancel }: { orgId: string; source
     const [loadingSource, setLoadingSource] = useState(source.mode !== 'create');
     const [attemptCount, setAttemptCount] = useState(0);
 
+    const [pasted, setPasted] = useState('');
+    const [importing, setImporting] = useState(false);
+    const [importNote, setImportNote] = useState<string | null>(null);
     const [brief, setBrief] = useState('');
     const [role, setRole] = useState('');
     const [perSection, setPerSection] = useState(5);
@@ -307,8 +310,9 @@ function TestEditor({ orgId, source, onDone, onCancel }: { orgId: string; source
                 setStrikes(t.look_away_strikes);
                 setAiMonitoring(t.ai_monitoring);
                 setShuffle(t.shuffle !== false);
-                const loaded: Draft[] = (t.questions || []).map((q: { section?: string; text: string; options: string[]; answer_index: number }) => ({
+                const loaded: Draft[] = (t.questions || []).map((q: { section?: string; text: string; options: string[]; answer_index: number; multi?: boolean; answer_indexes?: number[] }) => ({
                     uid: newUid(), section: q.section || 'general', text: q.text, options: padOptions(q.options), answer_index: q.answer_index,
+                    multi: !!q.multi, answer_indexes: q.multi ? q.answer_indexes || [q.answer_index] : [],
                 }));
                 const stored = ((t.stored_sections || []) as SectionDraft[]).map((s) => ({ key: s.key, title: s.title || '', description: s.description || '' }));
                 const titles = Object.fromEntries(((t.sections || []) as { key: string; title: string }[]).map((s) => [s.key, s.title]));
@@ -328,7 +332,7 @@ function TestEditor({ orgId, source, onDone, onCancel }: { orgId: string; source
         setInstructions(tpl.instructions);
         setDuration(tpl.duration_minutes);
         setMaxAttempts(tpl.max_attempts);
-        const loaded = tpl.questions.map((q) => ({ uid: newUid(), section: q.section, text: q.text, options: padOptions(q.options), answer_index: q.answer_index }));
+        const loaded: Draft[] = tpl.questions.map((q) => ({ uid: newUid(), section: q.section, text: q.text, options: padOptions(q.options), answer_index: q.answer_index, multi: false, answer_indexes: [] }));
         setSections(withMissingSections(tpl.sections.map((s) => ({ ...s })), loaded));
         setQuestions(loaded);
         setDraftNote(null);
@@ -354,8 +358,8 @@ function TestEditor({ orgId, source, onDone, onCancel }: { orgId: string; source
 
             if (data.title && !title) setTitle(data.title);
             if (data.instructions && !instructions) setInstructions(data.instructions);
-            const drafted: Draft[] = (data.questions as Omit<Draft, 'uid'>[]).map((q) => ({
-                uid: newUid(), section: q.section, text: q.text, options: padOptions(q.options), answer_index: q.answer_index,
+            const drafted: Draft[] = (data.questions as { section: string; text: string; options: string[]; answer_index: number }[]).map((q) => ({
+                uid: newUid(), section: q.section, text: q.text, options: padOptions(q.options), answer_index: q.answer_index, multi: false, answer_indexes: [],
             }));
             setSections((ss) => withMissingSections(
                 Array.isArray(data.sections) && data.sections.length
@@ -372,6 +376,58 @@ function TestEditor({ orgId, source, onDone, onCancel }: { orgId: string; source
             setError(errMsg(err));
         } finally {
             setDrafting(false);
+        }
+    };
+
+    /**
+     * Pasted questions → AI → added to the test. Sections are matched to existing ones by
+     * name; new names become new sections. Nothing is saved until Save.
+     */
+    const importPasted = async () => {
+        setImporting(true);
+        setError(null);
+        setImportNote(null);
+        try {
+            const res = await fetch('/api/proctor/import', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ org_id: orgId || undefined, text: pasted, existing_sections: sections.map((s) => s.title).filter(Boolean) }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Could not read the pasted questions');
+
+            const described = new Map(((data.sections || []) as { title: string; description: string }[]).map((s) => [s.title.toLowerCase(), s.description]));
+            const keyFor = new Map(sections.map((s) => [s.title.trim().toLowerCase(), s.key]));
+            const added: SectionDraft[] = [];
+            const stamp = Date.now().toString(36);
+            const imported: Draft[] = (data.questions as { section: string; text: string; options: string[]; multi: boolean; answer_index: number; answer_indexes: number[]; ai_picked: boolean }[])
+                .map((q) => {
+                    const name = q.section.trim().toLowerCase();
+                    if (!keyFor.has(name)) {
+                        const key = `section_${stamp}_${keyFor.size}`;
+                        keyFor.set(name, key);
+                        added.push({ key, title: q.section.trim(), description: described.get(name) || '' });
+                    }
+                    return {
+                        uid: newUid(), section: keyFor.get(name) as string, text: q.text, options: padOptions(q.options),
+                        answer_index: q.answer_index, multi: q.multi, answer_indexes: q.answer_indexes, aiPicked: q.ai_picked,
+                    };
+                });
+
+            setSections((ss) => [...ss, ...added]);
+            // Added to what's there — except the one blank question a new test starts with.
+            setQuestions((qs) => [...qs.filter((q) => q.text.trim() || q.options.some((o) => o.trim())), ...imported]);
+            const picked = imported.filter((q) => q.aiPicked).length;
+            setImportNote(
+                `Added ${imported.length} question${imported.length === 1 ? '' : 's'}${added.length ? ` and ${added.length} new section${added.length === 1 ? '' : 's'}` : ''}.`
+                + (picked ? ` ${picked} answer${picked === 1 ? ' was' : 's were'} not in the paste, so the AI picked ${picked === 1 ? 'it' : 'them'} — check the ones marked "AI-picked".` : '')
+                + ' Read them all before saving.',
+            );
+            setPasted('');
+        } catch (err) {
+            setError(errMsg(err));
+        } finally {
+            setImporting(false);
         }
     };
 
@@ -395,7 +451,13 @@ function TestEditor({ orgId, source, onDone, onCancel }: { orgId: string; source
                     // In section order, as laid out. Blank options are dropped server-side; remap the marked answer to match.
                     questions: orderedQuestions(sections, questions).map((q) => {
                         const kept = q.options.map((o, idx) => ({ o: o.trim(), idx })).filter((x) => x.o);
-                        return { section: q.section, text: q.text, options: kept.map((x) => x.o), answer_index: kept.findIndex((x) => x.idx === q.answer_index) };
+                        const remap = (i: number) => kept.findIndex((x) => x.idx === i);
+                        return {
+                            section: q.section, text: q.text, options: kept.map((x) => x.o),
+                            answer_index: remap(q.answer_index),
+                            multi: q.multi,
+                            answer_indexes: q.multi ? q.answer_indexes.map(remap).filter((i) => i >= 0) : undefined,
+                        };
                     }),
                 }),
             });
@@ -466,6 +528,30 @@ function TestEditor({ orgId, source, onDone, onCancel }: { orgId: string; source
                         </div>
                         <p className="text-xs text-indigo-900/70">It fills the form below and replaces the questions. Nothing is saved until you press Save.</p>
                         {draftNote && <p className="rounded-lg bg-white p-2 text-xs font-bold text-indigo-900">{draftNote}</p>}
+                    </div>
+
+                    <div className="space-y-2 rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">
+                        <p className="flex items-center gap-2 text-sm font-black text-emerald-900"><ClipboardPaste className="w-4 h-4" /> Paste your questions</p>
+                        <textarea
+                            className={input}
+                            rows={5}
+                            placeholder={'Paste questions copied from Word, a PDF or an email, in any format. For example:\n\nAptitude\n1. What is 15% of 200?\na) 20  b) 30  c) 40  d) 15\nAnswer: b'}
+                            value={pasted}
+                            onChange={(e) => setPasted(e.target.value)}
+                        />
+                        <div className="flex flex-wrap items-center gap-2">
+                            <p className="flex-1 text-xs text-emerald-900/70">
+                                AI sorts them into sections and marks the correct answers. If an answer isn&apos;t in the paste, it picks one and marks it for you to check. They are added to the questions below; nothing is saved until you press Save.
+                            </p>
+                            <button
+                                onClick={importPasted}
+                                disabled={importing || pasted.trim().length < 15}
+                                className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-bold text-white disabled:opacity-40"
+                            >
+                                {importing ? 'Reading…' : 'Add questions'}
+                            </button>
+                        </div>
+                        {importNote && <p className="rounded-lg bg-white p-2 text-xs font-bold text-emerald-900">{importNote}</p>}
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2 rounded-xl bg-slate-50 p-3">
