@@ -11,7 +11,10 @@ import { ArrowLeft, Check, Clock, Lock } from 'lucide-react';
  * Authors only (the API refuses everyone else).
  */
 
-type Question = { id: string; section?: string; text: string; options: string[]; answer_index: number };
+type Question = { id: string; section?: string; text: string; options: string[]; answer_index: number; multi?: boolean; answer_indexes?: number[] };
+
+/** Is this option a correct one? A multiple-answer question can have several. */
+const isCorrect = (q: Question, oi: number) => (q.multi && q.answer_indexes?.length ? q.answer_indexes.includes(oi) : oi === q.answer_index);
 type Section = { key: string; title: string; description?: string; question_count: number };
 type Test = {
     title: string; instructions: string | null; duration_minutes: number; max_attempts: number;
@@ -93,15 +96,16 @@ export default function ProctorPreviewPage({ params }: { params: Promise<{ testI
                             {inSection.map((q) => (
                                 <div key={q.id} className="rounded-2xl border border-slate-200 bg-white p-4">
                                     <p className="text-sm font-black text-slate-900">Q{test.questions.indexOf(q) + 1}. {q.text}</p>
+                                    {q.multi && <p className="mt-0.5 text-xs font-bold text-slate-500">Select all that apply</p>}
                                     <ul className="mt-2 space-y-1.5">
                                         {q.options.map((opt, oi) => (
                                             <li
                                                 key={oi}
                                                 className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-sm ${
-                                                    oi === q.answer_index ? 'border-emerald-400 bg-emerald-50 font-bold text-emerald-900' : 'border-slate-200 text-slate-700'
+                                                    isCorrect(q, oi) ? 'border-emerald-400 bg-emerald-50 font-bold text-emerald-900' : 'border-slate-200 text-slate-700'
                                                 }`}
                                             >
-                                                {oi === q.answer_index ? <Check className="w-4 h-4 shrink-0" /> : <span className="w-4 shrink-0 text-center text-xs text-slate-400">{'ABCD'[oi] || oi + 1}</span>}
+                                                {isCorrect(q, oi) ? <Check className="w-4 h-4 shrink-0" /> : <span className="w-4 shrink-0 text-center text-xs text-slate-400">{'ABCD'[oi] || oi + 1}</span>}
                                                 {opt}
                                             </li>
                                         ))}

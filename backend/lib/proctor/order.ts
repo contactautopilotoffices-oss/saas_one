@@ -1,4 +1,4 @@
-import { resolveSections, type ProctorQuestion } from '@/backend/lib/proctor/access';
+import { resolveSections, type ProctorAnswer, type ProctorQuestion } from '@/backend/lib/proctor/access';
 
 /**
  * The order an attempt shows its questions and options in.
@@ -47,21 +47,34 @@ export function presentQuestions(questions: ProctorQuestion[], order: unknown) {
         .map(({ id, options }) => {
             const q = byId.get(id);
             if (!q) return null;
-            return { id: q.id, section: q.section || 'general', text: q.text, options: options.map((i) => q.options[i]) };
+            return { id: q.id, section: q.section || 'general', text: q.text, options: options.map((i) => q.options[i]), multi: !!q.multi };
         })
-        .filter(Boolean) as Array<{ id: string; section: string; text: string; options: string[] }>;
+        .filter(Boolean) as Array<{ id: string; section: string; text: string; options: string[]; multi: boolean }>;
 }
 
-/** The page's answers (shown index) → stored answers (original index). Invalid picks are dropped. */
+/**
+ * The page's answers (shown index) → stored answers (original index). A
+ * multiple-answer question answers with a list of indexes; invalid picks are dropped.
+ */
 export function toOriginalAnswers(questions: ProctorQuestion[], order: unknown, given: Record<string, unknown>) {
     const map = new Map(orderOrDefault(questions, order).map((o) => [o.id, o.options]));
-    const out: Record<string, number> = {};
+    const out: Record<string, ProctorAnswer> = {};
     for (const q of questions) {
-        const shown = Number(given[q.id]);
         const options = map.get(q.id);
-        if (!options || !Number.isInteger(shown) || shown < 0 || shown >= options.length) continue;
-        const original = options[shown];
-        if (Number.isInteger(original) && original >= 0 && original < q.options.length) out[q.id] = original;
+        if (!options) continue;
+        const toOriginal = (v: unknown) => {
+            const shown = Number(v);
+            if (!Number.isInteger(shown) || shown < 0 || shown >= options.length) return null;
+            const original = options[shown];
+            return Number.isInteger(original) && original >= 0 && original < q.options.length ? original : null;
+        };
+        if (q.multi) {
+            const picked = [...new Set((Array.isArray(given[q.id]) ? given[q.id] as unknown[] : []).map(toOriginal).filter((v): v is number => v !== null))];
+            if (picked.length) out[q.id] = picked.sort((a, b) => a - b);
+        } else {
+            const original = toOriginal(given[q.id]);
+            if (original !== null) out[q.id] = original;
+        }
     }
     return out;
 }
@@ -69,10 +82,17 @@ export function toOriginalAnswers(questions: ProctorQuestion[], order: unknown, 
 /** Stored answers (original index) → the page's answers (shown index), for a resumed attempt. */
 export function toShownAnswers(questions: ProctorQuestion[], order: unknown, stored: Record<string, unknown>) {
     const map = new Map(orderOrDefault(questions, order).map((o) => [o.id, o.options]));
-    const out: Record<string, number> = {};
+    const out: Record<string, ProctorAnswer> = {};
     for (const [id, value] of Object.entries(stored || {})) {
-        const shown = map.get(id)?.indexOf(Number(value)) ?? -1;
-        if (shown >= 0) out[id] = shown;
+        const options = map.get(id);
+        if (!options) continue;
+        if (Array.isArray(value)) {
+            const shown = value.map((v) => options.indexOf(Number(v))).filter((i) => i >= 0);
+            if (shown.length) out[id] = shown;
+        } else {
+            const shown = options.indexOf(Number(value));
+            if (shown >= 0) out[id] = shown;
+        }
     }
     return out;
 }

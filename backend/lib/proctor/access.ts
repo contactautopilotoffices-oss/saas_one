@@ -113,12 +113,34 @@ export interface ProctorQuestion {
     section?: string;
     text: string;
     options: string[];
+    /** The correct option; for a multiple-answer question, the first of answer_indexes. */
     answer_index: number;
+    /** "Select all that apply": scored all or nothing against answer_indexes. */
+    multi?: boolean;
+    answer_indexes?: number[];
+}
+
+/** A stored answer: one option index, or for a multiple-answer question, the set picked. */
+export type ProctorAnswer = number | number[];
+
+/** The correct options of a question, as a sorted list. */
+export function correctOptions(q: ProctorQuestion): number[] {
+    return q.multi && Array.isArray(q.answer_indexes) && q.answer_indexes.length
+        ? [...q.answer_indexes].sort((a, b) => a - b)
+        : [q.answer_index];
+}
+
+/** All or nothing: right only when exactly the correct options were picked. */
+export function isCorrectAnswer(q: ProctorQuestion, given: ProctorAnswer | undefined) {
+    if (given === undefined) return false;
+    const picked = (Array.isArray(given) ? [...given] : [given]).sort((a, b) => a - b);
+    const correct = correctOptions(q);
+    return picked.length === correct.length && picked.every((v, i) => v === correct[i]);
 }
 
 /** What the test taker is allowed to see — the answer key stripped out. */
 export function stripAnswers(questions: ProctorQuestion[]) {
-    return (questions || []).map(({ id, section, text, options }) => ({ id, section: section || 'general', text, options }));
+    return (questions || []).map(({ id, section, text, options, multi }) => ({ id, section: section || 'general', text, options, multi: !!multi }));
 }
 
 /** Grace on top of the test duration for network lag before an attempt counts as expired. */

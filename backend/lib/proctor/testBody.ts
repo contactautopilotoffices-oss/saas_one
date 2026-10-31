@@ -35,13 +35,19 @@ export function parseTestBody(body: Record<string, unknown>) {
     for (const [i, q] of raw.entries()) {
         const text = String(q?.text || '').trim();
         const options = (Array.isArray(q?.options) ? q.options : []).map((o: unknown) => String(o || '').trim()).filter(Boolean);
-        const answer = Number(q?.answer_index);
         const section = sectionKeys.has(String(q?.section)) ? String(q.section) : 'general';
         if (!text) return { error: `Question ${i + 1} has no text` };
         if (options.length < 2) return { error: `Question ${i + 1} needs at least two options` };
-        if (!Number.isInteger(answer) || answer < 0 || answer >= options.length) {
-            return { error: `Question ${i + 1} needs a correct option marked` };
+        const valid = (n: unknown) => Number.isInteger(Number(n)) && Number(n) >= 0 && Number(n) < options.length;
+        if (q?.multi === true) {
+            // "Select all that apply": one or more correct options, scored all or nothing.
+            const answers: number[] = [...new Set<number>((Array.isArray(q.answer_indexes) ? q.answer_indexes as unknown[] : []).filter(valid).map(Number))].sort((a, b) => a - b);
+            if (!answers.length) return { error: `Question ${i + 1} needs at least one correct option ticked` };
+            questions.push({ id: `q${i + 1}`, section, text, options, answer_index: answers[0], multi: true, answer_indexes: answers });
+            continue;
         }
+        const answer = Number(q?.answer_index);
+        if (!valid(answer)) return { error: `Question ${i + 1} needs a correct option marked` };
         questions.push({ id: `q${i + 1}`, section, text, options, answer_index: answer });
     }
     if (questions.length === 0) return { error: 'Add at least one question' };
