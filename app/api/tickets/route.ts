@@ -117,16 +117,16 @@ export async function GET(request: NextRequest) {
         const isAllProperties = !propertyId || propertyId === 'all';
         const isAllOrgs = !organizationId || organizationId === 'all';
 
-        // Non-superadmins cannot query all properties across the organization
-        if (isAllProperties && !isOrgSuperAdmin) {
+        // A user may always list the tickets assigned to themselves, at any property (owner 2026-11-02: the org-level
+        // IT team is assigned tickets across properties it holds no property membership in).
+        const isOwnAssignedQuery = assignedTo === user.id;
+
+        // Non-superadmins cannot query all properties across the organization (except their own assigned tickets)
+        if (isAllProperties && !isOrgSuperAdmin && !isOwnAssignedQuery) {
             if (userPropIds.length === 0) {
                 return NextResponse.json({ tickets: [], total: 0 });
             }
         }
-
-        // A user may always list the tickets assigned to themselves, at any property (owner 2026-11-02: the org-level
-        // IT team is assigned tickets across properties it holds no property membership in).
-        const isOwnAssignedQuery = assignedTo === user.id;
 
         // If a specific property is requested, ensure non-superadmin belongs to that property
         if (propertyId && !isAllProperties && !isOrgSuperAdmin && !isOwnAssignedQuery) {
@@ -163,7 +163,7 @@ export async function GET(request: NextRequest) {
 
         if (propertyId && !isAllProperties) {
             query = query.eq('property_id', propertyId);
-        } else if (isAllProperties && !isOrgSuperAdmin && userPropIds.length > 0) {
+        } else if (isAllProperties && !isOrgSuperAdmin && !isOwnAssignedQuery && userPropIds.length > 0) {
             query = query.in('property_id', userPropIds);
         }
 
