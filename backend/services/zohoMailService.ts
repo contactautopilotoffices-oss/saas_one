@@ -392,13 +392,13 @@ export class ZohoMailService {
     }
 
     /** Mint (and cache) an access token for a caller-supplied refresh token. */
-    private static async tokenFromGrant(grant: { refreshToken: string; dc: string }): Promise<{ token: string; apiDomain: string }> {
+    private static async tokenFromGrant(grant: { refreshToken: string; dc: string; clientId?: string; clientSecret?: string }): Promise<{ token: string; apiDomain: string }> {
         const cacheKey = `grant:${grant.refreshToken.slice(-12)}`;
         const cached = tokenCache.get(cacheKey);
         if (cached && cached.expiresAt > Date.now()) return { token: cached.token, apiDomain: cached.apiDomain };
 
-        const clientId = process.env.ZOHO_MAIL_APP_CLIENT_ID ?? process.env.ZOHO_MAIL_CLIENT_ID;
-        const clientSecret = process.env.ZOHO_MAIL_APP_CLIENT_SECRET ?? process.env.ZOHO_MAIL_CLIENT_SECRET;
+        const clientId = grant.clientId ?? process.env.ZOHO_MAIL_APP_CLIENT_ID ?? process.env.ZOHO_CLIENT_ID ?? process.env.ZOHO_MAIL_CLIENT_ID;
+        const clientSecret = grant.clientSecret ?? process.env.ZOHO_MAIL_APP_CLIENT_SECRET ?? process.env.ZOHO_CLIENT_SECRET ?? process.env.ZOHO_MAIL_CLIENT_SECRET;
         if (!clientId || !clientSecret) throw new Error('No Zoho mail application configured (ZOHO_MAIL_APP_CLIENT_ID / _SECRET).');
 
         const dc = (grant.dc || 'com').trim();
@@ -421,7 +421,7 @@ export class ZohoMailService {
      * GET one Zoho Mail API path (e.g. `/api/tasks/me?from=0&limit=200`) with a caller-supplied grant.
      * Read-only by construction; used by the Task Manager's Zoho task import.
      */
-    static async getJsonWithGrant(grant: { refreshToken: string; dc: string }, pathAndQuery: string): Promise<unknown> {
+    static async getJsonWithGrant(grant: { refreshToken: string; dc: string; clientId?: string; clientSecret?: string }, pathAndQuery: string): Promise<unknown> {
         const t = await this.tokenFromGrant(grant);
         const res = await fetch(`${t.apiDomain}${pathAndQuery}`, {
             headers: { 'Authorization': `Zoho-oauthtoken ${t.token}`, Accept: 'application/json' },

@@ -10,7 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { TaskManagerAuth } from '../../_shared/adminGuard';
-import { ZohoTaskSync, zohoTaskCallbackUrl } from '@/task-manager/ZohoTaskSync';
+import { ZohoTaskSync, zohoTaskCallbackUrl, getZohoTaskAppCredentials } from '@/task-manager/ZohoTaskSync';
 
 export const dynamic = 'force-dynamic';
 
@@ -69,8 +69,8 @@ export async function GET(request: NextRequest) {
         .select('state');
     if (!claimed?.length) return page('Already used', 'That connection link has already been used.', 'bad');
 
-    const clientId = process.env.ZOHO_MAIL_APP_CLIENT_ID ?? '';
-    const clientSecret = process.env.ZOHO_MAIL_APP_CLIENT_SECRET ?? '';
+    const { clientId, clientSecret } = getZohoTaskAppCredentials();
+
     const dc = (process.env.ZOHO_MAIL_APP_DC || process.env.ZOHO_MAIL_DC || 'com').trim();
     // Zoho names the token server for THIS user's data centre; trust it over the env guess.
     const accountsServer = (sp.get('accounts-server') ?? '').trim().replace(/\/+$/, '') || `https://accounts.zoho.${dc}`;

@@ -31,6 +31,12 @@ const PAGE_SIZE = 200;   // Zoho allows 1-499
 const MAX_PAGES = 5;     // hard cap: 1,000 tasks per list per run
 
 /** The redirect Zoho sends the person back to. Must be registered on the Zoho application exactly. */
+export function getZohoTaskAppCredentials(): { clientId: string; clientSecret: string } {
+    const clientId = (process.env.ZOHO_TASKS_CLIENT_ID || process.env.ZOHO_CLIENT_ID || process.env.ZOHO_MAIL_APP_CLIENT_ID || '').trim();
+    const clientSecret = (process.env.ZOHO_TASKS_CLIENT_SECRET || process.env.ZOHO_CLIENT_SECRET || process.env.ZOHO_MAIL_APP_CLIENT_SECRET || '').trim();
+    return { clientId, clientSecret };
+}
+
 export function zohoTaskCallbackUrl(requestUrl?: string): string {
     const override = (process.env.ZOHO_TASKS_REDIRECT_URL ?? '').trim();
     if (override) return override.replace(/\/+$/, '');
@@ -242,7 +248,8 @@ export class ZohoTaskSync {
         const sep = base.endsWith('?') ? '' : '&';
         const all: ZohoTask[] = [];
         for (let page = 0; page < MAX_PAGES; page++) {
-            const data = await ZohoMailService.getJsonWithGrant(grant, `${base}${sep}from=${page * PAGE_SIZE}&limit=${PAGE_SIZE}`) as { data?: { tasks?: ZohoTask[] } } | null;
+            const creds = getZohoTaskAppCredentials();
+            const data = await ZohoMailService.getJsonWithGrant({ ...grant, ...creds }, `${base}${sep}from=${page * PAGE_SIZE}&limit=${PAGE_SIZE}`) as { data?: { tasks?: ZohoTask[] } } | null;
             const tasks = data?.data?.tasks ?? [];
             all.push(...tasks);
             if (tasks.length < PAGE_SIZE) break;
