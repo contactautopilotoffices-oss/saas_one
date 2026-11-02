@@ -16,7 +16,7 @@ import crypto from 'crypto';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { TaskManagerAuth } from '../../_shared/adminGuard';
 import { TaskDatabaseService } from '@/task-manager/TaskDatabaseService';
-import { ZOHO_TASK_SCOPES, zohoTaskCallbackUrl } from '@/task-manager/ZohoTaskSync';
+import { ZOHO_TASK_SCOPES, zohoTaskCallbackUrl, getZohoTaskAppCredentials } from '@/task-manager/ZohoTaskSync';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,9 +28,9 @@ export async function GET(request: NextRequest) {
     const employee = await TaskDatabaseService.getEmployeeById(user.id);
     if (!employee) return NextResponse.json({ error: 'You are not on the Task Manager roster, so there is no list to import into.' }, { status: 403 });
 
-    const clientId = process.env.ZOHO_MAIL_APP_CLIENT_ID;
-    if (!clientId || !process.env.ZOHO_MAIL_APP_CLIENT_SECRET) {
-        return NextResponse.json({ error: 'No Zoho application is configured on this deployment (ZOHO_MAIL_APP_CLIENT_ID / _SECRET).' }, { status: 503 });
+    const { clientId, clientSecret } = getZohoTaskAppCredentials();
+    if (!clientId || !clientSecret) {
+        return NextResponse.json({ error: 'No Zoho application is configured on this deployment (ZOHO_CLIENT_ID / _SECRET or ZOHO_MAIL_APP_CLIENT_ID / _SECRET).' }, { status: 503 });
     }
     const redirectUri = zohoTaskCallbackUrl(request.url);
     if (!redirectUri.startsWith('http')) {
