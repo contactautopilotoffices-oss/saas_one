@@ -563,7 +563,7 @@ export default function TicketDetailPage() {
       }
 
       if (!skipRoleCheck && currentUserId && t.property_id) {
-        secondaryTasks.push(determineUserRole(currentUserId, t.property_id));
+        secondaryTasks.push(determineUserRole(currentUserId, t.property_id, t.assigned_to));
       }
 
       await Promise.all(secondaryTasks);
@@ -736,7 +736,7 @@ export default function TicketDetailPage() {
     }
   };
 
-  const determineUserRole = async (uid: string, propertyId: string) => {
+  const determineUserRole = async (uid: string, propertyId: string, assignedTo?: string | null) => {
     try {
       // 1. Check if master_admin in users table
       const { data: userProfile } = await supabase
@@ -773,6 +773,13 @@ export default function TicketDetailPage() {
         if (orgMembers && orgMembers.length > 0) {
           setTicketOrgId(orgMembers[0].organization_id);
         }
+        return;
+      }
+
+      // Owner 2026-11-02: the org-level IT team works a ticket assigned to them the way an MST does
+      // (only that ticket; any other ticket falls through to the checks below).
+      if (assignedTo === uid && orgMembers?.some((m) => m.role === "it")) {
+        setUserRole("mst");
         return;
       }
 

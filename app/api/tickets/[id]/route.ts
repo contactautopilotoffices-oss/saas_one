@@ -46,7 +46,9 @@ export async function GET(
             const orgRoles = (orgMemsRes.data || []).map(m => (m.role || '').toLowerCase().trim());
             const propRoles = (propMemsRes.data || []).map(m => (m.role || '').toLowerCase().trim());
             const isStaffOrAdmin = orgRoles.some(r => ['org_super_admin', 'master_admin', 'super_admin', 'ops_super_admin'].includes(r)) ||
-                propRoles.some(r => ['property_admin', 'ops_super_admin', 'mst', 'staff', 'tech', 'soft_service_manager', 'soft_service_supervisor'].includes(r));
+                propRoles.some(r => ['property_admin', 'ops_super_admin', 'mst', 'staff', 'tech', 'soft_service_manager', 'soft_service_supervisor'].includes(r)) ||
+                // Owner 2026-11-02: the org-level IT team works the tickets assigned to them like staff do
+                (orgRoles.includes('it') && ticket.assigned_to === user.id);
             isTenantOrVendor = !isStaffOrAdmin;
         }
 

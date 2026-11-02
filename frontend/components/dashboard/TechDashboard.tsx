@@ -7,7 +7,7 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
     Building2, ChevronDown, ClipboardList, Droplets, FlaskConical, FolderOpen, Fuel, GitBranch, Layers, LayoutDashboard, LogOut,
-    Menu, Mic, ScanFace, TrendingUp, Gauge, UserCircle, Users, Wrench, X, Zap,
+    Menu, Mic, Plus, ScanFace, TrendingUp, Gauge, UserCircle, Users, Wrench, X, Zap,
 } from 'lucide-react';
 import { createClient } from '@/frontend/utils/supabase/client';
 import { useAuth } from '@/frontend/context/AuthContext';
@@ -36,6 +36,8 @@ const EscalationHierarchyBuilder = dynamic(() => import('@/frontend/components/e
 const PPMModule = dynamic(() => import('@/frontend/components/ppm/PPMModule'), { loading: TabLoading });
 // Owner 2026-10-29: the drive Tech shares with the Design team (the Design console has the same tab)
 const FilesTab = dynamic(() => import('@/frontend/components/files/FilesTab'), { loading: TabLoading });
+// Owner 2026-11-02: the Super Admin console's "New" ticket quick action
+const TicketCreateModal = dynamic(() => import('@/frontend/components/tickets/TicketCreateModal'), { loading: () => null });
 
 type TechTab =
     | 'tasks' | 'control_centre' | 'meetings' | 'vms_face' | 'files'
@@ -118,6 +120,7 @@ export default function TechDashboard() {
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [selectorOpen, setSelectorOpen] = useState(false);
     const [showSignOut, setShowSignOut] = useState(false);
+    const [showTicketCreate, setShowTicketCreate] = useState(false);
 
     useEffect(() => {
         if (!orgId) return;
@@ -202,6 +205,21 @@ export default function TechDashboard() {
                     <p className="text-[10px] font-black uppercase tracking-[0.2em] text-text-tertiary">Tech Console</p>
                 </div>
                 <nav className="custom-scrollbar min-h-0 flex-1 overflow-y-auto px-4 pb-4" aria-label="Tech console">
+                    {/* Quick Actions: the Super Admin console's "New" ticket button (OrgAdminDashboard), same look */}
+                    <div className="mb-6">
+                        <p className="mb-3 flex items-center gap-2 px-4 text-[10px] font-black uppercase tracking-widest text-slate-500">
+                            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />Quick Actions
+                        </p>
+                        <div className="grid grid-cols-3 gap-2.5 px-4">
+                            <button type="button" onClick={() => { setSidebarOpen(false); setShowTicketCreate(true); }} title="Create New Ticket"
+                                className="group flex min-h-[64px] w-full cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border border-primary bg-primary p-2.5 text-text-inverse shadow-sm transition-all hover:brightness-110">
+                                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/20 text-white transition-transform group-hover:scale-110">
+                                    <Plus className="h-4 w-4" />
+                                </div>
+                                <span className="text-center text-[10px] font-black uppercase tracking-tight">New</span>
+                            </button>
+                        </div>
+                    </div>
                     {NAV.map(group => (
                         <div key={group.section} className="mb-6">
                             <p className="mb-3 flex items-center gap-2 px-4 text-[10px] font-black uppercase tracking-widest text-slate-500">
@@ -237,6 +255,17 @@ export default function TechDashboard() {
             </aside>
 
             <SignOutModal isOpen={showSignOut} onClose={() => setShowSignOut(false)} onConfirm={signOut} />
+            {org && (
+                <TicketCreateModal
+                    isOpen={showTicketCreate}
+                    onClose={() => setShowTicketCreate(false)}
+                    organizationId={org.id}
+                    propertyId={propertyFilter}
+                    isAdminMode={true}
+                    organizations={[org]}
+                    properties={properties}
+                />
+            )}
 
             {/* Main */}
             <main className="w-full min-w-0 flex-1 bg-white lg:ml-72">
