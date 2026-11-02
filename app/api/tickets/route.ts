@@ -124,8 +124,12 @@ export async function GET(request: NextRequest) {
             }
         }
 
+        // A user may always list the tickets assigned to themselves, at any property (owner 2026-11-02: the org-level
+        // IT team is assigned tickets across properties it holds no property membership in).
+        const isOwnAssignedQuery = assignedTo === user.id;
+
         // If a specific property is requested, ensure non-superadmin belongs to that property
-        if (propertyId && !isAllProperties && !isOrgSuperAdmin) {
+        if (propertyId && !isAllProperties && !isOrgSuperAdmin && !isOwnAssignedQuery) {
             if (!userPropIds.includes(propertyId)) {
                 return NextResponse.json({ error: 'You do not have access to tickets for this property.' }, { status: 403 });
             }

@@ -6,8 +6,8 @@ import Image from 'next/image';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
-    Boxes, Building2, Bug, ChevronDown, ClipboardList, DoorOpen, FolderOpen, LayoutDashboard, LogOut, Menu, Settings, ShieldCheck,
-    UserCircle, X,
+    Boxes, Building2, Bug, ChevronDown, ClipboardList, DoorOpen, FolderOpen, LayoutDashboard, LogOut, Menu, Plus, Settings, ShieldCheck,
+    Ticket, UserCircle, X,
 } from 'lucide-react';
 import { createClient } from '@/frontend/utils/supabase/client';
 import { useAuth } from '@/frontend/context/AuthContext';
@@ -30,18 +30,24 @@ const SettingsView = dynamic(() => import('./SettingsView'), { loading: TabLoadi
 const BookMeetingRoom = dynamic(() => import('@/app/(dashboard)/[orgId]/book-room/page'), { loading: TabLoading });
 // Owner 2026-10-29: the drive Design shares with the Tech team (the Tech console has the same tab)
 const FilesTab = dynamic(() => import('@/frontend/components/files/FilesTab'), { loading: TabLoading });
+// Owner 2026-11-02: IT sees the tickets assigned to it (across all properties); Design can raise a ticket
+const AssignedTicketsTab = dynamic(() => import('@/frontend/components/tickets/AssignedTicketsTab'), { loading: TabLoading });
+const TicketCreateModal = dynamic(() => import('@/frontend/components/tickets/TicketCreateModal'), { loading: () => null });
 
 export type ConsoleDepartment = 'it' | 'design';
 
-type ConsoleTab = 'tasks' | 'assets' | 'meeting_room' | 'grievance' | 'files' | 'settings' | 'profile';
+type ConsoleTab = 'tasks' | 'assets' | 'tickets' | 'meeting_room' | 'grievance' | 'files' | 'settings' | 'profile';
 
 interface NavItem { id: ConsoleTab | 'feedback'; label: string; icon: React.ComponentType<{ className?: string }> }
 
-const DEPARTMENTS: Record<ConsoleDepartment, { name: string; work: NavItem[] }> = {
+// canRaiseTickets: shows the Super Admin console's "New" quick action (raise a ticket at any property of the org).
+const DEPARTMENTS: Record<ConsoleDepartment, { name: string; work: NavItem[]; canRaiseTickets: boolean }> = {
     it: {
         name: 'IT',
+        canRaiseTickets: false,
         work: [
             { id: 'assets', label: 'Assets', icon: Boxes },
+            { id: 'tickets', label: 'Tickets', icon: Ticket },
             { id: 'meeting_room', label: 'Meeting Room', icon: DoorOpen },
             { id: 'grievance', label: 'Grievances', icon: ShieldCheck },
             { id: 'tasks', label: 'Task Manager', icon: ClipboardList },
@@ -49,6 +55,7 @@ const DEPARTMENTS: Record<ConsoleDepartment, { name: string; work: NavItem[] }> 
     },
     design: {
         name: 'Design',
+        canRaiseTickets: true,
         work: [
             { id: 'meeting_room', label: 'Meeting Room', icon: DoorOpen },
             { id: 'grievance', label: 'Grievances', icon: ShieldCheck },
@@ -95,6 +102,7 @@ export default function DepartmentConsole({ department }: { department: ConsoleD
     const [selectorOpen, setSelectorOpen] = useState(false);
     const [showSignOut, setShowSignOut] = useState(false);
     const [showFeedback, setShowFeedback] = useState(false);
+    const [showTicketCreate, setShowTicketCreate] = useState(false);
 
     useEffect(() => {
         if (!orgId) return;
@@ -106,8 +114,8 @@ export default function DepartmentConsole({ department }: { department: ConsoleD
             if (cancelled) return;
             if (error || !data) { setErrorMsg('Could not load your organisation.'); return; }
             setOrg(data);
-            // Only IT has the property dropdown (Design has none).
-            if (department !== 'it') return;
+            // Properties feed IT's property dropdown and the "New" ticket form's property list (Design has no dropdown).
+            if (department !== 'it' && !DEPARTMENTS[department].canRaiseTickets) return;
             const { data: props } = await supabase.from('properties').select('id, name, code, image_url').eq('organization_id', data.id).order('name');
             if (!cancelled) setProperties(props || []);
         })();
@@ -213,6 +221,23 @@ export default function DepartmentConsole({ department }: { department: ConsoleD
                     <p className="text-[10px] font-black uppercase tracking-[0.2em] text-text-tertiary">{dept.name} Console</p>
                 </div>
                 <nav className="custom-scrollbar min-h-0 flex-1 overflow-y-auto px-4 pb-4" aria-label={`${dept.name} console`}>
+                    {/* Quick Actions: the Super Admin console's "New" ticket button (OrgAdminDashboard), same look */}
+                    {dept.canRaiseTickets && (
+                        <div className="mb-6">
+                            <p className="mb-3 flex items-center gap-2 px-4 text-[10px] font-black uppercase tracking-widest text-slate-500">
+                                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />Quick Actions
+                            </p>
+                            <div className="grid grid-cols-3 gap-2.5 px-4">
+                                <button type="button" onClick={() => { setSidebarOpen(false); setShowTicketCreate(true); }} title="Create New Ticket"
+                                    className="group flex min-h-[64px] w-full cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border border-primary bg-primary p-2.5 text-text-inverse shadow-sm transition-all hover:brightness-110">
+                                    <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/20 text-white transition-transform group-hover:scale-110">
+                                        <Plus className="h-4 w-4" />
+                                    </div>
+                                    <span className="text-center text-[10px] font-black uppercase tracking-tight">New</span>
+                                </button>
+                            </div>
+                        </div>
+                    )}
                     {nav.map(group => (
                         <div key={group.section} className="mb-6">
                             <p className="mb-3 flex items-center gap-2 px-4 text-[10px] font-black uppercase tracking-widest text-slate-500">
@@ -249,6 +274,16 @@ export default function DepartmentConsole({ department }: { department: ConsoleD
 
             <SignOutModal isOpen={showSignOut} onClose={() => setShowSignOut(false)} onConfirm={signOut} />
             <FeedbackModal isOpen={showFeedback} onClose={() => setShowFeedback(false)} />
+            {dept.canRaiseTickets && org && (
+                <TicketCreateModal
+                    isOpen={showTicketCreate}
+                    onClose={() => setShowTicketCreate(false)}
+                    organizationId={org.id}
+                    isAdminMode={true}
+                    organizations={[org]}
+                    properties={properties}
+                />
+            )}
 
             {/* Main */}
             <main className="w-full min-w-0 flex-1 bg-white lg:ml-72">
@@ -266,6 +301,9 @@ export default function DepartmentConsole({ department }: { department: ConsoleD
                     {errorMsg && <p role="alert" className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{errorMsg}</p>}
 
                     {activeTab === 'tasks' && <DepartmentTasksTab />}
+                    {activeTab === 'tickets' && org && user && (
+                        <AssignedTicketsTab organizationId={org.id} userId={user.id} propertyId={propertyFilter} />
+                    )}
                     {activeTab === 'assets' && org && (
                         <AssetsModule
                             organizationId={org.id}

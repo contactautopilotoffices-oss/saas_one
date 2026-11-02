@@ -476,7 +476,7 @@ export default function TicketCreateModal({
                                                                             </span>
                                                                         </div>
                                                                         <div className="min-w-0">
-                                                                            <p className="text-sm sm:text-xs font-bold text-slate-900 truncate">{user.full_name}</p>
+                                                                            <p className="text-sm sm:text-xs font-bold text-slate-900 truncate">{user.full_name}{user.role === 'it' && ' (IT)'}</p>
                                                                             {user.email && <p className="text-xs sm:text-[10px] text-slate-400 truncate font-medium">{user.email}</p>}
                                                                         </div>
                                                                     </div>
