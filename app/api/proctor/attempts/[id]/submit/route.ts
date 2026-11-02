@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { loadOwnAttempt, readAttemptToken, isPastDeadline } from '@/backend/lib/proctor/access';
+import { toOriginalAnswers } from '@/backend/lib/proctor/order';
+import { grade } from '@/backend/lib/proctor/grade';
 
 /**
  * POST /api/proctor/attempts/[id]/submit — grade and close the attempt.
@@ -22,27 +24,13 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     const given = (body.answers && typeof body.answers === 'object') ? body.answers as Record<string, unknown> : {};
 
-    const answers: Record<string, number> = {};
-    const sectionScores: Record<string, { score: number; total: number }> = {};
-    let score = 0;
-    for (const q of test.questions || []) {
-        const section = q.section || 'general';
-        sectionScores[section] ??= { score: 0, total: 0 };
-        sectionScores[section].total++;
-        const pick = Number(given[q.id]);
-        if (Number.isInteger(pick) && pick >= 0 && pick < q.options.length) {
-            answers[q.id] = pick;
-            if (pick === q.answer_index) {
-                score++;
-                sectionScores[section].score++;
-            }
-        }
-    }
+    // The page answers by the option's position as shown (it may be shuffled); store and grade the original.
+    const answers = toOriginalAnswers(test.questions || [], attempt.question_order, given);
 
     const status = isPastDeadline(attempt.started_at, test.duration_minutes) ? 'expired' : 'submitted';
     const { data: updated, error } = await supabaseAdmin
         .from('proctor_attempts')
-        .update({ status, answers, score, total: (test.questions || []).length, section_scores: sectionScores, ended_at: new Date().toISOString() })
+        .update({ status, answers, ...grade(test.questions || [], answers), ended_at: new Date().toISOString() })
         .eq('id', id)
         .eq('status', 'in_progress')
         .select('id')

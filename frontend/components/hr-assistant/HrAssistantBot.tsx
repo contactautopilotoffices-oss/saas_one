@@ -95,6 +95,8 @@ const HIDDEN_PATH_PREFIXES = [
     '/onboard', '/onboarding', '/landing', '/landing_animation', '/privacy', '/privacy-policy',
     '/terms', '/data-deletion', '/waiting-approval', '/cc-preview', '/design-lab', '/loader-test',
     '/test-loader', '/simple-test',
+    // Candidate assessments: the public test link and every /proctor page (runner, preview, report).
+    '/t', '/proctor',
 ];
 
 function isHiddenPath(pathname: string | null): boolean {

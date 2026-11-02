@@ -1,8 +1,9 @@
+﻿import Anthropic from '@anthropic-ai/sdk';
 import { resolveProvider } from '@/backend/lib/council/llm';
 import { visionExtract, DEFAULT_VISION_MODEL } from '@/backend/lib/ocr/vision';
 
 /**
- * One webcam frame → one vision-model verdict. Called every ~20s during a
+ * One webcam frame → one vision-model verdict. Called every ~10s during a
  * proctored test.
  *
  * Goes through the repo's existing vision helper (backend/lib/ocr/vision.ts),
@@ -16,12 +17,26 @@ import { visionExtract, DEFAULT_VISION_MODEL } from '@/backend/lib/ocr/vision';
  *    so neither agent justification applies `[BAA p.115]`; default to workflow `[BAA p.104]`.
  *    No prior deterministic path exists to compare against `[BAA pp.94–95, 99]`.
  * 2. Context: one image and a fixed checklist; knows nothing about the test or the person `[BAA p.112]`.
- * 3. Cost of a false positive: low — a verdict only flags the attempt for a human; it never
- *    ends the test or spends a chance. So the cheap, fast multimodal tier `[BAA p.112]`:
+ * 3. Cost of a false positive: medium — every flagged category (no face, looking away, a phone,
+ *    a second face) warns the taker and counts as a strike, and at the test's strike limit
+ *    (default 3) the attempt closes, using up a chance. One misread frame does not end a test,
+ *    and the frames for phone/second-face are kept for a human to overrule. Still the cheap,
+ *    fast multimodal tier `[BAA p.112]`, because the 10s cadence rules out slower models:
  *    glm-5.3-flash on ENGY, measured at 3–10s and ~500 tokens a frame (≈₹0.8 for a 30-minute
- *    test). qwen3.8-27b is cheaper but ran a steady 15s, too slow for a 20s cadence.
+ *    test at the old 20s cadence; ≈₹1.6 at 10s). qwen3.8-27b is cheaper but ran a steady 15s,
+ *    too slow for a 10s cadence. At most one strike per 20s, so a burst of misread frames
+ *    can't close a test in seconds.
+ *    Owner 2026-10-31: Claude Haiku 5.5 (claude-haiku-5-5) at effort "medium" when ANTHROPIC_API_KEY is
+ *    set — the cheapest current Claude (~$0.03–0.06 per 30-min test, ~2–4s a frame, estimated), with
+ *    JSON-schema output; the ENGY model above stays as the fallback. Sonnet 5.5 is the step up if
+ *    hard cases (part-hidden phone, edge-of-frame face) are still missed `[BAA p.112]`.
  * 4. Tools: none.
  * 5. Prompt: fixed checklist, JSON only, observation written before the verdict `[BAA pp.105, 114]`, `[BAA p.97]`.
+ *    Owner 2026-10-31: head turned OR eyes off the screen counts as looking away (the "slight
+ *    head tilt" exemption was removed). The route decides from the fields, not `flagged`
+ *    `[BAA p.94]`. This check is now the backstop: the 2-second warnings come from the
+ *    MediaPipe detector in the candidate's browser (frontend/lib/proctor/deviceDetector.ts),
+ *    and both feed the same strike rules (backend/lib/proctor/flags.ts).
  * 6. Memory: none — frames don't repeat in a way memory helps `[BAA pp.100–103]`.
  * 7. Multi-agent: no — single call `[BAA p.116]`.
  * 8. Evaluation `[BAA pp.118–119]`: system = ai_error events; quality = PARTIAL — hand-checked on
@@ -31,7 +46,9 @@ import { visionExtract, DEFAULT_VISION_MODEL } from '@/backend/lib/ocr/vision';
  *    audited after the fact `[BAA p.98]`; tool interaction = N/A; efficiency = one call per frame.
  * 9. Trace: every verdict is a proctor_events row `[BAA pp.119–120]`.
  * 10. Knowingly violated: L6 — no rubric grader and no ~5% manual audit behind those numbers.
- *     Acceptable only because a verdict never acts alone; a human reads every flag.
+ *     L10 — the false-positive cost rose (strikes can close an attempt) but the model tier did
+ *     not `[BAA p.112]`; the strike limit is the only buffer. Close the item-8 gap (one real
+ *     person at a laptop, NOT flagged) before relying on this for hiring decisions.
  */
 
 export interface FrameVerdict {
@@ -47,14 +64,15 @@ const PROMPT = `You are proctoring an online test. The image is a webcam frame o
 
 Check, in this order:
 1. How many human faces are visible? (0, 1, 2, ...)
-2. Is the person facing the screen (roughly toward the camera), not turned away or looking down at something?
-3. Is a phone, tablet, second screen, book or paper being looked at or held?
+2. Are the person's head AND eyes on the screen (roughly toward the camera)? Answer false if the head is turned to a side, up or down, or if the eyes are clearly looking away from the screen (to a side, or down at something below it), even when the head faces forward.
+3. Is a phone, tablet, second screen, book or paper visible, held or being looked at? A phone partly in view counts.
+4. Count any face, even one only partly visible at the edge of the frame.
 
-Flag the frame if: no face, more than one face, the person is clearly turned away, or a phone/device/notes are in use.
-Do not flag for poor lighting, glasses, a normal blink, or a slight head tilt.
+Flag the frame if: no face, more than one face, head or eyes off the screen, or a phone/device/notes in view.
+Do not flag for poor lighting, glasses, or a normal blink.
 
 Return ONLY raw JSON, no markdown:
-{"observation":"<one sentence on what you see>","face_count":<int>,"looking_at_screen":<bool>,"phone_or_device_visible":<bool>,"flagged":<bool>,"reason":"<short reason if flagged, else empty>"}`;
+{"observation":"<one sentence on what you see, including where the head and eyes point>","face_count":<int>,"looking_at_screen":<bool>,"phone_or_device_visible":<bool>,"flagged":<bool>,"reason":"<short reason if flagged, else empty>"}`;
 
 /**
  * Vision model per provider. A model id is provider-specific, so the ENGY
@@ -68,10 +86,77 @@ function modelForProvider(provider: string): string {
     return DEFAULT_VISION_MODEL; // custom (ENGY): glm-5.3-flash
 }
 
+// ── Claude (owner 2026-10-31: Haiku 5.5 "for now") ──────────────────────────
+/**
+ * Used when ANTHROPIC_API_KEY is set (or PROCTOR_VISION_PROVIDER=anthropic);
+ * PROCTOR_VISION_PROVIDER=council forces the old path. Medium effort (the
+ * model's default) takes ~2–4s, inside the 10s cadence, and the JSON schema means the answer
+ * always has exactly the fields the route reads. On any failure the frame goes
+ * to the council provider instead, so a check is never lost.
+ */
+const CLAUDE_VISION_MODEL = process.env.PROCTOR_CLAUDE_VISION_MODEL || 'claude-haiku-5-5';
+
+const VERDICT_SCHEMA = {
+    type: 'object',
+    properties: {
+        observation: { type: 'string' },
+        face_count: { type: 'integer' },
+        looking_at_screen: { type: 'boolean' },
+        phone_or_device_visible: { type: 'boolean' },
+        flagged: { type: 'boolean' },
+        reason: { type: 'string' },
+    },
+    required: ['observation', 'face_count', 'looking_at_screen', 'phone_or_device_visible', 'flagged', 'reason'],
+    additionalProperties: false,
+};
+
+function claudeEnabled() {
+    const choice = (process.env.PROCTOR_VISION_PROVIDER || '').toLowerCase();
+    if (choice === 'anthropic') return true;
+    if (choice === 'council') return false;
+    return !!process.env.ANTHROPIC_API_KEY;
+}
+
+let claude: Anthropic | null = null;
+
+async function claudeVerdict(base64: string): Promise<Partial<Record<keyof FrameVerdict, unknown>> | { error: string }> {
+    // One retry at most and a 9s ceiling, so a slow call can't overrun the next check.
+    claude ??= new Anthropic({ timeout: 9_000, maxRetries: 1 });
+    try {
+        const res = await claude.messages.create({
+            model: CLAUDE_VISION_MODEL,
+            max_tokens: 1024,
+            // Owner 2026-10-31: medium (Haiku 5.5's default) — a little more care on borderline frames.
+            output_config: { effort: 'medium', format: { type: 'json_schema', schema: VERDICT_SCHEMA } },
+            messages: [{
+                role: 'user',
+                content: [
+                    { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: base64 } },
+                    { type: 'text', text: PROMPT },
+                ],
+            }],
+        });
+        if (res.stop_reason === 'refusal') return { error: 'Claude declined to check this frame' };
+        if (res.stop_reason === 'max_tokens') return { error: 'Claude ran out of tokens on this frame' };
+        const text = res.content.find((b) => b.type === 'text');
+        if (!text || text.type !== 'text') return { error: 'Claude returned no answer' };
+        return JSON.parse(text.text);
+    } catch (err) {
+        if (err instanceof Anthropic.APIError) return { error: `Claude ${err.status ?? ''} ${err.message}`.trim() };
+        return { error: err instanceof Error ? err.message : 'Claude check failed' };
+    }
+}
+
 /** Returns a verdict, or an error string — never throws. */
 export async function checkFrame(imageDataUrl: string): Promise<FrameVerdict | { error: string }> {
     const base64 = imageDataUrl.split(',')[1] || '';
     if (!base64) return { error: 'Frame was empty' };
+
+    if (claudeEnabled()) {
+        const fromClaude = await claudeVerdict(base64);
+        if (!('error' in fromClaude) && typeof fromClaude.face_count === 'number') return toVerdict(fromClaude);
+        console.warn('[proctor] Claude frame check failed, using the council model:', 'error' in fromClaude ? fromClaude.error : 'no face_count');
+    }
 
     const { provider } = resolveProvider();
     const result = await visionExtract({
@@ -99,6 +184,11 @@ export async function checkFrame(imageDataUrl: string): Promise<FrameVerdict | {
         return { error: `Unreadable AI response: ${(result.text || '').slice(0, 200)}` };
     }
 
+    return toVerdict(parsed);
+}
+
+/** A model's answer → a verdict, with the flag re-derived from the fields. */
+function toVerdict(parsed: Partial<Record<keyof FrameVerdict, unknown>>): FrameVerdict {
     const faceCount = Math.max(0, Math.round(parsed.face_count as number));
     const looking = parsed.looking_at_screen !== false;
     const device = parsed.phone_or_device_visible === true;

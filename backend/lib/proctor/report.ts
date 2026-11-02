@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
-import { resolveSections, EVIDENCE_BUCKET, type ProctorQuestion } from '@/backend/lib/proctor/access';
+import { resolveSections, correctOptions, isCorrectAnswer, EVIDENCE_BUCKET, type ProctorAnswer, type ProctorQuestion } from '@/backend/lib/proctor/access';
 
 /**
  * The reviewer's report for one attempt: the score, how it was answered, and
@@ -50,20 +50,22 @@ export async function buildAttemptReport(attemptId: string, opts: { embedImages?
 
     const questions = (test.questions || []) as ProctorQuestion[];
     const sections = resolveSections(test.sections, questions);
-    const answers = (attempt.answers || {}) as Record<string, number>;
+    const answers = (attempt.answers || {}) as Record<string, ProctorAnswer>;
 
-    // Every question, what they picked, and whether it was right.
+    // Every question, what they picked, and whether it was right. picked/correct are lists, so a
+    // multiple-answer question reads the same way as a single one.
     const review = questions.map((q, i) => {
-        const picked = answers[q.id];
-        const answered = typeof picked === 'number';
+        const given = answers[q.id];
+        const picked = given === undefined ? null : Array.isArray(given) ? given : [given];
         return {
             number: i + 1,
             section: q.section || 'general',
             text: q.text,
             options: q.options,
-            picked: answered ? picked : null,
-            correct: q.answer_index,
-            is_correct: answered && picked === q.answer_index,
+            multi: !!q.multi,
+            picked,
+            correct: correctOptions(q),
+            is_correct: isCorrectAnswer(q, given),
         };
     });
 

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
-import { resolveProctorAccess, isProctorAccessError, COMPLETED_STATUSES, type ProctorQuestion } from '@/backend/lib/proctor/access';
+import { resolveProctorAccess, isProctorAccessError } from '@/backend/lib/proctor/access';
+import { standingFrom, STANDING_COLUMNS, type AttemptRow, type GrantRow } from '@/backend/lib/proctor/chances';
+import { parseTestBody } from '@/backend/lib/proctor/testBody';
 
 /**
  * GET /api/proctor/tests?org_id=
@@ -13,7 +15,7 @@ export async function GET(request: NextRequest) {
 
     let query = supabaseAdmin
         .from('proctor_tests')
-        .select('id, title, instructions, duration_minutes, ai_monitoring, is_active, max_attempts, look_away_strikes, public_token, questions, created_at')
+        .select('id, title, instructions, duration_minutes, ai_monitoring, is_active, max_attempts, look_away_strikes, shuffle, public_token, questions, created_at')
         .eq('organization_id', access.organizationId)
         .order('created_at', { ascending: false });
     if (!access.canAuthor) query = query.eq('is_active', true);
@@ -22,15 +24,23 @@ export async function GET(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
     const ids = (tests || []).map((t) => t.id);
-    let attemptQuery = supabaseAdmin.from('proctor_attempts').select('test_id, user_id, status').in('test_id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']);
+    const testIds = ids.length ? ids : ['00000000-0000-0000-0000-000000000000'];
+    let attemptQuery = supabaseAdmin.from('proctor_attempts').select(`test_id, user_id, candidate_email, ${STANDING_COLUMNS}`).in('test_id', testIds);
     if (!access.canAuthor) attemptQuery = attemptQuery.eq('user_id', access.userId);
-    const { data: attempts } = await attemptQuery;
+    const [{ data: attempts }, { data: myGrants }] = await Promise.all([
+        attemptQuery,
+        supabaseAdmin.from('proctor_grants').select('test_id, kind, created_at').in('test_id', testIds).eq('user_id', access.userId),
+    ]);
 
     return NextResponse.json({
         can_author: access.canAuthor,
         tests: (tests || []).map((t) => {
             const forTest = (attempts || []).filter((a) => a.test_id === t.id);
-            const mine = forTest.filter((a) => a.user_id === access.userId);
+            const mine = standingFrom(
+                forTest.filter((a) => a.user_id === access.userId) as unknown as AttemptRow[],
+                (myGrants || []).filter((g) => g.test_id === t.id) as GrantRow[],
+                t,
+            );
             return {
                 id: t.id,
                 title: t.title,
@@ -42,11 +52,14 @@ export async function GET(request: NextRequest) {
                 look_away_strikes: t.look_away_strikes,
                 question_count: Array.isArray(t.questions) ? t.questions.length : 0,
                 created_at: t.created_at,
-                my_attempts_used: mine.length,
-                my_completed: mine.some((a) => COMPLETED_STATUSES.includes(a.status)),
+                // This viewer's own chances, counting HR's extra chances and resets.
+                my_chances: mine.allowed,
+                my_attempts_used: mine.used,
+                my_completed: mine.completed,
                 ...(access.canAuthor ? {
+                    shuffle: t.shuffle,
                     public_token: t.public_token,
-                    people: new Set(forTest.map((a) => a.user_id)).size,
+                    people: new Set(forTest.map((a) => a.user_id || a.candidate_email?.toLowerCase())).size,
                     attempts: forTest.length,
                     terminated: forTest.filter((a) => a.status === 'terminated').length,
                 } : {}),
@@ -67,59 +80,14 @@ export async function POST(request: NextRequest) {
     if (isProctorAccessError(access)) return access;
     if (!access.canAuthor) return NextResponse.json({ error: 'Forbidden: you cannot create tests' }, { status: 403 });
 
-    const title = String(body.title || '').trim();
-    if (!title) return NextResponse.json({ error: 'Title is required' }, { status: 400 });
-
-    const duration = Number(body.duration_minutes) || 15;
-    if (duration < 1 || duration > 180) return NextResponse.json({ error: 'Duration must be 1–180 minutes' }, { status: 400 });
-
-    const maxAttempts = body.max_attempts === undefined ? 2 : Number(body.max_attempts);
-    if (!Number.isInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 5) {
-        return NextResponse.json({ error: 'Chances must be 1–5' }, { status: 400 });
-    }
-
-    const strikes = body.look_away_strikes === undefined ? 3 : Number(body.look_away_strikes);
-    if (!Number.isInteger(strikes) || strikes < 1 || strikes > 20) {
-        return NextResponse.json({ error: 'Camera warnings must be 1–20' }, { status: 400 });
-    }
-
-    const sections = (Array.isArray(body.sections) ? body.sections : [])
-        .filter((s: { key?: unknown }) => typeof s?.key === 'string' && s.key.trim())
-        .map((s: { key: string; title?: unknown; description?: unknown }) => ({
-            key: s.key.trim(),
-            title: String(s.title || '').trim(),
-            description: String(s.description || '').trim(),
-        }));
-
-    const sectionKeys = new Set<string>([...sections.map((s: { key: string }) => s.key), 'general']);
-    const raw = Array.isArray(body.questions) ? body.questions : [];
-    const questions: ProctorQuestion[] = [];
-    for (const [i, q] of raw.entries()) {
-        const text = String(q?.text || '').trim();
-        const options = (Array.isArray(q?.options) ? q.options : []).map((o: unknown) => String(o || '').trim()).filter(Boolean);
-        const answer = Number(q?.answer_index);
-        const section = sectionKeys.has(String(q?.section)) ? String(q.section) : 'general';
-        if (!text) return NextResponse.json({ error: `Question ${i + 1} has no text` }, { status: 400 });
-        if (options.length < 2) return NextResponse.json({ error: `Question ${i + 1} needs at least two options` }, { status: 400 });
-        if (!Number.isInteger(answer) || answer < 0 || answer >= options.length) {
-            return NextResponse.json({ error: `Question ${i + 1} needs a correct option marked` }, { status: 400 });
-        }
-        questions.push({ id: `q${i + 1}`, section, text, options, answer_index: answer });
-    }
-    if (questions.length === 0) return NextResponse.json({ error: 'Add at least one question' }, { status: 400 });
+    const parsed = parseTestBody(body);
+    if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
 
     const { data, error } = await supabaseAdmin
         .from('proctor_tests')
         .insert({
             organization_id: access.organizationId,
-            title,
-            instructions: String(body.instructions || '').trim() || null,
-            duration_minutes: duration,
-            max_attempts: maxAttempts,
-            look_away_strikes: strikes,
-            sections,
-            ai_monitoring: body.ai_monitoring !== false,
-            questions,
+            ...parsed.fields,
             created_by: access.userId,
         })
         .select('id, public_token')
