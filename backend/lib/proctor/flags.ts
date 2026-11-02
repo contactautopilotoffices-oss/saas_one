@@ -27,7 +27,7 @@ export const WARNING_MESSAGE: Record<FlagCategory, string> = {
     no_face: 'Your face is not visible — look into the camera',
     multiple_faces: 'Only you should be in view — someone else was seen on camera',
     phone: 'Put away phones and other devices',
-    looking_away: 'Keep your head and eyes on the screen',
+    looking_away: 'Keep your head facing the screen',
 };
 
 export const isFlagCategory = (c: unknown): c is FlagCategory => WARNING_CATEGORIES.includes(c as FlagCategory);

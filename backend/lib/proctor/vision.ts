@@ -32,8 +32,10 @@ import { visionExtract, DEFAULT_VISION_MODEL } from '@/backend/lib/ocr/vision';
  *    hard cases (part-hidden phone, edge-of-frame face) are still missed `[BAA p.112]`.
  * 4. Tools: none.
  * 5. Prompt: fixed checklist, JSON only, observation written before the verdict `[BAA pp.105, 114]`, `[BAA p.97]`.
- *    Owner 2026-10-31: head turned OR eyes off the screen counts as looking away (the "slight
- *    head tilt" exemption was removed). The route decides from the fields, not `flagged`
+ *    Owner 2026-11-02 (replaces the 2026-10-31 "head OR eyes" rule): only the HEAD turned away
+ *    counts as looking away; eyes are ignored, and a slight downward tilt toward the lower screen
+ *    or keyboard is allowed. Reason: real candidates reading the screen were flagged "eyes looking
+ *    down" — a false-positive cost that closed attempts `[BAA p.112]`. The route decides from the fields, not `flagged`
  *    `[BAA p.94]`. This check is now the backstop: the 2-second warnings come from the
  *    MediaPipe detector in the candidate's browser (frontend/lib/proctor/deviceDetector.ts),
  *    and both feed the same strike rules (backend/lib/proctor/flags.ts).
@@ -64,15 +66,15 @@ const PROMPT = `You are proctoring an online test. The image is a webcam frame o
 
 Check, in this order:
 1. How many human faces are visible? (0, 1, 2, ...)
-2. Are the person's head AND eyes on the screen (roughly toward the camera)? Answer false if the head is turned to a side, up or down, or if the eyes are clearly looking away from the screen (to a side, or down at something below it), even when the head faces forward.
+2. Is the person's HEAD facing the screen (roughly toward the camera)? Judge the head only — ignore where the eyes point. Answer false only if the head is clearly turned to a side, or tilted far up, or far down (e.g. toward the lap). A head facing forward with the eyes looking down or aside, or tilted slightly down toward the lower screen or the keyboard, is facing the screen: answer true.
 3. Is a phone, tablet, second screen, book or paper visible, held or being looked at? A phone partly in view counts.
 4. Count any face, even one only partly visible at the edge of the frame.
 
-Flag the frame if: no face, more than one face, head or eyes off the screen, or a phone/device/notes in view.
-Do not flag for poor lighting, glasses, or a normal blink.
+Flag the frame if: no face, more than one face, head turned away from the screen, or a phone/device/notes in view.
+Do not flag for eye movement, reading, looking at the keyboard, poor lighting, glasses, or a normal blink.
 
 Return ONLY raw JSON, no markdown:
-{"observation":"<one sentence on what you see, including where the head and eyes point>","face_count":<int>,"looking_at_screen":<bool>,"phone_or_device_visible":<bool>,"flagged":<bool>,"reason":"<short reason if flagged, else empty>"}`;
+{"observation":"<one sentence on what you see, including where the head points>","face_count":<int>,"looking_at_screen":<bool>,"phone_or_device_visible":<bool>,"flagged":<bool>,"reason":"<short reason if flagged, else empty>"}`;
 
 /**
  * Vision model per provider. A model id is provider-specific, so the ENGY

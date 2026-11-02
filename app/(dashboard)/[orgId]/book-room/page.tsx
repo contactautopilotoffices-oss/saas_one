@@ -20,8 +20,9 @@ const LAST_PROPERTY_KEY = 'book_room_last_property';
  */
 export default function BookMeetingRoomPage() {
     const params = useParams();
-    const orgId = params.orgId as string;
-    const { user } = useAuth();
+    const { user, membership } = useAuth();
+    // URLs without the organisation (e.g. /dashboard?tab=meeting_room) fall back to the user's own organisation
+    const orgId = (params.orgId as string) || membership?.org_id || '';
     const [properties, setProperties] = useState<BookableProperty[]>([]);
     const [selectedPropertyId, setSelectedPropertyId] = useState<string>('');
     const [isLoading, setIsLoading] = useState(true);

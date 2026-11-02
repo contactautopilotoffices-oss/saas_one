@@ -7,7 +7,7 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
     Building2, ChevronDown, ClipboardList, Droplets, FlaskConical, FolderOpen, Fuel, GitBranch, Layers, LayoutDashboard, LogOut,
-    Menu, Mic, Plus, ScanFace, TrendingUp, Gauge, UserCircle, Users, Wrench, X, Zap,
+    Menu, Mic, Plus, ScanFace, TrendingUp, Gauge, UserCircle, UserSearch, Users, Wrench, X, Zap,
 } from 'lucide-react';
 import { createClient } from '@/frontend/utils/supabase/client';
 import { useAuth } from '@/frontend/context/AuthContext';
@@ -36,11 +36,13 @@ const EscalationHierarchyBuilder = dynamic(() => import('@/frontend/components/e
 const PPMModule = dynamic(() => import('@/frontend/components/ppm/PPMModule'), { loading: TabLoading });
 // Owner 2026-10-29: the drive Tech shares with the Design team (the Design console has the same tab)
 const FilesTab = dynamic(() => import('@/frontend/components/files/FilesTab'), { loading: TabLoading });
+// Owner 2026-11-02: Candidate Search (HR candidate sheets, CRUD, AI search with a chosen top N); here for now
+const CandidateSearchTab = dynamic(() => import('@/frontend/components/candidates/CandidateSearchTab'), { loading: TabLoading });
 // Owner 2026-11-02: the Super Admin console's "New" ticket quick action
 const TicketCreateModal = dynamic(() => import('@/frontend/components/tickets/TicketCreateModal'), { loading: () => null });
 
 type TechTab =
-    | 'tasks' | 'control_centre' | 'meetings' | 'vms_face' | 'files'
+    | 'tasks' | 'control_centre' | 'meetings' | 'vms_face' | 'files' | 'candidates'
     | 'water_logger' | 'water' | 'diesel_logger' | 'diesel' | 'electricity_logger' | 'ppm'
     | 'org_progress' | 'org_efficiency' | 'visitors' | 'escalation'
     | 'profile';
@@ -57,6 +59,7 @@ const NAV: Array<{ section: string; items: NavItem[] }> = [
             { id: 'meetings', label: 'Meeting Assistant', icon: Mic },
             { id: 'vms_face', label: 'VMS Face (Testing)', icon: ScanFace },
             { id: 'files', label: 'Files', icon: FolderOpen },
+            { id: 'candidates', label: 'Candidate Search', icon: UserSearch },
         ],
     },
     {
@@ -278,7 +281,7 @@ export default function TechDashboard() {
                         </button>
                         <h1 className="truncate font-display text-xl font-semibold tracking-tight text-text-primary md:text-2xl">{tabLabel}</h1>
                     </div>
-                    {activeTab !== 'tasks' && activeTab !== 'control_centre' && activeTab !== 'meetings' && activeTab !== 'files' && activeTab !== 'profile' && propertySelector}
+                    {activeTab !== 'tasks' && activeTab !== 'control_centre' && activeTab !== 'meetings' && activeTab !== 'files' && activeTab !== 'candidates' && activeTab !== 'profile' && propertySelector}
                 </header>
 
                 <div className="p-4 md:p-8">
@@ -296,6 +299,7 @@ export default function TechDashboard() {
                             {activeTab === 'control_centre' && <TaskManagerTestingDashboard orgId={org?.id || ''} />}
                             {assistantOpened && <div className={activeTab === 'meetings' ? '' : 'hidden'}><MeetingsTab space="tech" /></div>}
                             {activeTab === 'files' && org && <FilesTab orgId={org.id} team="tech" />}
+                            {activeTab === 'candidates' && org && <CandidateSearchTab orgId={org.id} />}
                             {activeTab === 'vms_face' && propertyFilter && org && <VMSFaceDashboard key={propertyFilter} orgId={org.id} propertyId={propertyFilter} propertyName={activeProperty?.name || ''} />}
                             {activeTab === 'water_logger' && propertyFilter && <WaterDashboard propertyId={propertyFilter} />}
                             {activeTab === 'water' && <WaterAnalyticsDashboard key="water-analytics-tab" propertyId={propertyFilter} orgId={org?.id} properties={properties} />}

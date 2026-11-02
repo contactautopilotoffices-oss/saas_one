@@ -14,6 +14,7 @@ export const dynamic = 'force-dynamic';
  *     complete      { id }                       the browser finished uploading → the file is shown
  *     download_url  { id }                       60-second download link → { url }
  *     delete        { id }                       a file, or a folder and everything in it
+ *     set_note      { id, note }                 the item's note (empty clears it) → { note }
  * WHO is acting always comes from the signed-in session.
  */
 
@@ -59,6 +60,8 @@ export async function POST(request: NextRequest) {
                 return NextResponse.json({ success: true, ...(await SharedFilesService.downloadUrl(g.organizationId, body.id, g.team)) });
             case 'delete':
                 return NextResponse.json({ success: true, ...(await SharedFilesService.remove(g.organizationId, body.id)) });
+            case 'set_note':
+                return NextResponse.json({ success: true, ...(await SharedFilesService.setNote(g.organizationId, body.id, body.note)) });
             default:
                 return NextResponse.json({ success: false, error: 'Unknown action' }, { status: 400 });
         }

@@ -7,7 +7,7 @@ import type { FaceLandmarker, ObjectDetector } from '@mediapipe/tasks-vision';
  * warning can pop up within about two seconds instead of waiting on a server
  * call. Looks at the webcam several times a second for:
  *   · no face, or more than one face        (Face Landmarker)
- *   · head turned, or eyes off the screen   (head pose + eye blendshapes)
+ *   · head turned away from the screen      (head pose only — eyes are not tracked)
  *   · a phone in view                       (Object Detector, COCO "cell phone")
  *
  * The model and WebAssembly files are served by the app itself from /t/mediapipe
@@ -15,7 +15,7 @@ import type { FaceLandmarker, ObjectDetector } from '@mediapipe/tasks-vision';
  * load them, and no outside host is needed). Nothing leaves the device from
  * here; the page reports a problem to the server only once it has lasted.
  *
- * Head and eye angles are measured against the candidate's own resting pose,
+ * Head angles are measured against the candidate's own resting pose,
  * taken over their first couple of seconds, so a laptop camera below the eyes
  * doesn't read as "looking down".
  */
@@ -35,16 +35,13 @@ export interface DeviceObservation {
 const ASSET_ROOT = '/t/mediapipe';
 
 // Thresholds, relative to the candidate's resting pose. Tuned to catch a clear look away,
-// not normal reading; the 1.5s hold in the page filters out glances and blinks.
+// not normal reading; the 1.5s hold in the page filters out glances.
+// Pitch was 20°; raised to 35° (owner 2026-11-02) so a nod toward the bottom of the
+// screen or the keyboard is not a flag, while looking down into the lap still is.
 const HEAD_YAW_DEG = 25;
-const HEAD_PITCH_DEG = 20;
-const EYES_SIDEWAYS = 0.5;
-const EYES_DOWN_EXTRA = 0.35;
-const BLINK = 0.5;
+const HEAD_PITCH_DEG = 35;
 const PHONE_SCORE = 0.45;
 const CALIBRATION_SAMPLES = 8;
-
-type Blend = Record<string, number>;
 
 export interface DeviceDetector {
     /** Call several times a second with the live <video>. `checkPhone` runs the heavier object model. */
@@ -74,7 +71,7 @@ export async function createDeviceDetector(): Promise<DeviceDetector | null> {
             baseOptions: { modelAssetPath: `${ASSET_ROOT}/models/face_landmarker.task`, delegate },
             runningMode: 'VIDEO',
             numFaces: 3,
-            outputFaceBlendshapes: true,
+            outputFaceBlendshapes: false, // eye blendshapes were only for the removed eye check
             outputFacialTransformationMatrixes: true,
         }));
         const objects: ObjectDetector = await withDelegate((delegate) => vision.ObjectDetector.createFromOptions(fileset, {
@@ -87,8 +84,8 @@ export async function createDeviceDetector(): Promise<DeviceDetector | null> {
 
         let lastTs = 0;
         let closed = false;
-        const baseline: { yaw: number; pitch: number; down: number }[] = [];
-        let rest = { yaw: 0, pitch: 0, down: 0 };
+        const baseline: { yaw: number; pitch: number }[] = [];
+        let rest = { yaw: 0, pitch: 0 };
         let lastPhone: { seen: boolean; score: number } = { seen: false, score: 0 };
 
         return {
@@ -112,29 +109,21 @@ export async function createDeviceDetector(): Promise<DeviceDetector | null> {
                 }
 
                 const { yaw, pitch } = headAngles(result.facialTransformationMatrixes?.[0]?.data);
-                const blend: Blend = Object.fromEntries((result.faceBlendshapes?.[0]?.categories || []).map((c) => [c.categoryName, c.score]));
-                const avg = (a: string, b: string) => ((blend[a] || 0) + (blend[b] || 0)) / 2;
-                const down = avg('eyeLookDownLeft', 'eyeLookDownRight');
 
                 // The first few clean frames set the resting pose.
                 if (baseline.length < CALIBRATION_SAMPLES) {
-                    baseline.push({ yaw, pitch, down });
+                    baseline.push({ yaw, pitch });
                     if (baseline.length === CALIBRATION_SAMPLES) rest = medianPose(baseline);
                     return { category: null, observation: 'Calibrating', faces, yaw, pitch };
                 }
 
                 const dYaw = wrapDeg(yaw - rest.yaw);
                 const dPitch = wrapDeg(pitch - rest.pitch);
+                // Head only. Eyes are not tracked (owner 2026-11-02): reading the screen or
+                // glancing at the keyboard moved the eyes and was being flagged.
                 if (Math.abs(dYaw) > HEAD_YAW_DEG || Math.abs(dPitch) > HEAD_PITCH_DEG) {
                     const where = Math.abs(dYaw) >= Math.abs(dPitch) ? 'to the side' : 'up or down';
                     return { category: 'looking_away', observation: `Head turned ${where} (${Math.round(Math.abs(dYaw))}° side, ${Math.round(Math.abs(dPitch))}° tilt)`, faces, yaw: dYaw, pitch: dPitch };
-                }
-
-                if (avg('eyeBlinkLeft', 'eyeBlinkRight') < BLINK) {
-                    // Both eyes turned the same way: out on one side and in on the other.
-                    const sideways = Math.max(avg('eyeLookOutLeft', 'eyeLookInRight'), avg('eyeLookInLeft', 'eyeLookOutRight'));
-                    if (sideways > EYES_SIDEWAYS) return { category: 'looking_away', observation: 'Eyes looking to the side, away from the screen', faces, yaw: dYaw, pitch: dPitch };
-                    if (down - rest.down > EYES_DOWN_EXTRA) return { category: 'looking_away', observation: 'Eyes looking down, below the screen', faces, yaw: dYaw, pitch: dPitch };
                 }
 
                 return { category: null, observation: 'On screen', faces, yaw: dYaw, pitch: dPitch };
@@ -175,10 +164,10 @@ function wrapDeg(d: number) {
     return ((((d + 180) % 360) + 360) % 360) - 180;
 }
 
-function medianPose(samples: { yaw: number; pitch: number; down: number }[]) {
+function medianPose(samples: { yaw: number; pitch: number }[]) {
     const median = (xs: number[]) => {
         const s = [...xs].sort((a, b) => a - b);
         return s[Math.floor(s.length / 2)];
     };
-    return { yaw: median(samples.map((s) => s.yaw)), pitch: median(samples.map((s) => s.pitch)), down: median(samples.map((s) => s.down)) };
+    return { yaw: median(samples.map((s) => s.yaw)), pitch: median(samples.map((s) => s.pitch)) };
 }
